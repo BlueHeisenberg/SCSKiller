@@ -732,12 +732,18 @@ static int run(const std::wstring& exe, const std::wstring& args) {
     return (int)code;
 }
 
+// Cache file snapshots (dxr_snap, below): path -> (size, mtime).
+using DxrSnap = std::map<std::wstring, std::pair<uintmax_t, long long>>;
+static DxrSnap dxr_snap();
+static void dxr_diff(const DxrSnap& a, const DxrSnap& b, const char* when);
+
 // Columns: p1 = first seen (proc 1), p1b = again in proc 1, p2 = proc 2 (same exe name, same folder), od = a process
-// with the same exe file name in another folder (runs between proc 1 and proc 2). Rows are medians when runs > 1.
-// fa, fb: that exe in dir and in the other folder (fields_main).
-static int fields_parent(const std::wstring& fa, const std::wstring& fb, const std::wstring& dir, int runs) {
+// with the same exe file name in another folder (runs between proc 1 and proc 2), on = a process with another exe file
+// name in the same folder (runs right after proc 1: is the cache per exe name at all?). Rows are medians when runs > 1.
+// fa, fb, fc: that exe in dir, in the other folder, and the other name in dir (fields_main).
+static int fields_parent(const std::wstring& fa, const std::wstring& fb, const std::wstring& fc, const std::wstring& dir, int runs) {
     std::vector<std::string> order;
-    Col col[4];  // p1, p1b, od, p2
+    Col col[5];  // p1, p1b, od, p2, on
     auto read = [&](const std::wstring& path, int c0, bool two) {
         read_rows(path, &order, [&](const std::string& name, const char* rest) {
             char* t2 = nullptr;
@@ -746,16 +752,27 @@ static int fields_parent(const std::wstring& fa, const std::wstring& fb, const s
         });
     };
     std::random_device rd;
+    DxrSnap prev = dxr_snap();
     for (int r = 0; r < runs; ++r) {
         unsigned seed = 100000 + rd() % 8000000;  // < 2^24: the float constant stays exact
         std::wstring s = L" " + std::to_wstring(seed) + L" ";
         printf("probe 6 run %d/%d\n", r + 1, runs);
-        run(fa, L"fields1" + s + L"\"" + dir + L"fields1.txt\"");
-        run(fb, L"fields3" + s + L"\"" + dir + L"fields3.txt\"");
-        run(fa, L"fields2" + s + L"\"" + dir + L"fields2.txt\"");
-        run(fa, L"fields4" + s + L"\"" + dir + L"fields4.txt\"");
+        // the first run lists which cache files each process wrote: what a vendor keys its files on
+        auto step = [&](const std::wstring& exe, int proc, const char* when) {
+            std::wstring n = std::to_wstring(proc);
+            run(exe, L"fields" + n + s + L"\"" + dir + L"fields" + n + L".txt\"");
+            if (r) return;
+            DxrSnap now = dxr_snap();
+            dxr_diff(prev, now, when);
+            prev = std::move(now);
+        };
+        step(fa, 1, "p1 (X)");
+        step(fc, 5, "othrnam (Y)");
+        step(fb, 3, "othrdir (X, other folder)");
+        step(fa, 2, "p2 (X)");
+        step(fa, 4, "fresh proc (X)");
         read(dir + L"fields1.txt", 0, true), read(dir + L"fields3.txt", 2, false), read(dir + L"fields2.txt", 3, false);
-        read(dir + L"fields4.txt", 0, false);
+        read(dir + L"fields4.txt", 0, false), read(dir + L"fields5.txt", 4, false);
     }
     auto med = [&](int c, const std::string& n) {
         double x = col_median(col[c], n);
@@ -767,7 +784,7 @@ static int fields_parent(const std::wstring& fa, const std::wstring& fb, const s
     // maps it to a pipeline it has), CHEAP = a new pipeline linked from cached stage binaries, FULL = a stage recompiles
     // (costs about what a cold VS or PS alone costs here). "fresh proc" rows: first compile in a new process (probe 3).
     printf("probe 6: one PSO field changed around cached shaders; ms, median of %d run(s). FREE <0.25, CHEAP <1.2, FULL >=1.2\n", runs);
-    printf("%-54s %7s %7s %7s %7s  %s\n", "variant", "p1", "p1again", "othrdir", "p2", "class");
+    printf("%-54s %7s %7s %7s %7s %7s  %s\n", "variant", "p1", "p1again", "othrdir", "p2", "othrnam", "class");
     for (auto& n : order) {
         std::string cls;
         const double x = col_median(col[0], n), p2 = col_median(col[3], n);
@@ -780,7 +797,21 @@ static int fields_parent(const std::wstring& fa, const std::wstring& fb, const s
             // setup rows), so p2 decides: FREE/CHEAP = per-stage cache across processes, FULL = per pair.
             if (!n.rfind("xpair", 0) && p2 != -2) cls = std::string("p2 ") + c(p2) + " (od: compare its setup rows)";
         }
-        printf("%-54s %s %s %s %s  %s\n", n.c_str(), med(0, n).c_str(), med(1, n).c_str(), med(2, n).c_str(), med(3, n).c_str(), cls.c_str());
+        printf("%-54s %s %s %s %s %s  %s\n", n.c_str(), med(0, n).c_str(), med(1, n).c_str(), med(2, n).c_str(), med(3, n).c_str(),
+               med(4, n).c_str(), cls.c_str());
+    }
+    // What the staged warm depends on (CacheKeyedByExeName): the baseline, cold in p1, is a disk hit in p2 and od but cold
+    // again under another name. A hit under the other name too = one cache shared by every exe.
+    const std::string b = "ctl: baseline (proc 1: cold)";
+    const double cold = col_median(col[0], b), p2 = col_median(col[3], b), od = col_median(col[2], b), on = col_median(col[4], b);
+    if (cold > 0 && p2 >= 0 && od >= 0 && on >= 0) {
+        auto hit = [&](double y) { return y < cold / 2; };
+        printf("probe 6 cache key: baseline cold %.2f, same name %.2f, same name other folder %.2f, other name %.2f ms: %s\n", cold,
+               p2, od, on,
+               !hit(p2)            ? "not kept across processes"
+               : !hit(od)          ? "per exe path (a staged warm can't reach it)"
+               : hit(on)           ? "shared by every exe name"
+                                   : "per exe file name, path-independent (a staged warm reaches it)");
     }
     return 0;
 }
@@ -1328,8 +1359,8 @@ static int dxr_child(int proc, unsigned seed, const std::wstring& blobs, const s
 }
 
 // Driver cache folders (+ the runtime's D3DSCache, reported only: never ours to delete): path -> (size, mtime).
-// mtimes are informative only: AMD writes through a memory map (ARCHITECTURE.md).
-using DxrSnap = std::map<std::wstring, std::pair<uintmax_t, long long>>;
+// mtimes are informative only: AMD writes through a memory map (ARCHITECTURE.md). Intel's location is unmeasured: all of
+// Intel\ under Local and LocalLow is listed until it is.
 static std::wstring local_appdata() {
     wchar_t la[MAX_PATH] = L"";
     GetEnvironmentVariableW(L"LOCALAPPDATA", la, MAX_PATH);
@@ -1339,26 +1370,31 @@ static DxrSnap dxr_snap() {
     namespace fs = std::filesystem;
     DxrSnap s;
     std::wstring la = local_appdata();
-    for (auto d : {L"\\NVIDIA\\DXCache", L"\\NVIDIA\\GLCache", L"\\AMD\\DxcCache", L"\\AMD\\DxCache", L"\\AMD\\VkCache", L"\\D3DSCache"}) {
+    std::vector<std::wstring> dirs;
+    for (auto d : {L"\\NVIDIA\\DXCache", L"\\NVIDIA\\GLCache", L"\\AMD\\DxcCache", L"\\AMD\\DxCache", L"\\AMD\\VkCache", L"\\D3DSCache", L"\\Intel"})
+        dirs.push_back(la + d);
+    if (!la.empty()) dirs.push_back(la + L"Low\\Intel");   // %USERPROFILE%\AppData\LocalLow
+    for (auto& d : dirs) {
         std::error_code ec;
-        for (fs::recursive_directory_iterator it(la + d, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec))
+        for (fs::recursive_directory_iterator it(d, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec))
             if (it->is_regular_file(ec)) s[it->path().wstring()] = {it->file_size(ec), it->last_write_time(ec).time_since_epoch().count()};
     }
     return s;
 }
 static void dxr_diff(const DxrSnap& a, const DxrSnap& b, const char* when) {
-    size_t cut = local_appdata().size() + 1;
+    const std::wstring la = local_appdata() + L"\\";
+    auto rel_of = [&](const std::wstring& p) { return p.rfind(la, 0) == 0 ? p.c_str() + la.size() : p.c_str(); };
     int n = 0;
     printf("  cache files after %s:", when);
     for (auto& [p, v] : b) {
         auto it = a.find(p);
-        const wchar_t* rel = p.c_str() + cut;
+        const wchar_t* rel = rel_of(p);
         if (it == a.end()) printf("\n    new     %ls (%llu)", rel, (unsigned long long)v.first), ++n;
         else if (it->second.first != v.first) printf("\n    grown   %ls %llu -> %llu", rel, (unsigned long long)it->second.first, (unsigned long long)v.first), ++n;
         else if (it->second.second != v.second) printf("\n    written %ls (mtime)", rel), ++n;
     }
     for (auto& [p, v] : a)
-        if (!b.count(p)) printf("\n    gone    %ls", p.c_str() + cut), ++n;
+        if (!b.count(p)) printf("\n    gone    %ls", rel_of(p)), ++n;
     printf(n ? "\n" : " no change\n");
 }
 
@@ -1460,11 +1496,14 @@ struct RunDir {
 // ponytail: probe runs leave their throwaway names' cache files; delete by the keys the children hold open
 // (NvidiaAppCache.KeysOpenBy) if they pile up
 static void list_new_cache(const DxrSnap& start) {
-    std::vector<std::wstring> made;
+    std::vector<std::wstring> made, runtime;
     for (auto& [p, v] : dxr_snap())
-        if (!start.count(p) && p.find(L"\\D3DSCache\\") == std::wstring::npos) made.push_back(p);
+        if (!start.count(p)) (p.find(L"\\D3DSCache\\") == std::wstring::npos ? made : runtime).push_back(p);
     if (!made.empty()) printf("%zu new driver-cache files (left in place):\n", made.size());
     for (auto& p : made) printf("  %ls\n", p.c_str());
+    // some drivers keep theirs through the runtime's D3DSCache (never ours to delete): listed apart
+    if (!runtime.empty()) printf("%zu new D3DSCache files:\n", runtime.size());
+    for (auto& p : runtime) printf("  %ls\n", p.c_str());
 }
 
 // `selftest gpulock` (no GPU): the GPU lock has one owner at a time and goes with its handle.
@@ -1505,12 +1544,14 @@ static int fields_main(const std::wstring& a, const std::wstring& dir, int runs,
     if (dxil && !dxc_compiler()) return printf("fields dxil: no DXC (dxcompiler.dll + dxil.dll)\n"), 1;
     std::wstring lock = gpu_lock("selftest fields");
     if (lock.empty()) return 1;
-    std::wstring name = L"scskf" + std::to_wstring(GetTickCount() % 1000000) + L".exe", odir = dir + L"fields_other\\";
+    std::wstring stamp = std::to_wstring(GetTickCount() % 1000000), name = L"scskf" + stamp + L".exe", other = L"scskf" + stamp + L"n.exe",
+                 odir = dir + L"fields_other\\";
     CreateDirectoryW(odir.c_str(), nullptr);
-    CHECK(CopyFileW(a.c_str(), (dir + name).c_str(), FALSE) && CopyFileW(a.c_str(), (odir + name).c_str(), FALSE));
+    CHECK(CopyFileW(a.c_str(), (dir + name).c_str(), FALSE) && CopyFileW(a.c_str(), (odir + name).c_str(), FALSE) &&
+          CopyFileW(a.c_str(), (dir + other).c_str(), FALSE));
     if (dxil) SetEnvironmentVariableW(L"SELFTEST_FIELDS_DXIL", L"1");
     const DxrSnap start = dxr_snap();
-    int rc = fields_parent(dir + name, odir + name, dir, runs);
+    int rc = fields_parent(dir + name, odir + name, dir + other, dir, runs);
     list_new_cache(start);
     return rc;
 }
