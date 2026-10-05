@@ -11,7 +11,8 @@ public static class GameFiles
     static readonly EnumerationOptions Flat = new() { IgnoreInaccessible = true };
 
     /// <summary>The process that creates the D3D12 device: the largest exe under a Binaries\Win64 folder (Unreal; not
-    /// Engine\Binaries, which only holds helpers like CrashReportClient; of exes named alike, the one nearest the root), else
+    /// Engine\Binaries, which only holds helpers like CrashReportClient, nor an <see cref="UnrealHelpers"/> exe; one named like
+    /// a build target, *-Win64-*.exe, over any other; of exes named alike, the one nearest the root), else
     /// the exe BattlEye's launcher starts (<see cref="BattlEyeTarget"/>), else <paramref name="launcherExe"/>, else the
     /// largest exe near the install root. A launcher among the last two is replaced by the game it starts
     /// (<see cref="LaunchedExe"/>). Exes in a patcher's or installer's copy of the game (<see cref="Staging"/>) are never
@@ -22,11 +23,12 @@ public static class GameFiles
         var unreal = Directory.EnumerateDirectories(installDir, "Win64", Deep)
             .Where(d => string.Equals(Path.GetFileName(Path.GetDirectoryName(d)), "Binaries", StringComparison.OrdinalIgnoreCase))
             .SelectMany(d => Directory.EnumerateFiles(d, "*.exe", Flat))
-            .Where(f => !IsEngineFolder(installDir, f) && !InStaging(installDir, f))
+            .Where(f => !IsEngineFolder(installDir, f) && !InStaging(installDir, f) && !UnrealHelpers.Contains(Path.GetFileName(f), StringComparer.OrdinalIgnoreCase))
             .Select(f => new FileInfo(f))
             .GroupBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
             .Select(same => same.MinBy(f => Path.GetRelativePath(installDir, f.FullName).Count(c => c == Path.DirectorySeparatorChar))!)
-            .MaxBy(f => f.Length);
+            .OrderByDescending(f => f.Name.Contains("-Win64-", StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(f => f.Length).FirstOrDefault();
         if (unreal != null) return unreal.FullName;
         if (BattlEyeTarget(installDir) is { } be) return be;
         if (launcherExe != null)
@@ -157,6 +159,10 @@ public static class GameFiles
     public static string DirKey(string dir) => dir.Length == 0 ? dir : Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir));
 
     static readonly string[] NotTheGame = ["redist", "directx", "crash", "unins", "setup", "vconsole"];   // vconsole2.exe: Source 2's developer console
+
+    /// <summary>Exes an Unreal game ships beside its own in Binaries\Win64 that never create its device: Returnal's
+    /// 114 MB EpicOnlineServicesInstaller.exe outweighs its 0.4 MB Returnal-Win64-Shipping.exe.</summary>
+    static readonly string[] UnrealHelpers = ["EpicOnlineServicesInstaller.exe"];
 
     /// <summary>Folders a patcher or installer keeps a copy of the game's files in, which never run: Stellar Blade's
     /// PatchData\SB\Binaries\Win64 holds a second SB-Win64-Shipping.exe; the EA app's __Installer its own tools.</summary>

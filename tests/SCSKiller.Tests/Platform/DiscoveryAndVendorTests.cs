@@ -467,6 +467,27 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Exe_discovery_takes_an_unreal_target_exe_over_larger_helpers_beside_it()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-helpers-test-").FullName;
+        try
+        {
+            void Put(string rel, byte[] bytes) { Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(root, rel))!); File.WriteAllBytes(Path.Combine(root, rel), bytes); }
+            string At(string rel) => Path.Combine(root, rel);
+            // Returnal: the EOS installer and a launcher outweigh the game
+            Put(@"Returnal\Binaries\Win64\EpicOnlineServicesInstaller.exe", Exe(null, 9000));
+            Put(@"Returnal\Binaries\Win64\Launcher.exe", Exe(null, 5000));
+            Put(@"Returnal\Binaries\Win64\Returnal-Win64-Shipping.exe", Exe("d3d12.dll", 400));
+            Assert.Equal(At(@"Returnal\Binaries\Win64\Returnal-Win64-Shipping.exe"), GameFiles.FindExe(root));
+            // a game exe renamed off the target pattern: the largest that isn't a known helper
+            File.Delete(At(@"Returnal\Binaries\Win64\Returnal-Win64-Shipping.exe"));
+            Put(@"Returnal\Binaries\Win64\Returnal.exe", Exe("d3d12.dll", 7000));
+            Assert.Equal(At(@"Returnal\Binaries\Win64\Returnal.exe"), GameFiles.FindExe(root));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void Exe_discovery_takes_the_exe_battleye_s_launcher_starts()
     {
         var tmp = Directory.CreateTempSubdirectory("scskiller-battleye-test-").FullName;
