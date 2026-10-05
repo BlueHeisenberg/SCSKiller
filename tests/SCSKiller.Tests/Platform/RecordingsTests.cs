@@ -395,6 +395,9 @@ public class RecordingsTests(ITestOutputHelper output) : IDisposable
         var bytes = File.ReadAllBytes(db);
         bytes[7] ^= 0x20;   // "\0SCSKREc"
         File.WriteAllBytes(db, bytes);
+        // same size, and often the same write time as the first write (the clock ticks every ~15 ms), which the cache
+        // would take for unchanged: a real rewrite comes later
+        File.SetLastWriteTimeUtc(db, File.GetLastWriteTimeUtc(db).AddSeconds(1));
         Assert.Throws<Recordings.IncompleteLayerList>(() => Recordings.LayerMadeOnDisk(data));
         File.Delete(db);
 
