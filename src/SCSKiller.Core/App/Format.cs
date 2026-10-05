@@ -1,3 +1,5 @@
+using SCSKiller.Core.Vendors;
+
 namespace SCSKiller.Core.App;
 
 /// <summary>Text the app and the CLI show.</summary>
@@ -25,11 +27,14 @@ public static class Format
     public static string Middleware(MiddlewareTag t) => t.Label + (t.Pipelines > 0 ? $": {t.Pipelines:N0} known pipelines, compiled with the game"
         : t.Label == "DLSS" ? ": compiled by the NVIDIA driver itself" : ": detected; added after a recording sees them");
 
-    /// <summary>The Library's notice that this GPU can't compile; null on NVIDIA and AMD, or once closed for this GPU
-    /// (<paramref name="dismissedFor"/>: <see cref="Settings.GpuNoticeDismissed"/>).</summary>
+    /// <summary>The Library's notice that this GPU can't compile (or, on Intel with <see cref="IntelBackend.Enabled"/>, that
+    /// it compiles experimentally); null on NVIDIA and AMD, or once closed for this GPU (<paramref name="dismissedFor"/>:
+    /// <see cref="Settings.GpuNoticeDismissed"/>).</summary>
     public static string? GpuNotice(GpuInfo gpu, string? dismissedFor) => gpu.Vendor is GpuVendor.Nvidia or GpuVendor.Amd || dismissedFor == gpu.Name ? null
         : gpu.Vendor switch
         {
+            GpuVendor.Intel when IntelBackend.Enabled => "Intel support is experimental: SCSKiller compiles only the pipelines a recording saw, "
+                + "and hasn't measured yet whether Intel's driver keeps them for the game. Turn on Record for a game, play it, then compile.",
             GpuVendor.Intel => "SCSKiller doesn't compile on Intel GPUs yet: how Intel's driver caches shaders hasn't been measured. Support is planned.",
             GpuVendor.Qualcomm => "SCSKiller doesn't compile on Qualcomm GPUs yet: how Qualcomm's driver caches shaders hasn't been measured.",
             _ => "SCSKiller doesn't compile on this GPU yet: it only knows how NVIDIA and AMD drivers cache shaders.",

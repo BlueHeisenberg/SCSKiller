@@ -276,7 +276,11 @@ Both vendors cache ray tracing state objects on disk per exe name, and both hit 
 
 ### Other vendors and Vulkan
 
-Intel and other vendors are unmeasured, so SCSKiller reports them as unsupported.
+Intel and other vendors are unmeasured, so SCSKiller reports them as unsupported. On Intel, setting
+`SCSKILLER_EXPERIMENTAL_INTEL=1` uses `IntelBackend` instead: the most conservative caps the planner supports (keyed on the
+exe file name, state-dependent, per pipeline, whole ray tracing objects), so a warm replays only what a recording saw.
+`tools/intel-arc/measure.ps1` runs the probes that will replace those assumptions with measurements; `selftest fields`
+reports a process under another exe name too (`othrnam`), and the probes list `Intel\` under Local and LocalLow.
 
 Vulkan games aren't supported. NVIDIA's driver keeps Vulkan pipelines keyed on the exe name (`NVIDIA\GLCache`), which
 Steam can redirect per game; AMD's Vulkan cache (`AMD\VkCache`) is keyed on the exe's full path, so a staged warm can't

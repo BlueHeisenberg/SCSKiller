@@ -14,6 +14,7 @@ public static class GpuBackends
             {
                 GpuVendor.Nvidia => new NvidiaBackend(gpu),
                 GpuVendor.Amd => new AmdBackend(gpu),
+                GpuVendor.Intel when IntelBackend.Enabled => new IntelBackend(gpu),
                 _ => new UnsupportedVendor(gpu),
             };
         }
@@ -87,7 +88,8 @@ public interface IRefreshableGpu
     string FallbackVersion(string umd);
 }
 
-/// <summary>Intel / unknown until measured: no cache assumptions, warming reports Unsupported via the caps.</summary>
+/// <summary>Intel (unless <see cref="IntelBackend.Enabled"/>) / unknown until measured: no cache assumptions, warming
+/// reports Unsupported via the caps.</summary>
 public sealed class UnsupportedVendor(GpuInfo gpu) : IGpuVendorBackend, IRefreshableGpu
 {
     public GpuVendor Vendor => Gpu.Vendor;
