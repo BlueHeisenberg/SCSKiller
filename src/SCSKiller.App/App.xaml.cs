@@ -71,6 +71,7 @@ public partial class App : Application
             watcher = real.WatchGames(stopWatching.Token);
         }
         Main = new MainWindow();
+        if (shots < 0) Main.RestorePlacement(Core is FakeScsKiller ? fakeDir : AppStore.DefaultDir);   // screenshots: always the default size
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(Main);
         if (Core is ScsKiller seen) seen.Unseen = () => !IsWindowVisible(hwnd) || IsIconic(hwnd);
 
@@ -342,6 +343,7 @@ public partial class App : Application
         if (quitNow != null) { quitNow.TrySetResult(); return; }
         if (quitting) return;
         quitting = true;
+        Main.SavePlacement();
         try
         {
             if (Core.Compiling)   // a removed item's warm too: it is still saving

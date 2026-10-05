@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text.Json;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -21,6 +22,8 @@ public sealed partial class MainWindow : Window
     const int MinWidth = 1072, MinHeight = 640;
 
     bool syncingNav;
+    string? placementFile;   // window.json: where the window was last closed (RestorePlacement)
+    bool maximizeOnShow;
     readonly (NavigationViewItem Item, Type Page)[] pages;
 
     public MainWindow()
@@ -40,9 +43,16 @@ public sealed partial class MainWindow : Window
         // The close button (and Alt+F4) hides to the notification area; the tray icon's Quit really quits.
         AppWindow.Closing += (_, e) =>
         {
+            SavePlacement();
             if (!App.HidesOnClose) return;
             e.Cancel = true;
             App.HideToTray();
+        };
+        AppWindow.Changed += (w, e) =>
+        {
+            if (!e.DidVisibilityChange || !w.IsVisible || !maximizeOnShow) return;
+            maximizeOnShow = false;
+            ((OverlappedPresenter)w.Presenter).Maximize();
         };
     }
 
@@ -74,6 +84,7 @@ public sealed partial class MainWindow : Window
     {
         UpdateButton.IsEnabled = false;
         UpdateText.Text = "Finishing the compile…";
+        SavePlacement();   // the restart exits without closing the window
         if (await Updater.RestartAsync()) return;   // exits
         (UpdateButton.IsEnabled, UpdateText.Text) = (true, "Restart to update");
         ShowUpdate();
@@ -106,6 +117,41 @@ public sealed partial class MainWindow : Window
         var presenter = (OverlappedPresenter)AppWindow.Presenter;
         (presenter.PreferredMinimumWidth, presenter.PreferredMinimumHeight) = ((int)(MinWidth * Scale), (int)(MinHeight * Scale));
     }
+
+    /// <summary>Puts the window where it was last closed (window.json in <paramref name="dir"/>): its restored bounds, and
+    /// maximized once it shows if it was. Never shows it: a --tray start stays in the notification area. Bounds on a monitor
+    /// that's gone are moved onto one by Windows (SetWindowPlacement).</summary>
+    public void RestorePlacement(string dir)
+    {
+        placementFile = Path.Combine(dir, "window.json");
+        Placement? saved;
+        try { saved = JsonSerializer.Deserialize<Placement>(File.ReadAllBytes(placementFile)); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { return; }   // none yet, or unreadable: the default
+        if (saved is not { Width: > 0, Height: > 0 }) return;
+        var wp = new WindowPlacement { Length = Marshal.SizeOf<WindowPlacement>(), ShowCmd = SwHide,
+                                       Normal = new(saved.Left, saved.Top, saved.Left + saved.Width, saved.Top + saved.Height) };
+        SetWindowPlacement(WinRT.Interop.WindowNative.GetWindowHandle(this), ref wp);
+        maximizeOnShow = saved.Maximized;
+    }
+
+    /// <summary>Saves where the window is (<see cref="RestorePlacement"/>) while it shows: as it closes to the notification
+    /// area, quits or restarts to update. Hidden, it keeps what was saved as it hid.</summary>
+    public void SavePlacement()
+    {
+        if (placementFile == null || !AppWindow.IsVisible) return;
+        var wp = new WindowPlacement { Length = Marshal.SizeOf<WindowPlacement>() };
+        if (!GetWindowPlacement(WinRT.Interop.WindowNative.GetWindowHandle(this), ref wp)) return;
+        var r = wp.Normal;   // the restored bounds, also while maximized or minimized
+        bool maximized = wp.ShowCmd == SwShowMaximized || wp.ShowCmd == SwShowMinimized && (wp.Flags & WpfRestoreToMaximized) != 0;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(placementFile)!);
+            File.WriteAllBytes(placementFile, JsonSerializer.SerializeToUtf8Bytes(new Placement(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top, maximized)));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // the next start opens at the default
+    }
+
+    sealed record Placement(int Left, int Top, int Width, int Height, bool Maximized);
 
     /// <summary>Shows the window off-screen, never activated and not in the task switcher: the user may be gaming.</summary>
     public void ShowOffscreen()
@@ -301,4 +347,11 @@ public sealed partial class MainWindow : Window
     }
 
     [DllImport("user32.dll")] static extern uint GetDpiForWindow(nint hwnd);
+    [DllImport("user32.dll")] static extern bool GetWindowPlacement(nint hwnd, ref WindowPlacement wp);
+    [DllImport("user32.dll")] static extern bool SetWindowPlacement(nint hwnd, ref WindowPlacement wp);
+
+    const int SwHide = 0, SwShowMinimized = 2, SwShowMaximized = 3, WpfRestoreToMaximized = 2;
+
+    [StructLayout(LayoutKind.Sequential)] record struct NativeRect(int Left, int Top, int Right, int Bottom);
+    [StructLayout(LayoutKind.Sequential)] struct WindowPlacement { public int Length, Flags, ShowCmd; public PointInt32 Min, Max; public NativeRect Normal; }
 }
