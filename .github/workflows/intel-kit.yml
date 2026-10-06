@@ -1,0 +1,43 @@
+# The Intel Arc measurement kit (tools/intel-arc): the native probes plus DXC, as one artifact to run on an Arc PC without
+# Visual Studio. Proxy build only (no .NET), a few minutes on a GitHub-hosted runner.
+name: intel-kit
+
+on:
+  push:
+    branches: ['intel-**']
+    paths: ['proxy/**', 'tools/intel-arc/**', '.github/workflows/intel-kit.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kit:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+
+      - name: Proxy (CMake, MSVC, Release x64)
+        shell: cmd
+        run: cmake -S proxy -B proxy/build -A x64 && cmake --build proxy/build --config Release -- /m
+
+      - name: Assemble kit
+        shell: powershell
+        run: |
+          $kit = New-Item -ItemType Directory -Force intel-arc-kit
+          $rel = 'proxy/build/Release'
+          foreach ($f in 'selftest.exe', 'd3d12.dll', 'fakenext.dll', 'probe11.exe') { Copy-Item "$rel/$f" $kit }
+          Copy-Item tools/intel-arc/* $kit
+          # dxcompiler.dll + dxil.dll from the newest Windows SDK, as selftest's dxc_dir would pick them there
+          $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.*\x64\dxcompiler.dll" | Sort-Object FullName | Select-Object -Last 1
+          if (-not $sdk) { throw 'no dxcompiler.dll in the Windows SDK' }
+          Copy-Item $sdk.FullName, (Join-Path $sdk.DirectoryName 'dxil.dll') $kit
+          Get-ChildItem $kit | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: intel-arc-kit
+          path: intel-arc-kit/
+          retention-days: 30
+          if-no-files-found: error

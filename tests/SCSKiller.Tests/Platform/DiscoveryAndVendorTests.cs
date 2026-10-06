@@ -133,6 +133,27 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         Assert.Equal("a \"quoted\" b", SteamSource.Values(vdf, "name").Single());
     }
 
+    [Fact]
+    public void Experimental_intel_backend_compiles_only_what_a_recording_saw()
+    {
+        var intel = new IntelBackend(new GpuInfo(GpuVendor.Intel, "Intel(R) Arc(TM) B580 Graphics", "32.0.101.6979", 1, 12UL << 30));
+        Assert.Equal(("intel-0", true, false, false, RtCacheGranularity.WholeObject),
+            (intel.Caps.Profile, intel.Caps.CacheKeyedByExeName, intel.Caps.StateIndependentCache, intel.Caps.PerStageCache, intel.Caps.RtCacheGranularity));
+        Assert.Null(((IGpuVendorBackend)intel).AppCache);
+        Assert.Null(intel.GetCacheLimit());
+        Assert.Throws<NotSupportedException>(() => intel.SetCacheLimit(new(1L << 30, false)));
+        Assert.True(intel.Refresh(intel.Gpu with { DriverVersion = "32.0.101.7026" }));
+        Assert.Equal("32.0.101.7026", intel.Gpu.DriverVersion);
+
+        // shaders with embedded root signatures plan without a recording on NVIDIA's state-independent cache, never on Intel's
+        var game = new Game("test:intel", "intel", Store.Other, @"C:\nowhere", @"C:\nowhere\game.exe");
+        var engine = new EngineInfo(Core.Carved.CarvedReader.Family, "DXBC" + Core.Carved.CarvedReader.EmbeddedRootSignatures, null, "D3D12", false, null);
+        var planner = new Core.Planning.Planner();
+        Assert.Equal(Readiness.Ready, planner.Check(game, engine, null, new VendorCaps("nvidia-1", true, true, true)).Readiness);
+        Assert.Equal(Readiness.NeedsRecording, planner.Check(game, engine, null, intel.Caps).Readiness);
+        Assert.Equal(Readiness.Unsupported, planner.Check(game, engine, null, new UnsupportedVendor(intel.Gpu).Caps).Readiness);
+    }
+
     [Trait("Needs", "Gpu")]
     [Fact]
     public void Nvidia_backend_reads_driver_usage_and_cache_limit()
