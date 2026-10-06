@@ -5,6 +5,11 @@ All notable changes to the SCSKiller app and command line. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Wuthering Waves stayed "needs the game's AES key" after a correct key was entered: its engine was taken for Unreal
+  4.27, not the 4.26 fork it runs on, so none of its files could be opened. Its 5.6 GB shader library is now read too.
+
 ## [1.2.3] - 2026-10-06
 
 ### Added
