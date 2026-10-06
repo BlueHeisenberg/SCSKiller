@@ -31,32 +31,6 @@ foreach ($k in 'HKLM:\SOFTWARE\Intel', 'HKCU:\SOFTWARE\Intel', 'HKLM:\SOFTWARE\W
         }
     }
 }
-if ($ScanDriver) {
-    # The user-mode driver files: the class key's DriverStore folder of the Intel adapter. Every printable ASCII or UTF-16
-    # string around "cache" that looks like a setting name goes to driver-strings.txt.
-    $class = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}'
-    $dirs = Get-ChildItem $class -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^\d{4}$' } | ForEach-Object {
-        $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
-        if ($p.ProviderName -match 'Intel' -and $p.UserModeDriverName) {
-            foreach ($f in @($p.UserModeDriverName)) { if ($f -and (Test-Path $f)) { Split-Path $f -Parent } }
-        }
-    } | Sort-Object -Unique
-    $pattern = '[A-Za-z][A-Za-z0-9_]{2,}(Cache|cache|CACHE)[A-Za-z0-9_]*|[A-Za-z0-9_]*(ShaderCache|DiskCache|PipelineCache|CacheSize|CacheLimit|CacheMax)[A-Za-z0-9_]*'
-    $found = foreach ($d in $dirs) {
-        Log "driver folder: $d"
-        foreach ($f in Get-ChildItem $d -Filter *.dll -File) {
-            $bytes = [IO.File]::ReadAllBytes($f.FullName)
-            $ascii = [Text.Encoding]::GetEncoding(28591).GetString($bytes)
-            $wide = [Text.Encoding]::Unicode.GetString($bytes)
-            foreach ($t in $ascii, $wide) {
-                foreach ($m in [regex]::Matches($t, $pattern)) { if ($m.Value.Length -le 64) { "{0}`t{1}" -f $f.Name, $m.Value } }
-            }
-        }
-    }
-    $found | Sort-Object -Unique | Set-Content (Join-Path $out 'driver-strings.txt')
-    Log ("driver strings: {0} distinct (driver-strings.txt)" -f @($found | Sort-Object -Unique).Count)
-}
-
 # --- Fill ----------------------------------------------------------------------------------------------------------------
 $exe = Join-Path $kit "scskfill$((Get-Random -Maximum 999999)).exe"
 Copy-Item (Join-Path $kit 'selftest.exe') $exe
@@ -66,6 +40,7 @@ $startNames = @{}; foreach ($f in $start) { $startNames[$f.Name] = $f.Length }
 Log ("cache folder: {0}: {1} files, {2:N1} MB" -f $cache, $start.Count, (($start | Measure-Object Length -Sum).Sum / 1MB))
 $mine = $null; $last = -1; $flat = 0; $maxBytes = $MaxGB * 1GB; $grown = 0
 $rows = @()
+Log ("filling in batches of {0:N0} compute PSOs (a line per batch; up to {1} GB of growth)..." -f $Batch, $MaxGB)
 for ($b = 1; $b -le 10000; $b++) {
     $sw = [Diagnostics.Stopwatch]::StartNew()
     & $exe dxcfill $Batch $Unroll $b 0 | Out-Null
@@ -97,6 +72,37 @@ Log ("batch 1 again: {0:N1} s (its first run: {1} s; much faster = still cached,
 
 Remove-Item $exe -ErrorAction SilentlyContinue
 if ($mine) { Remove-Item (Join-Path $cache $mine) -ErrorAction SilentlyContinue; Log "deleted the throwaway cache file $mine" }
+
+# --- Driver strings (last: the fill matters more) ------------------------------------------------------------------------
+if ($ScanDriver) {
+    # The user-mode driver files: the class key's DriverStore folder of the Intel adapter. Printable ASCII and UTF-16 runs
+    # are pulled out first (one linear pass per file), then those mentioning a cache kept: driver-strings.txt.
+    $class = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}'
+    $dirs = Get-ChildItem $class -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^\d{4}$' } | ForEach-Object {
+        $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+        if ($p.ProviderName -match 'Intel' -and $p.UserModeDriverName) {
+            foreach ($f in @($p.UserModeDriverName)) { if ($f -and (Test-Path $f)) { Split-Path $f -Parent } }
+        }
+    } | Sort-Object -Unique
+    $ascii = [regex]'[\x20-\x7E]{6,200}'
+    $wide = [regex]'(?:[\x20-\x7E]\x00){6,200}'
+    $found = [Collections.Generic.HashSet[string]]::new()
+    foreach ($d in $dirs) {
+        $files = @(Get-ChildItem $d -Filter *.dll -File | Sort-Object Length)
+        Log ("driver folder: {0} ({1} DLLs, {2:N0} MB)" -f $d, $files.Count, (($files | Measure-Object Length -Sum).Sum / 1MB))
+        $i = 0
+        foreach ($f in $files) {
+            $i++
+            Write-Host ("  [{0}/{1}] {2} ({3:N0} MB)" -f $i, $files.Count, $f.Name, ($f.Length / 1MB))
+            $text = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($f.FullName))
+            foreach ($m in $ascii.Matches($text)) { if ($m.Value -match 'cache') { [void]$found.Add("$($f.Name)`t$($m.Value)") } }
+            foreach ($m in $wide.Matches($text)) { $v = $m.Value -replace "`0", ''; if ($v -match 'cache') { [void]$found.Add("$($f.Name)`t(utf16) $v") } }
+        }
+    }
+    $found | Sort-Object | Set-Content (Join-Path $out 'driver-strings.txt')
+    Log ("driver strings mentioning a cache: {0} (driver-strings.txt)" -f $found.Count)
+}
+
 $zip = Join-Path ([Environment]::GetFolderPath('Desktop')) "scskiller-intel-cache-limit-$stamp.zip"
 Compress-Archive -Path "$out\*" -DestinationPath $zip -Force
 Log "Done. Results: $zip"
