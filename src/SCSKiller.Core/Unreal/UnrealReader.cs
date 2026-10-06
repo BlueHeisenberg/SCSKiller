@@ -565,6 +565,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
 
     static Archive? Open(AbstractVfsFileProvider provider, GameFile file)
     {
+        if (file.Size >= Array.MaxLength) return OpenLarge(file, provider.Versions.Game);
         var arc = ReadLibrary(file.Path, file.Read(), provider.Versions.Game);
         switch (arc.SerializedShaders)
         {
@@ -596,6 +597,54 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             default:
                 return null;
         }
+    }
+
+    /// <summary>A pak-era library past 2 GB (Wuthering Waves' SM6 chunk library: 5.6 GB): no byte[] holds it, and CUE4Parse's
+    /// whole-file read casts the size to int (a prefix 4 GB short). The header is read alone (growing until its counts fit), the
+    /// code in ranges of up to 16 MB as the work runs, one read at a time (the pak reader isn't concurrent).</summary>
+    static Archive OpenLarge(GameFile file, EGame game)
+    {
+        byte[] Read(long offset, long size) =>
+            file.Read(new FByteBulkDataHeader(0, 0, checked((uint)size), offset, FBulkDataCookedIndex.Default));
+        var width = game >= EGame.GAME_UE5_8 ? 8 : 20;
+        byte[] head;
+        (long Header, long End)? layout = null;
+        for (var n = 64L << 20; ; n *= 4) // a header past 1 GB isn't one
+        {
+            head = Read(0, n);
+            if (BitConverter.ToUInt32(head) != 2) throw new InvalidDataException($"{file.Path}: a {file.Size >> 20} MB shader library of version {BitConverter.ToUInt32(head)}, not 2");
+            if ((layout = Layout(head, width, ioStore: false)) != null || n >= 1L << 30) break;
+        }
+        if (layout is not { } l || l.End != file.Size)
+            throw new InvalidDataException($"{file.Path}: not a shader library this reads as UE {VersionOf(game)} (its counts don't end at the file's end)");
+        var lib = new FSerializedShaderArchive(new FByteArchive(file.Path, head, new VersionContainer(game)) { Position = 4 });
+        head = null!;
+        var entries = lib.ShaderEntries;
+        var order = Enumerable.Range(0, entries.Length).OrderBy(i => entries[i].Offset).ToArray();
+        var batches = new List<int[]>();
+        for (int s = 0, e; s < order.Length; s = e)
+            for (e = s + 1; ; e++)
+                if (e == order.Length || (long)(entries[order[e]].Offset + entries[order[e]].Size - entries[order[s]].Offset) > 16 << 20)
+                {
+                    batches.Add(order[s..e]);
+                    break;
+                }
+        var gate = new object();
+        return new Archive(lib.ShaderMapHashes.Select(h => h.ToString().ToLowerInvariant()).ToArray(),
+            lib.ShaderMapEntries.Select(e => ((int)e.ShaderIndicesOffset, (int)e.NumShaders)).ToArray(), lib.ShaderIndices, entries.Length,
+            batches.Select(b => (Func<IEnumerable<(int, byte[])>>)(() =>
+            {
+                var start = (long)entries[b[0]].Offset;
+                var end = b.Max(i => (long)entries[i].Offset + entries[i].Size);
+                byte[] span;
+                lock (gate) span = Read(l.Header + start, end - start);
+                return b.Select(i =>
+                {
+                    var e = entries[i];
+                    var code = span.AsSpan((int)((long)e.Offset - start), (int)e.Size).ToArray();
+                    return (i, e.Size == e.UncompressedSize ? code : Decompress(code, (int)e.UncompressedSize));
+                }).ToList();
+            })).ToArray(), Hashes: lib.ShaderHashes.Select(h => h.ToString().ToLowerInvariant()).ToArray());
     }
 
     /// <summary>A version-1 shader code archive (pre-4.25 ShaderCodeLibrary, e.g. Tiny Tina's Wonderlands, 4.21): u32 version,
