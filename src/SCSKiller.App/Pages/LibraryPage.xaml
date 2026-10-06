@@ -18,62 +18,55 @@
         </Grid.RowDefinitions>
 
         <StackPanel Spacing="12">
-            <Grid ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <StackPanel Spacing="4" VerticalAlignment="Bottom">
+            <Grid RowSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <StackPanel Spacing="4">
                     <TextBlock Text="Library" Style="{StaticResource TitleTextBlockStyle}" />
-                    <TextBlock Text="{x:Bind Vm.Summary, Mode=OneWay}" Style="{StaticResource Secondary}" />
-                    <TextBlock Text="{x:Bind Vm.RefreshNote, Mode=OneWay}" Visibility="{x:Bind Vm.HasRefreshNote, Mode=OneWay}" Style="{StaticResource Secondary}" />
+                    <TextBlock Text="{x:Bind Vm.Summary, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                    <TextBlock Text="{x:Bind Vm.RefreshNote, Mode=OneWay}" Visibility="{x:Bind Vm.HasRefreshNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Bottom">
-                    <Button Click="OnRefresh"
-                            ToolTipService.ToolTip="Re-reads every game's cache size, recordings and status, and finds new games. Shift+click also re-checks every game's engine and anti-cheat (slower).">
+                <local:WrapPanel Grid.Row="1" Spacing="12">
+                    <Button ToolTipService.ToolTip="Re-reads every game's cache size, recordings and status, and finds new games. Shift+click also re-checks every game's engine and anti-cheat (slower)." Click="OnRefresh">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <ProgressRing Width="16" Height="16" IsActive="{x:Bind Vm.Refreshing, Mode=OneWay}" Visibility="{x:Bind Vm.Refreshing, Mode=OneWay}" />
                             <TextBlock Text="Refresh" />
                         </StackPanel>
                     </Button>
-                    <Button Click="OnAddGame" AutomationProperties.Name="Add a game"
-                            ToolTipService.ToolTip="Add a game no store lists (another launcher, or a game in a folder of its own) by picking its .exe">
+                    <Button AutomationProperties.Name="Add a game" ToolTipService.ToolTip="Add a game no store lists (another launcher, or a game in a folder of its own) by picking its .exe" Click="OnAddGame">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <FontIcon Glyph="&#xE710;" FontSize="14" />
                             <TextBlock Text="Add a game…" />
                         </StackPanel>
                     </Button>
-                </StackPanel>
-                <Grid Grid.Column="3" VerticalAlignment="Bottom">
-                    <Button Click="OnAddRecommended" Visibility="{x:Bind Vm.CanAddRecommended, Mode=OneWay}"
-                            BorderBrush="{ThemeResource AccentFillColorDefaultBrush}" BorderThickness="1.5"
-                            ToolTipService.ToolTip="Queue every game known to stutter that is ready to compile"
-                            AutomationProperties.Name="{x:Bind Vm.AddRecommendedText, Mode=OneWay}">
+                    <Button Content="{x:Bind Vm.AddAllText, Mode=OneWay}"
+                            Click="OnAddAll" IsEnabled="{x:Bind Vm.CanAddAll, Mode=OneWay}" />
+                    <Grid>
+                        <Button ToolTipService.ToolTip="Queue every game known to stutter that is ready to compile" Click="OnAddRecommended" Visibility="{x:Bind Vm.CanAddRecommended, Mode=OneWay}"
+                                BorderBrush="{ThemeResource AccentFillColorDefaultBrush}" BorderThickness="1.5"
+                                AutomationProperties.Name="{x:Bind Vm.AddRecommendedText, Mode=OneWay}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE734;" FontSize="14" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                <TextBlock Text="{x:Bind Vm.AddRecommendedText, Mode=OneWay}" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                            </StackPanel>
+                        </Button>
+                        <Button IsEnabled="False" Visibility="{x:Bind Vm.CannotAddRecommended, Mode=OneWay}" BorderThickness="1.5"
+                                AutomationProperties.Name="{x:Bind Vm.AddRecommendedText, Mode=OneWay}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE734;" FontSize="14" />
+                                <TextBlock Text="{x:Bind Vm.AddRecommendedText, Mode=OneWay}" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                    <Button Style="{StaticResource AccentButtonStyle}" Click="OnCompileQueue" IsEnabled="{x:Bind Vm.CanCompileQueue, Mode=OneWay}">
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon Glyph="&#xE734;" FontSize="14" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-                            <TextBlock Text="{x:Bind Vm.AddRecommendedText, Mode=OneWay}" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                            <FontIcon Glyph="&#xE945;" FontSize="14" />
+                            <TextBlock Text="{x:Bind Vm.CompileQueueText, Mode=OneWay}" />
                         </StackPanel>
                     </Button>
-                    <Button IsEnabled="False" Visibility="{x:Bind Vm.CannotAddRecommended, Mode=OneWay}" BorderThickness="1.5"
-                            AutomationProperties.Name="{x:Bind Vm.AddRecommendedText, Mode=OneWay}">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon Glyph="&#xE734;" FontSize="14" />
-                            <TextBlock Text="{x:Bind Vm.AddRecommendedText, Mode=OneWay}" />
-                        </StackPanel>
-                    </Button>
-                </Grid>
-                <Button Grid.Column="2" VerticalAlignment="Bottom" Content="{x:Bind Vm.AddAllText, Mode=OneWay}"
-                        Click="OnAddAll" IsEnabled="{x:Bind Vm.CanAddAll, Mode=OneWay}" />
-                <Button Grid.Column="4" VerticalAlignment="Bottom" Style="{StaticResource AccentButtonStyle}"
-                        Click="OnCompileQueue" IsEnabled="{x:Bind Vm.CanCompileQueue, Mode=OneWay}">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon Glyph="&#xE945;" FontSize="14" />
-                        <TextBlock Text="{x:Bind Vm.CompileQueueText, Mode=OneWay}" />
-                    </StackPanel>
-                </Button>
+                </local:WrapPanel>
             </Grid>
             <InfoBar Severity="Error" IsOpen="{x:Bind Vm.HasError, Mode=OneWay}" Visibility="{x:Bind Vm.HasError, Mode=OneWay}" Message="{x:Bind Vm.Error, Mode=OneWay}" IsClosable="False" />
             <InfoBar Severity="Informational" IsOpen="{x:Bind Vm.HasGpuNotice, Mode=OneWay}" Visibility="{x:Bind Vm.HasGpuNotice, Mode=OneWay}"

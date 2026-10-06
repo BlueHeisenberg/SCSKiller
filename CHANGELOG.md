@@ -5,6 +5,10 @@ All notable changes to the SCSKiller app and command line. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- In a narrow window the Library's buttons wrap onto another line under the summary instead of being cut off.
+
 ## [1.2.3] - 2026-10-06
 
 ### Added
