@@ -72,7 +72,7 @@ SCSKiller 会读取游戏自带的着色器，推断游戏运行时会创建的�
   <tr><td>Star Wars Jedi: Survivor</td><td>NVIDIA<br>RTX 5090</td><td>卡顿次数（≥ 20 ms）</td><td>9,038</td><td><b>11</b></td></tr>
 </table>
 
-数据通过 SCSKiller 的管线采集器测得。您的测试结果会因游戏、GPU 和驱动程序而异。
+数据通过 SCSKiller 的管线采集器测得。你的测试结果会因游戏、GPU 和驱动程序而异。
 
 - **可解决的问题：** 着色器编译卡顿。
 - **无法解决的问题：** 场景探索、资源流式加载以及其他原因导致的卡顿。
@@ -83,7 +83,7 @@ SCSKiller 会读取游戏自带的着色器，推断游戏运行时会创建的�
 - **支持 NVIDIA 和 AMD。** 适用于 DirectX 12 游戏，以及 NVIDIA 平台上的 DirectX 11 游戏。
 - **自动发现已安装的游戏。** 支持 Steam、Epic Games、EA app、GOG、Ubisoft Connect、Xbox (PC)、Battle.net、PURPLE、HoYoPlay 和 Gaijin。
 - **识别容易卡顿的游戏。** 游戏库会将已知存在卡顿问题的游戏置顶，并说明原因。
-- **驱动更新后重新编译。** 驱动更新会清空着色器缓存，SCSKiller 能检测到这一变化并重新编译；经您允许，也可以自动完成。
+- **驱动更新后重新编译。** 驱动更新会清空着色器缓存，SCSKiller 能检测到这一变化并重新编译；经你允许，也可以自动完成。
 - **可选采集器：** 适用于无法通过文件推断出管线的游戏。开启采集器后游玩几分钟，再进行编译。它还可以与替换着色器的模组配合采集数据。
 - **查看每次游玩的帧时间。** 启用采集器后，游戏详情页会展示上次游玩的帧时间图表，区分着色器编译卡顿和其他卡顿。帧时间数据仅保存在本机。
 - **一键启动游戏。** 游戏库和游戏详情页均提供启动游戏按钮，可通过对应商店启动游戏。
@@ -98,7 +98,7 @@ SCSKiller 会读取游戏自带的着色器，推断游戏运行时会创建的�
 | 显卡 | NVIDIA 或 AMD |
 | 游戏 | DirectX 12；NVIDIA 显卡支持 DirectX 11 |
 
-暂不支持 Intel 显卡，因为我没有可用于测试的设备。如果您愿意赞助一块 Intel Arc 显卡，请通过
+暂不支持 Intel 显卡，因为我没有可用于测试的设备。如果你愿意赞助一块 Intel Arc 显卡，请通过
 [contact@scskiller.com](mailto:contact@scskiller.com) 与我联系。
 
 从 [Releases 页面](https://github.com/BlueHeisenberg/SCSKiller/releases/latest) 下载并运行 `SCSKiller-Setup.exe`。程序仅为当前用户安装，无需管理员权限，并支持自动更新。
@@ -107,7 +107,7 @@ SCSKiller 会读取游戏自带的着色器，推断游戏运行时会创建的�
 
 <!-- UNSIGNED NOTICE: delete this block once releases are signed. -->
 > [!IMPORTANT]
-> **发布版本目前尚未进行代码签名**，因此首次运行 SCSKiller 时，Windows SmartScreen 很可能会提示“Windows 已保护您的电脑”。请点击“更多信息”，然后选择“仍要运行”。此提示在每次安装时仅出现一次：更新由 SCSKiller 自行下载，绝不会再次触发该提示。
+> **发布版本目前尚未进行代码签名**，因此首次运行 SCSKiller 时，Windows SmartScreen 很可能会提示“Windows 已保护你的电脑”。请点击“更多信息”，然后选择“仍要运行”。此提示在每次安装时仅出现一次：更新由 SCSKiller 自行下载，绝不会再次触发该提示。
 >
 > 通过 SignPath Foundation 进行代码签名的工作正在进行中。如需验证下载文件，请将其 SHA-256 哈希值与发布说明中的值进行比较（PowerShell 命令：`Get-FileHash <file>`）。智能应用控制（Windows 11）会直接阻止未签名的应用程序；如果已启用该功能，请等待完成签名的发布版本。
 <!-- END UNSIGNED NOTICE -->
@@ -133,7 +133,7 @@ SCSKiller 会读取游戏自带的着色器，推断游戏运行时会创建的�
 
 **它是否会修改我的驱动程序或其设置？** 不会。它通过 DirectX 进行编译，方式与游戏本身相同。
 
-**我是否需要创建账户？** 不需要。本应用在您电脑上执行的所有操作均为免费。通过 Patreon 登录只会解锁支持者功能。
+**我是否需要创建账户？** 不需要。本应用在你电脑上执行的所有操作均为免费。通过 Patreon 登录只会解锁支持者功能。
 
 **游戏未被识别，或者遇到了问题怎么办？** 请使用问题反馈或游戏支持申请模板提交 [issue](https://github.com/BlueHeisenberg/SCSKiller/issues/new/choose)。
 
