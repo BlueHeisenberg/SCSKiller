@@ -300,6 +300,17 @@ public class UnrealReaderTests(ITestOutputHelper output)
         Assert.NotEqual(Nte, UnrealReader.DetectFork(Ue55, Ue55, "Neverness to Everness", "HTGame"));
     }
 
+    /// <summary>Pak version 11 is 4.26.2 to 4.27: an anti-cheat game's (exe not read) 4.26 fork is found. Wuthering Waves'
+    /// pak index only mounts as GAME_WutheringWaves; as 4.27 every encrypted pak stays unreadable even with the right key.</summary>
+    [Fact]
+    public void A426ForkIsFoundWhenPakVersion11AllowsIt()
+    {
+        const CUE4Parse.UE4.Versions.EGame Ue426 = CUE4Parse.UE4.Versions.EGame.GAME_UE4_26, Ue427 = CUE4Parse.UE4.Versions.EGame.GAME_UE4_27,
+            WuWa = CUE4Parse.UE4.Versions.EGame.GAME_WutheringWaves;
+        Assert.Equal(WuWa, UnrealReader.DetectFork(Ue427, 0, "Wuthering Waves Game", "Client-Win64-Shipping", fromContainers: true, downTo: Ue426));
+        Assert.Null(UnrealReader.DetectFork(Ue427, 0, "Wuthering Waves Game", "Client-Win64-Shipping", fromContainers: true));
+    }
+
     /// <summary>Dead Island 2 ships 4.27's IoStore containers on Dambuster's 4.25 fork: it is that fork, so it gets 4.25's rule,
     /// when its folder, exe or title is exactly its name and only the containers told the version.
     /// Its recording's most used root signature (a VS with 3 constant buffers, a PS with 2) is what that rule serializes,

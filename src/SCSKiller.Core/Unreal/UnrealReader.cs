@@ -102,8 +102,8 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     static (string Paks, EGame Base, EGame? Fork, string Project)? Locate(Game game)
     {
         if (PaksDir(game.InstallDir) is not { } paks) return null;
-        var baseGame = DetectEngine(game, paks, out var upTo, out var fromContainers);
-        var fork = DetectFork(baseGame, upTo, Path.GetFileName(game.InstallDir.TrimEnd('\\', '/')), Path.GetFileNameWithoutExtension(game.ExePath), fromContainers, game.Name);
+        var baseGame = DetectEngine(game, paks, out var downTo, out var upTo, out var fromContainers);
+        var fork = DetectFork(baseGame, upTo, Path.GetFileName(game.InstallDir.TrimEnd('\\', '/')), Path.GetFileNameWithoutExtension(game.ExePath), fromContainers, game.Name, downTo);
         return (paks, fork is { } f ? (EGame)((uint)f & 0xFFFF0000) : baseGame, fork, ProjectOf(paks));
     }
 
@@ -714,11 +714,12 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
 
     // Engine version: "++UE4+Release-4.26" style build string in the exe (UTF-16, streamed: exes run to 500 MB; not read
     // for anti-cheat games, whose files we only read paks/ini of; Xbox app games' exes can't be opened at all), else the
-    // containers' format versions (approximate), else the PE version. upTo: the latest version a TOC version allows.
-    static EGame DetectEngine(Game game, string paks, out EGame upTo, out bool fromContainers)
+    // containers' format versions (approximate), else the PE version. upTo: the latest version a TOC version allows;
+    // downTo: the earliest a pak version allows.
+    static EGame DetectEngine(Game game, string paks, out EGame downTo, out EGame upTo, out bool fromContainers)
     {
         var exePath = game.ExePath;
-        (upTo, fromContainers) = (0, false);
+        (downTo, upTo, fromContainers) = (0, 0, false);
         if (File.Exists(exePath) && GameFiles.DetectAntiCheat(game) == AntiCheat.None && BuildString(exePath) is { } built) return upTo = built;
         fromContainers = true;
         var toc = Directory.EnumerateFiles(paks, "*.utoc").Select(TocVersion).DefaultIfEmpty(0).Max();
@@ -734,6 +735,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         string pe;
         try { pe = File.Exists(exePath) ? FileVersionInfo.GetVersionInfo(exePath).FileVersion ?? "" : ""; }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { pe = ""; }
+        if (pak >= 11 && !pe.StartsWith("UE5")) downTo = EGame.GAME_UE4_26; // 4.26.2 writes 11+ too: a 4.26 fork (Wuthering Waves) is in range
         return pe.StartsWith("UE5") ? EGame.GAME_UE5_1 : EGame.GAME_UE4_27;
     }
 
@@ -832,21 +834,21 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     static readonly (EGame Fork, EGame Containers, string[] Names)[] OlderBase = [(EGame.GAME_DeadIsland2, EGame.GAME_UE4_27, ["deadisland2", "deadisland"])];
 
     /// <summary>Known forks: a CUE4Parse EGame whose name matches the install folder or exe name (roman numerals as digits)
-    /// and whose base engine version is <paramref name="baseGame"/>'s, or up to <paramref name="upTo"/>'s when the containers
-    /// tell a range. A name equal to the folder's or exe's wins over a longer one (a beta's), then the base version's. With
+    /// and whose base engine version is <paramref name="baseGame"/>'s, or from <paramref name="downTo"/>'s up to
+    /// <paramref name="upTo"/>'s when the containers tell a range. A name equal to the folder's or exe's wins over a longer one (a beta's), then the base version's. With
     /// none, and the version only from the containers (<paramref name="fromContainers"/>), an <see cref="OlderBase"/> fork
     /// whose name the folder, exe or <paramref name="title"/> equals.</summary>
-    internal static EGame? DetectFork(EGame baseGame, EGame upTo, string folder, string exeName, bool fromContainers = false, string title = "")
+    internal static EGame? DetectFork(EGame baseGame, EGame upTo, string folder, string exeName, bool fromContainers = false, string title = "", EGame downTo = 0)
     {
-        uint lo = (uint)baseGame & 0xFFFF0000, hi = Math.Max(lo, (uint)upTo & 0xFFFF0000);
+        uint b0 = (uint)baseGame & 0xFFFF0000, lo = downTo == 0 ? b0 : Math.Min(b0, (uint)downTo & 0xFFFF0000), hi = Math.Max(b0, (uint)upTo & 0xFFFF0000);
         string Norm(string s) => Regex.Replace(Regex.Replace(s, @"\b(XX|XIX|XVIII|XVII|XVI|XV|XIV|XIII|XII|XI|X|IX|VIII|VII|VI|V|IV|III|II)\b",
             m => Array.IndexOf(["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX"], m.Value.ToUpperInvariant()).ToString(),
             RegexOptions.IgnoreCase), "[^A-Za-z0-9]", "").ToLowerInvariant();
         var names = new[] { Norm(folder), Norm(Regex.Replace(exeName, "-Win(64|GDK)-Shipping$", "", RegexOptions.IgnoreCase)) }.Where(n => n.Length >= 4).ToList();
         return Enum.GetValues<EGame>().Where(g => ((uint)g & 0xFFFF) != 0 && ((uint)g & 0xFFFF0000) is var b && b >= lo && b <= hi)
             .Select(g => (g, n: Norm(g.ToString()[5..]))).Where(x => x.n.Length >= 4 && names.Any(n => n.StartsWith(x.n) || x.n.StartsWith(n)))
-            .OrderByDescending(x => names.Contains(x.n)).ThenByDescending(x => ((uint)x.g & 0xFFFF0000) == lo).ThenByDescending(x => x.n.Length)
+            .OrderByDescending(x => names.Contains(x.n)).ThenByDescending(x => ((uint)x.g & 0xFFFF0000) == b0).ThenByDescending(x => x.n.Length)
             .Select(x => (EGame?)x.g).FirstOrDefault()
-            ?? (fromContainers ? OlderBase.Where(o => lo == (uint)o.Containers && names.Append(Norm(title)).Any(o.Names.Contains)).Select(o => (EGame?)o.Fork).FirstOrDefault() : null);
+            ?? (fromContainers ? OlderBase.Where(o => b0 == (uint)o.Containers && names.Append(Norm(title)).Any(o.Names.Contains)).Select(o => (EGame?)o.Fork).FirstOrDefault() : null);
     }
 }
