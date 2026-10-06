@@ -33,8 +33,8 @@ public static class Format
     public static string? GpuNotice(GpuInfo gpu, string? dismissedFor) => gpu.Vendor is GpuVendor.Nvidia or GpuVendor.Amd || dismissedFor == gpu.Name ? null
         : gpu.Vendor switch
         {
-            GpuVendor.Intel when IntelBackend.Enabled => "Intel support is experimental: SCSKiller compiles only the pipelines a recording saw, "
-                + "and hasn't measured yet whether Intel's driver keeps them for the game. Turn on Record for a game, play it, then compile.",
+            GpuVendor.Intel when IntelBackend.Enabled => "Intel support is experimental: measured on an Arc B580 but not yet checked on many games. "
+                + "DirectX 12 games need a recording first: turn on Record for a game, play it, then compile.",
             GpuVendor.Intel => "SCSKiller doesn't compile on Intel GPUs yet: how Intel's driver caches shaders hasn't been measured. Support is planned.",
             GpuVendor.Qualcomm => "SCSKiller doesn't compile on Qualcomm GPUs yet: how Qualcomm's driver caches shaders hasn't been measured.",
             _ => "SCSKiller doesn't compile on this GPU yet: it only knows how NVIDIA and AMD drivers cache shaders.",

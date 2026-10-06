@@ -41,7 +41,7 @@ public sealed class UnitCover(ExactLayouts facts)
     {
         var read = s.Stages.TryGetValue((int)Stage.Vertex, out var vs) && x.Shaders.TryGetValue(vs, out var vi)
             ? ExactLayouts.ReadLayout(ExactLayouts.Explicit(s.Layout), vi) : ExactLayouts.Explicit(s.Layout); // no signature: the whole layout
-        return Units(x, s.Stages, s.Rs, read, s.Topology, ExactLayouts.ExportShape(s));
+        return Units(x, s.Stages, s.Rs, read, s.Topology, x.ShapeOf(s));
     }
 
     /// <summary>The units of one PSO: <paramref name="readLayout"/> as <see cref="ExactLayouts.ReadLayout"/> returns it.</summary>
