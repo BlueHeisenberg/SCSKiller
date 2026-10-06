@@ -57,7 +57,7 @@ for ($b = 1; $b -le 10000; $b++) {
         OtherFilesGone = $gone; Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1) }
     Log ("batch {0}: {1:N0} PSOs, file {2:N1} MB, folder {3:N1} MB, other files gone {4}, {5:N0} s" -f $b, ($b * $Batch), ($size / 1MB), ($total / 1MB), $gone, $sw.Elapsed.TotalSeconds)
     if ($null -eq $size) { Log 'this exe''s cache file was deleted: a folder-wide eviction took it'; break }
-    if ($size -le $last) { $flat++ } else { $flat = 0 }
+    if ($size -le $last + 1MB) { $flat++ } else { $flat = 0 }   # at the cap the file still changes by a few bytes (B580: 512.0 MB)
     if ($flat -ge 3) { Log ("the file stopped growing at {0:N1} MB: a per-file cap" -f ($size / 1MB)); break }
     $grown = $size; $last = $size
     if ($grown -ge $maxBytes) { Log ("stopped at {0:N1} MB of growth (-MaxGB {1}): no cap below that" -f ($grown / 1MB), $MaxGB); break }
