@@ -274,13 +274,41 @@ Both vendors cache ray tracing state objects on disk per exe name, and both hit 
 - **AMD (`WholeObject`)**: the key is the whole linked object. Cached parts don't help a different whole, and
   `AddToStateObject` hits only as an exact repeat. Only recorded objects can be warmed.
 
+### Intel
+
+Measured with `tools/intel-arc/measure.ps1` (selftest `fields`, `fields dxil`, `dxr`, `bindless`, probe11) on an Arc B580,
+driver 32.0.101.9034, Windows 11. Not yet checked on games, so `IntelBackend` is used only with
+`SCSKILLER_EXPERIMENTAL_INTEL=1`; without it Intel stays unsupported.
+
+- **Keyed on the exe file name, path-independent** (probe 6, DXBC and DXIL): the baseline, 4.6 ms cold, is a 0.13 ms hit
+  under the same name, a hit from another folder, and cold again under another name (`othrnam` 4.57 ms). So the staged
+  warm reaches the game's cache (`CacheKeyedByExeName`). Case sensitivity is unmeasured: warms use the launched case.
+- Files: `%USERPROFILE%\AppData\LocalLow\Intel\ShaderCache\<64 hex>`, one per exe name, growing as entries are added;
+  the name is not a plain hash of the exe name. Each process also writes a `D3DSCache\<per-path folder>`, but the hit from
+  another folder comes from the Intel file (only it grows there).
+- **Per stage, not state-independent** (`PerStageCache`, `UnitPolicy.Intel`). A VS and a PS compiled with other partners
+  link for free. FREE: every input layout change (formats, offsets, slots, step rates, order, unread elements),
+  topology, all rasterizer fields, all depth-stencil fields, DSV format, MSAA count. A PS recompile (~2 ms): any blend
+  field (factors, ops, write mask, alpha-to-coverage, independent blend, logic op), any render-target format (even one
+  of the same shape), RT count, `MultisampleEnable`, `SampleMask` 0. Both stages: any root signature layout change,
+  DENY flags and serialization version included (FreeRsFlags 0); a descriptor-count change in a PIXEL-only table is
+  FREE. The VS, as on AMD, is compiled for what follows it (a VS alone, no RT bound, write mask 0) and for how its PS
+  reads it (`PartnerReads`). So a PS unit keys on `ExactLayouts.ExactShape`: exact formats plus the blend desc.
+- Compute: root signature changes recompile, flags don't. Heap-indexed (SM 6.6) and RayQuery compute PSOs are full hits
+  across processes (`selftest bindless`: 470-550 ms cold, 0.23 ms in the next process), unlike NVIDIA's RayQuery floor.
+- **Ray tracing (`Collection`)**: an exact repeat hits (0.3 ms), per exe name, path-independent. Five collections compiled
+  in one process (1.5 s cold) link in another in 9.5 ms though never linked before. Collections and flat pipelines share
+  nothing, any change to a flat pipeline (a hit group subset, names, config) compiles it whole, and `AddToStateObject`
+  doesn't use a cached collection (60% of cold). Cold compiles are slow: 0.3 s for a small pipeline, 19 s for 64 hit
+  groups.
+- **D3D11**: keyed on the exe file name, path-independent; shaders compile at the first draw (~365 ms for probe11's
+  heavy PS, 3 ms cached) and state changes cost under 1 ms, so D3D11 games are warmed as on NVIDIA (`Planner.D3D11Cache`).
+- `selftest fields dxil` lost its device at view instancing with 4 views on this driver; the rows after it in p1 failed.
+  The DXBC run covers them.
+
 ### Other vendors and Vulkan
 
-Intel and other vendors are unmeasured, so SCSKiller reports them as unsupported. On Intel, setting
-`SCSKILLER_EXPERIMENTAL_INTEL=1` uses `IntelBackend` instead: the most conservative caps the planner supports (keyed on the
-exe file name, state-dependent, per pipeline, whole ray tracing objects), so a warm replays only what a recording saw.
-`tools/intel-arc/measure.ps1` runs the probes that will replace those assumptions with measurements; `selftest fields`
-reports a process under another exe name too (`othrnam`), and the probes list `Intel\` under Local and LocalLow.
+Other vendors are unmeasured, so SCSKiller reports them as unsupported.
 
 Vulkan games aren't supported. NVIDIA's driver keeps Vulkan pipelines keyed on the exe name (`NVIDIA\GLCache`), which
 Steam can redirect per game; AMD's Vulkan cache (`AMD\VkCache`) is keyed on the exe's full path, so a staged warm can't

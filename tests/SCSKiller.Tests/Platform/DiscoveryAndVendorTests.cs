@@ -134,10 +134,10 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Experimental_intel_backend_compiles_only_what_a_recording_saw()
+    public void Experimental_intel_backend_has_the_measured_caps_and_plans_from_a_recording()
     {
         var intel = new IntelBackend(new GpuInfo(GpuVendor.Intel, "Intel(R) Arc(TM) B580 Graphics", "32.0.101.6979", 1, 12UL << 30));
-        Assert.Equal(("intel-0", true, false, false, RtCacheGranularity.WholeObject),
+        Assert.Equal(("intel-1", true, false, true, RtCacheGranularity.Collection),
             (intel.Caps.Profile, intel.Caps.CacheKeyedByExeName, intel.Caps.StateIndependentCache, intel.Caps.PerStageCache, intel.Caps.RtCacheGranularity));
         Assert.Null(((IGpuVendorBackend)intel).AppCache);
         Assert.Null(intel.GetCacheLimit());

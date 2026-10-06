@@ -24,7 +24,10 @@ public readonly record struct Resolved<T>(T Value, Provenance Provenance);
 /// PSOs didn't bear it out (AMD A/B, session 2's 220 new PSOs after a warm of session 1's plan, fresh exe names: 46 still
 /// slow with the VS-visible key, 34 with the whole root signature, for +0.9% plan PSOs), so AMD keys the VS on the whole
 /// root signature too. NVIDIA (probe 6b): the shader and the whole root
-/// signature (any change is FULL, DENY flags too); layout, formats, topology and the next stage are FREE.</summary>
+/// signature (any change is FULL, DENY flags too); layout, formats, topology and the next stage are FREE. Intel (probe 6,
+/// Arc B580, driver 32.0.101.9034, DXBC and DXIL): the VS like AMD's but without the layout and topology (every input
+/// layout change is FREE), the PS on the exact render-target formats and the whole blend desc (any format change, even of
+/// the same shape, and any blend field recompile it), both on the whole root signature (DENY flags too).</summary>
 /// <param name="ReadLayout">a VS unit keys on the layout elements its input signature declares</param>
 /// <param name="NextStage">a VS unit keys on what follows it: a PS, nothing (depth pass), a GS or a HS</param>
 /// <param name="ExportShape">a PS unit keys on its render targets' <see cref="ExactLayouts.ExportShape"/></param>
@@ -32,18 +35,22 @@ public readonly record struct Resolved<T>(T Value, Provenance Provenance);
 /// <param name="UvClamp">which resolved VS layouts also get their <see cref="ExactLayouts.UvClampVariants"/></param>
 /// <param name="PartnerReads">a VS unit keys on how its PS consumes the VS's outputs (<see cref="ExactLayouts.PartnerKeys"/>:
 /// the components it reads and their interpolation), where the PS's bytes are known</param>
+/// <param name="ExactExport">with <paramref name="ExportShape"/>: the shape is <see cref="ExactLayouts.ExactShape"/> (the
+/// exact formats and the blend desc), not the format classes</param>
 public sealed record UnitPolicy(string Name, bool ReadLayout, bool Topology, bool NextStage, bool ExportShape, uint FreeRsFlags,
-    bool PartnerReads = false, UvClampLayouts UvClamp = UvClampLayouts.None)
+    bool PartnerReads = false, UvClampLayouts UvClamp = UvClampLayouts.None, bool ExactExport = false)
 {
     /// <summary>D3D12_ROOT_SIGNATURE_FLAG_DENY_{VERTEX,HULL,DOMAIN,GEOMETRY,PIXEL,AMPLIFICATION,MESH}_SHADER_ROOT_ACCESS.</summary>
     public const uint DenyFlags = 0x2 | 0x4 | 0x8 | 0x10 | 0x20 | 0x100 | 0x200;
 
     public static readonly UnitPolicy Amd = new("amd", true, true, true, true, DenyFlags, true, UvClampLayouts.Recorded);
     public static readonly UnitPolicy Nvidia = new("nvidia", false, false, false, false, 0);
+    public static readonly UnitPolicy Intel = new("intel", false, false, true, true, 0, true, ExactExport: true);
 
-    /// <summary>The policy of a per-stage cache; null when the vendor caches whole pipelines. ponytail: picked from the
-    /// caps' state independence until a vendor needs a third shape.</summary>
-    public static UnitPolicy? For(VendorCaps caps) => !caps.PerStageCache ? null : caps.StateIndependentCache ? Nvidia : Amd;
+    /// <summary>The policy of a per-stage cache; null when the vendor caches whole pipelines. Intel by its profile, the others
+    /// from the caps' state independence.</summary>
+    public static UnitPolicy? For(VendorCaps caps) => !caps.PerStageCache ? null
+        : caps.Profile.StartsWith("intel", StringComparison.Ordinal) ? Intel : caps.StateIndependentCache ? Nvidia : Amd;
 }
 
 /// <summary>What a recording says about the state each stage of a per-stage cache is compiled for (pure; no plan output).
@@ -171,7 +178,7 @@ public sealed class ExactLayouts
         }
         if (s.Stages.TryGetValue((int)Stage.Pixel, out var ps))
         {
-            var shape = ExportShape(s);
+            var shape = ShapeOf(s);
             ShapeExample.TryAdd(shape, (s.RtFormats, s.RtWriteMasks, s.LogicOps));
             var l = Get(ShapesByPs, ps);
             if (!l.Contains(shape)) l.Add(shape);
@@ -251,6 +258,16 @@ public sealed class ExactLayouts
     /// on AMD (FF7's own PSOs, fresh exe names) a pipeline whose PS was compiled only without it cost 16-126 ms, 22 of 28.</summary>
     public static string ExportShape(PsoState s) => string.Join(',', s.RtFormats.Select((f, i) =>
         ExportClass(f) + (s.RtWriteMasks[i] == 0 ? "/m0" : "") + (s.LogicOps[i] >= 0 ? $"/op{s.LogicOps[i]}" : "") + (i == 0 && s.DualSource ? "/ds" : "")));
+
+    /// <summary>A PS unit's render-target part under <see cref="UnitPolicy.ExactExport"/>: each RT's DXGI format (write mask 0
+    /// and logic op as in <see cref="ExportShape"/>), then the SHA-1 of the blend desc when recorded; "" with no RT bound.
+    /// Because the blend is in it, <see cref="Link"/> by this shape gives back a recorded blend of exactly this shape.</summary>
+    public static string ExactShape(PsoState s) => s.RtFormats.Length == 0 ? ""
+        : string.Join(',', s.RtFormats.Select((f, i) => f + (s.RtWriteMasks[i] == 0 ? "/m0" : "") + (s.LogicOps[i] >= 0 ? $"/op{s.LogicOps[i]}" : "")))
+          + (s.Blend != null ? "/b" + Hex(SHA1.HashData(s.Blend))[..16] : "");
+
+    /// <summary>The PS shape of <paramref name="s"/> as this policy keys it.</summary>
+    public string ShapeOf(PsoState s) => Policy.ExactExport ? ExactShape(s) : ExportShape(s);
 
     /// <summary>The recorded blend / depth-stencil / DSV to link a PS unit's PSO with: the PS's own (Exact), else the most
     /// used one of its output signature with that shape, else of the shape; null when nothing with that shape was recorded
@@ -438,7 +455,7 @@ public sealed class ExactLayouts
         }
         var (rt, _) = Planner.Targets(ps);
         var guessed = new PsoState("", [], [], 3, rt, rt.Select(_ => (byte)0xF).ToArray(), rt.Select(_ => -1).ToArray(), 0, 1);
-        var key = ExportShape(guessed);
+        var key = ShapeOf(guessed);
         ShapeExample.TryAdd(key, (guessed.RtFormats, guessed.RtWriteMasks, guessed.LogicOps));
         return new([key], Provenance.Guessed);
     }

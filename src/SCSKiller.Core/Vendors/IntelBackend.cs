@@ -1,10 +1,10 @@
 namespace SCSKiller.Core.Vendors;
 
-/// <summary>Intel (Arc and Xe graphics). Experimental and opt-in (<see cref="Enabled"/>): nothing here is measured yet.
-/// tools/intel-arc/measure.ps1 runs the probes that decide each cap (selftest fields/dxr/bindless, probe11); until their
-/// results are in, the caps are the most conservative ones the planner supports: the cache is assumed keyed on the exe
-/// file name (what a staged warm needs at all), state-dependent and per pipeline, and ray tracing objects whole, so a warm
-/// replays exactly the pipelines a recording saw and nothing synthesized.
+/// <summary>Intel (Arc and Xe graphics). Experimental and opt-in (<see cref="Enabled"/>) until a warm is checked on games.
+/// Caps measured with tools/intel-arc/measure.ps1 on an Arc B580, driver 32.0.101.9034 (ARCHITECTURE.md, Intel): the D3D12
+/// cache is keyed on the exe file name, path-independent; per stage (<see cref="Planning.UnitPolicy.Intel"/>), but the PS
+/// on its exact render-target formats and blend desc, so not state-independent; ray tracing collections are cached on
+/// their own and link in ~10 ms (selftest dxr: 5 collections never linked before, 1.5 s cold).
 ///
 /// Driver version = DXGI's user-mode driver version ("32.0.101.6979"), which is Intel's own notation.</summary>
 public sealed class IntelBackend(GpuInfo dxgi) : IGpuVendorBackend, IRefreshableGpu
@@ -25,20 +25,17 @@ public sealed class IntelBackend(GpuInfo dxgi) : IGpuVendorBackend, IRefreshable
 
     public string FallbackVersion(string umd) => umd;
 
-    // The profile is stored in plans: measured caps get a new one, so every plan made under these is rebuilt.
-    public VendorCaps Caps { get; } = new("intel-0", CacheKeyedByExeName: true, StateIndependentCache: false, CacheSizeConfigurable: false,
-        PerStageCache: false, RtCacheGranularity: RtCacheGranularity.WholeObject);
+    // The profile is stored in plans (a new one rebuilds them) and picks the per-stage policy (UnitPolicy.For).
+    public VendorCaps Caps { get; } = new("intel-1", CacheKeyedByExeName: true, StateIndependentCache: false, CacheSizeConfigurable: false,
+        PerStageCache: true, RtCacheGranularity: RtCacheGranularity.Collection);
 
     static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
-    /// <summary>Where Intel's D3D12 cache may be (unmeasured: measure.ps1 lists what its probes write). LocalLow is
-    /// LocalAppData's sibling.</summary>
-    public static IReadOnlyList<string> CacheDirs =>
-        [Path.Combine(LocalAppData + "Low", "Intel", "ShaderCache"), Path.Combine(LocalAppData, "Intel", "ShaderCache")];
+    /// <summary>D3D12 and D3D11 cache: %USERPROFILE%\AppData\LocalLow\Intel\ShaderCache (LocalAppData's sibling), one file
+    /// per exe name, named by a 64-hex hash that isn't derivable from the name alone, growing as entries are added.</summary>
+    public static string CacheDir => Path.Combine(LocalAppData + "Low", "Intel", "ShaderCache");
 
-    /// <summary>Every candidate folder's bytes; <see cref="CacheUsage.Path"/> is the first one that exists.</summary>
-    public CacheUsage GetCacheUsage() =>
-        new(CacheDirs.FirstOrDefault(Directory.Exists) ?? CacheDirs[0], CacheDirs.Sum(AmdBackend.Bytes), UpperBound: false);
+    public CacheUsage GetCacheUsage() => new(CacheDir, AmdBackend.Bytes(CacheDir), UpperBound: false);
 
     public CacheLimit? GetCacheLimit() => null;
 

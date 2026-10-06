@@ -52,10 +52,10 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     public const int Version = 31;
 
     /// <summary>The vendor's D3D11 driver cache persists across processes, is keyed on the exe file name and caches per
-    /// shader, whatever the state or the other stages (measured on NVIDIA, proxy/probe11.cpp): a staged warm
-    /// that creates and draws/dispatches each shader once fills it. ponytail: measured for "nvidia-1" only; becomes the
-    /// proposed VendorCaps.D3D11CacheKeyedByExeName once that's in the contract.</summary>
-    internal static bool D3D11Cache(VendorCaps caps) => caps.Profile == "nvidia-1";
+    /// shader, whatever the state or the other stages (measured on NVIDIA and Intel, proxy/probe11.cpp): a staged warm
+    /// that creates and draws/dispatches each shader once fills it. ponytail: measured for "nvidia-1" and "intel-1" only;
+    /// becomes the proposed VendorCaps.D3D11CacheKeyedByExeName once that's in the contract.</summary>
+    internal static bool D3D11Cache(VendorCaps caps) => caps.Profile is "nvidia-1" or "intel-1";
 
     /// <summary>The vendor's driver caches a ray tracing collection on its own, so a collection compiled by the warm makes
     /// the game's pipelines linking it cheap (NVIDIA, selftest dxr: per-shader collections cached across processes,
