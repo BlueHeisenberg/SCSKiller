@@ -263,9 +263,10 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     }
 
     /// <summary>The graphics PSOs of the game's shipped pipeline caches (<see cref="StablePipelineCache"/>), one exact map each,
-    /// so the planner pairs their shaders as the game does. With r.ShaderPipelineCache.ExcludePrecachePSO they are what PSO
-    /// precaching doesn't create: global and post-process passes. Not in the content hash: they change no shader, and the
-    /// community database finds a build by that hash.</summary>
+    /// so the planner pairs their shaders as the game does, with the vertex declaration each was created with as the map's
+    /// layout (<see cref="StablePipelineCache.InputLayout"/>). With r.ShaderPipelineCache.ExcludePrecachePSO they
+    /// are what PSO precaching doesn't create: global and post-process passes. Not in the content hash: they change no
+    /// shader, and the community database finds a build by that hash.</summary>
     static List<ShaderMap> ShippedPipelines(AbstractFileProvider provider, Dictionary<string, (string Sha, string Platform)> byHash, IProgress<string>? log)
     {
         var maps = new List<ShaderMap>();
@@ -278,8 +279,10 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             var graphics = psos.Where(p => p.Type == StablePipelineCache.PsoType.Graphics).ToList();
             var known = graphics.Where(p => p.Shaders.Length > 0 && p.Shaders.All(byHash.ContainsKey)).ToList();
             maps.AddRange(known.Select(p => new ShaderMap($"{f.NameWithoutExtension}:{p.Key:x8}", "PipelineCache", byHash[p.Shaders[0]].Platform,
-                p.Shaders.Select(h => byHash[h].Sha).ToList(), IsPipeline: true)));
-            log?.Report($"{f.Name}: {psos.Count} PSOs, {graphics.Count} graphics{(known.Count < graphics.Count ? $" ({graphics.Count - known.Count} name a shader no library has)" : "")}");
+                p.Shaders.Select(h => byHash[h].Sha).ToList(), IsPipeline: true, StablePipelineCache.InputLayout(p))));
+            var layouts = known.Count(p => StablePipelineCache.InputLayout(p) != null);
+            log?.Report($"{f.Name}: {psos.Count} PSOs, {graphics.Count} graphics{(known.Count < graphics.Count ? $" ({graphics.Count - known.Count} name a shader no library has)" : "")}"
+                + (layouts > 0 ? $", {layouts} with their vertex declaration" : ""));
         }
         return maps;
     }

@@ -804,7 +804,7 @@ public sealed class DetailVm(string id) : Bindable
         P != null ? new("Synthesized pipeline templates", Fmt.N(P.SynthesizedTemplates)) : null,
         P != null ? new("Shader layouts", $"{P.RootSignatures:N0} · {RootSigSource(P)}") : null,
         P is { } u && u.ExactUnits + u.InferredUnits + u.GuessedUnits > 0 ? new("Stage units exact / inferred / guessed", $"{u.ExactUnits:N0} / {u.InferredUnits:N0} / {u.GuessedUnits:N0}") : null,
-        P is { LayoutCoverage: > 0 } ? new("Vertex layouts from a recording", $"{P.LayoutCoverage:P1}") : null,
+        P is { LayoutCoverage: > 0 } ? new("Vertex layouts known", $"{P.LayoutCoverage:P1}") : null,
         s.CacheOnDisk != null || s.EstimatedCacheBytes != null ? new("Driver cache", Fmt.Cache(s) + (s.CacheOnDisk != null ? " measured" : " estimated")) : null,
     }.OfType<DetailRow>().ToList();
 

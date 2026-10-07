@@ -53,8 +53,10 @@ public sealed record ShaderInfo(string Sha1, Stage Stage, string ShaderModel, in
     byte[]? EngineHeader = null);   // the engine's own header stored beside the shader, read by its root-signature rule (Dagor: dxil::ShaderHeader)
 
 /// <summary>A group of shaders that can combine. <see cref="IsPipeline"/>: the game shipped this exact stage set as one
-/// pipeline (e.g. a PSO cache record), so no pairing is needed.</summary>
-public sealed record ShaderMap(string Hash, string Library, string Platform, IReadOnlyList<string> Shaders, bool IsPipeline = false);
+/// pipeline (e.g. a PSO cache record), so no pairing is needed. <see cref="Layout"/>: the input layout the game creates that
+/// pipeline with (a shipped PSO cache's vertex declaration), as exact for its vertex shader as a recording's; null = unknown.</summary>
+public sealed record ShaderMap(string Hash, string Library, string Platform, IReadOnlyList<string> Shaders, bool IsPipeline = false,
+    IReadOnlyList<Planning.PsoDb.LayoutElem>? Layout = null);
 
 public sealed record ShaderIndex(
     string ContentHash,     // changes when the game's shader libraries change (game patch) -> plans built on it are stale
@@ -153,7 +155,7 @@ public sealed record PlanCheck(Readiness Readiness, string Reason);
 
 public sealed record PlanStats(long Recorded, long Generated, long SynthesizedTemplates, long RootSignatures, bool RootSigRuleVerified,
     long ExactUnits = 0, long InferredUnits = 0, long GuessedUnits = 0,   // per-stage plans: where each unit's state came from
-    double LayoutCoverage = 0,    // per-stage plans needing real layouts: share of the index's VSs resolved from a recording
+    double LayoutCoverage = 0,    // per-stage plans needing real layouts: share of the index's VSs with a known layout (a recording's, or the shipped pipeline cache's)
     long D3D11Shaders = 0,        // D3D11 items (each shader once, no pipelines); not in Generated
     long MiddlewareItems = 0,     // recorded middleware PSOs seeded from packs (not in the recording); not in Generated.
                                   // Warm items = Recorded + Generated + D3D11Shaders + MiddlewareItems (about: a pack entry whose

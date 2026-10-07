@@ -422,6 +422,12 @@ sealed class PlanBuilder
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var facts = ExactLayouts.Build(recs, recBlobs, policy, bc);
+        // the game's shipped pipeline caches: each PSO's vertex declaration is the layout its VS is created with, as exact as
+        // a recorded one and renewed by every patch (what a recording would add for these: the topology, and the PS's shape);
+        // an empty one says nothing a VS without vertex input doesn't (L0' below)
+        var shippedLayouts = 0;
+        foreach (var m in index.Maps.Where(m => m.Platform == plat && m.Layout is { Count: > 0 }))
+            if (m.Shaders.FirstOrDefault(h => bc.TryGetValue(h, out var s) && s.Stage == Stage.Vertex) is { } vs) { facts.AddLayout(vs, m.Layout!); shippedLayouts++; }
         var cover = UnitCover.Seeded(facts, h => bc.ContainsKey(h) || recBlobs.ContainsKey(h)); // a shared recording's PSO with a shader neither has doesn't replay
         var recorded = cover.Covered.ToHashSet();
 
@@ -487,8 +493,8 @@ sealed class PlanBuilder
             Count("generated");
         }
 
-        // how much of the library's vertex input the recording pins down: recorded for the VS (L0), no vertex input (L0'),
-        // recorded for a VS with the same input signature (L1)
+        // how much of the library's vertex input the recording and the shipped pipeline caches pin down: known for the VS (L0),
+        // no vertex input (L0'), known for a VS with the same input signature (L1)
         var libVs = maps.Where(m => m.Platform == plat).SelectMany(m => m.Shas).Distinct().Where(h => bc.TryGetValue(h, out var v) && v.Stage == Stage.Vertex).Select(h => bc[h]).ToList();
         var l0 = libVs.Count(v => facts.ReadLayouts.ContainsKey(v.Sha1));
         var l0b = libVs.Count(v => !facts.ReadLayouts.ContainsKey(v.Sha1) && v.Inputs.All(i => i.SysValue != 0));
@@ -496,10 +502,10 @@ sealed class PlanBuilder
         layoutCoverage = libVs.Count == 0 ? 1 : (double)(l0 + l0b + l1) / libVs.Count;
         log?.Report($"per-stage ({policy.Name}): {cands.Count} stage sets ({pairs} with a PS), units {recorded.Count} recorded + {counted.Count - recorded.Count} new "
             + $"({string.Join(", ", newByStage.Select(s => $"{s.Key} {s.Value}"))}; exact/inferred/guessed {string.Join('/', unitsBy)}), "
-            + $"cover {coverSize} PSOs{(maximum ? $" + {picks.Count - coverSize} for stage sets it doesn't need (maximum)" : "")}; VS layouts resolved from the recording: {layoutCoverage:P0} of {libVs.Count} (L0 {l0}, L0' no vertex input {l0b}, L1 {l1}) ({sw.Elapsed.TotalSeconds:F1}s)"
+            + $"cover {coverSize} PSOs{(maximum ? $" + {picks.Count - coverSize} for stage sets it doesn't need (maximum)" : "")}; VS layouts resolved from the recording{(shippedLayouts > 0 ? $" and {shippedLayouts} shipped pipelines" : "")}: {layoutCoverage:P0} of {libVs.Count} (L0 {l0}, L0' no vertex input {l0b}, L1 {l1}) ({sw.Elapsed.TotalSeconds:F1}s)"
             + (facts.ClassFixes.Count > 0 ? $"; guessed layouts with a mixed slot: {string.Join(", ", facts.ClassFixes.Select(f => $"{f.Key} {f.Value}"))}" : ""));
         if (layoutCoverage < 0.8 && policy.ReadLayout)   // a vendor whose VS key ignores the layout (NVIDIA) doesn't care
-            log?.Report($"warning: only {layoutCoverage:P0} of the game's vertex shaders have a recorded input layout; the rest are inferred or guessed "
+            log?.Report($"warning: only {layoutCoverage:P0} of the game's vertex shaders have a known input layout (recorded, or the game's shipped pipeline cache's); the rest are inferred or guessed "
                 + "(a guessed layout that's wrong costs a compile in game): a longer recording helps");
     }
 

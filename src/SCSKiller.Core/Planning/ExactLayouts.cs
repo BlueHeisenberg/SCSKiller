@@ -153,21 +153,7 @@ public sealed class ExactLayouts
         {
             if (!TopoOf.TryGetValue(vs, out var topos)) TopoOf[vs] = topos = [];
             topos.Add(s.Topology);
-            var full = Explicit(s.Layout);
-            AddDistinct(FullLayouts, full);
-            foreach (var e in full.Where(e => e.Offset != AppendAligned))
-            {
-                var k = (e.Semantic.ToUpperInvariant(), e.Index, CompClass(e.Format));
-                if (!elemCounts.TryGetValue(k, out var c)) elemCounts[k] = c = [];
-                var v = e with { Semantic = k.Item1 };
-                c[v] = c.GetValueOrDefault(v) + 1;
-            }
-            if (Shaders.TryGetValue(vs, out var vi))
-            {
-                var read = ReadLayout(full, vi);
-                AddDistinct(Get(ReadLayouts, vs), read);
-                AddDistinct(Get(LayoutsBySig, SigKey(vi)), read);
-            }
+            AddLayout(vs, s.Layout);
         }
         if (s.Stages.TryGetValue((int)Stage.Pixel, out var ps))
         {
@@ -188,6 +174,28 @@ public sealed class ExactLayouts
                 Tally(shape);
                 if (pi != null) Tally($"{OutSig(pi)}|{shape}");
             }
+        }
+    }
+
+    /// <summary>An input layout the game creates a pipeline of <paramref name="vs"/> with: a recorded PSO's, or a shipped
+    /// pipeline cache's vertex declaration (<see cref="ShaderMap.Layout"/>). Exact for that VS, inferred for every VS with its
+    /// input signature, and a vote for guessed layouts' element shapes.</summary>
+    public void AddLayout(string vs, IReadOnlyList<LayoutElem> layout)
+    {
+        var full = Explicit(layout);
+        AddDistinct(FullLayouts, full);
+        foreach (var e in full.Where(e => e.Offset != AppendAligned))
+        {
+            var k = (e.Semantic.ToUpperInvariant(), e.Index, CompClass(e.Format));
+            if (!elemCounts.TryGetValue(k, out var c)) elemCounts[k] = c = [];
+            var v = e with { Semantic = k.Item1 };
+            c[v] = c.GetValueOrDefault(v) + 1;
+        }
+        if (Shaders.TryGetValue(vs, out var vi))
+        {
+            var read = ReadLayout(full, vi);
+            AddDistinct(Get(ReadLayouts, vs), read);
+            AddDistinct(Get(LayoutsBySig, SigKey(vi)), read);
         }
     }
 

@@ -292,7 +292,8 @@ open game files read-only and never launch or attach to the game.
   game's AES key (`aes.key`, given by the user). A shipped pipeline cache (`*.stable.upipelinecache`, file versions 17
   (UE 4.25) and 22-28, `StablePipelineCache`) names each PSO's shaders by their library hash; every graphics PSO
   becomes one exact shader map, so the planner pairs those shaders as the game does (global and post-process passes
-  that no signature match pairs). They are left out of the index's content hash.
+  that no signature match pairs), carrying the vertex declaration the PSO was created with as the map's layout (read
+  from the PSO body; a fork's TOC without per-entry times, Kuro's, is read too). They are left out of the index's content hash.
 - **Unity** (`Unity/`): Shader objects in serialized files and UnityFS bundles. Their compiled programs are one LZ4 blob
   per platform; the reader finds the blob by its shape and carves it, which avoids depending on each Unity version's
   serialized layout. Windows builds ship DXBC for the `d3d11` platform, which both the D3D11 and D3D12 players
@@ -411,8 +412,8 @@ reject on the current vendor (a `[WaveSize]` the GPU doesn't run, AMD AGS extens
 
 Both vendors cache per stage, so a plan needs each stage unit once, not every VS × PS pair. `UnitPolicy` defines a unit
 per vendor: NVIDIA, shader + root signature; AMD, the VS also with its declared input elements, topology, and its PS's
-render-target binding and consumption. `ExactLayouts` resolves each shader's state from the recording (exact, inferred
-from a shader with the same signature, or guessed), and `UnitCover` picks the fewest pipelines that cover every unit,
+render-target binding and consumption. `ExactLayouts` resolves each shader's state from the recording and the shipped
+pipeline cache's vertex declarations (exact, inferred from a shader with the same signature, or guessed), and `UnitCover` picks the fewest pipelines that cover every unit,
 seeded with the recording's own units.
 
 ### Ray tracing collections
