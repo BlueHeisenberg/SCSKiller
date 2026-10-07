@@ -5,10 +5,17 @@ All notable changes to the SCSKiller app and command line. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- On AMD, Unreal games that ship a pipeline cache (`*.stable.upipelinecache`) compile their vertex shaders for the input
+  layouts in it as well as the recording's; those layouts come with the game and follow its patches.
+
 ### Fixed
 
 - Wuthering Waves stayed "needs the game's AES key" after a correct key was entered: its engine was taken for Unreal
   4.27, not the 4.26 fork it runs on, so none of its files could be opened. Its 5.6 GB shader library is now read too.
+- Wuthering Waves' compile matched none of the pipelines the game creates: its 4.26 fork's root signatures also deny the
+  mesh and amplification stages. On NVIDIA its ray tracing shaders now compile too, without a recording. Compile it again.
 
 ## [1.2.3] - 2026-10-06
 
