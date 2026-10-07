@@ -5873,6 +5873,7 @@ public partial class AppTests : IDisposable
         Assert.Equal(0.75, s.Careful!.LaunchCompiled);
         Assert.Equal("partly warmed for driver 100.01: 75% of the 400 pipelines its first launch created still compiled; " +
                      $"a careful compile ({ScsKiller.AmdCarefulThreads} threads, in passes) reaches more of them, in about {ScsKiller.Duration(careful)}", s.StatusReason);
+        Assert.True(FormatTests.KnownReason(s.StatusReason), s.StatusReason);   // the game page translates it
         Assert.Equal(TimeSpan.FromSeconds(10), s.EstimatedWarmTime);   // the fast compile's, measured
 
         k.SetCarefulCompile(_game.Id, true);
@@ -5884,6 +5885,7 @@ public partial class AppTests : IDisposable
         s = k.Games.Single();
         Assert.Equal((true, careful), (s.Careful!.On, s.EstimatedWarmTime));
         Assert.EndsWith(": the next compile is careful", s.StatusReason);
+        Assert.True(FormatTests.KnownReason(s.StatusReason), s.StatusReason);
         k.Enqueue(_game.Id);
         k.StartQueue();
         await k.WhenQueueIdle().WaitAsync(TimeSpan.FromSeconds(10));
@@ -5898,6 +5900,7 @@ public partial class AppTests : IDisposable
         File.AppendAllText(Path.Combine(_exeDir, "scskiller_creates.csv"), Launch(DateTimeOffset.Now.AddMinutes(1).ToUnixTimeMilliseconds(), 50, 150));
         k.RefreshGame(_game.Id);
         Assert.EndsWith(", even after a careful compile", k.Games.Single().StatusReason);
+        Assert.True(FormatTests.KnownReason(k.Games.Single().StatusReason), k.Games.Single().StatusReason);
 
         k.SetCarefulCompile(_game.Id, false);
         Assert.False(k.Store.LoadGame(_game.Id).Careful);

@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using SCSKiller.Core.App;
 
 namespace SCSKiller.App;
 
@@ -69,9 +70,9 @@ sealed class Tray : IDisposable
     void ShowMenu()
     {
         var menu = CreatePopupMenu();
-        AppendMenuW(menu, 0 /* MF_STRING */, IdOpen, "Open SCSKiller");
+        AppendMenuW(menu, 0 /* MF_STRING */, IdOpen, Loc.Text("Open SCSKiller"));
         var pause = PauseLabel();
-        AppendMenuW(menu, pause == null ? 0x1u /* MF_GRAYED */ : 0, IdPause, pause ?? "Pause compiling");
+        AppendMenuW(menu, pause == null ? 0x1u /* MF_GRAYED */ : 0, IdPause, pause ?? Loc.Text("Pause compiling"));
         AppendMenuW(menu, 0x800 /* MF_SEPARATOR */, 0, null);
         AppendMenuW(menu, 0, IdQuit, QuitLabel());
         GetCursorPos(out var pt);

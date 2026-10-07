@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Security.Principal;
 using System.Text.Json;
 using CUE4Parse.Compression;
@@ -6,6 +7,9 @@ using SCSKiller.Core;
 using SCSKiller.Core.App;
 using SCSKiller.Core.Unreal;
 using SCSKiller.Core.Vendors;
+
+// English output whatever the Windows display language: Core's display text (Format, Loc) follows the UI culture.
+CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
 
 const string Usage = """
     usage: scskiller <command>

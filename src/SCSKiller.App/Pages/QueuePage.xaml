@@ -27,11 +27,10 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Spacing="4">
-                    <TextBlock Text="Compile queue" Style="{StaticResource TitleTextBlockStyle}" />
+                    <TextBlock x:Uid="QueuePage_CompileQueue" Style="{StaticResource TitleTextBlockStyle}" />
                     <TextBlock Text="{x:Bind Vm.Summary, Mode=OneWay}" Style="{StaticResource Secondary}" />
-                    <TextBlock Text="{x:Bind Vm.PlanChecks, Mode=OneWay}" Visibility="{x:Bind Vm.HasPlanChecks, Mode=OneWay}" Style="{StaticResource Caption}"
-                               ToolTipService.ToolTip="After an update SCSKiller rebuilds the plans of compiled games in the background, without compiling. A game with more to compile shows it in the Library." />
-                    <TextBlock Text="Compiles run outside the game, under the game's name. Keep the game closed while it runs."
+                    <TextBlock x:Uid="QueuePage_AfterAnUpdateSCSKiller" Text="{x:Bind Vm.PlanChecks, Mode=OneWay}" Visibility="{x:Bind Vm.HasPlanChecks, Mode=OneWay}" Style="{StaticResource Caption}" />
+                    <TextBlock x:Uid="QueuePage_CompilesRunOutsideThe"
                                Style="{StaticResource Caption}" TextWrapping="Wrap" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Bottom">
@@ -39,19 +38,18 @@
                             Visibility="{x:Bind Vm.Idle, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanStart, Mode=OneWay}">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <FontIcon Glyph="&#xE945;" FontSize="14" />
-                            <TextBlock Text="Compile queue" />
+                            <TextBlock x:Uid="QueuePage_CompileQueueTextBlock" />
                         </StackPanel>
                     </Button>
                     <Button Content="{x:Bind Vm.PauseText, Mode=OneWay}" Click="OnPause" Visibility="{x:Bind Vm.HasCurrent, Mode=OneWay}" />
-                    <Button Content="Stop" Click="OnStop" Visibility="{x:Bind Vm.HasCurrent, Mode=OneWay}"
-                            ToolTipService.ToolTip="Finishes the compiles in flight, then stops. Add the game again to continue where it stopped." />
+                    <Button x:Uid="QueuePage_Stop" Click="OnStop" Visibility="{x:Bind Vm.HasCurrent, Mode=OneWay}" />
                 </StackPanel>
             </Grid>
 
             <InfoBar Severity="Warning" IsClosable="False" IsOpen="{x:Bind Vm.CacheWarn, Mode=OneWay}" Visibility="{x:Bind Vm.CacheWarn, Mode=OneWay}"
                      Message="{x:Bind Vm.CacheWarnText, Mode=OneWay}">
                 <InfoBar.ActionButton>
-                    <HyperlinkButton Content="Raise the limit" Click="OnSettings" Visibility="{x:Bind Vm.CanRaiseLimit}" />
+                    <HyperlinkButton x:Uid="QueuePage_RaiseTheLimit" Click="OnSettings" Visibility="{x:Bind Vm.CanRaiseLimit}" />
                 </InfoBar.ActionButton>
             </InfoBar>
 
@@ -67,16 +65,16 @@
                             <ColumnDefinition Width="80" />
                             <ColumnDefinition Width="216" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="1" Grid.ColumnSpan="3" Text="Game (in run order)" Style="{StaticResource Caption}" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="4" Text="Time" Style="{StaticResource Caption}" TextAlignment="Right" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="5" Text="Cache" Style="{StaticResource Caption}" TextAlignment="Right" VerticalAlignment="Center" />
+                        <TextBlock x:Uid="QueuePage_GameInRunOrder" Grid.Column="1" Grid.ColumnSpan="3" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                        <TextBlock x:Uid="QueuePage_Time" Grid.Column="4" Style="{StaticResource Caption}" TextAlignment="Right" VerticalAlignment="Center" />
+                        <TextBlock x:Uid="QueuePage_Cache" Grid.Column="5" Style="{StaticResource Caption}" TextAlignment="Right" VerticalAlignment="Center" />
                     </Grid>
                     <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
 
                     <StackPanel Padding="20,32" Spacing="6" HorizontalAlignment="Center" Visibility="{x:Bind Vm.Empty, Mode=OneWay}">
-                        <TextBlock Text="Add games from the Library" Style="{StaticResource Section}" HorizontalAlignment="Center" />
-                        <TextBlock Text="Press Add to queue on a game, then Compile queue." Style="{StaticResource Secondary}" HorizontalAlignment="Center" />
-                        <HyperlinkButton Content="Open the Library" Click="OnLibrary" HorizontalAlignment="Center" />
+                        <TextBlock x:Uid="QueuePage_AddGamesFromThe" Style="{StaticResource Section}" HorizontalAlignment="Center" />
+                        <TextBlock x:Uid="QueuePage_PressAddToQueue" Style="{StaticResource Secondary}" HorizontalAlignment="Center" />
+                        <HyperlinkButton x:Uid="QueuePage_OpenTheLibrary" Click="OnLibrary" HorizontalAlignment="Center" />
                     </StackPanel>
 
                     <!-- The running item: not draggable, always first. -->
@@ -112,16 +110,16 @@
                         </StackPanel>
                         <TextBlock Grid.Column="4" Text="{x:Bind Vm.Current.Time, Mode=OneWay}" TextAlignment="Right" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="5" Text="{x:Bind Vm.Current.Cache, Mode=OneWay}" TextAlignment="Right" VerticalAlignment="Center" />
-                        <Button Grid.Column="6" HorizontalAlignment="Right" Style="{StaticResource RowButton}" Click="OnRemoveCurrent"
-                                AutomationProperties.Name="{x:Bind Vm.Current.RemoveLabel, Mode=OneWay}" ToolTipService.ToolTip="Stop and remove">
+                        <Button x:Uid="QueuePage_StopAndRemove" Grid.Column="6" HorizontalAlignment="Right" Style="{StaticResource RowButton}" Click="OnRemoveCurrent"
+                                AutomationProperties.Name="{x:Bind Vm.Current.RemoveLabel, Mode=OneWay}">
                             <FontIcon Glyph="&#xE711;" FontSize="14" />
                         </Button>
-                        <ProgressBar Grid.Row="1" Grid.Column="3" Grid.ColumnSpan="3" Value="{x:Bind Vm.Percent, Mode=OneWay}"
-                                     IsIndeterminate="{x:Bind Vm.Indeterminate, Mode=OneWay}" AutomationProperties.Name="Compile progress" />
+                        <ProgressBar x:Uid="QueuePage_CompileProgress" Grid.Row="1" Grid.Column="3" Grid.ColumnSpan="3" Value="{x:Bind Vm.Percent, Mode=OneWay}"
+                                     IsIndeterminate="{x:Bind Vm.Indeterminate, Mode=OneWay}" />
                     </Grid>
 
-                    <ListView ItemsSource="{x:Bind Vm.Waiting}" SelectionMode="None" CanDragItems="True" CanReorderItems="True" AllowDrop="True"
-                              DragItemsStarting="OnDragStarting" DragItemsCompleted="OnDragCompleted" AutomationProperties.Name="Waiting games">
+                    <ListView x:Uid="QueuePage_WaitingGames" ItemsSource="{x:Bind Vm.Waiting}" SelectionMode="None" CanDragItems="True" CanReorderItems="True" AllowDrop="True"
+                              DragItemsStarting="OnDragStarting" DragItemsCompleted="OnDragCompleted">
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
                                 <Setter Property="Padding" Value="16,0" />
@@ -140,7 +138,7 @@
                                         <ColumnDefinition Width="80" />
                                         <ColumnDefinition Width="216" />
                                     </Grid.ColumnDefinitions>
-                                    <FontIcon Glyph="&#xE76F;" FontSize="14" Foreground="{ThemeResource TextFillColorTertiaryBrush}" ToolTipService.ToolTip="Drag to reorder" />
+                                    <FontIcon x:Uid="QueuePage_DragToReorder" Glyph="&#xE76F;" FontSize="14" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                                     <Border Grid.Column="1" Width="24" Height="24" CornerRadius="12" Background="{ThemeResource ControlFillColorSecondaryBrush}">
                                         <TextBlock Text="{x:Bind Number}" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                     </Border>
@@ -158,18 +156,18 @@
                                     <TextBlock Grid.Column="4" Text="{x:Bind Time}" TextAlignment="Right" VerticalAlignment="Center" />
                                     <TextBlock Grid.Column="5" Text="{x:Bind Cache}" TextAlignment="Right" VerticalAlignment="Center" />
                                     <StackPanel Grid.Column="6" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="2">
-                                        <Button Content="Move to top" Style="{StaticResource RowButton}" FontSize="13" IsEnabled="{x:Bind CanUp}" Click="OnTop"
+                                        <Button x:Uid="QueuePage_MoveToTop" Style="{StaticResource RowButton}" FontSize="13" IsEnabled="{x:Bind CanUp}" Click="OnTop"
                                                 AutomationProperties.Name="{x:Bind TopLabel}" />
-                                        <Button Style="{StaticResource RowButton}" Padding="0" IsEnabled="{x:Bind CanUp}" Click="OnUp"
-                                                AutomationProperties.Name="{x:Bind UpLabel}" ToolTipService.ToolTip="Move up">
+                                        <Button x:Uid="QueuePage_MoveUp" Style="{StaticResource RowButton}" Padding="0" IsEnabled="{x:Bind CanUp}" Click="OnUp"
+                                                AutomationProperties.Name="{x:Bind UpLabel}">
                                             <FontIcon Glyph="&#xE70E;" FontSize="14" />
                                         </Button>
-                                        <Button Style="{StaticResource RowButton}" Padding="0" IsEnabled="{x:Bind CanDown}" Click="OnDown"
-                                                AutomationProperties.Name="{x:Bind DownLabel}" ToolTipService.ToolTip="Move down">
+                                        <Button x:Uid="QueuePage_MoveDown" Style="{StaticResource RowButton}" Padding="0" IsEnabled="{x:Bind CanDown}" Click="OnDown"
+                                                AutomationProperties.Name="{x:Bind DownLabel}">
                                             <FontIcon Glyph="&#xE70D;" FontSize="14" />
                                         </Button>
-                                        <Button Style="{StaticResource RowButton}" Padding="0" Click="OnRemove"
-                                                AutomationProperties.Name="{x:Bind RemoveLabel}" ToolTipService.ToolTip="Remove">
+                                        <Button x:Uid="QueuePage_Remove" Style="{StaticResource RowButton}" Padding="0" Click="OnRemove"
+                                                AutomationProperties.Name="{x:Bind RemoveLabel}">
                                             <FontIcon Glyph="&#xE711;" FontSize="14" />
                                         </Button>
                                     </StackPanel>
@@ -181,8 +179,8 @@
                     <StackPanel Visibility="{x:Bind Vm.HasFinished, Mode=OneWay}" Padding="0,0,0,8">
                         <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
                         <Grid Margin="16,6,16,0">
-                            <TextBlock Text="Finished" Style="{StaticResource Caption}" VerticalAlignment="Center" />
-                            <HyperlinkButton Content="Clear finished" HorizontalAlignment="Right" FontSize="12" Click="OnClearFinished" />
+                            <TextBlock x:Uid="QueuePage_Finished" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                            <HyperlinkButton x:Uid="QueuePage_ClearFinished" HorizontalAlignment="Right" FontSize="12" Click="OnClearFinished" />
                         </Grid>
                         <ItemsControl ItemsSource="{x:Bind Vm.Finished}" IsTabStop="False">
                             <ItemsControl.ItemTemplate>
@@ -211,8 +209,8 @@
                                         </StackPanel>
                                         <TextBlock Grid.Column="4" Text="{x:Bind Time}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextAlignment="Right" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="5" Text="{x:Bind Cache}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextAlignment="Right" VerticalAlignment="Center" />
-                                        <Button Grid.Column="6" HorizontalAlignment="Right" Style="{StaticResource RowButton}" Padding="0" Click="OnRemove"
-                                                AutomationProperties.Name="{x:Bind RemoveLabel}" ToolTipService.ToolTip="Remove">
+                                        <Button x:Uid="QueuePage_RemoveButton" Grid.Column="6" HorizontalAlignment="Right" Style="{StaticResource RowButton}" Padding="0" Click="OnRemove"
+                                                AutomationProperties.Name="{x:Bind RemoveLabel}">
                                             <FontIcon Glyph="&#xE711;" FontSize="14" />
                                         </Button>
                                     </Grid>
@@ -226,14 +224,13 @@
             <Expander Header="{x:Bind Vm.CpuSummary, Mode=OneWay}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                 <StackPanel Spacing="14">
                     <Grid>
-                        <TextBlock Text="Compile threads" />
+                        <TextBlock x:Uid="QueuePage_CompileThreads" />
                         <TextBlock Text="{x:Bind Vm.ThreadsText, Mode=OneWay}" HorizontalAlignment="Right" />
                     </Grid>
-                    <Slider Minimum="1" Maximum="{x:Bind Vm.MaxThreads}" StepFrequency="1" Value="{x:Bind Vm.Threads, Mode=TwoWay}"
-                            AutomationProperties.Name="Compile threads" />
-                    <RadioButtons Header="Priority" SelectedIndex="{x:Bind Vm.Priority, Mode=TwoWay}">
-                        <RadioButton Content="Below normal: fastest, the PC stays usable" />
-                        <RadioButton Content="Idle only: runs when nothing else needs the CPU" />
+                    <Slider x:Uid="QueuePage_CompileThreadsSlider" Minimum="1" Maximum="{x:Bind Vm.MaxThreads}" StepFrequency="1" Value="{x:Bind Vm.Threads, Mode=TwoWay}" />
+                    <RadioButtons x:Uid="QueuePage_Priority" SelectedIndex="{x:Bind Vm.Priority, Mode=TwoWay}">
+                        <RadioButton x:Uid="QueuePage_BelowNormalFastestThe" />
+                        <RadioButton x:Uid="QueuePage_IdleOnlyRunsWhen" />
                     </RadioButtons>
                 </StackPanel>
             </Expander>

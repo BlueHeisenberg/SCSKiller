@@ -196,7 +196,12 @@ public sealed record WarmOptions(int Threads, WarmPriority Priority, long StartA
 /// build, built at run time, a middleware DLL without it); not in <paramref name="Total"/>. Set by the app from
 /// Materialize, 0 from the warmer.</param>
 public sealed record WarmProgress(long Done, long Total, long Failed, double PerSecond, long CacheGrowthBytes = 0, long Skipped = 0,
-    string? Note = null);   // what the warm is doing besides compiling, e.g. "retrying ray tracing with fewer threads (8)"; null = nothing
+    string? Note = null)   // what the warm is doing besides compiling, e.g. "retrying ray tracing with fewer threads (8)"; null = nothing
+{
+    // Transient display template and arguments; Note and serialized diagnostics stay unchanged.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public FormattableString? NoteFormat { get; init; }
+}
 public enum WarmOutcome { Completed, Stopped, Failed }
 /// <param name="Failed">PSOs the driver rejected</param>
 /// <param name="Skipped">PSOs not replayed: a shader not in this install (see <see cref="WarmProgress.Skipped"/>)</param>
@@ -332,12 +337,18 @@ public sealed record Settings(int Threads, WarmPriority Priority, DriverUpdateMo
     string? GpuNoticeDismissed = null,   // the GPU name whose "doesn't compile on this GPU" notice was closed (Format.GpuNotice)
     bool InstallUpdatesAutomatically = true,   // a downloaded update installs at the next start or quit (AutoInstall); off = only "Restart to update"
     bool ScanAtStart = true,   // a scan the user didn't ask for reads every game again where it changed; off = the last list (ScsKiller.Listed)
-    bool CloseQuits = false);  // the window's close button quits like the tray's Quit (WindowClose); off = it hides to the notification area
+    bool CloseQuits = false,  // the window's close button quits like the tray's Quit (WindowClose); off = it hides to the notification area
+    string Language = "");   // empty = follow Windows; otherwise a supported culture tag (applied on next launch)
 
 public enum QueueStage { Waiting, Indexing, Planning, Materializing, Warming, Paused, Done, Failed, Stopped }
 public sealed record QueueItem(string GameId, QueueStage Stage, WarmProgress? Progress, string? Error,
     string? Note = null,   // why it waits or is paused ("paused while <game> is running"); Done/Stopped: ScsKiller.WarmCounts (failed, skipped)
-    bool PlanCheck = false);   // a background plan rebuild the app queued itself (ScsKiller.CheckPlans), not a compile: lists leave it out
+    bool PlanCheck = false)   // a background plan rebuild the app queued itself (ScsKiller.CheckPlans), not a compile: lists leave it out
+{
+    // Only supplied for program-owned notes; external/unknown diagnostics have no template.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public FormattableString? NoteFormat { get; init; }
+}
 
 /// <summary><see cref="IScsKiller.AddManualGame"/>'s result: the added game, or the listed one the exe belongs to.</summary>
 public sealed record ManualAdd(Game Game, bool Existed);

@@ -16,7 +16,7 @@
         <Border x:Name="ShotBackground" Grid.RowSpan="2" Visibility="Collapsed"
                 Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" />
 
-        <TitleBar x:Name="AppTitleBar" Title="SCSKiller" Subtitle="Shader Compilation Stutter Killer"
+        <TitleBar x:Uid="MainWindow_AppTitleBar" x:Name="AppTitleBar" Title="SCSKiller"
                   IsBackButtonVisible="False"
                   IsPaneToggleButtonVisible="True" PaneToggleRequested="OnPaneToggle">
             <TitleBar.IconSource>
@@ -27,7 +27,7 @@
                 <Button x:Name="UpdateButton" Visibility="Collapsed" Click="OnRestartToUpdate" Margin="0,0,8,0" Padding="10,3">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon Glyph="&#xE777;" FontSize="13" />
-                        <TextBlock x:Name="UpdateText" Text="Restart to update" FontSize="13" />
+                        <TextBlock x:Uid="MainWindow_UpdateText" x:Name="UpdateText" FontSize="13" />
                     </StackPanel>
                 </Button>
             </TitleBar.RightHeader>
@@ -38,18 +38,18 @@
                         IsBackButtonVisible="Collapsed" IsPaneToggleButtonVisible="False" IsSettingsVisible="False"
                         SelectionChanged="OnNavSelection">
             <NavigationView.MenuItems>
-                <NavigationViewItem x:Name="LibraryItem" Content="Library">
+                <NavigationViewItem x:Uid="MainWindow_LibraryItem" x:Name="LibraryItem">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xF0E2;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="QueueItem" Content="Compile queue">
+                <NavigationViewItem x:Uid="MainWindow_QueueItem" x:Name="QueueItem">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE8FD;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="SettingsItem" Content="Settings">
+                <NavigationViewItem x:Uid="MainWindow_SettingsItem" x:Name="SettingsItem">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE713;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
             <NavigationView.FooterMenuItems>
-                <NavigationViewItem x:Name="AboutItem" Content="About">
+                <NavigationViewItem x:Uid="MainWindow_AboutItem" x:Name="AboutItem">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE946;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.FooterMenuItems>

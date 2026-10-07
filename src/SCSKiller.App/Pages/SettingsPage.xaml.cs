@@ -52,20 +52,19 @@ public sealed partial class SettingsPage : Page
     async void OnApply(object _, RoutedEventArgs __)
     {
         var (label, limit) = SettingsVm.Sizes[SizeBox.SelectedIndex];
-        if (!await App.ConfirmAsync(this, $"Set the shader cache limit to {label}?",
-                $"This is a global {Fmt.Vendor(App.Core.Vendor.Vendor)} driver setting: it applies to every game on this PC, not only the ones SCSKiller compiles, " +
-                "and stays until you change it. Windows will ask for administrator permission.\n\n" +
-                "Raising it deletes nothing. Lowering it below what is used now makes the driver delete older entries, and those games stutter again. " +
-                "You can switch back to the driver default here at any time.",
-                "Change limit")) return;
+        if (!await App.ConfirmAsync(this, Loc.Format($"Set the shader cache limit to {label}?"),
+                Loc.Format($"This is a global {Fmt.Vendor(App.Core.Vendor.Vendor)} driver setting: it applies to every game on this PC, not only the ones SCSKiller compiles, and stays until you change it. Windows will ask for administrator permission.\n\n") +
+                Loc.Text("Raising it deletes nothing. Lowering it below what is used now makes the driver delete older entries, and those games stutter again. ") +
+                Loc.Text("You can switch back to the driver default here at any time."),
+                Loc.Text("Change limit"))) return;
 
         ApplyButton.IsEnabled = false;
         var size = limit.IsDriverDefault ? "default" : limit.Bytes is { } b ? (b / (double)(1L << 30)).ToString(CultureInfo.InvariantCulture) : "unlimited";
         (Vm.ApplyMessage, Vm.ApplySeverity) = await AsAdminAsync(() => App.Core.Vendor.SetCacheLimit(limit), ["cache", "set", size]) switch
         {
-            null => ("Cancelled.", InfoBarSeverity.Informational),
-            { Ok: true } => ($"Shader cache limit set to {label}.", InfoBarSeverity.Success),
-            var r => ("The limit was not changed: " + r.Message, InfoBarSeverity.Error),
+            null => (Loc.Text("Cancelled."), InfoBarSeverity.Informational),
+            { Ok: true } => (Loc.Format($"Shader cache limit set to {label}."), InfoBarSeverity.Success),
+            var r => (Loc.Text("The limit was not changed: ") + Format.Reason(r.Message), InfoBarSeverity.Error),
         };
         ApplyButton.IsEnabled = true;
         Vm.Refresh();
@@ -88,17 +87,17 @@ public sealed partial class SettingsPage : Page
     async void OnApplyAuto(object _, RoutedEventArgs __)
     {
         var level = Vm.AutoChoice;
-        if (!await App.ConfirmAsync(this, level == AutoShaderCompilation.Off ? "Turn off NVIDIA Auto Shader Compilation?" : $"Turn on NVIDIA Auto Shader Compilation ({level})?",
-                "Auto Shader Compilation is a beta feature by NVIDIA®.", level == AutoShaderCompilation.Off ? "Turn off" : "Turn on")) return;
+        if (!await App.ConfirmAsync(this, level == AutoShaderCompilation.Off ? Loc.Text("Turn off NVIDIA Auto Shader Compilation?") : Loc.Format($"Turn on NVIDIA Auto Shader Compilation ({Loc.Text(level.ToString())})?"),
+                Loc.Text("Auto Shader Compilation is a beta feature by NVIDIA®."), level == AutoShaderCompilation.Off ? Loc.Text("Turn off") : Loc.Text("Turn on"))) return;
 
         AutoApplyButton.IsEnabled = false;
         // --for-user: the elevated CLI refuses when UAC elevated another administrator (NvOSC would register the task for them).
         string[] cli = ["nvidia-auto-shader", level.ToString().ToLowerInvariant(), Elevated.ForUserArg, Elevated.CurrentUserSid];
         (Vm.AutoMessage, Vm.AutoSeverity) = await AsAdminAsync(() => App.Core.Vendor.SetAutoShaderCompilation(level), cli) switch
         {
-            null => ("Cancelled.", InfoBarSeverity.Informational),
-            { Ok: true } => (level == AutoShaderCompilation.Off ? "Turned off." : $"Turned on ({level}).", InfoBarSeverity.Success),
-            var r => ("Not changed: " + r.Message, InfoBarSeverity.Error),
+            null => (Loc.Text("Cancelled."), InfoBarSeverity.Informational),
+            { Ok: true } => (level == AutoShaderCompilation.Off ? Loc.Text("Turned off.") : Loc.Format($"Turned on ({Loc.Text(level.ToString())})."), InfoBarSeverity.Success),
+            var r => (Loc.Text("Not changed: ") + Format.Reason(r.Message), InfoBarSeverity.Error),
         };
         AutoApplyButton.IsEnabled = true;
         Vm.Refresh();   // re-reads the setting and the task

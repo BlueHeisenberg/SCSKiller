@@ -62,6 +62,20 @@ path into a test: `TestEnv` finds games through Steam's library list, the `XboxG
 locally too (`dotnet test tests/SCSKiller.Tests -c Release`). Tests must never write into a game folder, change the
 driver's cache size or settings, or register scheduled tasks.
 
+## Localization
+
+- Register a culture in `Loc.Languages` and add matching WinUI resources under `src/SCSKiller.App/Strings/`
+  and Core satellite resources alongside `src/SCSKiller.Core/App/Strings.resx`.
+- Use `x:Uid` for XAML and `Loc.Text` / `Loc.Format` for dynamic display text; `Format.Reason` translates the core's
+  English messages for display.
+- A `Loc` key is the English text itself, and the neutral value repeats it: English output never changes. Translate
+  whole sentences rather than fragments, and keep resource keys consistent across languages; preserve placeholder
+  indices and formats.
+- The command line stays English (it pins the invariant UI culture).
+- Translate display text only. Keep identifiers, comparisons, paths, commands, product names, licence texts
+  and stored diagnostics unchanged; preserve unknown external messages.
+- Preview without touching games: `SCSKiller.exe --fake --language <culture-tag>`.
+
 ## Style
 
 - Match the code around your change. Keep changes small, one topic per PR.

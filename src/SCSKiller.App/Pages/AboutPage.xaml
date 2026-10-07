@@ -6,7 +6,7 @@
 
     <ScrollViewer>
         <StackPanel Padding="36,28,36,28" Spacing="16">
-            <TextBlock Text="About" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock x:Uid="AboutPage_About" Style="{StaticResource TitleTextBlockStyle}" />
 
             <Border Style="{StaticResource Card}" Padding="20">
                 <Grid ColumnSpacing="16">
@@ -17,47 +17,45 @@
                     <FontIcon Glyph="&#xE945;" FontSize="36" VerticalAlignment="Top" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
                     <StackPanel Grid.Column="1" Spacing="4">
                         <TextBlock Text="SCSKiller" Style="{StaticResource Section}" FontSize="20" />
-                        <TextBlock Text="Shader Compilation Stutter Killer" Style="{StaticResource Secondary}" />
+                        <TextBlock x:Uid="AboutPage_ShaderCompilationStutterKiller" Style="{StaticResource Secondary}" />
                         <TextBlock Text="{x:Bind Vm.Version}" Style="{StaticResource Caption}" IsTextSelectionEnabled="True" />
                         <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0" Visibility="{x:Bind Vm.ShowsCheck}">
-                            <Button Content="Check for updates" Click="OnCheckForUpdates" IsEnabled="{x:Bind Vm.CanCheck, Mode=OneWay}" />
+                            <Button x:Uid="AboutPage_CheckForUpdates" Click="OnCheckForUpdates" IsEnabled="{x:Bind Vm.CanCheck, Mode=OneWay}" />
                             <TextBlock Text="{x:Bind Vm.UpdateNote, Mode=OneWay}" Style="{StaticResource Caption}" VerticalAlignment="Center" TextWrapping="Wrap" />
                         </StackPanel>
-                        <CheckBox IsChecked="{x:Bind Vm.InstallUpdatesAutomatically, Mode=TwoWay}" Visibility="{x:Bind Vm.ShowsCheck}"
-                                  AutomationProperties.Name="Install updates automatically">
+                        <CheckBox x:Uid="AboutPage_InstallUpdatesAutomatically" IsChecked="{x:Bind Vm.InstallUpdatesAutomatically, Mode=TwoWay}" Visibility="{x:Bind Vm.ShowsCheck}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Install updates automatically" TextWrapping="Wrap" />
-                                <TextBlock Text="A downloaded update installs the next time SCSKiller starts or quits, never during a compile, an offline session or a game. Off: only Restart to update installs it."
+                                <TextBlock x:Uid="AboutPage_InstallUpdatesAutomaticallyTextBlock" TextWrapping="Wrap" />
+                                <TextBlock x:Uid="AboutPage_ADownloadedUpdateInstalls"
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
                         <InfoBar IsOpen="{x:Bind Vm.HasUpdateProblem, Mode=OneWay}" Visibility="{x:Bind Vm.HasUpdateProblem, Mode=OneWay}"
                                  Message="{x:Bind Vm.UpdateProblem, Mode=OneWay}" Severity="Warning" IsClosable="False" />
                         <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0" Visibility="{x:Bind Vm.ShowsSource}">
-                            <Button Content="Download source code" Click="OnSource" IsEnabled="{x:Bind Vm.SourceIdle, Mode=OneWay}" />
+                            <Button x:Uid="AboutPage_DownloadSourceCode" Click="OnSource" IsEnabled="{x:Bind Vm.SourceIdle, Mode=OneWay}" />
                             <TextBlock Text="{x:Bind Vm.SourceStatus, Mode=OneWay}" Style="{StaticResource Caption}" VerticalAlignment="Center" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                         </StackPanel>
-                        <TextBlock Margin="0,8,0,0" TextWrapping="Wrap"
-                                   Text="Compiles your games' shaders into the graphics driver's cache ahead of time, so they don't stutter the first time you play them." />
+                        <TextBlock x:Uid="AboutPage_CompilesYourGamesShaders" Margin="0,8,0,0" TextWrapping="Wrap" />
                         <TextBlock Margin="0,8,0,0" Style="{StaticResource Secondary}">
-                            <Run Text="SCSKiller licence:" FontWeight="SemiBold" /><Run Text=" GPL-3.0-or-later, with an additional permission for Oodle, the Windows App SDK and graphics driver libraries (LICENSE-EXCEPTION.txt)" />
+                            <Run x:Uid="AboutPage_SCSKillerLicence" FontWeight="SemiBold" /><Run x:Uid="AboutPage_GPL30Or" />
                         </TextBlock>
                         <StackPanel Orientation="Horizontal" Spacing="16" Margin="0,4,0,0">
-                            <HyperlinkButton Content="Website" Padding="0" FontSize="12" NavigateUri="https://scskiller.com" />
-                            <HyperlinkButton Content="Source code" Padding="0" FontSize="12" NavigateUri="https://github.com/BlueHeisenberg/SCSKiller" />
-                            <HyperlinkButton Content="Support on Patreon" Padding="0" FontSize="12" NavigateUri="https://www.patreon.com/SCSKiller" />
+                            <HyperlinkButton x:Uid="AboutPage_Website" Padding="0" FontSize="12" NavigateUri="https://scskiller.com" />
+                            <HyperlinkButton x:Uid="AboutPage_SourceCode" Padding="0" FontSize="12" NavigateUri="https://github.com/BlueHeisenberg/SCSKiller" />
+                            <HyperlinkButton x:Uid="AboutPage_SupportOnPatreon" Padding="0" FontSize="12" NavigateUri="https://www.patreon.com/SCSKiller" />
                         </StackPanel>
                     </StackPanel>
                 </Grid>
             </Border>
 
-            <Expander x:Name="TrademarksBox" Header="Trademarks" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+            <Expander x:Uid="AboutPage_TrademarksBox" x:Name="TrademarksBox" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                 <TextBlock Text="{x:Bind Vm.Trademarks}" Style="{StaticResource Secondary}" TextWrapping="Wrap" LineHeight="22" IsTextSelectionEnabled="True" />
             </Expander>
 
             <StackPanel Spacing="8">
-                <TextBlock Text="Third-party components" Style="{StaticResource Section}" />
-                <TextBlock Text="Open one to read its licence. The same list, with notes, is in THIRD-PARTY-NOTICES.md next to the app."
+                <TextBlock x:Uid="AboutPage_ThirdPartyComponents" Style="{StaticResource Section}" />
+                <TextBlock x:Uid="AboutPage_OpenOneToRead"
                            Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                 <ItemsControl x:Name="Components" ItemsSource="{x:Bind Vm.Components}" IsTabStop="False">
                     <ItemsControl.ItemsPanel>

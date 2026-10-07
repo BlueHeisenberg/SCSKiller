@@ -57,7 +57,7 @@ public sealed partial class MainWindow : Window
     public void ShowGpu()
     {
         GpuName.Text = App.Core.Vendor.Gpu.Name;
-        GpuDriver.Text = (App.Core as ScsKiller)?.GpuRestartNote ?? "Driver " + App.Core.Vendor.Gpu.DriverVersion;
+        GpuDriver.Text = (App.Core as ScsKiller)?.GpuRestartNote is { } restart ? Format.Reason(restart) : Loc.Text("Driver ") + App.Core.Vendor.Gpu.DriverVersion;
     }
 
     public void Navigate(Type page, object? arg = null) => ContentFrame.Navigate(page, arg);
@@ -74,17 +74,16 @@ public sealed partial class MainWindow : Window
     {
         var ready = Updater.Ready;   // once: a check may replace it meanwhile
         UpdateButton.Visibility = ready != null ? Visibility.Visible : Visibility.Collapsed;
-        ToolTipService.SetToolTip(UpdateButton, Updater.Problem ?? $"SCSKiller {ready} is ready. Restarting stops a running compile safely " +
-            "(the driver saves its cache first) and continues it afterwards." +
-            (App.Core.Settings.InstallUpdatesAutomatically ? " Otherwise it installs the next time SCSKiller starts or quits." : ""));
+        ToolTipService.SetToolTip(UpdateButton, Updater.Problem ?? Loc.Format($"SCSKiller {ready} is ready. Restarting stops a running compile safely (the driver saves its cache first) and continues it afterwards.") +
+            (App.Core.Settings.InstallUpdatesAutomatically ? Loc.Text(" Otherwise it installs the next time SCSKiller starts or quits.") : ""));
     }
 
     async void OnRestartToUpdate(object _, RoutedEventArgs __)
     {
         UpdateButton.IsEnabled = false;
-        UpdateText.Text = "Finishing the compile…";
+        UpdateText.Text = Loc.Text("Finishing the compile…");
         if (await Updater.RestartAsync()) return;   // exits
-        (UpdateButton.IsEnabled, UpdateText.Text) = (true, "Restart to update");
+        (UpdateButton.IsEnabled, UpdateText.Text) = (true, Loc.Text("Restart to update"));
         ShowUpdate();
     }
 

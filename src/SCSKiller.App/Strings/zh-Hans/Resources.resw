@@ -1,0 +1,775 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="MainWindow_AppTitleBar.Subtitle" xml:space="preserve">
+    <value>游戏着色器预编译工具</value>
+    <comment>MainWindow.xaml</comment>
+  </data>
+  <data name="MainWindow_UpdateText.Text" xml:space="preserve">
+    <value>重启以更新</value>
+    <comment>MainWindow.xaml</comment>
+  </data>
+  <data name="MainWindow_LibraryItem.Content" xml:space="preserve">
+    <value>游戏库</value>
+    <comment>MainWindow.xaml</comment>
+  </data>
+  <data name="MainWindow_QueueItem.Content" xml:space="preserve">
+    <value>预编译队列</value>
+    <comment>MainWindow.xaml</comment>
+  </data>
+  <data name="MainWindow_SettingsItem.Content" xml:space="preserve">
+    <value>设置</value>
+    <comment>MainWindow.xaml</comment>
+  </data>
+  <data name="MainWindow_AboutItem.Content" xml:space="preserve">
+    <value>关于</value>
+    <comment>MainWindow.xaml</comment>
+  </data>
+  <data name="AboutPage_About.Text" xml:space="preserve">
+    <value>关于</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_ShaderCompilationStutterKiller.Text" xml:space="preserve">
+    <value>游戏着色器预编译工具</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_CheckForUpdates.Content" xml:space="preserve">
+    <value>检查更新</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_InstallUpdatesAutomatically.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>自动安装更新</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_InstallUpdatesAutomaticallyTextBlock.Text" xml:space="preserve">
+    <value>自动安装更新</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_ADownloadedUpdateInstalls.Text" xml:space="preserve">
+    <value>下载更新后，SCSKiller 下次启动或退出时便会安装，绝不会在预编译、离线会话或游戏期间安装。关闭时：仅“重启以更新”才能完成安装。</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_DownloadSourceCode.Content" xml:space="preserve">
+    <value>下载源代码</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_CompilesYourGamesShaders.Text" xml:space="preserve">
+    <value>提前把游戏着色器编译到显卡驱动缓存中，减少首次游玩时的着色器编译卡顿。</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_SCSKillerLicence.Text" xml:space="preserve">
+    <value>SCSKiller 许可证：</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_GPL30Or.Text" xml:space="preserve">
+    <value> GPL-3.0-or-later，并额外授予 Oodle、Windows App SDK 和显卡驱动库的使用许可（LICENSE-EXCEPTION.txt）</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_Website.Content" xml:space="preserve">
+    <value>网站</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_SourceCode.Content" xml:space="preserve">
+    <value>源代码</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_SupportOnPatreon.Content" xml:space="preserve">
+    <value>支持项目</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_TrademarksBox.Header" xml:space="preserve">
+    <value>商标</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_ThirdPartyComponents.Text" xml:space="preserve">
+    <value>第三方组件</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_OpenOneToRead.Text" xml:space="preserve">
+    <value>打开一个即可阅读其许可协议。附带说明的相同列表位于应用旁边的 THIRD-PARTY-NOTICES.md 文件中。</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="DetailPage_GameFolder.Content" xml:space="preserve">
+    <value>游戏文件夹…</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_GameFolder.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>SCSKiller 在采集该游戏前，会检查其文件夹中的反作弊程序</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_RemoveFromLibrary.Content" xml:space="preserve">
+    <value>从游戏库中移除</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_RemoveFromLibrary.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>从游戏库中移除此游戏，并移除游戏文件夹内的采集器。游戏本身的文件不会删除。</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_PlayingNow.Text" xml:space="preserve">
+    <value>● 正在游玩</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_Refresh.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>刷新</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_Refresh.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>重新读取该游戏的缓存大小、采集状态和上次会话信息</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_KnownToStutter.Text" xml:space="preserve">
+    <value>已知会卡顿</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_TurnOnRecording.Content" xml:space="preserve">
+    <value>开启采集</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_TurnOnRecordingButton.Content" xml:space="preserve">
+    <value>开启采集</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_ShaderCoverage.Text" xml:space="preserve">
+    <value>着色器覆盖率</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_ShadersInTheGame.Text" xml:space="preserve">
+    <value>游戏中的着色器</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_WhereTheShadersCome.Text" xml:space="preserve">
+    <value>着色器的来源</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_DetailsExpander.Header" xml:space="preserve">
+    <value>详细信息</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_FrameTimesLastTime.Text" xml:space="preserve">
+    <value>上次游玩时的帧时间</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_ShaderCompile.Text" xml:space="preserve">
+    <value>着色器编译</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_OtherHitch.Text" xml:space="preserve">
+    <value>其他卡顿</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_LoadingQuitting.Text" xml:space="preserve">
+    <value>加载、退出</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_LoadingCompilingShaders.Text" xml:space="preserve">
+    <value>加载、编译着色器</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_SlowFramesExpander.Header" xml:space="preserve">
+    <value>慢帧</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_CarefulCompile.Text" xml:space="preserve">
+    <value>稳妥预编译</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_CarefulSwitch.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>稳妥预编译</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_RecordWhileIPlay.Text" xml:space="preserve">
+    <value>游玩时采集着色器</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_RecordSwitch.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>游玩时采集着色器</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_BanRisk.Title" xml:space="preserve">
+    <value>封禁风险</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_ClearRecording.Content" xml:space="preserve">
+    <value>清除采集数据</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_PlayWithItOn.Text" xml:space="preserve">
+    <value>开启后运行游戏，上次会话的结果会显示在此：其中有多少已就绪，哪些仍出现卡顿。</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_ReadyInTheGames.Text" xml:space="preserve">
+    <value>游戏自带着色器库中已就绪</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_ReadyInTheDriver.Text" xml:space="preserve">
+    <value>驱动缓存中已就绪</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_CompiledDuringPlay.Text" xml:space="preserve">
+    <value>游玩时已编译</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Library.Text" xml:space="preserve">
+    <value>游戏库</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_ReReadsEveryGames.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>重新读取每款游戏的着色器缓存大小、采集和状态，并查找新游戏。Shift+单击还会重新检查每款游戏的引擎和反作弊系统（速度较慢）。</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Refresh.Text" xml:space="preserve">
+    <value>刷新</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_AddAGame.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>添加游戏</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_AddAGame.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>通过选择 .exe 文件，添加一个游戏平台未收录的游戏（例如其他启动器中的游戏，或独立文件夹中的游戏）</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_AddAGameTextBlock.Text" xml:space="preserve">
+    <value>添加游戏…</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_QueueEveryGameKnown.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>将所有已知有着色器编译卡顿、且可预编译的推荐游戏加入队列，包括当前筛选未显示的游戏</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_DriverShaderCache.Text" xml:space="preserve">
+    <value>驱动着色器缓存</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_DriverShaderCacheUse.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>驱动着色器缓存使用</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Change.Content" xml:space="preserve">
+    <value>更改</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Change.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>更改驱动着色器缓存的大小</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_AfterADriverUpdate.Text" xml:space="preserve">
+    <value>驱动更新后</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_ChangeHyperlinkButton.Content" xml:space="preserve">
+    <value>更改</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_ChangeHyperlinkButton.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>更改驱动更新后的处理方式</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_CompileSpeed.Text" xml:space="preserve">
+    <value>预编译速度</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_ChangeHyperlinkButton2.Content" xml:space="preserve">
+    <value>更改</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_ChangeHyperlinkButton2.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>更改预编译速度</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_CheckingForNewAnd.Text" xml:space="preserve">
+    <value>正在检查新增和已更改的游戏…</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Search.PlaceholderText" xml:space="preserve">
+    <value>按名称、游戏平台或引擎搜索</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Search.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>搜索游戏</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Game.Text" xml:space="preserve">
+    <value>游戏</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Shaders.Text" xml:space="preserve">
+    <value>着色器</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Pipelines.Text" xml:space="preserve">
+    <value>管线</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Cache.Text" xml:space="preserve">
+    <value>着色器缓存</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Time.Text" xml:space="preserve">
+    <value>时间</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Status.Text" xml:space="preserve">
+    <value>状态</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_TryPartOfThe.Text" xml:space="preserve">
+    <value>可尝试输入部分名称、游戏平台（Steam、GOG…）或引擎（UE 5）。</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_LookingForYourGames.Text" xml:space="preserve">
+    <value>正在查找你的游戏…</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_List.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>游戏</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_KnownToStutter.Text" xml:space="preserve">
+    <value>已知存在卡顿</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Details.Content" xml:space="preserve">
+    <value>详细信息</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Record.Content" xml:space="preserve">
+    <value>开启采集</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Why.Content" xml:space="preserve">
+    <value>为什么？</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="QueuePage_CompileQueue.Text" xml:space="preserve">
+    <value>预编译队列</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_AfterAnUpdateSCSKiller.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>更新后，SCSKiller 会在后台重建已编译游戏的预编译方案，而不会立即进行预编译。需要预编译的内容较多的游戏会在游戏库中显示出来。</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_CompilesRunOutsideThe.Text" xml:space="preserve">
+    <value>预编译会在游戏外部、以游戏名称运行的进程中执行。运行期间请保持游戏处于关闭状态。</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_CompileQueueTextBlock.Text" xml:space="preserve">
+    <value>开始预编译</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Stop.Content" xml:space="preserve">
+    <value>停止</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Stop.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>完成正在编译的内容后停止。重新添加游戏，即可从停止的位置继续。</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_RaiseTheLimit.Content" xml:space="preserve">
+    <value>提高限制</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_GameInRunOrder.Text" xml:space="preserve">
+    <value>游戏（按运行顺序）</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Time.Text" xml:space="preserve">
+    <value>时间</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Cache.Text" xml:space="preserve">
+    <value>缓存</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_AddGamesFromThe.Text" xml:space="preserve">
+    <value>从游戏库添加游戏</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_PressAddToQueue.Text" xml:space="preserve">
+    <value>在某个游戏上点“添加到队列”，然后点“开始预编译”即可。</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_OpenTheLibrary.Content" xml:space="preserve">
+    <value>打开游戏库</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_StopAndRemove.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>停止并移除</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_CompileProgress.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>预编译进度</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_WaitingGames.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>等待中的游戏</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_DragToReorder.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>拖动以重新排序</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_MoveToTop.Content" xml:space="preserve">
+    <value>移至顶部</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_MoveUp.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>上移</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_MoveDown.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>下移</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Remove.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>移除</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Finished.Text" xml:space="preserve">
+    <value>已完成</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_ClearFinished.Content" xml:space="preserve">
+    <value>清除已完成项</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_RemoveButton.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>移除</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_CompileThreads.Text" xml:space="preserve">
+    <value>编译线程</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_CompileThreadsSlider.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>编译线程</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Priority.Header" xml:space="preserve">
+    <value>优先级</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_BelowNormalFastestThe.Content" xml:space="preserve">
+    <value>低于正常：速度最快，电脑仍可正常使用</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_IdleOnlyRunsWhen.Content" xml:space="preserve">
+    <value>仅在空闲时运行：当 CPU 未被其他任务占用时运行</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="SettingsPage_Settings.Text" xml:space="preserve">
+    <value>设置</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_LanguageBox.Header" xml:space="preserve">
+    <value>显示语言</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_LanguageNote.Text" xml:space="preserve">
+    <value>重启 SCSKiller 即可应用语言更改。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_CurrentLimit.Text" xml:space="preserve">
+    <value>当前上限</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_UsedNow.Text" xml:space="preserve">
+    <value>当前已用</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_NewLimitLabel.Text" xml:space="preserve">
+    <value>新上限</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ApplyNeedsAdministrator.Text" xml:space="preserve">
+    <value>应用（管理员）</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_YouCanSwitchBack.Text" xml:space="preserve">
+    <value>你可以随时在此处切换回驱动默认设置。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AfterADriverUpdate.Text" xml:space="preserve">
+    <value>驱动更新后</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ANewDriverThrows.Text" xml:space="preserve">
+    <value>新驱动会清除所有已编译的着色器，因此已预编译的游戏会再次出现卡顿，直到着色器被重新预编译。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_WhenToRebuild.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>何时重新构建</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AskMe.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>询问我</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AskMeTextBlock.Text" xml:space="preserve">
+    <value>询问我</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ANotificationOffersCompile.Text" xml:space="preserve">
+    <value>系统会提示你选择“立即编译”“空闲时编译”或“跳过”。任何操作都不会自动开始。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AutomaticallyOnlyWhileThe.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>自动编译，仅在电脑空闲时进行</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AutomaticallyOnlyWhileTheTextBlock.Text" xml:space="preserve">
+    <value>自动编译，仅在电脑空闲时进行</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_StopsTheMomentYou.Text" xml:space="preserve">
+    <value>一碰到鼠标或键盘就会停止，之后会从上次中断的地方继续。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_Off.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>关闭</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_OffTextBlock.Text" xml:space="preserve">
+    <value>关闭</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_RebuildGamesYourselfFrom.Text" xml:space="preserve">
+    <value>从游戏库中自行重新构建游戏。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_PauseBackgroundCompilingWhile.Content" xml:space="preserve">
+    <value>有游戏运行时暂停后台编译</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ThreadsForBackgroundRebuilds.Text" xml:space="preserve">
+    <value>用于后台重新构建的线程数</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ThreadsForBackgroundRebuildsSlider.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>用于后台重新构建的线程数</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AutoBox.Content" xml:space="preserve">
+    <value>自动着色器编译（NVIDIA 测试版）</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SystemUtilization.Header" xml:space="preserve">
+    <value>系统占用率</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ApplyNeedsAdministratorTextBlock.Text" xml:space="preserve">
+    <value>应用（管理员）</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_WeRecommendEnablingIt.Title" xml:space="preserve">
+    <value>我们建议启用此功能</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_WeRecommendEnablingIt.Message" xml:space="preserve">
+    <value>这是 NVIDIA App 的一项测试版功能，会在驱动更新后，重新预编译你已玩过的游戏。SCSKiller 可补充其余游戏，建议两者搭配使用。重复部分耗时很少：NVIDIA 已预编译的着色器在这里每项约需 1 ms。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_PatreonAndCommunityDatabase.Text" xml:space="preserve">
+    <value>Patreon 与社区数据库</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_PatreonSupportersGetThe.Text" xml:space="preserve">
+    <value>Patreon 支持者可获得社区着色器哈希数据库以及测试版和抢先体验版构建。请使用你用于支持 SCSKiller 的 Patreon 账户登录。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SignInWithPatreon.Content" xml:space="preserve">
+    <value>Patreon 登录</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_Cancel.Content" xml:space="preserve">
+    <value>取消</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_FinishSigningInIn.Text" xml:space="preserve">
+    <value>请在浏览器中完成登录。此处无需执行其他操作。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SignedInWithPatreon.Text" xml:space="preserve">
+    <value>已通过 Patreon 登录</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_RefreshStatus.Content" xml:space="preserve">
+    <value>刷新状态</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SignOut.Content" xml:space="preserve">
+    <value>退出登录</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_YoureInWantTo.Title" xml:space="preserve">
+    <value>你已进入。想要帮助改进社区着色器哈希数据库吗？</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_YoureInWantTo.Message" xml:space="preserve">
+    <value>游戏着色器的哈希值会以匿名方式共享，不会关联你的 Patreon 账户。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ShareAnonymously.Content" xml:space="preserve">
+    <value>匿名分享</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_NotNow.Content" xml:space="preserve">
+    <value>暂不分享</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_UpdateChannel.Header" xml:space="preserve">
+    <value>更新频道</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_GoBackToStable.Content" xml:space="preserve">
+    <value>立即返回稳定版</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_DownloadSharedShaderHashes.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>下载已共享的着色器哈希</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_DownloadSharedShaderHashesTextBlock.Text" xml:space="preserve">
+    <value>下载共享着色器哈希值</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_HashesOtherPlayersRecorded.Text" xml:space="preserve">
+    <value>下载其他玩家为这些游戏采集的着色器哈希，让你无需先自行采集即可预编译。下载内容不含游戏文件：GPU 仍从你已安装的游戏文件中预编译着色器。无论是否启用此选项，所有人都可下载超分辨率技术（FSR、XeSS）的管线数据。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ShareAnonymousShaderHashes.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>分享匿名着色器哈希值</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ShareAnonymousShaderHashesTextBlock.Text" xml:space="preserve">
+    <value>分享匿名着色器哈希值</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_HelpsEveryoneGetBetter.Text" xml:space="preserve">
+    <value>帮助所有人覆盖更多管线。你采集的超分辨率技术（FSR、XeSS）管线数据，也会分享给使用相同超分组件版本的玩家。这些数据不会关联你的 Patreon 账户；除此之外，与你的游戏有关的任何信息都不会离开电脑。所有人均可免费使用。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_CompileSpeedWhenYou.Text" xml:space="preserve">
+    <value>进行预编译时的速度</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_CompileThreads.Text" xml:space="preserve">
+    <value>预编译线程</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_CompileThreadsSlider.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>预编译线程</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_MaximumMemoryForCompiling.Text" xml:space="preserve">
+    <value>预编译最大内存</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_MaximumMemoryForCompilingSlider.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>预编译最大内存（0 = 自动）</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_MaximumModeAlsoCompile.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>最大覆盖模式：同时编译所有管线</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_MaximumModeAlsoCompileTextBlock.Text" xml:space="preserve">
+    <value>最大覆盖模式：同时编译所有管线</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SeemsToHelpMost.Text" xml:space="preserve">
+    <value>在 AMD 显卡上效果似乎最明显。预编译时间会更长，占用的磁盘空间也更多。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_InTheBackground.Text" xml:space="preserve">
+    <value>在后台运行</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_StartSCSKillerWhenWindows.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Windows 启动时运行 SCSKiller</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_StartSCSKillerWhenWindowsTextBlock.Text" xml:space="preserve">
+    <value>Windows 启动时运行 SCSKiller</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ItWaitsInThe.Text" xml:space="preserve">
+    <value>它会驻留在通知区域，位于时钟旁边，以便在驱动更新后提供重建选项。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ClosingTheWindowQuits.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>关闭窗口即退出 SCSKiller</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ClosingTheWindowQuitsTextBlock.Text" xml:space="preserve">
+    <value>关闭窗口即退出 SCSKiller</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ARunningCompileFinishes.Text" xml:space="preserve">
+    <value>正在运行的预编译会先完成保存，就像在通知区域选择“退出”一样。关闭时：关闭窗口后 SCSKiller 仍会保留在后台；右键单击其图标即可退出。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ScanGamesWhenSCSKiller.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>SCSKiller 启动时扫描游戏</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ScanGamesWhenSCSKillerTextBlock.Text" xml:space="preserve">
+    <value>SCSKiller 启动时扫描游戏</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ReadsAgainWhatChanged.Text" xml:space="preserve">
+    <value>重新读取每个游戏文件夹中的更改内容。关闭：将显示上次列表，并在刷新、游戏退出或 Steam 或 Xbox 应用更新时重新读取游戏。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_NotifyMeWhenGames.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>当游戏有新着色器可供预编译时通知我</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_NotifyMeWhenGamesTextBlock.Text" xml:space="preserve">
+    <value>有新着色器可供预编译时通知我</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ACompiledGameGains.Text" xml:space="preserve">
+    <value>预编译后的游戏会从其采集、共享着色器哈希值或 SCSKiller 更新中获取管线。你只会收到一次通知，游玩期间不会收到。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SendAnAnonymousDaily.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>发送匿名每日检查报告</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SendAnAnonymousDailyTextBlock.Text" xml:space="preserve">
+    <value>发送匿名每日检查报告</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_CountsActiveInstallsOnce.Text" xml:space="preserve">
+    <value>统计活跃安装情况：每天一次，仅报告应用版本和你的 GPU 厂商，不包含任何身份标识。不会涉及你的电脑或游戏信息。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_RecordInAllCompatible.Text" xml:space="preserve">
+    <value>在所有兼容游戏中进行采集</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AddsASmallD3d12.Text" xml:space="preserve">
+    <value>为不含反作弊系统的游戏添加一个小型 d3d12.dll，用于捕获预编译方案遗漏的着色器，并为每一帧计时，以便游戏页面显示卡顿发生在何处。帧时间数据仅保留在本机上。反作弊游戏中绝不会使用此功能。关闭后，它会从所有你尚未自行开启该功能的游戏中移除。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_RecordInAllCompatibleToggleSwitch.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>在所有兼容的游戏中采集着色器</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_RecordingLimitLabel.Text" xml:space="preserve">
+    <value>每个游戏的采集数据上限</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_CountsTheRecordingIn.Text" xml:space="preserve">
+    <value>此上限同时计入游戏文件夹内的采集数据，以及 SCSKiller 保存的副本。达到上限后，游戏仍照常运行：只是新的着色器管线将不再被采集。</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SpaceByGame.Header" xml:space="preserve">
+    <value>各游戏占用的空间</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+</root>
