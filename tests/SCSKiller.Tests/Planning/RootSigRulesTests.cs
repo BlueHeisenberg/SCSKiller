@@ -46,6 +46,7 @@ public class RootSigRulesTests
     [InlineData("4.22", null, Rule.Ue422)] [InlineData("4.23", null, Rule.Ue422)] [InlineData("4.24", null, Rule.Ue422)]
     [InlineData("4.25", null, Rule.Ue425)] [InlineData("4.26", null, Rule.Ue426)] [InlineData("4.27", null, Rule.Ue426)]
     [InlineData("4.26", "GAME_FinalFantasy7Rebirth", Rule.Ff7)] [InlineData("4.26", "GAME_StellarBlade", Rule.Ue426)]
+    [InlineData("4.26", "GAME_WutheringWaves", Rule.Kuro)] [InlineData("4.27", "GAME_WutheringWaves", Rule.Ue426)]
     [InlineData("5.0", null, Rule.Ue50)] [InlineData("5.1", "GAME_Palworld", Rule.Ue51)] [InlineData("5.2", null, Rule.Ue51)]
     [InlineData("5.3", null, Rule.Ue51)] [InlineData("5.4", null, Rule.Ue54)] [InlineData("5.5", null, Rule.Ue55)]
     [InlineData("5.6", null, Rule.Ue55)] [InlineData("5.7", null, Rule.Ue55)] [InlineData("5.8", null, Rule.Ue58)] [InlineData("5.12", null, Rule.Ue58)] [InlineData("6.0", null, Rule.Ue58)]
@@ -71,6 +72,11 @@ public class RootSigRulesTests
             T(Px, Srv, 64), T(Px, Smp, 16), T(Px, Uav, 16), T(Vx, Srv, 64), T(Vx, Smp, 16), T(Gx, Srv, 64), T(Gx, Smp, 16),
             Cbv(Px, 0), Cbv(Px, 1), Cbv(Vx, 0), Cbv(Gx, 0), Cbv(Gx, 1), Cbv(Gx, 2));
         Check(Rule.Ue426, P(Cs), false, 0x3E, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0)); // compute denies every graphics stage
+        // Kuro's 4.26 fork: 4.26's rows, plus the mesh/amplification deny bits on every root signature (Wuthering Waves' recording:
+        // 90/90 distinct root signatures), whatever the tier
+        Check(Rule.Kuro, P(Vs, Ps), false, 0x31D, vsps(64));
+        Check(Rule.Kuro, P(Vs, Ps), true, 0x31D, vsps(64));
+        Check(Rule.Kuro, P(Cs), false, 0x33E, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0));
         Check(Rule.Ue422, P(Cs), false, 0x3E, T(All, Srv, 48), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0));
         Check(Rule.Ue50, P(CsDiagnostic), false, 0x32, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0), Diagnostic);
     }

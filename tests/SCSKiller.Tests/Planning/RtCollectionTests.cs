@@ -27,6 +27,27 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
 
     static List<RtCollections.ItemFields> Items(Plan p) => PlanFile.Read(p.FilePath).Records.Where(r => r.Tag == 'Y').Select(r => RtCollections.ParseItem(r.Payload)).ToList();
 
+    /// <summary>Kuro's 4.26 fork (Wuthering Waves): its own global root signature (space 77 then UE 4.26's space 1, NVAPI's slot
+    /// u0 space 1001 last), each library's own payload, and the NVAPI slot set on every collection, all without a recording.</summary>
+    [Fact]
+    public void KuroForkHasItsOwnCollectionRule()
+    {
+        var dir = Ff7.TempDir("rt-plan-kuro");
+        var wuwa = Ue427 with { Version = "4.26", Fork = "GAME_WutheringWaves" };
+        var plan = new Planner().Build(Ff7.Game, wuwa, Index(), null, Nvidia, Path.Combine(dir, "nv"), new Log(output.WriteLine), CancellationToken.None);
+        var y = Assert.Single(Items(plan)); // the bindless library is left out: space 4 isn't in the fork's global root signature either
+        var (global, blob) = RtCollections.Serialize(RtCollections.WuwaGlobal, RootSig.Ue426Samplers);
+        Assert.Equal(global, y.Global);
+        Assert.Equal((Chs.Sha1, 0u, 8u, 1u, 4u, new RtCollections.Nv(0, 1001, 0)), (y.Library, y.Payload, y.Attributes, y.Depth, y.Flags, y.Nv!.Value));
+        var ranges = RootSig.Parse(blob);
+        Assert.Equal(0u, ranges.Flags);
+        Assert.Equal(24 + 6, ranges.Slots.Length); // 4 in space 77, 19 in space 1, the NVAPI table, 6 static samplers
+        Assert.Equal((0u, 1u, 0u, 16u, 77u, true), ranges.Slots[0]);  // UAV table u0-u15 space 77 first
+        Assert.Equal((0u, 2u, 2u, 1u, 77u, false), ranges.Slots[2]);  // root CBV b2 space 77 before b1
+        Assert.Equal((0u, 1u, 0u, 1u, 1001u, true), ranges.Slots[23]); // NVAPI u0 space 1001 as a table
+        if (D3D12Runtime.Available) Assert.Equal(0, D3D12Runtime.CreateRootSignature(blob));
+    }
+
     [Fact]
     public void CollectionsOnlyWhereTheDriverCachesThem()
     {

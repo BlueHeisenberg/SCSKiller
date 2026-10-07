@@ -26,6 +26,7 @@ public static unsafe class RootSig
         Ue422,  // 4.22-4.24: MAX_SRVS 48, no static samplers
         Ue425,  // 4.25: MAX_SRVS 64, static samplers s1000-s1005 in space 0
         Ue426,  // 4.26-4.27: static samplers s0-s5 in space 1000
+        Kuro,   // Kuro's 4.26 fork (Wuthering Waves): 4.26's, every root signature also denying the mesh and amplification stages as UE 5's SM6 path does (see BuildStock); before Ue50 for its UE 4 comparisons
         Ue50,   // 5.0: no hull/domain, mesh/amplification stages, AGS/diagnostic root UAVs, bindless heap flags
         Ue51,   // 5.1-5.3: a stage's table only when it uses that resource type
         Ue54,   // 5.4: MAX_SAMPLERS 32, root constants
@@ -46,6 +47,7 @@ public static unsafe class RootSig
         if (e.Family == Dagor.DagorReader.Family) return e.Fork == Dagor.DagorReader.CbvRangesFork ? Rule.DagorCbvRanges : Rule.Dagor;
         if (e.Family != "Unreal" || !System.Version.TryParse(e.Version, out var v)) return null;
         if (e.Fork == "GAME_FinalFantasy7Rebirth" && e.Version == "4.26") return Rule.Ff7;
+        if (e.Fork == "GAME_WutheringWaves" && e.Version == "4.26") return Rule.Kuro;
         return (v.Major, v.Minor) switch
         {
             (4, 20) => Rule.Ue420,
@@ -206,6 +208,10 @@ public static unsafe class RootSig
         }
         foreach (var s in all)
             if ((!q.TryGetValue(s, out var c) || c == default) && (meshTier || s is not (Stage.Mesh or Stage.Amplification))) flags |= DenyBit(s);
+        // Kuro's 4.26 fork: every root signature denies the mesh and amplification stages, as UE 5's SM6 path does (the fork ships a
+        // PCD3D_SM6 platform stock 4.26 lacks, and its pipeline cache bodies carry UE 5's MS/AS hashes too); a recording of Wuthering
+        // Waves: 113 of 113 distinct root signatures (5725 of 5725 PSOs) differ from 4.26's in these two bits only
+        if (r == Rule.Kuro) flags |= DenyBit(Stage.Mesh) | DenyBit(Stage.Amplification);
         return new Desc(flags, rows);
     }
 

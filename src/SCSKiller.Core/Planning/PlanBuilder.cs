@@ -799,6 +799,15 @@ sealed class PlanBuilder
             rule = new(h, RtCollections.NoConfig, 1, 64, 8, false);
             how = "UE 4.25's (Returnal's recording: 401 of its 403 collections rebuilt from its files, the other 2 at a 24-byte payload)";
         }
+        else if (this.rule == RootSig.Rule.Kuro)
+        {
+            // Kuro's fork: its own global root signature, each library's own payload (its recording: 2396 collections at 32, 10 at 16,
+            // 5 at 24 bytes, each its library's), ALLOW_STATE_OBJECT_ADDITIONS, depth 1, triangle barycentrics
+            var (h, b) = RtCollections.Serialize(RtCollections.WuwaGlobal, RootSig.Ue426Samplers);
+            rsBlobs[h] = b;
+            rule = new(h, 4, 1, 0, 8, false);
+            how = "Kuro's UE 4.26 fork's (Wuthering Waves' recording: 2409/2409 collections rebuilt from its files)";
+        }
         else if (engine.Family == "Unreal" && engine.Version is "4.26" or "4.27")
         {
             var desc = RtCollections.GlobalFor(libs.Select(l => bc[l]));
@@ -837,9 +846,9 @@ sealed class PlanBuilder
         else { log?.Report($"ray tracing: {libs.Count} DXIL libraries; no collection rule for {engine.Family} {engine.Version} without a recording: none synthesized"); return; }
 
         // NVIDIA keys a collection on the NVAPI shader-extension slot too (selftest nvext): only a recording shows whether the
-        // game sets one around its creates
-        var nv = RtCollections.LearnedNv(stateObjects.Where(r => RtCollections.Read(r) != null).ToList(), nvRecs);
-        var nvHow = nv is { } x ? $"NVAPI extension slot u{x.Slot} space {x.Space}{(x.Options != 0 ? $", creation flags 0x{x.Options:x}" : "")}, as the recorded collections"
+        // game sets one around its creates; Kuro's fork sets u0 space 1001 around every one (its recording: all 2411)
+        var nv = RtCollections.LearnedNv(stateObjects.Where(r => RtCollections.Read(r) != null).ToList(), nvRecs) ?? (this.rule == RootSig.Rule.Kuro ? new RtCollections.Nv(0, 1001, 0) : null);
+        var nvHow = nv is { } x ? $"NVAPI extension slot u{x.Slot} space {x.Space}{(x.Options != 0 ? $", creation flags 0x{x.Options:x}" : "")}, as the {(learned.Count > 0 ? "recorded collections" : "fork creates them")}"
             : learned.Count > 0 ? "no NVAPI state recorded with the recorded collections"
             : "NVAPI state unknown without a recording of ray tracing (a game setting NVIDIA's shader-extension slot misses them all)";
         var recordedLibs = stateObjects.SelectMany(r => ParseStateObject(r).Libraries).ToHashSet();

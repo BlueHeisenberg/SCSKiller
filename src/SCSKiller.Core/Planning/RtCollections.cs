@@ -37,6 +37,15 @@ public static class RtCollections
         [0, 0, 0, 64, 0, 1, 5], [0, 0, 3, 16, 0, 1, 1], [0, 0, 1, 16, 0, 1, 3],
         .. Enumerable.Range(0, 16).Select(b => new uint[] { 2, 0, (uint)b, 1, 8 })]);
 
+    /// <summary>Kuro's 4.26 fork's (Wuthering Waves' recording: 2411 collections, one global root signature): in space 77 (the
+    /// fork's own global ray tracing space, which 127415 of its 127439 libraries bind) a UAV table of 16, an SRV table of 64
+    /// and root CBVs b2 then b1; then UE 4.26's space 1 block without its NVAPI slot; then NVAPI's extension UAV u0 in space
+    /// 1001 as a table (offset 0, no flags; where UE 5.8 puts it); UE's six static samplers.</summary>
+    public static readonly RootSig.Desc WuwaGlobal = new(0, [
+        [0, 0, 1, 16, 0, 77, 3], [0, 0, 0, 64, 0, 77, 5], [2, 0, 2, 77, 8], [2, 0, 1, 77, 8],
+        .. Ue426Global.Rows.Skip(1),
+        [0, 0, 1, 1, 0, 1001, 0, 0]]);
+
     /// <summary>UE 4.25's (Returnal's recording): 4.26's without the NVAPI slot, with 4.25's static samplers
     /// (<see cref="RootSig.StaticSamplers"/>).</summary>
     public static readonly RootSig.Desc Ue425Global = new(0, [.. Ue426Global.Rows.Skip(1)]);
