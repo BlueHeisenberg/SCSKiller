@@ -1,12 +1,36 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using SCSKiller.Core;
 using SCSKiller.Core.App;
 using SCSKiller.Core.Vendors;
 
 namespace SCSKiller.Tests.Platform;
 
-public class FormatTests
+public class FormatTests : IDisposable
 {
+    // some tests switch the culture (the assembly's UI culture is pinned in TestEnv): each gets it back afterwards
+    readonly CultureInfo culture = CultureInfo.CurrentCulture;
+    readonly CultureInfo uiCulture = CultureInfo.CurrentUICulture;
+
+    public void Dispose()
+    {
+        CultureInfo.CurrentCulture = culture;
+        CultureInfo.CurrentUICulture = uiCulture;
+    }
+
+    [Theory]
+    [InlineData("fr-FR")]
+    [InlineData("ja-JP")]
+    [InlineData("ar-EG")]
+    public void Regional_formatting_is_independent_of_the_UI_language(string region)
+    {
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(region);
+        CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
+        Assert.Equal(1.5.ToString("0.#", CultureInfo.CurrentCulture) + " GB", Format.Bytes(3L << 29));
+        Assert.Equal("Reading shaders", Format.QueueActivity(new("g", QueueStage.Indexing, null, null)));
+        Assert.Equal("unknown diagnostic {details}", Loc.Text("unknown diagnostic {details}"));
+    }
+
     [Fact]
     public void Bytes_are_whole_megabytes_below_a_gigabyte_and_one_decimal_from_there()
     {
@@ -20,11 +44,15 @@ public class FormatTests
         finally { CultureInfo.CurrentCulture = was; }
     }
 
-    [Fact]
-    public void A_duration_is_ScsKillers_or_a_dash()
+    [Theory]
+    [InlineData("en-US", "2 h 5 min")]
+    [InlineData("zh-Hans", "2 小时 5 分钟")]
+    public void UI_duration_is_localized_while_stored_duration_is_invariant(string language, string expected)
     {
+        CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(language);
         Assert.Equal(Format.Dash, Format.Duration(null));
-        Assert.Equal(ScsKiller.Duration(TimeSpan.FromMinutes(125)), Format.Duration(TimeSpan.FromMinutes(125)));
+        Assert.Equal(expected, Format.Duration(TimeSpan.FromMinutes(125)));
+        Assert.Equal("2 h 5 min", ScsKiller.Duration(TimeSpan.FromMinutes(125)));
     }
 
     [Fact]
@@ -91,6 +119,70 @@ public class FormatTests
         };
         Assert.All(cases, c => Assert.Equal(c.Note, Format.ShortNote(c.State)));
     }
+
+    [Fact]
+    public void Format_shows_English_under_the_invariant_UI_culture_the_command_line_sets()
+    {
+        CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;   // what Program.cs sets first, whatever the display language
+        Assert.Equal("DLSS: compiled by the NVIDIA driver itself", Format.Middleware(new MiddlewareTag("DLSS", ["nvngx_dlss.dll"], 0)));
+        Assert.Equal(("2 h 5 min", "3.2 GB"), (Format.Duration(TimeSpan.FromMinutes(125)), Format.Bytes((long)(3.2 * (1L << 30)))));
+        Assert.Equal(ScsKiller.WhenIdleNote, Format.QueueNote(new QueueItem("g", QueueStage.Waiting, null, null, ScsKiller.WhenIdleNote)));
+    }
+
+    [Fact]
+    public void Raw_diagnostics_paths_and_stored_notes_are_not_translated()
+    {
+        CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo("zh-Hans");
+        const string unknown = @"C:\Games\custom.exe: unknown error 0x80070005; another clause";
+        Assert.Equal((unknown, unknown), (Format.Reason(unknown), Format.QueueNote(new QueueItem("g", QueueStage.Waiting, null, null, unknown))));
+        string file = Core.Warming.Warmer.ExeFor(GpuVendor.Nvidia);
+        var failed = Format.QueueNote(new QueueItem("g", QueueStage.Failed, null, $"{file} not found next to the app or in proxy\\build\\Release"));
+        Assert.True(failed.Contains(file) && failed.Contains(@"proxy\build\Release"), failed);   // translated, the file and folder kept
+        FormattableString note = $"paused while {"Game {x}"} is running";
+        var q = new QueueItem("g", QueueStage.Paused, null, null, note.ToString()) { NoteFormat = note };
+        Assert.Contains("Game {x}", Format.QueueNote(q));
+        Assert.Equal(System.Text.Json.JsonSerializer.Serialize(q with { NoteFormat = null }), System.Text.Json.JsonSerializer.Serialize(q));
+    }
+
+    [Theory]
+    [InlineData("src/SCSKiller.Core/App/Strings.resx", "src/SCSKiller.Core/App/Strings.zh-Hans.resx")]
+    [InlineData("src/SCSKiller.App/Strings/en-US/Resources.resw", "src/SCSKiller.App/Strings/zh-Hans/Resources.resw")]
+    public void Translations_have_the_same_keys_and_only_the_placeholders_of_the_English(string english, string chinese)
+    {
+        static Dictionary<string, string> Read(string file) => System.Xml.Linq.XDocument.Load(Path.Combine(TestEnv.RepoRoot, file)).Root!
+            .Elements("data").ToDictionary(d => (string)d.Attribute("name")!, d => (string)d.Element("value")!);
+        static HashSet<string> Holes(string s) => Regex.Matches(s, @"(?<!\{)\{(\d+)").Select(m => m.Groups[1].Value).ToHashSet();
+        var (en, zh) = (Read(english), Read(chinese));
+        Assert.Equal(en.Keys.Order(), zh.Keys.Order());
+        Assert.Equal(en.Count, en.Keys.Distinct(StringComparer.OrdinalIgnoreCase).Count());   // resource names ignore case
+        Assert.All(zh, e => Assert.True(Holes(e.Value).IsSubsetOf(Holes(en[e.Key])), $"{e.Key}: {e.Value}"));
+    }
+
+    /// <summary>The core's own messages: Format.Reason gives the same English back and knows every clause (a resource or a
+    /// ReasonTemplates match), so a message reworded in Core fails here instead of showing untranslated.</summary>
+    public static TheoryData<string> CoreMessages()
+    {
+        var (unreal, caps) = (new EngineInfo("Unreal", "5.4", null, "D3D12", false, null), new VendorCaps("nvidia-1", true, true, true));
+        return new(ScsKiller.RtNote(null), ScsKiller.RtNote(false), ScsKiller.RtUnseenNote, ScsKiller.RtInlineNote, "warmed for driver 1.0; " + ScsKiller.RtAfterRecordingNote,
+            "ray-traced effects aren't compiled: they need a recording, " + ScsKiller.ManualNoRecording, "needs a recording, which its anti-cheat blocks; " + ScsKiller.InDbNote,
+            ScsKiller.PartialNote(new PlanStats(0, 1200, 0, 0, false, Uncovered: 500))!, ScsKiller.PartialNote(new PlanStats(300, 1200, 0, 0, false, Uncovered: 400))!,
+            ScsKiller.NotChainableReason("OptiScaler"), ScsKiller.NotChainableReason("ReShade"), ScsKiller.SkipForeignDll, ScsKiller.SkipVulkanMod, ScsKiller.SkipShaderMod,
+            ScsKiller.RtWhy(caps, unreal), ScsKiller.RtWhy(caps with { RtCacheGranularity = RtCacheGranularity.Collection }, unreal),
+            ScsKiller.WhenIdleNote, ScsKiller.TrimmedAllReason, Core.Planning.Planner.UntestedNote, "driver changed: 591.44 -> 596.02");
+    }
+
+    [Theory]
+    [MemberData(nameof(CoreMessages))]
+    public void Core_messages_reach_Reason_unchanged_in_English_and_known_to_it(string message) =>
+        Assert.True(Format.Reason(message) == message && KnownReason(message), message);
+
+    static readonly System.Resources.ResourceManager Neutral = new("SCSKiller.Core.App.Strings", typeof(Loc).Assembly);
+    static bool IsResource(string s) => Neutral.GetString(s, CultureInfo.InvariantCulture) != null || Neutral.GetString(char.ToUpperInvariant(s[0]) + s[1..], CultureInfo.InvariantCulture) != null;
+    /// <summary>Every clause is a resource or matches a template, and when several match, one is the longest (Format.Reason
+    /// takes it), so no template shadows a more specific one.</summary>
+    internal static bool KnownReason(string message) => IsResource(message) || message.Split("; ").All(c => IsResource(c)
+        || Format.ReasonTemplates.Where(t => Regex.IsMatch(c, "\\A" + string.Join("(.+?)", Regex.Split(t, @"\{\d+\}").Select(Regex.Escape)) + "\\z", RegexOptions.IgnoreCase))
+            .Select(t => t.Length).OrderDescending().ToArray() is var lengths && (lengths.Length == 1 || lengths.Length > 1 && lengths[0] > lengths[1]));
 
     static GpuInfo Gpu(GpuVendor v, string name, ulong vram) => new(v, name, "1.0", 0, vram);
 

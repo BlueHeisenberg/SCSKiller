@@ -1,0 +1,2077 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="SCSKiller is still running" xml:space="preserve">
+    <value>SCSKiller 仍在运行</value>
+  </data>
+  <data name="It's in the notification area; right-click the icon to quit." xml:space="preserve">
+    <value>它正在通知区域运行；右键单击图标即可退出。</value>
+  </data>
+  <data name="Cancel" xml:space="preserve">
+    <value>取消</value>
+  </data>
+  <data name="Resume" xml:space="preserve">
+    <value>继续</value>
+  </data>
+  <data name="Pause compiling" xml:space="preserve">
+    <value>暂停预编译</value>
+  </data>
+  <data name="Quit now (loses unsaved cache)" xml:space="preserve">
+    <value>立即退出（将丢失未保存的缓存）</value>
+  </data>
+  <data name="Quit" xml:space="preserve">
+    <value>退出</value>
+  </data>
+  <data name="Stopping the compile so the graphics driver can save its shader cache" xml:space="preserve">
+    <value>停止预编译，以便显卡驱动保存其着色器缓存</value>
+  </data>
+  <data name="SCSKiller: finishing, the driver is saving the shader cache" xml:space="preserve">
+    <value>SCSKiller：正在收尾，驱动正在保存着色器缓存</value>
+  </data>
+  <data name="SCSKiller: idle" xml:space="preserve">
+    <value>SCSKiller：空闲</value>
+  </data>
+  <data name="SCSKiller: checking games for more to compile" xml:space="preserve">
+    <value>SCSKiller：正在检查游戏，寻找更多可预编译的内容</value>
+  </data>
+  <data name="SCSKiller: paused ({0})" xml:space="preserve">
+    <value>SCSKiller：已暂停（{0}）</value>
+  </data>
+  <data name="Compiling {0}, {1:0}%" xml:space="preserve">
+    <value>正在预编译 {0}，{1:0}%</value>
+  </data>
+  <data name="Compiling {0}" xml:space="preserve">
+    <value>正在预编译 {0}</value>
+  </data>
+  <data name="1 game needs" xml:space="preserve">
+    <value>有 1 款游戏需要</value>
+  </data>
+  <data name="{0} games need" xml:space="preserve">
+    <value>有 {0} 款游戏需要</value>
+  </data>
+  <data name="{0} driver updated" xml:space="preserve">
+    <value>{0} 驱动已更新</value>
+  </data>
+  <data name="Driver {0} cleared the shader cache. {1} rebuilding: " xml:space="preserve">
+    <value>驱动 {0} 已清除着色器缓存。{1}重新预编译：</value>
+  </data>
+  <data name=", about {0}." xml:space="preserve">
+    <value>，预计耗时 {0}。</value>
+  </data>
+  <data name="New shaders to compile" xml:space="preserve">
+    <value>有新着色器需要预编译</value>
+  </data>
+  <data name="{0} has {1:N0} new pipeline{2}. Compile now so they don't stutter." xml:space="preserve">
+    <value>{0} 有 {1:N0} 个新的管线。立即预编译，避免卡顿。</value>
+  </data>
+  <data name="{0} games have new shaders to compile" xml:space="preserve">
+    <value>{0} 款游戏有新着色器需要预编译</value>
+  </data>
+  <data name="Driver " xml:space="preserve">
+    <value>驱动 </value>
+  </data>
+  <data name=" Otherwise it installs the next time SCSKiller starts or quits." xml:space="preserve">
+    <value> 否则将在下次启动或退出 SCSKiller 时安装。</value>
+  </data>
+  <data name="Finishing the compile…" xml:space="preserve">
+    <value>正在完成预编译…</value>
+  </data>
+  <data name="Restart to update" xml:space="preserve">
+    <value>重启以更新</value>
+  </data>
+  <data name="Open SCSKiller" xml:space="preserve">
+    <value>打开 SCSKiller</value>
+  </data>
+  <data name="today at {0:t}" xml:space="preserve">
+    <value>今天 {0:t}</value>
+  </data>
+  <data name="yesterday at {0:t}" xml:space="preserve">
+    <value>昨天 {0:t}</value>
+  </data>
+  <data name="on {0:d}" xml:space="preserve">
+    <value>于 {0:d}</value>
+  </data>
+  <data name="Unknown engine" xml:space="preserve">
+    <value>未知引擎</value>
+  </data>
+  <data name="UE {0}" xml:space="preserve">
+    <value>UE {0}</value>
+  </data>
+  <data name="anti-cheat" xml:space="preserve">
+    <value>反作弊</value>
+  </data>
+  <data name="{0} shader-compilation stutter: {1}.
+Source: {2} (checked {3})" xml:space="preserve">
+    <value>{0} 着色器编译卡顿：{1}。
+来源：{2}（检查于 {3}）</value>
+  </data>
+  <data name="Severe" xml:space="preserve">
+    <value>严重</value>
+  </data>
+  <data name="Moderate" xml:space="preserve">
+    <value>中等</value>
+  </data>
+  <data name="Other" xml:space="preserve">
+    <value>其他</value>
+  </data>
+  <data name="Added by you" xml:space="preserve">
+    <value>由你添加</value>
+  </data>
+  <data name="Estimated driver cache if compiled" xml:space="preserve">
+    <value>若完成预编译，预计的驱动缓存大小</value>
+  </data>
+  <data name="Compiling: play when it finishes" xml:space="preserve">
+    <value>正在预编译：完成后即可游玩</value>
+  </data>
+  <data name="Couldn't find how {0} starts {1}: refresh the library." xml:space="preserve">
+    <value>无法找到 {0} 启动 {1} 的方式：请刷新游戏库。</value>
+  </data>
+  <data name="Start {0}" xml:space="preserve">
+    <value>启动 {0}</value>
+  </data>
+  <data name="Play through {0}" xml:space="preserve">
+    <value>通过 {0} 启动</value>
+  </data>
+  <data name="no thumbnail" xml:space="preserve">
+    <value>无缩略图</value>
+  </data>
+  <data name="{0} upscalers" xml:space="preserve">
+    <value>{0} 个超分组件</value>
+  </data>
+  <data name="Partly warmed" xml:space="preserve">
+    <value>部分已预编译</value>
+  </data>
+  <data name="Warmed" xml:space="preserve">
+    <value>已预编译</value>
+  </data>
+  <data name="Ready to compile" xml:space="preserve">
+    <value>可预编译</value>
+  </data>
+  <data name="Needs a recording" xml:space="preserve">
+    <value>需采集着色器</value>
+  </data>
+  <data name="Needs a 5-min recording" xml:space="preserve">
+    <value>需采集约 5 分钟</value>
+  </data>
+  <data name="Needs rebuilding" xml:space="preserve">
+    <value>需重新预编译</value>
+  </data>
+  <data name="Not compiled" xml:space="preserve">
+    <value>未预编译</value>
+  </data>
+  <data name="Encrypted game files" xml:space="preserve">
+    <value>加密的游戏文件</value>
+  </data>
+  <data name="Not supported yet" xml:space="preserve">
+    <value>暂不支持</value>
+  </data>
+  <data name="driver {0} · {1:0}% still compiled at its first launch" xml:space="preserve">
+    <value>驱动 {0} · 首次启动时仍在游戏内编译了 {1:0}% 的着色器</value>
+  </data>
+  <data name=" · a recording compiles the rest" xml:space="preserve">
+    <value> · 采集着色器后可预编译其余部分</value>
+  </data>
+  <data name="{0} blocks recording" xml:space="preserve">
+    <value>受 {0} 限制，无法采集着色器</value>
+  </data>
+  <data name="recorder on: play for about 5 minutes" xml:space="preserve">
+    <value>采集器已启用：运行游戏约 5 分钟</value>
+  </data>
+  <data name="Playing now" xml:space="preserve">
+    <value>正在游玩</value>
+  </data>
+  <data name="Playing now · " xml:space="preserve">
+    <value>正在游玩 · </value>
+  </data>
+  <data name="In queue" xml:space="preserve">
+    <value>排队中</value>
+  </data>
+  <data name="Add to queue" xml:space="preserve">
+    <value>加入队列</value>
+  </data>
+  <data name="Running" xml:space="preserve">
+    <value>正在运行</value>
+  </data>
+  <data name="Play" xml:space="preserve">
+    <value>开始游戏</value>
+  </data>
+  <data name="{0} is running" xml:space="preserve">
+    <value>{0} 正在运行</value>
+  </data>
+  <data name="Recommended to compile" xml:space="preserve">
+    <value>推荐预编译</value>
+  </data>
+  <data name="{0} game{1}" xml:space="preserve">
+    <value>{0} 款游戏</value>
+  </data>
+  <data name=" · known to stutter · {0} compiled" xml:space="preserve">
+    <value> · 已知存在卡顿 · 已预编译 {0}</value>
+  </data>
+  <data name=" · known to stutter" xml:space="preserve">
+    <value> · 已知会导致卡顿</value>
+  </data>
+  <data name="{0} of {1} shown" xml:space="preserve">
+    <value>显示 {0} / {1}</value>
+  </data>
+  <data name="No games match “{0}”" xml:space="preserve">
+    <value>没有游戏匹配“{0}”</value>
+  </data>
+  <data name="Add all ready ({0})" xml:space="preserve">
+    <value>全部加入队列（{0}）</value>
+  </data>
+  <data name="Add all recommended ({0})" xml:space="preserve">
+    <value>添加所有推荐游戏（{0}）</value>
+  </data>
+  <data name="Compile queue ({0})" xml:space="preserve">
+    <value>开始预编译（{0}）</value>
+  </data>
+  <data name="Ask me first" xml:space="preserve">
+    <value>先询问我</value>
+  </data>
+  <data name="When the PC is idle" xml:space="preserve">
+    <value>电脑空闲时</value>
+  </data>
+  <data name="Off" xml:space="preserve">
+    <value>关闭</value>
+  </data>
+  <data name="A notification offers compile now, when idle, or skip" xml:space="preserve">
+    <value>通知中可选：立即预编译、空闲时预编译或跳过</value>
+  </data>
+  <data name="Rebuilds on its own while you're away from the PC" xml:space="preserve">
+    <value>你离开电脑时自动重建</value>
+  </data>
+  <data name="Rebuild games yourself from the Library" xml:space="preserve">
+    <value>从游戏库中自行重建游戏</value>
+  </data>
+  <data name="of {0} threads" xml:space="preserve">
+    <value>/ {0} 线程</value>
+  </data>
+  <data name="Checking Steam, Epic, Xbox, EA, GOG, Ubisoft Connect, Battle.net, PURPLE, HoYoPlay and Gaijin, then which engine each game uses. " xml:space="preserve">
+    <value>正在检查 Steam、Epic、Xbox、EA、GOG、Ubisoft Connect、Battle.net、PURPLE、HoYoPlay 和 Gaijin，以及每款游戏使用的引擎。</value>
+  </data>
+  <data name="The first scan reads every game's files, so it can take a minute." xml:space="preserve">
+    <value>首次扫描会读取每款游戏的文件，可能需要一分钟。</value>
+  </data>
+  <data name="Re-reading every game's engine and anti-cheat; the list updates when it's done." xml:space="preserve">
+    <value>正在重新读取每款游戏的引擎和反作弊系统；完成后列表将会更新。</value>
+  </data>
+  <data name="The list updates when it's done." xml:space="preserve">
+    <value>完成后列表将会更新。</value>
+  </data>
+  <data name="Scan failed: " xml:space="preserve">
+    <value>扫描失败：</value>
+  </data>
+  <data name="Checked the server a few minutes ago." xml:space="preserve">
+    <value>几分钟前已检查过服务器。</value>
+  </data>
+  <data name="Couldn't reach the SCSKiller server. The lists stay as they were." xml:space="preserve">
+    <value>无法连接到 SCSKiller 服务器。列表将保持原样。</value>
+  </data>
+  <data name="{0} stores" xml:space="preserve">
+    <value>{0} 个游戏平台</value>
+  </data>
+  <data name=" and " xml:space="preserve">
+    <value> 和 </value>
+  </data>
+  <data name="Looking for games…" xml:space="preserve">
+    <value>正在查找游戏…</value>
+  </data>
+  <data name="{0} {1}game{2} found{3} · {4} ready to compile" xml:space="preserve">
+    <value>找到 {0} 款{1}游戏{3} · {4} 款可预编译</value>
+  </data>
+  <data name=" in " xml:space="preserve">
+    <value>，来自 </value>
+  </data>
+  <data name="Below-normal priority" xml:space="preserve">
+    <value>低于正常优先级</value>
+  </data>
+  <data name="Idle priority" xml:space="preserve">
+    <value>空闲优先级</value>
+  </data>
+  <data name=" · about {0:N0} pipelines/s measured" xml:space="preserve">
+    <value> · 测得约 {0:N0} 条管线/秒</value>
+  </data>
+  <data name="limit unknown" xml:space="preserve">
+    <value>上限未知</value>
+  </data>
+  <data name="· DirectX 12 {0} of {1} limit" xml:space="preserve">
+    <value>· DirectX 12 {0}/{1} 上限</value>
+  </data>
+  <data name="of {0} limit" xml:space="preserve">
+    <value>{0} 上限</value>
+  </data>
+  <data name="no limit" xml:space="preserve">
+    <value>无上限</value>
+  </data>
+  <data name="Driver default limit may evict games" xml:space="preserve">
+    <value>默认上限可能导致旧缓存被清理</value>
+  </data>
+  <data name="The cache is nearly full" xml:space="preserve">
+    <value>缓存几乎已满</value>
+  </data>
+  <data name="compiled for driver {0}" xml:space="preserve">
+    <value>已为驱动 {0} 预编译</value>
+  </data>
+  <data name="not fully compiled yet: {0} of it is in the driver cache" xml:space="preserve">
+    <value>尚未完全预编译：其中 {0} 已存入驱动缓存</value>
+  </data>
+  <data name="not compiled yet" xml:space="preserve">
+    <value>尚未预编译</value>
+  </data>
+  <data name="its shader cache is empty: compile it again" xml:space="preserve">
+    <value>其着色器缓存为空：请重新预编译</value>
+  </data>
+  <data name="In the community database: {0:N0} pipeline{1} recorded by other players. Patreon supporters compile them without recording." xml:space="preserve">
+    <value>社区数据库中：有 {0:N0} 个管线由其他玩家采集。Patreon 支持者可在不采集的情况下对其进行预编译。</value>
+  </data>
+  <data name="Patreon membership" xml:space="preserve">
+    <value>Patreon 会员资格</value>
+  </data>
+  <data name="Sign in with Patreon" xml:space="preserve">
+    <value>使用 Patreon 登录</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="Compile carefully" xml:space="preserve">
+    <value>稳妥预编译</value>
+  </data>
+  <data name="Compile without ray tracing (partial)" xml:space="preserve">
+    <value>预编译非光线追踪部分</value>
+  </data>
+  <data name="Compile" xml:space="preserve">
+    <value>预编译</value>
+  </data>
+  <data name="Compiles the pipelines recorded in the game in passes on few threads, so the driver keeps more of them. This game has no recording yet, so there is nothing to compile carefully." xml:space="preserve">
+    <value>分批次在少量线程上预编译游戏中采集的管线，以便驱动保留更多管线。该游戏目前尚无采集，因此没有内容可供稳妥预编译。</value>
+  </data>
+  <data name="Compiles the pipelines recorded in the game in passes on {0} threads, so the driver keeps more of them; the rest at full speed." xml:space="preserve">
+    <value>分批次在 {0} 个线程上预编译游戏中采集的管线，以便驱动保留更多管线；其余部分则以全速预编译。</value>
+  </data>
+  <data name=" After the last compile, the game's first launch still compiled {0:0}% of its pipelines." xml:space="preserve">
+    <value> 上次预编译后，游戏首次启动时仍有 {0:0}% 的管线被重新编译。</value>
+  </data>
+  <data name="Clear cache ({0})" xml:space="preserve">
+    <value>清除缓存（{0}）</value>
+  </data>
+  <data name="Clear cache" xml:space="preserve">
+    <value>清除缓存</value>
+  </data>
+  <data name="Deletes this game's shader caches (the driver's and Windows', and the game's own if you choose) so its next run starts cold" xml:space="preserve">
+    <value>删除该游戏的着色器缓存（包括驱动缓存、Windows 缓存，以及你选择时删除的游戏自带缓存），使其下次启动时从头开始加载</value>
+  </data>
+  <data name="SCSKiller learns this game's driver cache files the first time it compiles it or sees it running" xml:space="preserve">
+    <value>SCSKiller 首次对该游戏进行预编译或看到其运行时，会学习该游戏的驱动缓存文件</value>
+  </data>
+  <data name="Source ({0})" xml:space="preserve">
+    <value>来源（{0}）</value>
+  </data>
+  <data name="Source: {0} ({1})" xml:space="preserve">
+    <value>来源：{0}（{1}）</value>
+  </data>
+  <data name=" · custom fork" xml:space="preserve">
+    <value> · 自定义分支</value>
+  </data>
+  <data name="No anti-cheat" xml:space="preserve">
+    <value>无反作弊</value>
+  </data>
+  <data name="No anti-cheat found: this game can be recorded" xml:space="preserve">
+    <value>未检测到反作弊：本游戏可被采集</value>
+  </data>
+  <data name="{0} treats an extra d3d12.dll as tampering: this game is never recorded" xml:space="preserve">
+    <value>{0} 会将额外的 d3d12.dll 视为篡改行为：本游戏绝不会被采集</value>
+  </data>
+  <data name="DLSS (by the driver)" xml:space="preserve">
+    <value>DLSS（由驱动提供）</value>
+  </data>
+  <data name="Also compiles: " xml:space="preserve">
+    <value>同时预编译：</value>
+  </data>
+  <data name="Detected: " xml:space="preserve">
+    <value>已检测到：</value>
+  </data>
+  <data name="Upscaler DLLs next to the game. Their pipelines are compiled with it once a recording of any game has seen that DLL version" xml:space="preserve">
+    <value>游戏旁的超分组件 DLL。一旦任何游戏的采集数据中出现过该 DLL 版本，其管线就会随之一并被预编译</value>
+  </data>
+  <data name=": on this PC, or for FSR and XeSS on any PC that shares them" xml:space="preserve">
+    <value>：在本电脑上，或对于 FSR 和 XeSS，在所有共享它们的电脑上均适用</value>
+  </data>
+  <data name=" (this plan: {0} of theirs)" xml:space="preserve">
+    <value>（此预编译方案：包含其中的 {0} 个）</value>
+  </data>
+  <data name="Record more play" xml:space="preserve">
+    <value>继续游玩并采集着色器</value>
+  </data>
+  <data name="Record 5 minutes of play" xml:space="preserve">
+    <value>游玩 5 分钟并采集着色器</value>
+  </data>
+  <data name=" Everything else is compiled." xml:space="preserve">
+    <value> 其余部分均已预编译。</value>
+  </data>
+  <data name=" Everything else compiles from the game files already." xml:space="preserve">
+    <value> 其余部分已能直接从游戏文件中预编译。</value>
+  </data>
+  <data name="Turn on recording and play as usual for about 5 minutes. SCSKiller learns this game's shader layout from it, then it can compile." xml:space="preserve">
+    <value>开启采集后，像往常一样游玩约 5 分钟。SCSKiller 会从中学习本游戏的着色器布局，然后即可进行预编译。</value>
+  </data>
+  <data name="Known once its first compile starts" xml:space="preserve">
+    <value>首次预编译开始后才会知晓</value>
+  </data>
+  <data name="Covers" xml:space="preserve">
+    <value>涵盖</value>
+  </data>
+  <data name="Will cover" xml:space="preserve">
+    <value>将涵盖</value>
+  </data>
+  <data name=" every DirectX 11 shader in the game files" xml:space="preserve">
+    <value> 游戏文件中的每个 DirectX 11 着色器</value>
+  </data>
+  <data name="Measured again on the next compile" xml:space="preserve">
+    <value>下次预编译时重新测量</value>
+  </data>
+  <data name="Its new plan covers" xml:space="preserve">
+    <value>新预编译方案覆盖</value>
+  </data>
+  <data name="Its last plan covered" xml:space="preserve">
+    <value>上次预编译方案覆盖</value>
+  </data>
+  <data name=" all the shader combinations found in this game" xml:space="preserve">
+    <value> 本游戏中发现的所有管线</value>
+  </data>
+  <data name=" about {0}% of the shader combinations found in this game" xml:space="preserve">
+    <value> 本游戏中发现的大约 {0}% 的管线</value>
+  </data>
+  <data name="Found in the game files" xml:space="preserve">
+    <value>在游戏文件中发现</value>
+  </data>
+  <data name="Your play recordings" xml:space="preserve">
+    <value>你的采集数据</value>
+  </data>
+  <data name="Your recording and the community database" xml:space="preserve">
+    <value>你的采集数据与社区数据库</value>
+  </data>
+  <data name="The community database" xml:space="preserve">
+    <value>社区数据库</value>
+  </data>
+  <data name="has a recording for this version" xml:space="preserve">
+    <value>已收录</value>
+  </data>
+  <data name="not in it yet" xml:space="preserve">
+    <value>未收录</value>
+  </data>
+  <data name="Its upscalers, learned from recordings" xml:space="preserve">
+    <value>从采集数据中获取的超分组件</value>
+  </data>
+  <data name="Its upscalers, from shared packs" xml:space="preserve">
+    <value>来自共享数据包的超分组件</value>
+  </data>
+  <data name="Its upscalers, from recordings and shared packs" xml:space="preserve">
+    <value>来自采集数据和共享数据包的超分组件</value>
+  </data>
+  <data name="DirectX 11 shaders" xml:space="preserve">
+    <value>DirectX 11 着色器</value>
+  </data>
+  <data name="Ray-traced effects" xml:space="preserve">
+    <value>光线追踪效果</value>
+  </data>
+  <data name="off in this game" xml:space="preserve">
+    <value>未启用</value>
+  </data>
+  <data name="inline, from the game files" xml:space="preserve">
+    <value>内联光线追踪（来自游戏文件）</value>
+  </data>
+  <data name="covered" xml:space="preserve">
+    <value>已覆盖</value>
+  </data>
+  <data name="being checked" xml:space="preserve">
+    <value>检查中</value>
+  </data>
+  <data name="not seen while recording" xml:space="preserve">
+    <value>采集中未发现</value>
+  </data>
+  <data name="inline ones covered" xml:space="preserve">
+    <value>内联光线追踪已覆盖</value>
+  </data>
+  <data name="mostly covered" xml:space="preserve">
+    <value>基本已覆盖</value>
+  </data>
+  <data name="need a recording" xml:space="preserve">
+    <value>需先采集</value>
+  </data>
+  <data name="Community recording downloaded {0:d}" xml:space="preserve">
+    <value>已于 {0:d} 下载社区采集</value>
+  </data>
+  <data name=" · yours shared {0:d}" xml:space="preserve">
+    <value> · 本机采集已于 {0:d} 共享</value>
+  </data>
+  <data name="Shared with the community database {0:d}" xml:space="preserve">
+    <value>已于 {0:d} 共享至社区数据库</value>
+  </data>
+  <data name="which {0} blocks" xml:space="preserve">
+    <value>其中 {0} 个已屏蔽</value>
+  </data>
+  <data name="Anything else compiles while you play: confirm the game's folder (Game folder… above) to record what's missing." xml:space="preserve">
+    <value>其他效果会在游玩时即时编译：请确认游戏文件夹（见上方的“游戏文件夹…”），以便采集缺失的内容。</value>
+  </data>
+  <data name="Anything else compiles while you play: {0} blocks the recording that would find it." xml:space="preserve">
+    <value>其他效果会在游玩时即时编译：{0} 会阻止采集，而采集正是发现这些效果的关键。</value>
+  </data>
+  <data name="The rest use shader slots this game's engine adds." xml:space="preserve">
+    <value>其余着色器使用了游戏引擎添加的着色器槽位。</value>
+  </data>
+  <data name=" A 5-minute recording lets SCSKiller rebuild them." xml:space="preserve">
+    <value> 采集约 5 分钟的着色器后，SCSKiller 就能重建这些槽位。</value>
+  </data>
+  <data name="The rest use shader slots SCSKiller can't rebuild yet, so they still compile while you play." xml:space="preserve">
+    <value>其余着色器使用的槽位暂时无法由 SCSKiller 重建，因此仍需在游玩时编译。</value>
+  </data>
+  <data name="SCSKiller hasn't seen how the game sets the rest up yet." xml:space="preserve">
+    <value>SCSKiller 尚未了解该游戏如何配置其余内容。</value>
+  </data>
+  <data name=" Playing longer with recording on teaches it." xml:space="preserve">
+    <value> 开启采集后多玩一会儿，就能获取这些设置。</value>
+  </data>
+  <data name="Recording is on: anything new you play is added the next time it compiles." xml:space="preserve">
+    <value>采集已开启：游玩时遇到的新着色器会加入下次预编译。</value>
+  </data>
+  <data name="Last time you played, {0:N0} still had to compile." xml:space="preserve">
+    <value>上次游玩时，仍有 {0:N0} 个着色器需要编译。</value>
+  </data>
+  <data name=" Recording picks them up." xml:space="preserve">
+    <value> 采集会将其收录。</value>
+  </data>
+  <data name="Nothing was missing last time you played." xml:space="preserve">
+    <value>上次游玩时没有发现缺失内容。</value>
+  </data>
+  <data name="Nothing SCSKiller knows of is missing." xml:space="preserve">
+    <value>据 SCSKiller 所知，没有缺失内容。</value>
+  </data>
+  <data name="A few effects are only put together while you play." xml:space="preserve">
+    <value>只有少数特效会在游玩时生成。</value>
+  </data>
+  <data name=" A short recording picks them up." xml:space="preserve">
+    <value> 一次简短的采集即可将其收录。</value>
+  </data>
+  <data name="Some shader states are guesses." xml:space="preserve">
+    <value>部分着色器状态为推测结果。</value>
+  </data>
+  <data name="Some shader states are guesses; a longer recording makes them exact." xml:space="preserve">
+    <value>部分着色器管线状态仅为推测；更长的采集可使其精确无误。</value>
+  </data>
+  <data name="Ray-traced effects aren't compiled yet" xml:space="preserve">
+    <value>光线追踪效果尚未预编译</value>
+  </data>
+  <data name="Some shaders still compile while you play" xml:space="preserve">
+    <value>部分着色器在游玩时仍需编译</value>
+  </data>
+  <data name="All" xml:space="preserve">
+    <value>全部</value>
+  </data>
+  <data name="not yet" xml:space="preserve">
+    <value>尚未</value>
+  </data>
+  <data name="Compile time" xml:space="preserve">
+    <value>预编译耗时</value>
+  </data>
+  <data name="Compile time (estimate)" xml:space="preserve">
+    <value>预编译耗时（预估）</value>
+  </data>
+  <data name="{0} min {1} s" xml:space="preserve">
+    <value>{0} 分钟 {1} 秒</value>
+  </data>
+  <data name="Disk space" xml:space="preserve">
+    <value>磁盘空间</value>
+  </data>
+  <data name="Disk space (estimate)" xml:space="preserve">
+    <value>磁盘空间（预估）</value>
+  </data>
+  <data name="None" xml:space="preserve">
+    <value>无</value>
+  </data>
+  <data name="Stutters last time you played" xml:space="preserve">
+    <value>上次游玩时的卡顿</value>
+  </data>
+  <data name="Compiles while you played" xml:space="preserve">
+    <value>游玩时的着色器编译</value>
+  </data>
+  <data name="Pipelines in the plan" xml:space="preserve">
+    <value>预编译方案中的管线</value>
+  </data>
+  <data name="Shaders in the game files" xml:space="preserve">
+    <value>游戏文件中的着色器</value>
+  </data>
+  <data name="Shader combinations found" xml:space="preserve">
+    <value>已找到的管线</value>
+  </data>
+  <data name="Left out" xml:space="preserve">
+    <value>已跳过</value>
+  </data>
+  <data name=" (shader slots SCSKiller can't rebuild)" xml:space="preserve">
+    <value>（SCSKiller 无法重建的着色器槽位）</value>
+  </data>
+  <data name=" ({0:N0} for shader slots SCSKiller can't rebuild)" xml:space="preserve">
+    <value>（{0:N0} 个着色器槽位 SCSKiller 无法重建）</value>
+  </data>
+  <data name="Left out for shader slots SCSKiller can't rebuild" xml:space="preserve">
+    <value>因 SCSKiller 无法重建着色器槽位而遗漏</value>
+  </data>
+  <data name="Recorded pipelines" xml:space="preserve">
+    <value>已采集的管线</value>
+  </data>
+  <data name="Built from the game files" xml:space="preserve">
+    <value>从游戏文件构建</value>
+  </data>
+  <data name="Upscaler pipelines" xml:space="preserve">
+    <value>超分组件管线</value>
+  </data>
+  <data name="Ray tracing shader libraries" xml:space="preserve">
+    <value>光线追踪着色器库</value>
+  </data>
+  <data name=" (not used by the game)" xml:space="preserve">
+    <value>（游戏未使用）</value>
+  </data>
+  <data name=" ({0:N0} not compiled)" xml:space="preserve">
+    <value>（{0:N0} 个未预编译）</value>
+  </data>
+  <data name="Shaders that trace rays inline" xml:space="preserve">
+    <value>内联光线追踪着色器</value>
+  </data>
+  <data name="In the community database" xml:space="preserve">
+    <value>在社区数据库中</value>
+  </data>
+  <data name="{0:N0} pipelines" xml:space="preserve">
+    <value>{0:N0} 个管线</value>
+  </data>
+  <data name="Community recording" xml:space="preserve">
+    <value>社区采集数据</value>
+  </data>
+  <data name="Synthesized pipeline templates" xml:space="preserve">
+    <value>合成的管线模板</value>
+  </data>
+  <data name="Shader layouts" xml:space="preserve">
+    <value>着色器布局</value>
+  </data>
+  <data name="Stage units exact / inferred / guessed" xml:space="preserve">
+    <value>阶段单元：精确 / 推断 / 猜测</value>
+  </data>
+  <data name="Vertex layouts from a recording" xml:space="preserve">
+    <value>来自采集的顶点布局</value>
+  </data>
+  <data name="Driver cache" xml:space="preserve">
+    <value>驱动着色器缓存</value>
+  </data>
+  <data name=" measured" xml:space="preserve">
+    <value> 已测量</value>
+  </data>
+  <data name=" estimated" xml:space="preserve">
+    <value> 已估算</value>
+  </data>
+  <data name="tested on this engine version" xml:space="preserve">
+    <value>此引擎版本已验证</value>
+  </data>
+  <data name="not needed (DirectX 11)" xml:space="preserve">
+    <value>不需要（DirectX 11）</value>
+  </data>
+  <data name="learned from recording" xml:space="preserve">
+    <value>根据采集还原</value>
+  </data>
+  <data name="not tested on this engine version yet" xml:space="preserve">
+    <value>此引擎版本尚未验证</value>
+  </data>
+  <data name="shipped with the shaders" xml:space="preserve">
+    <value>游戏文件自带</value>
+  </data>
+  <data name="First compile" xml:space="preserve">
+    <value>首次预编译</value>
+  </data>
+  <data name="Last compile" xml:space="preserve">
+    <value>上次预编译</value>
+  </data>
+  <data name=" Nothing failed." xml:space="preserve">
+    <value> 本次预编译无失败项。</value>
+  </data>
+  <data name=" The driver skipped {0:N0} combination{1}." xml:space="preserve">
+    <value> 有 {0:N0} 个管线未能通过驱动预编译。</value>
+  </data>
+  <data name=" It uses {0} of disk space." xml:space="preserve">
+    <value> 缓存占用 {0}。</value>
+  </data>
+  <data name="Its shader cache was cleared. The last compile took {0}." xml:space="preserve">
+    <value>着色器缓存已清空，上次预编译耗时 {0}。</value>
+  </data>
+  <data name="It takes about {0} and runs in the background, so you can keep using the PC." xml:space="preserve">
+    <value>预计耗时 {0}。预编译在后台进行，期间仍可使用电脑。</value>
+  </data>
+  <data name="It runs in the background, so you can keep using the PC." xml:space="preserve">
+    <value>预编译在后台进行，期间仍可使用电脑。</value>
+  </data>
+  <data name=" It adds about {0} to the driver's shader cache." xml:space="preserve">
+    <value> 预计新增约 {0} 的驱动着色器缓存。</value>
+  </data>
+  <data name="{0:N0} skipped" xml:space="preserve">
+    <value>已跳过 {0:N0} 个</value>
+  </data>
+  <data name="{0:N0} {1} skipped: {2} in this version of the game. Nothing to do." xml:space="preserve">
+    <value>已跳过 {0:N0} 个管线：当前游戏版本中没有对应的着色器，无需处理。</value>
+  </data>
+  <data name="its shader isn't" xml:space="preserve">
+    <value>其着色器不存在</value>
+  </data>
+  <data name="their shaders aren't" xml:space="preserve">
+    <value>它们的着色器不存在</value>
+  </data>
+  <data name="{0:N0} {1} skipped: {2} the GPU driver. If the game uses {3}, it compiles {4} itself." xml:space="preserve">
+    <value>已跳过 {0:N0} 个管线：预编译它们会导致显卡驱动崩溃。如果游戏需要这些管线，会在运行时自行编译。</value>
+  </data>
+  <data name="it crashes" xml:space="preserve">
+    <value>它会崩溃</value>
+  </data>
+  <data name="they crash" xml:space="preserve">
+    <value>它们会崩溃</value>
+  </data>
+  <data name="{0:N0} need{1} a recording on this PC: the game or a mod builds {2} while it runs, so they're in no game file. Play with &quot;Record while I play&quot; on to catch them." xml:space="preserve">
+    <value>有 {0:N0} 个管线需要在这台电脑上采集。对应的着色器由游戏或模组在运行时生成，不包含在游戏文件中。请开启“游玩时采集着色器”来收集它们。</value>
+  </data>
+  <data name="its shaders" xml:space="preserve">
+    <value>它的着色器</value>
+  </data>
+  <data name="their shaders" xml:space="preserve">
+    <value>它们的着色器</value>
+  </data>
+  <data name="Last time you played · {0}" xml:space="preserve">
+    <value>上次游玩时间 · {0}</value>
+  </data>
+  <data name="Nothing had to compile while you played: all {0:N0} shader combinations the game used were ready." xml:space="preserve">
+    <value>游玩期间无需编译：游戏使用的所有 {0:N0} 个管线都已就绪。</value>
+  </data>
+  <data name="Nothing had to compile while you played." xml:space="preserve">
+    <value>游玩期间无需编译。</value>
+  </data>
+  <data name=" (it took {0:0} ms)" xml:space="preserve">
+    <value>（耗时 {0:0} 毫秒）</value>
+  </data>
+  <data name=" (the longest took {0:0} ms)" xml:space="preserve">
+    <value>（最长耗时 {0:0} 毫秒）</value>
+  </data>
+  <data name="{0:N0} had to compile while you played{1}." xml:space="preserve">
+    <value>游玩期间有 {0:N0} 个管线需要编译{1}。</value>
+  </data>
+  <data name=" {0:N0} compiled while the game started." xml:space="preserve">
+    <value> 游戏启动期间编译了 {0:N0} 个管线。</value>
+  </data>
+  <data name=" The other {0:N0} were ready." xml:space="preserve">
+    <value> 其余 {0:N0} 个都已就绪。</value>
+  </data>
+  <data name="Ray tracing pipelines: {0:N0} ready, {1:N0} compiled while you played" xml:space="preserve">
+    <value>光线追踪管线：{0:N0} 已就绪，{1:N0} 在你游戏时完成编译</value>
+  </data>
+  <data name=", {0:N0} while the game started." xml:space="preserve">
+    <value>，{0:N0} 个在游戏启动时编译。</value>
+  </data>
+  <data name="{0:N0} ray-traced pipeline{1} the driver partly recompiles every launch." xml:space="preserve">
+    <value>{0:N0} 个光线追踪管线，驱动每次启动都会部分重新编译。</value>
+  </data>
+  <data name="Startup (the game's own shader precompile and first load): {0}. In play: {1:N0} frames of 50 ms or more, " xml:space="preserve">
+    <value>启动阶段（游戏自带的着色器预编译和首次加载）：{0}。游戏过程中：{1:N0} 帧的耗时达到或超过 50 毫秒，</value>
+  </data>
+  <data name="{0:N0} of 100 ms or more. Frame times stay on this PC." xml:space="preserve">
+    <value>{0:N0} 帧的耗时达到或超过 100 毫秒。帧时间会保留在此电脑上。</value>
+  </data>
+  <data name="{0:0} ms" xml:space="preserve">
+    <value>{0:0} 毫秒</value>
+  </data>
+  <data name="shader compile" xml:space="preserve">
+    <value>着色器编译</value>
+  </data>
+  <data name="other hitch" xml:space="preserve">
+    <value>其他卡顿</value>
+  </data>
+  <data name="quitting" xml:space="preserve">
+    <value>退出</value>
+  </data>
+  <data name="loading, compiling shaders" xml:space="preserve">
+    <value>正在加载，编译着色器</value>
+  </data>
+  <data name="loading" xml:space="preserve">
+    <value>加载中</value>
+  </data>
+  <data name="no stutters from shader compiles" xml:space="preserve">
+    <value>无着色器编译卡顿</value>
+  </data>
+  <data name="{0:N0} stutter{1} from shader compiles (worst {2})" xml:space="preserve">
+    <value>{0:N0} 次着色器编译卡顿（最严重 {2}）</value>
+  </data>
+  <data name=", no other hitches" xml:space="preserve">
+    <value>，无其他卡顿</value>
+  </data>
+  <data name=", {0:N0} other hitch{1}" xml:space="preserve">
+    <value>，{0:N0} 次其他卡顿</value>
+  </data>
+  <data name=", 1% low {0:0} fps." xml:space="preserve">
+    <value>，1% Low 帧率 {0:0} fps。</value>
+  </data>
+  <data name=" Loading: " xml:space="preserve">
+    <value>加载中：</value>
+  </data>
+  <data name="{0:N0} slow frame{1} compiling shaders (worst {2})" xml:space="preserve">
+    <value>{0:N0} 个编译着色器时的慢帧（最慢 {2}）</value>
+  </data>
+  <data name="{0:N0} slow frame{1}" xml:space="preserve">
+    <value>{0:N0} 个慢帧</value>
+  </data>
+  <data name="{0:N0} other{1}" xml:space="preserve">
+    <value>{0:N0} 处其他</value>
+  </data>
+  <data name="{0:N0} requests: {1:N0} from the game's own library, {2:N0} already in the driver cache, {3:N0} compiled during play" xml:space="preserve">
+    <value>{0:N0} 次请求：{1:N0} 次来自游戏自带着色器库，{2:N0} 次已在驱动缓存中，{3:N0} 次在游玩时编译</value>
+  </data>
+  <data name=", {0:N0} while the game started" xml:space="preserve">
+    <value>，游戏启动期间 {0:N0}</value>
+  </data>
+  <data name=", {0:N0} ray-traced pipelines the driver partly recompiles every launch" xml:space="preserve">
+    <value>，{0:N0} 条光线追踪管线在每次启动时会被驱动部分重新编译</value>
+  </data>
+  <data name="; ray tracing pipelines {0:N0} ready, {1:N0} compiled during play" xml:space="preserve">
+    <value>；光线追踪管线 {0:N0} 个已就绪，游玩期间编译了 {1:N0} 个</value>
+  </data>
+  <data name="{0} treats an extra d3d12.dll as tampering, so this game is compiled from its files only." xml:space="preserve">
+    <value>{0} 会将额外的 d3d12.dll 视为篡改行为，因此该游戏仅从其自带文件中编译着色器。</value>
+  </data>
+  <data name="Not available: {0} treats an extra d3d12.dll as tampering, so this game is compiled from its files only." xml:space="preserve">
+    <value>不可用：{0} 会将额外的 d3d12.dll 视为篡改行为，因此该游戏仅从其自带文件中编译着色器。</value>
+  </data>
+  <data name="Not available until you confirm the game's folder (Game folder… above): SCSKiller checks all of it for anti-cheat before it records." xml:space="preserve">
+    <value>在确认游戏文件夹（上方“游戏文件夹…”）前不可用：SCSKiller 会在采集前检查整个文件夹是否存在反作弊程序。</value>
+  </data>
+  <data name="Not available: {0}." xml:space="preserve">
+    <value>不可用：{0}。</value>
+  </data>
+  <data name="Adds a small d3d12.dll next to the game to catch anything the plan missed and time each frame, so this page shows what stuttered. Remove any time." xml:space="preserve">
+    <value>在游戏旁添加一个小型 d3d12.dll，捕获预编译方案遗漏的内容并为每一帧计时，从而在此页面显示卡顿来源。可随时移除。</value>
+  </data>
+  <data name=" The last launch wasn't recorded: {0}." xml:space="preserve">
+    <value> 上次启动未被采集：{0}。</value>
+  </data>
+  <data name="Record alongside {0}" xml:space="preserve">
+    <value>与 {0} 一同采集</value>
+  </data>
+  <data name="{0}'s d3d12.dll is renamed while the recorder is in, and restored exactly as it was when it's removed." xml:space="preserve">
+    <value>{0} 的 d3d12.dll 在采集器启用期间会被重命名，移除后则会恢复原样。</value>
+  </data>
+  <data name="Offline session running…" xml:space="preserve">
+    <value>离线采集中…</value>
+  </data>
+  <data name="Record offline without EasyAntiCheat (at your own risk)" xml:space="preserve">
+    <value>离线采集（风险自担）</value>
+  </data>
+  <data name="The recording uses {0} (in the game folder and SCSKiller's copy)" xml:space="preserve">
+    <value>采集数据占用了 {0}（位于游戏文件夹和 SCSKiller 的副本中）</value>
+  </data>
+  <data name=". Raise the limit in Settings, or clear the recording." xml:space="preserve">
+    <value>。请在“设置”中调高上限，或清除采集数据。</value>
+  </data>
+  <data name="Close the game first" xml:space="preserve">
+    <value>请先关闭游戏</value>
+  </data>
+  <data name="Deletes the recorded pipelines; the recorder stays in" xml:space="preserve">
+    <value>删除已采集的管线；采集器仍保留在游戏中</value>
+  </data>
+  <data name="Move {0} to the top" xml:space="preserve">
+    <value>将 {0} 移至顶部</value>
+  </data>
+  <data name="Move {0} up" xml:space="preserve">
+    <value>将 {0} 上移</value>
+  </data>
+  <data name="Move {0} down" xml:space="preserve">
+    <value>将 {0} 下移</value>
+  </data>
+  <data name="Remove {0} from the queue" xml:space="preserve">
+    <value>从队列中移除 {0}</value>
+  </data>
+  <data name="Reading shaders" xml:space="preserve">
+    <value>正在读取着色器</value>
+  </data>
+  <data name="Building plan" xml:space="preserve">
+    <value>生成预编译方案</value>
+  </data>
+  <data name="Preparing files" xml:space="preserve">
+    <value>正在准备文件</value>
+  </data>
+  <data name="Paused" xml:space="preserve">
+    <value>已暂停</value>
+  </data>
+  <data name="{0} · {1:0.0}% · {2:N0} of {3:N0} pipelines" xml:space="preserve">
+    <value>{0} · {1:0.0}% · {2:N0} / {3:N0} 个管线</value>
+  </data>
+  <data name=" · {0:N0} failed" xml:space="preserve">
+    <value> · {0:N0} 条失败</value>
+  </data>
+  <data name=" · {0:N0} skipped" xml:space="preserve">
+    <value> · 已跳过 {0:N0} 个</value>
+  </data>
+  <data name="Pause" xml:space="preserve">
+    <value>暂停</value>
+  </data>
+  <data name="{0} of {1}" xml:space="preserve">
+    <value>{0} / {1}</value>
+  </data>
+  <data name="CPU use: {0} of {1} threads, {2} priority" xml:space="preserve">
+    <value>CPU 占用：{0} / {1} 个线程，优先级 {2}</value>
+  </data>
+  <data name="below-normal" xml:space="preserve">
+    <value>低于正常</value>
+  </data>
+  <data name="idle" xml:space="preserve">
+    <value>空闲</value>
+  </data>
+  <data name="Nothing queued" xml:space="preserve">
+    <value>队列为空</value>
+  </data>
+  <data name="{0} game{1} · " xml:space="preserve">
+    <value>{0} 款游戏 · </value>
+  </data>
+  <data name="about {0} in total{1}" xml:space="preserve">
+    <value>总计约 {0}{1}</value>
+  </data>
+  <data name=", plus plans to build" xml:space="preserve">
+    <value>，加上待构建的方案</value>
+  </data>
+  <data name="time known once the plans are built" xml:space="preserve">
+    <value>方案生成后即可知晓时间</value>
+  </data>
+  <data name=" · not started" xml:space="preserve">
+    <value> · 尚未开始</value>
+  </data>
+  <data name="After this queue the cache is close to its {0} limit; older games may be evicted." xml:space="preserve">
+    <value>此队列完成后，缓存将接近 {0} 上限；驱动可能会清除较早生成的游戏着色器缓存。</value>
+  </data>
+  <data name="Failed: {0}" xml:space="preserve">
+    <value>失败：{0}</value>
+  </data>
+  <data name="Stopped at {0:N0} of {1:N0}: add it again to continue" xml:space="preserve">
+    <value>在 {0:N0} / {1:N0} 处停止：重新添加即可继续</value>
+  </data>
+  <data name="Stopped" xml:space="preserve">
+    <value>已停止</value>
+  </data>
+  <data name="Done · " xml:space="preserve">
+    <value>完成 · </value>
+  </data>
+  <data name="Done" xml:space="preserve">
+    <value>完成</value>
+  </data>
+  <data name="{0:N0} pipelines{1}" xml:space="preserve">
+    <value>{0:N0} 个管线{1}</value>
+  </data>
+  <data name=" + {0:N0} DirectX 11 shaders" xml:space="preserve">
+    <value> + {0:N0} 个 DirectX 11 着色器</value>
+  </data>
+  <data name="plan is built first" xml:space="preserve">
+    <value>方案需先生成</value>
+  </data>
+  <data name="16 GB (driver default)" xml:space="preserve">
+    <value>16 GB（驱动默认）</value>
+  </data>
+  <data name="32 GB" xml:space="preserve">
+    <value>32 GB</value>
+  </data>
+  <data name="100 GB" xml:space="preserve">
+    <value>100 GB</value>
+  </data>
+  <data name="Unlimited" xml:space="preserve">
+    <value>无限制</value>
+  </data>
+  <data name="{0} shader cache size" xml:space="preserve">
+    <value>{0} 着色器缓存大小</value>
+  </data>
+  <data name="Low" xml:space="preserve">
+    <value>低</value>
+  </data>
+  <data name="Medium" xml:space="preserve">
+    <value>中</value>
+  </data>
+  <data name="High" xml:space="preserve">
+    <value>高</value>
+  </data>
+  <data name="Couldn't read the setting" xml:space="preserve">
+    <value>无法读取该设置</value>
+  </data>
+  <data name="Now: Off" xml:space="preserve">
+    <value>当前：已关闭</value>
+  </data>
+  <data name="Now: On, {0}" xml:space="preserve">
+    <value>当前：已开启，{0}</value>
+  </data>
+  <data name="Setting on but the NVIDIA task is missing: click Apply to repair" xml:space="preserve">
+    <value>设置已开启，但 NVIDIA 任务缺失：点击“应用”进行修复</value>
+  </data>
+  <data name="Global driver setting, the same one as NVIDIA App › Graphics › Shader Cache Size. " xml:space="preserve">
+    <value>全局驱动设置，与 NVIDIA 应用 › 图形 › 着色器缓存大小中的设置相同。</value>
+  </data>
+  <data name="Global driver setting. " xml:space="preserve">
+    <value>全局驱动设置。</value>
+  </data>
+  <data name="When the cache is full the driver deletes older entries, and those games stutter again." xml:space="preserve">
+    <value>缓存满后，驱动会删除旧条目，这些游戏就会再次出现卡顿。</value>
+  </data>
+  <data name="The AMD driver's DirectX 12 shader cache is fixed at {0}; it has no size setting. " xml:space="preserve">
+    <value>AMD 驱动的 DirectX 12 着色器缓存固定为 {0}，没有大小设置。</value>
+  </data>
+  <data name="Past it, the driver removes the least recently used games' caches when a game starts, and SCSKiller shows those games as needing a compile again." xml:space="preserve">
+    <value>超过该限制后，启动游戏时驱动会移除使用最少游戏的缓存，SCSKiller 也会将这些游戏标记为需要重新预编译。</value>
+  </data>
+  <data name="SCSKiller can't change the cache size of {0} drivers yet, so it only shows what is used. " xml:space="preserve">
+    <value>SCSKiller 目前还无法更改 {0} 驱动的缓存大小，因此只显示已使用的缓存。</value>
+  </data>
+  <data name="If games get evicted, raise the limit in your GPU vendor's control panel." xml:space="preserve">
+    <value>如果游戏被移出，请在 GPU 厂商的控制面板中调高限制。</value>
+  </data>
+  <data name="Unknown" xml:space="preserve">
+    <value>未知</value>
+  </data>
+  <data name="Disabled" xml:space="preserve">
+    <value>已禁用</value>
+  </data>
+  <data name=" (driver default)" xml:space="preserve">
+    <value>（驱动默认值）</value>
+  </data>
+  <data name="Couldn't update the sign-in check: " xml:space="preserve">
+    <value>无法更新登录检查：</value>
+  </data>
+  <data name="Last rebuilt for driver {0}" xml:space="preserve">
+    <value>上次为驱动 {0} 重建</value>
+  </data>
+  <data name=" · {0} skipped: {1}" xml:space="preserve">
+    <value> · 跳过 {0} 个：{1}</value>
+  </data>
+  <data name="Recordings use {0} in {1} game{2}" xml:space="preserve">
+    <value>采集数据共占用 {0}，来自 {1} 款游戏</value>
+  </data>
+  <data name="No recordings on disk" xml:space="preserve">
+    <value>磁盘上没有采集数据</value>
+  </data>
+  <data name="Auto picks the best limit for this PC's memory ({0} GB here, with {1} GB of RAM). Set it lower to keep more memory free while compiling." xml:space="preserve">
+    <value>自动选择适合本电脑内存的最佳限制（此处为 {0} GB，可用内存为 {1} GB）。调低该值可在预编译期间保留更多空闲内存。</value>
+  </data>
+  <data name="{0} GB" xml:space="preserve">
+    <value>{0} GB</value>
+  </data>
+  <data name="Auto ({0} GB)" xml:space="preserve">
+    <value>自动（{0} GB）</value>
+  </data>
+  <data name="Below-normal priority." xml:space="preserve">
+    <value>低于正常优先级。</value>
+  </data>
+  <data name="Idle priority." xml:space="preserve">
+    <value>空闲优先级。</value>
+  </data>
+  <data name=" Fewer threads = slower compile, quieter PC." xml:space="preserve">
+    <value> 线程越少，编译越慢，电脑越安静。</value>
+  </data>
+  <data name="The list of games it covers is checked for everyone; the shared hashes need a Patreon subscription." xml:space="preserve">
+    <value>其覆盖的游戏列表对所有人都进行了检查；共享哈希值需要 Patreon 订阅。</value>
+  </data>
+  <data name="Your Patreon membership doesn't include it right now. What was downloaded before keeps working." xml:space="preserve">
+    <value>你的 Patreon 会员目前不包含此功能。之前下载的内容仍可继续使用。</value>
+  </data>
+  <data name="Checking your supporter status…" xml:space="preserve">
+    <value>正在检查你的支持者状态…</value>
+  </data>
+  <data name="Supporter status not checked yet." xml:space="preserve">
+    <value>尚未检查支持者状态。</value>
+  </data>
+  <data name="No supporter benefits right now. They start once your Patreon membership is active: then click Refresh status." xml:space="preserve">
+    <value>当前暂无支持者权益。你的 Patreon 会员激活后即可获得：然后点击“刷新状态”。</value>
+  </data>
+  <data name="Stable" xml:space="preserve">
+    <value>稳定版</value>
+  </data>
+  <data name="Beta (Patreon supporter)" xml:space="preserve">
+    <value>测试版（Patreon 支持者）</value>
+  </data>
+  <data name="Alpha (Patreon backer)" xml:space="preserve">
+    <value>抢先版（Patreon 支持者）</value>
+  </data>
+  <data name="Internal" xml:space="preserve">
+    <value>内部版</value>
+  </data>
+  <data name="Checking for updates…" xml:space="preserve">
+    <value>正在检查更新…</value>
+  </data>
+  <data name="Updates download in the background and install the next time SCSKiller starts or quits, never during a compile or a game." xml:space="preserve">
+    <value>更新会在后台下载，并在下次启动或退出 SCSKiller 时安装，绝不会在预编译或游戏期间安装。</value>
+  </data>
+  <data name="Updates download in the background; Restart to update installs them." xml:space="preserve">
+    <value>更新会在后台下载；重启后即可安装更新。</value>
+  </data>
+  <data name=" Leaving an early channel keeps this build until Stable passes it." xml:space="preserve">
+    <value> 退出早期频道后，此构建版本将保留，直到稳定版取代它为止。</value>
+  </data>
+  <data name="No licence stated" xml:space="preserve">
+    <value>未声明许可证</value>
+  </data>
+  <data name="Microsoft licence" xml:space="preserve">
+    <value>Microsoft 许可证</value>
+  </data>
+  <data name="No licence text is published with it." xml:space="preserve">
+    <value>未随附任何许可证文本。</value>
+  </data>
+  <data name="Version " xml:space="preserve">
+    <value>版本 </value>
+  </data>
+  <data name=" · {0}{1} channel" xml:space="preserve">
+    <value> · {0}{1} 频道</value>
+  </data>
+  <data name="Downloading…" xml:space="preserve">
+    <value>正在下载…</value>
+  </data>
+  <data name="sign in with Patreon first" xml:space="preserve">
+    <value>请先使用 Patreon 登录</value>
+  </data>
+  <data name="Saved to " xml:space="preserve">
+    <value>已保存到 </value>
+  </data>
+  <data name="Couldn't download it: " xml:space="preserve">
+    <value>无法下载：</value>
+  </data>
+  <data name="Downloading SCSKiller {0}…" xml:space="preserve">
+    <value>正在下载 SCSKiller {0}…</value>
+  </data>
+  <data name="SCSKiller is up to date." xml:space="preserve">
+    <value>SCSKiller 已是最新版本。</value>
+  </data>
+  <data name="Library" xml:space="preserve">
+    <value>游戏库</value>
+  </data>
+  <data name="{0}'s folder" xml:space="preserve">
+    <value>{0} 的文件夹</value>
+  </data>
+  <data name="Save" xml:space="preserve">
+    <value>保存</value>
+  </data>
+  <data name="Couldn't set the game folder" xml:space="preserve">
+    <value>无法设置游戏文件夹</value>
+  </data>
+  <data name="OK" xml:space="preserve">
+    <value>确定</value>
+  </data>
+  <data name="Remove {0} from the library?" xml:space="preserve">
+    <value>要从游戏库中移除 {0} 吗？</value>
+  </data>
+  <data name="SCSKiller forgets the game and takes its recorder out of the game's folder. The game's own files stay, and you can add it again any time." xml:space="preserve">
+    <value>SCSKiller 将不再采集该游戏，并将其采集器从游戏文件夹中移除。游戏本身的文件会保留，你可以随时重新添加该游戏。</value>
+  </data>
+  <data name="Remove" xml:space="preserve">
+    <value>移除</value>
+  </data>
+  <data name="Couldn't remove the game" xml:space="preserve">
+    <value>无法移除游戏</value>
+  </data>
+  <data name="The game will compile shaders during play again until you re-warm it." xml:space="preserve">
+    <value>在你重新预编译之前，该游戏在运行时将再次编译着色器。</value>
+  </data>
+  <data name=" Anti-cheat game: only the driver cache is cleared." xml:space="preserve">
+    <value> 反作弊游戏：仅清除驱动缓存。</value>
+  </data>
+  <data name="Measuring the cache files…
+
+" xml:space="preserve">
+    <value>正在测量缓存文件…
+
+</value>
+  </data>
+  <data name="Clear the shader cache of {0}?" xml:space="preserve">
+    <value>清除 {0} 的着色器缓存？</value>
+  </data>
+  <data name="Nothing was cleared: no shader-cache files of this game were found." xml:space="preserve">
+    <value>未清除任何内容：未找到该游戏的着色器缓存文件。</value>
+  </data>
+  <data name="No cache files on disk now" xml:space="preserve">
+    <value>当前磁盘上没有缓存文件</value>
+  </data>
+  <data name="Also delete the game's own shader cache ({0}). It rebuilds it at its next start, which then takes longer." xml:space="preserve">
+    <value>同时删除游戏自带的着色器缓存（{0}）。游戏下次启动时会重新生成该缓存，届时启动时间会更长。</value>
+  </data>
+  <data name="Clear the recording of {0}?" xml:space="preserve">
+    <value>清除 {0} 的采集数据？</value>
+  </data>
+  <data name="Clear recording" xml:space="preserve">
+    <value>清除采集数据</value>
+  </data>
+  <data name="Nothing was cleared: no recording of this game was found." xml:space="preserve">
+    <value>未清除任何内容：未找到该游戏的采集数据。</value>
+  </data>
+  <data name="Start {0} offline without EasyAntiCheat?" xml:space="preserve">
+    <value>在不启动 EasyAntiCheat 的情况下以离线模式启动 {0}？</value>
+  </data>
+  <data name=" Online play isn't possible in that session." xml:space="preserve">
+    <value> 该会话无法进行在线游戏。</value>
+  </data>
+  <data name="Record offline session" xml:space="preserve">
+    <value>开始离线采集</value>
+  </data>
+  <data name="Change…" xml:space="preserve">
+    <value>更改…</value>
+  </data>
+  <data name="Before it records, SCSKiller checks the whole game folder for anti-cheat. " xml:space="preserve">
+    <value>在开始采集前，SCSKiller 会检查整个游戏文件夹是否存在反作弊程序。</value>
+  </data>
+  <data name="Pick the game's own folder, not one that holds other games." xml:space="preserve">
+    <value>请选择游戏本身的文件夹，不要选择存放了其他游戏的文件夹。</value>
+  </data>
+  <data name="Game" xml:space="preserve">
+    <value>游戏</value>
+  </data>
+  <data name="Program (the recorder goes next to it)" xml:space="preserve">
+    <value>程序（采集器将放在其旁边）</value>
+  </data>
+  <data name="Game folder" xml:space="preserve">
+    <value>游戏文件夹</value>
+  </data>
+  <data name="Use this folder" xml:space="preserve">
+    <value>使用此文件夹</value>
+  </data>
+  <data name="Couldn't open the folder picker: " xml:space="preserve">
+    <value>无法打开文件夹选择器：</value>
+  </data>
+  <data name="Add game" xml:space="preserve">
+    <value>添加游戏</value>
+  </data>
+  <data name="Couldn't open the file picker" xml:space="preserve">
+    <value>无法打开文件选择器</value>
+  </data>
+  <data name="Couldn't add this game" xml:space="preserve">
+    <value>无法添加此游戏</value>
+  </data>
+  <data name="Add {0}" xml:space="preserve">
+    <value>添加 {0}</value>
+  </data>
+  <data name="you added it already" xml:space="preserve">
+    <value>你已添加过它</value>
+  </data>
+  <data name="SCSKiller found it in {0}" xml:space="preserve">
+    <value>SCSKiller 已在 {0} 中找到它</value>
+  </data>
+  <data name="Already in your library" xml:space="preserve">
+    <value>已在你的游戏库中</value>
+  </data>
+  <data name="{0} is in the list: {1}." xml:space="preserve">
+    <value>{0} 已在列表中：{1}。</value>
+  </data>
+  <data name="Open" xml:space="preserve">
+    <value>打开</value>
+  </data>
+  <data name="{0}: {1}. Refresh the library to see it." xml:space="preserve">
+    <value>{0}：{1}。刷新游戏库即可查看。</value>
+  </data>
+  <data name="0x followed by 64 hex digits" xml:space="preserve">
+    <value>0x 后跟 64 个十六进制数字</value>
+  </data>
+  <data name="AES key" xml:space="preserve">
+    <value>AES 密钥</value>
+  </data>
+  <data name="Why can't {0} be compiled?" xml:space="preserve">
+    <value>为什么 {0} 无法预编译？</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>关闭</value>
+  </data>
+  <data name="Unlock" xml:space="preserve">
+    <value>解锁</value>
+  </data>
+  <data name="That key didn't work" xml:space="preserve">
+    <value>该密钥无效</value>
+  </data>
+  <data name="It doesn't open this game's files." xml:space="preserve">
+    <value>它无法打开此游戏的文件。</value>
+  </data>
+  <data name="Record {0}?" xml:space="preserve">
+    <value>采集 {0}？</value>
+  </data>
+  <data name="SCSKiller adds a small d3d12.dll next to the game that writes down every pipeline it creates. " xml:space="preserve">
+    <value>SCSKiller 会在游戏旁边添加一个小型 d3d12.dll，用于采集其创建的每个管线。</value>
+  </data>
+  <data name="Play for about 5 minutes, close the game, then add it to the compile queue. You can remove it any time from the game's page." xml:space="preserve">
+    <value>运行游戏约 5 分钟后关闭，然后将其加入预编译队列。你可以随时从游戏页面中移除它。</value>
+  </data>
+  <data name="Add recorder" xml:space="preserve">
+    <value>添加采集器</value>
+  </data>
+  <data name="Couldn't add the recorder" xml:space="preserve">
+    <value>无法添加采集器</value>
+  </data>
+  <data name="Set the shader cache limit to {0}?" xml:space="preserve">
+    <value>将着色器缓存上限设为 {0}？</value>
+  </data>
+  <data name="Raising it deletes nothing. Lowering it below what is used now makes the driver delete older entries, and those games stutter again. " xml:space="preserve">
+    <value>调高该值不会删除任何内容。若调至低于当前使用值，驱动将删除旧条目，导致那些游戏再次出现卡顿。</value>
+  </data>
+  <data name="You can switch back to the driver default here at any time." xml:space="preserve">
+    <value>你可以随时在此处切换回驱动默认设置。</value>
+  </data>
+  <data name="Change limit" xml:space="preserve">
+    <value>更改限制</value>
+  </data>
+  <data name="Cancelled." xml:space="preserve">
+    <value>已取消。</value>
+  </data>
+  <data name="Shader cache limit set to {0}." xml:space="preserve">
+    <value>着色器缓存限制已设为 {0}。</value>
+  </data>
+  <data name="The limit was not changed: " xml:space="preserve">
+    <value>限制未更改：</value>
+  </data>
+  <data name="Turn off NVIDIA Auto Shader Compilation?" xml:space="preserve">
+    <value>关闭 NVIDIA 自动着色器编译？</value>
+  </data>
+  <data name="Turn on NVIDIA Auto Shader Compilation ({0})?" xml:space="preserve">
+    <value>启用 NVIDIA 自动着色器编译（{0}）？</value>
+  </data>
+  <data name="Auto Shader Compilation is a beta feature by NVIDIA®." xml:space="preserve">
+    <value>自动着色器编译是 NVIDIA® 的一项测试版功能。</value>
+  </data>
+  <data name="Turn off" xml:space="preserve">
+    <value>关闭</value>
+  </data>
+  <data name="Turn on" xml:space="preserve">
+    <value>启用</value>
+  </data>
+  <data name="Turned off." xml:space="preserve">
+    <value>已关闭。</value>
+  </data>
+  <data name="Turned on ({0})." xml:space="preserve">
+    <value>已启用（{0}）。</value>
+  </data>
+  <data name="Not changed: " xml:space="preserve">
+    <value>未更改：</value>
+  </data>
+  <data name="{0:0.#} GB" xml:space="preserve">
+    <value>{0:0.#} GB</value>
+  </data>
+  <data name="{0:0} MB" xml:space="preserve">
+    <value>{0:0} MB</value>
+  </data>
+  <data name=": {0:N0} known pipelines, compiled with the game" xml:space="preserve">
+    <value>：{0:N0} 个已知管线，随游戏一同编译</value>
+  </data>
+  <data name=": compiled by the NVIDIA driver itself" xml:space="preserve">
+    <value>：由 NVIDIA 驱动自行编译</value>
+  </data>
+  <data name=": detected; added after a recording sees them" xml:space="preserve">
+    <value>：已检测；采集发现后会添加</value>
+  </data>
+  <data name="SCSKiller doesn't compile on Intel GPUs yet: how Intel's driver caches shaders hasn't been measured. Support is planned." xml:space="preserve">
+    <value>SCSKiller 目前还无法在 Intel GPU 上进行预编译：Intel 驱动如何缓存着色器尚未得到实测。相关支持已在计划中。</value>
+  </data>
+  <data name="SCSKiller doesn't compile on Qualcomm GPUs yet: how Qualcomm's driver caches shaders hasn't been measured." xml:space="preserve">
+    <value>SCSKiller 目前还无法在 Qualcomm GPU 上进行预编译：Qualcomm 驱动如何缓存着色器尚未得到实测。</value>
+  </data>
+  <data name="SCSKiller doesn't compile on this GPU yet: it only knows how NVIDIA and AMD drivers cache shaders." xml:space="preserve">
+    <value>SCSKiller 目前还无法在此 GPU 上进行预编译：它只了解 NVIDIA 和 AMD 驱动如何缓存着色器。</value>
+  </data>
+  <data name="Driver {0} · {1:0}% still compiled" xml:space="preserve">
+    <value>驱动 {0} · 仍有 {1:0}% 需要编译</value>
+  </data>
+  <data name="Recorder on: play with ray tracing" xml:space="preserve">
+    <value>采集器已开启：游玩时启用光线追踪</value>
+  </data>
+  <data name="Ray tracing needs a recording" xml:space="preserve">
+    <value>光线追踪需要一次采集</value>
+  </data>
+  <data name="Ray tracing needs a 5-min recording" xml:space="preserve">
+    <value>光线追踪需要 5 分钟的采集</value>
+  </data>
+  <data name="Driver {0}" xml:space="preserve">
+    <value>驱动 {0}</value>
+  </data>
+  <data name=" · partly covered" xml:space="preserve">
+    <value> · 部分已覆盖</value>
+  </data>
+  <data name="Recording paused: limit reached" xml:space="preserve">
+    <value>采集已暂停：已达上限</value>
+  </data>
+  <data name="Recorder on: play 5 minutes" xml:space="preserve">
+    <value>采集已开启：游玩 5 分钟</value>
+  </data>
+  <data name="For ray-traced effects" xml:space="preserve">
+    <value>用于光线追踪效果</value>
+  </data>
+  <data name=" · in the community database" xml:space="preserve">
+    <value> · 在社区数据库中</value>
+  </data>
+  <data name="Play into the game world" xml:space="preserve">
+    <value>进入游戏世界</value>
+  </data>
+  <data name="Turn on Record and play" xml:space="preserve">
+    <value>开启采集并游玩</value>
+  </data>
+  <data name="Ray tracing not compiled" xml:space="preserve">
+    <value>光线追踪未编译</value>
+  </data>
+  <data name="Ray tracing blocked by {0}" xml:space="preserve">
+    <value>光线追踪被 {0} 阻止</value>
+  </data>
+  <data name="No ray tracing seen while recording" xml:space="preserve">
+    <value>采集期间未检测到光线追踪</value>
+  </data>
+  <data name="Path tracing needs a recording" xml:space="preserve">
+    <value>路径追踪需要采集</value>
+  </data>
+  <data name="Partly covered" xml:space="preserve">
+    <value>部分已覆盖</value>
+  </data>
+  <data name="Not tested on this engine version" xml:space="preserve">
+    <value>未在此引擎版本上测试</value>
+  </data>
+  <data name="DirectX 11; DirectX 12 needs a recording" xml:space="preserve">
+    <value>DirectX 11；DirectX 12 需要采集</value>
+  </data>
+  <data name="DirectX 11 and 12" xml:space="preserve">
+    <value>DirectX 11 和 12</value>
+  </data>
+  <data name="{0} changes all its pipelines" xml:space="preserve">
+    <value>{0} 会更改其所有管线</value>
+  </data>
+  <data name="Blocked by {0}" xml:space="preserve">
+    <value>被 {0} 阻止</value>
+  </data>
+  <data name="Needs a recording: confirm its folder" xml:space="preserve">
+    <value>需要采集：请确认其文件夹</value>
+  </data>
+  <data name="No DirectX shaders" xml:space="preserve">
+    <value>无 DirectX 着色器</value>
+  </data>
+  <data name="Engine not supported yet" xml:space="preserve">
+    <value>引擎暂不支持</value>
+  </data>
+  <data name="Couldn't read the game files" xml:space="preserve">
+    <value>无法读取游戏文件</value>
+  </data>
+  <data name="Runs on " xml:space="preserve">
+    <value>运行于 </value>
+  </data>
+  <data name="Not supported on this GPU yet" xml:space="preserve">
+    <value>此 GPU 暂不支持</value>
+  </data>
+  <data name="Driver {0} cleared its cache" xml:space="preserve">
+    <value>{0} 驱动已清除其缓存</value>
+  </data>
+  <data name="The driver trimmed its cache" xml:space="preserve">
+    <value>驱动已缩减其缓存</value>
+  </data>
+  <data name="Its shader cache was removed" xml:space="preserve">
+    <value>其着色器缓存已被移除</value>
+  </data>
+  <data name="The compile missed the game's cache" xml:space="preserve">
+    <value>预编译未能覆盖游戏缓存</value>
+  </data>
+  <data name="The exe name's case changed" xml:space="preserve">
+    <value>exe 名称的大小写已更改</value>
+  </data>
+  <data name="Game updated" xml:space="preserve">
+    <value>游戏已更新</value>
+  </data>
+  <data name="Game shaders changed" xml:space="preserve">
+    <value>游戏着色器已更改</value>
+  </data>
+  <data name="SCSKiller can compile more" xml:space="preserve">
+    <value>SCSKiller 现在可以预编译更多着色器</value>
+  </data>
+  <data name="Maximum mode: more to compile" xml:space="preserve">
+    <value>最大覆盖模式：仍有更多着色器需要预编译</value>
+  </data>
+  <data name="Follow Windows" xml:space="preserve">
+    <value>跟随 Windows</value>
+    <comment>Settings language selector</comment>
+  </data>
+  <data name="Welcome to SCSKiller" xml:space="preserve">
+    <value>欢迎使用 SCSKiller</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="SCSKiller is free and open source. Everything it does on your PC is free, with no account needed." xml:space="preserve">
+    <value>SCSKiller 免费且开源。它在你的电脑上执行的所有操作都免费，无需创建账户。</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="Patreon supporters get access to the community shader hash database and to beta and alpha builds. Patreon pays for the servers that run it." xml:space="preserve">
+    <value>Patreon 支持者可以访问社区着色器哈希数据库以及 Beta 和 Alpha 版本。Patreon 为运行该服务的服务器提供资金。</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="Once a day the app tells our server that an install is active, with its version and GPU vendor and no identifier; you can turn that off in Settings." xml:space="preserve">
+    <value>每天，该应用会向我们的服务器报告一次安装处于活动状态，并附上其版本、GPU 厂商，但不含任何标识符；你可以在“设置”中关闭此功能。</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="About supporting SCSKiller" xml:space="preserve">
+    <value>关于支持 SCSKiller</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="Help improve the community shader hash database (shared anonymously)" xml:space="preserve">
+    <value>帮助改进社区着色器哈希数据库（匿名共享）</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="Continue without" xml:space="preserve">
+    <value>继续而不支持</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="Compile now" xml:space="preserve">
+    <value>立即预编译</value>
+    <comment>Notification buttons</comment>
+  </data>
+  <data name="When idle" xml:space="preserve">
+    <value>空闲时编译</value>
+    <comment>Notification buttons</comment>
+  </data>
+  <data name="Skip" xml:space="preserve">
+    <value>跳过</value>
+    <comment>Notification buttons</comment>
+  </data>
+  <data name="Show" xml:space="preserve">
+    <value>显示</value>
+    <comment>Notification buttons</comment>
+  </data>
+  <data name="Encrypted game files (needs the game's AES key)" xml:space="preserve">
+    <value>加密的游戏文件（需要游戏的 AES 密钥）</value>
+  </data>
+  <data name="No shaders found (no shader library, no global shader cache)" xml:space="preserve">
+    <value>未找到着色器（无着色器库，也无全局着色器缓存）</value>
+  </data>
+  <data name="Not in the community database yet" xml:space="preserve">
+    <value>社区数据库尚未收录</value>
+  </data>
+  <data name="Its anti-cheat" xml:space="preserve">
+    <value>其反作弊机制</value>
+  </data>
+  <data name="Needs a recording, once you confirm its game folder" xml:space="preserve">
+    <value>需先确认游戏文件夹，再采集着色器</value>
+  </data>
+  <data name="No recording needed" xml:space="preserve">
+    <value>无需采集</value>
+  </data>
+  <data name="Planned from a recording" xml:space="preserve">
+    <value>根据采集生成预编译方案</value>
+  </data>
+  <data name="Turn on recording and play for about 5 minutes" xml:space="preserve">
+    <value>开启采集，然后游玩约 5 分钟</value>
+  </data>
+  <data name="The recording has no draws: play into the game world" xml:space="preserve">
+    <value>采集数据中没有绘制信息：请进入实际游戏场景游玩，不要只停留在菜单</value>
+  </data>
+  <data name="The driver's shader cache is disabled, so there is nothing to compile into. Set a cache size first." xml:space="preserve">
+    <value>驱动的着色器缓存已禁用，无法写入预编译结果。请先设置缓存大小。</value>
+  </data>
+  <data name="NvOSC.exe was not found in the NVIDIA driver's folder (it needs driver r610 or newer)" xml:space="preserve">
+    <value>未在 NVIDIA 驱动文件夹中找到 NvOSC.exe（需要 r610 或更新的驱动）</value>
+  </data>
+  <data name="This NVIDIA driver can't switch Auto Shader Compilation from outside the NVIDIA App (no NvAPI_DRS_SetSettingEx)" xml:space="preserve">
+    <value>此 NVIDIA 驱动暂不支持由外部程序切换“自动着色器编译”（缺少 NvAPI_DRS_SetSettingEx），需在 NVIDIA App 中设置</value>
+  </data>
+  <data name="Switching NVIDIA Auto Shader Compilation needs administrator rights" xml:space="preserve">
+    <value>切换 NVIDIA 自动着色器编译功能需要管理员权限</value>
+  </data>
+  <data name="Couldn't read its files: {0}" xml:space="preserve">
+    <value>无法读取其文件：{0}</value>
+  </data>
+  <data name="Runs on {0}" xml:space="preserve">
+    <value>运行于 {0}</value>
+  </data>
+  <data name="{0} (last run)" xml:space="preserve">
+    <value>{0}（上次运行）</value>
+  </data>
+  <data name="Needs a recording, which {0} blocks" xml:space="preserve">
+    <value>需要采集，但 {0} 会阻止该操作</value>
+  </data>
+  <data name="Needs a recording, which {0} blocks unless you record an offline session (game page)" xml:space="preserve">
+    <value>需要采集着色器，但受 {0} 限制，常规采集无法使用。请在游戏详情页使用离线采集模式</value>
+  </data>
+  <data name="No raw DXBC/DXIL shaders in its files ({0} GB sampled): shaders are compressed or packed: needs an engine reader" xml:space="preserve">
+    <value>其文件中没有原始的 DXBC/DXIL 着色器（已采样 {0} GB）：着色器已被压缩或打包，需要使用引擎文件解析器</value>
+  </data>
+  <data name="Only {0} raw compute shaders: graphics shaders are compressed or packed: needs an engine reader" xml:space="preserve">
+    <value>仅有 {0} 个原始计算着色器：图形着色器已被压缩或打包：需要引擎文件解析器</value>
+  </data>
+  <data name="Only {0} raw graphics shaders: the rest are compressed or packed: needs an engine reader" xml:space="preserve">
+    <value>仅有 {0} 个原始图形着色器：其余着色器已被压缩或打包：需要引擎文件解析器</value>
+  </data>
+  <data name="Shader dump version {0}: SCSKiller reads version {1}" xml:space="preserve">
+    <value>着色器转储版本 {0}：SCSKiller 读取的是版本 {1}</value>
+  </data>
+  <data name="Listed with {0}, but the game runs {1}" xml:space="preserve">
+    <value>识别到的启动程序是 {0}，但游戏实际运行的是 {1}</value>
+  </data>
+  <data name="Unity {0}: none of {1} built-in shaders has DirectX (d3d11) code this reader can read" xml:space="preserve">
+    <value>Unity {0}：在 {1} 个内置着色器中，没有一个是此解析器能读取的 DirectX（d3d11）着色器</value>
+  </data>
+  <data name="No D3D shaders ({0})" xml:space="preserve">
+    <value>没有 D3D 着色器（{0}）</value>
+  </data>
+  <data name="No shader containers in its packages' material files (commonest files: {0})" xml:space="preserve">
+    <value>游戏资源包的材质文件中没有找到着色器容器（最常见文件：{0}）</value>
+  </data>
+  <data name="Luma isn't supported with {0} yet" xml:space="preserve">
+    <value>Luma 暂不支持 {0}</value>
+  </data>
+  <data name="ReShade must be next to the game's exe to compile through {0}" xml:space="preserve">
+    <value>必须将 ReShade 放在游戏 exe 文件旁，才能通过 {0} 进行预编译</value>
+  </data>
+  <data name="Set LoadReshade=true in OptiScaler.ini to compile through {0}" xml:space="preserve">
+    <value>在 OptiScaler.ini 中设置 LoadReshade=true，才能通过 {0} 进行预编译</value>
+  </data>
+  <data name="Fix the section headers in OptiScaler.ini to compile through {0}" xml:space="preserve">
+    <value>需修正 OptiScaler.ini 中的配置节名称，才能通过 {0} 进行预编译</value>
+  </data>
+  <data name="Rename ReShade to dxgi.dll next to the exe to compile through {0}" xml:space="preserve">
+    <value>将 ReShade 重命名为 dxgi.dll 并放在 exe 文件旁，才能通过 {0} 进行预编译</value>
+  </data>
+  <data name="NvOSC.exe {0} did not finish within a minute" xml:space="preserve">
+    <value>NvOSC.exe {0} 未在一分钟内完成</value>
+  </data>
+  <data name="The setting was saved, but NvOSC.exe {0} failed (exit code {1})" xml:space="preserve">
+    <value>设置已保存，但 NvOSC.exe {0} 失败（退出代码 {1}）</value>
+  </data>
+  <data name="On" xml:space="preserve">
+    <value>开启</value>
+  </data>
+  <data name="{0} s" xml:space="preserve">
+    <value>{0} 秒</value>
+  </data>
+  <data name="{0} min" xml:space="preserve">
+    <value>{0} 分钟</value>
+  </data>
+  <data name="{0} h" xml:space="preserve">
+    <value>{0} 小时</value>
+  </data>
+  <data name="{0} h {1} min" xml:space="preserve">
+    <value>{0} 小时 {1} 分钟</value>
+  </data>
+  <data name="{0:0.0} s" xml:space="preserve">
+    <value>{0:0.0} 秒</value>
+  </data>
+  <data name="SCSKiller measurement" xml:space="preserve">
+    <value>SCSKiller 实测</value>
+  </data>
+  <data name="Recording paused: limit reached ({0})" xml:space="preserve">
+    <value>采集已暂停：达到容量上限（{0}）</value>
+  </data>
+  <data name="This GPU's driver reuses ray tracing pipelines only exactly as the game builds them, and which ones it builds isn't in its files." xml:space="preserve">
+    <value>该 GPU 的驱动仅会复用与游戏实际创建结果完全一致的光线追踪管线，而游戏会创建哪些管线并不在其文件中。</value>
+  </data>
+  <data name="SCSKiller can't rebuild {0}'s ray tracing layout from the game files yet." xml:space="preserve">
+    <value>SCSKiller 尚无法从游戏文件中还原 {0} 的光线追踪布局。</value>
+  </data>
+  <data name="this engine" xml:space="preserve">
+    <value>此引擎</value>
+  </data>
+  <data name="another mod" xml:space="preserve">
+    <value>其他模组</value>
+  </data>
+  <data name="Ray-traced effects need one short recording" xml:space="preserve">
+    <value>光线追踪效果需要一小段游玩采集。</value>
+  </data>
+  <data name="Ray-traced effects need one short recording, or a community recording for this version" xml:space="preserve">
+    <value>光线追踪效果需要一小段游玩采集，或此游戏版本对应的社区采集。</value>
+  </data>
+  <data name="no ray tracing seen while recording: turn it on in the game and play to cover it" xml:space="preserve">
+    <value>采集期间未发现光线追踪：请在游戏中启用光线追踪并游玩，以覆盖这部分内容</value>
+  </data>
+  <data name="ray tracing that uses separate pipelines (such as path tracing) is compiled only from a recording" xml:space="preserve">
+    <value>使用独立管线的光线追踪（如路径追踪）只能根据游玩采集进行预编译。</value>
+  </data>
+  <data name="Shader-compilation stutter persisted through Patch 4; SCSKiller cut its startup shader compile from 813 s to 3.2 s of compile time" xml:space="preserve">
+    <value>截至 4 号补丁，着色器编译卡顿仍存在；SCSKiller 将启动时的着色器编译耗时从 813 秒缩短至 3.2 秒</value>
+  </data>
+  <data name="Skipping its optional shader precompile causes stutter entering new locations (the director confirmed it)" xml:space="preserve">
+    <value>跳过游戏可选的着色器预编译，会在进入新区域时造成卡顿（游戏总监已确认）</value>
+  </data>
+  <data name="Its own &quot;Preparing Shaders&quot; step is incomplete: shader and traversal stutter remain" xml:space="preserve">
+    <value>游戏自带的“Preparing Shaders”（准备着色器）步骤不完整，仍有着色器编译卡顿和跑图卡顿</value>
+  </data>
+  <data name="Severe UE5 shader-compilation hitches; its precompile is incomplete and patch 2.0 made it worse" xml:space="preserve">
+    <value>存在严重的 UE5 着色器编译卡顿；预编译覆盖不完整，2.0 补丁后问题更加严重</value>
+  </data>
+  <data name="Players still report shader-compilation stutter; a larger driver shader cache helps" xml:space="preserve">
+    <value>玩家仍反映存在着色器编译卡顿；增大驱动着色器缓存有助于缓解</value>
+  </data>
+  <data name="Compiles shaders once at first launch but not again after a driver update" xml:space="preserve">
+    <value>仅在首次启动时编译一次着色器，更新驱动后却不会重新编译</value>
+  </data>
+  <data name="No shader precompile step; players still report shader-compilation stutter" xml:space="preserve">
+    <value>没有着色器预编译步骤；玩家仍反映存在着色器编译卡顿</value>
+  </data>
+  <data name="Shader-compilation stutter on first-time events; players raise the driver shader cache to 100 GB" xml:space="preserve">
+    <value>首次触发事件时出现着色器编译卡顿；玩家将驱动着色器缓存增至 100 GB</value>
+  </data>
+  <data name="Both shader-compilation and traversal stutter reported" xml:space="preserve">
+    <value>报告同时存在着色器编译卡顿和跑图卡顿</value>
+  </data>
+  <data name="UE5 shader-compilation stutter is a known ongoing issue; patches haven't eliminated it" xml:space="preserve">
+    <value>UE5 着色器编译卡顿是已知的持续性问题；补丁尚未解决该问题</value>
+  </data>
+  <data name="Major shader-compilation stutter returned after patch v3.02; deleting and recompiling the shader cache doesn't fix it" xml:space="preserve">
+    <value>v3.02 补丁后，严重的着色器编译卡顿再次出现；删除并重新编译着色器缓存也无法解决</value>
+  </data>
+  <data name="Shaders compile on exit but aren't remapped on next boot, causing on-the-fly shader-compilation stutter until rebuilt (an engine-level cache bug, documented on Proton)" xml:space="preserve">
+    <value>退出时着色器会编译，但下次启动时未重新映射，导致在重建前一直出现运行时着色器编译卡顿（这是引擎级缓存错误，已在 Proton 上有记录）</value>
+  </data>
+  <data name="Digital Foundry put its launch pauses down to shader compiles, but Valve found most big hitches on Steam Deck weren't. In one session after compiling, SCSKiller measured 37 in-play frames of 50 ms or more: 2 on a ray tracing pipeline compile, 35 with no compile under them" xml:space="preserve">
+    <value>Digital Foundry 将启动时的停顿归因于着色器编译，但 Valve 发现 Steam Deck 上的大多数严重卡顿并非如此。在一次编译后的游玩中，SCSKiller 测得 37 次游戏内帧耗时 50 毫秒或以上：其中 2 次发生在光线追踪管线编译期间，另外 35 次则未发生任何编译</value>
+  </data>
+  <data name="SCSKiller measured 73 pipeline compiles that blocked the game for 20 ms or more in 3.3 minutes of play with a cold cache, none after compiling; DX12 shader-compilation stutter in this game is well documented" xml:space="preserve">
+    <value>在驱动缓存为空时进行 3.3 分钟的游玩中，SCSKiller 测得共有 73 次管线编译导致游戏阻塞 20 毫秒或以上，而完成编译后则无一发生；本作中的 DX12 着色器编译卡顿现象已有充分记录</value>
+  </data>
+  <data name="UE5's own shader-precompile systems (5.1-5.4) don't work properly without extra developer work, per Digital Foundry - a general UE5 engine gap this game inherits" xml:space="preserve">
+    <value>据 Digital Foundry 称，UE5 自带的着色器预编译系统（5.1-5.4）若没有开发者的额外工作就无法正常运行——这是本作继承自 UE5 引擎的一个普遍问题</value>
+  </data>
+  <data name="Shader-compilation stutter with no precompile step" xml:space="preserve">
+    <value>没有着色器预编译步骤，存在着色器编译卡顿</value>
+  </data>
+  <data name="Stutters the first time an enemy or effect appears, not on repeats" xml:space="preserve">
+    <value>仅在敌人或特效首次出现时卡顿，再次出现则不会</value>
+  </data>
+  <data name="Shader and traversal stutter; an 850 MB patch did not fix it" xml:space="preserve">
+    <value>着色器与跑图卡顿；850 MB 的补丁未能解决该问题</value>
+  </data>
+  <data name="Heavy shader compilation at startup and on level loads (Digital Foundry Direct)" xml:space="preserve">
+    <value>启动和关卡加载时大量编译着色器（Digital Foundry Direct）</value>
+  </data>
+  <data name="Major PSO stutters during play; SCSKiller measured 92 shader stutters on a cold run and 0 after one compile" xml:space="preserve">
+    <value>游戏期间出现严重的管线状态对象（PSO）编译卡顿；SCSKiller 在驱动缓存为空时测得 92 次着色器卡顿，一次预编译后为 0 次</value>
+  </data>
+  <data name="Shader-compilation stutter remains during play; SCSKiller measured 38 shader stutters (worst 4.6 s) on a cold run and 1 after one compile" xml:space="preserve">
+    <value>游戏期间仍存在着色器编译卡顿；SCSKiller 在驱动缓存为空时测得 38 次着色器卡顿（最长 4.6 秒），一次预编译后为 1 次</value>
+  </data>
+  <data name="Its DirectX 12 build compiles shaders while you play; SCSKiller measured 9 shader stutters (worst 1.4 s) on a cold run and 0 after one compile" xml:space="preserve">
+    <value>其 DirectX 12 版本会在游戏运行时编译着色器；SCSKiller 在驱动缓存为空时测得 9 次着色器卡顿（最长 1.4 秒），一次预编译后为 0 次</value>
+  </data>
+  <data name="Driver changed: {0} -&gt; {1}" xml:space="preserve">
+    <value>驱动已更新：{0} → {1}</value>
+  </data>
+  <data name="{0:N0} new pipeline{1} recorded" xml:space="preserve">
+    <value>新采集 {0:N0} 个管线</value>
+  </data>
+  <data name="{0:N0} new pipeline{1}" xml:space="preserve">
+    <value>新增 {0:N0} 个管线</value>
+  </data>
+  <data name="{0:N0} new pipeline{1} recorded; compile again to include them" xml:space="preserve">
+    <value>新采集了 {0:N0} 个管线，重新预编译即可一并处理。</value>
+  </data>
+  <data name="{0:N0} new pipeline{1}; compile again to include them" xml:space="preserve">
+    <value>新增 {0:N0} 个管线，重新预编译即可一并处理。</value>
+  </data>
+  <data name="segheap\scskiller_warm.exe not found next to the app or in proxy\build\Release" xml:space="preserve">
+    <value>未在应用程序目录或 proxy\build\Release 中找到 segheap\scskiller_warm.exe。</value>
+  </data>
+  <data name="scskiller_warm.exe not found next to the app or in proxy\build\Release" xml:space="preserve">
+    <value>未在应用程序目录或 proxy\build\Release 中找到 scskiller_warm.exe。</value>
+  </data>
+  <data name="Compiling" xml:space="preserve">
+    <value>正在预编译</value>
+  </data>
+  <data name="Paused: {0}" xml:space="preserve">
+    <value>已暂停：{0}</value>
+  </data>
+  <data name="Compiling: {0}" xml:space="preserve">
+    <value>正在预编译：{0}</value>
+  </data>
+  <data name="starts when the PC is idle" xml:space="preserve">
+    <value>电脑空闲时开始</value>
+  </data>
+  <data name="waits for another SCSKiller compile of this game" xml:space="preserve">
+    <value>等待另一个 SCSKiller 进程完成此游戏的预编译</value>
+  </data>
+  <data name="paused until the PC is idle" xml:space="preserve">
+    <value>等待电脑空闲后继续</value>
+  </data>
+  <data name="already compiled: the new plan adds nothing" xml:space="preserve">
+    <value>已完成预编译：新方案没有新增内容</value>
+  </data>
+  <data name="plan built" xml:space="preserve">
+    <value>方案已生成</value>
+  </data>
+  <data name="{0} failed (the driver rejected them)" xml:space="preserve">
+    <value>{0} 个失败（驱动拒绝创建）</value>
+  </data>
+  <data name="{0} skipped (a shader not in this install)" xml:space="preserve">
+    <value>跳过 {0} 个（当前游戏安装缺少所需着色器）</value>
+  </data>
+  <data name="{0} skipped ({1} the GPU driver)" xml:space="preserve">
+    <value>跳过 {0} 个（会导致显卡驱动崩溃）</value>
+  </data>
+  <data name="Checking {0} game{1} for more to compile (while idle)" xml:space="preserve">
+    <value>空闲时检查 {0} 款游戏是否有新增预编译内容</value>
+  </data>
+  <data name="paused while {0} is running" xml:space="preserve">
+    <value>{0} 正在运行，预编译已暂停</value>
+  </data>
+  <data name="stopped while {0} is running: continues when it exits" xml:space="preserve">
+    <value>已因 {0} 正在运行而停止；游戏退出后继续预编译</value>
+  </data>
+  <data name="no progress for {0} min" xml:space="preserve">
+    <value>已 {0} 分钟没有进展</value>
+  </data>
+  <data name="retrying ray tracing with fewer threads ({0})" xml:space="preserve">
+    <value>正在以更少的线程重试光线追踪（{0} 个线程）</value>
+  </data>
+  <data name="recovering from a GPU driver crash" xml:space="preserve">
+    <value>正在从显卡驱动崩溃中恢复</value>
+  </data>
+  <data name="careful compile: the plan's other pipelines at full speed" xml:space="preserve">
+    <value>稳妥预编译：以全速预编译方案中的其他管线</value>
+  </data>
+  <data name="careful compile: recorded pipelines, pass {0} of {1}" xml:space="preserve">
+    <value>稳妥预编译：已采集的管线，第 {0} / {1} 批</value>
+  </data>
+  <data name=", " xml:space="preserve">
+    <value>，</value>
+  </data>
+  <data name="." xml:space="preserve">
+    <value>。</value>
+  </data>
+  <data name="SCSKiller {0} is ready. Restarting stops a running compile safely (the driver saves its cache first) and continues it afterwards." xml:space="preserve">
+    <value>SCSKiller {0} 已就绪。重启会安全中断正在进行的预编译（驱动会先保存缓存），之后再继续。</value>
+  </data>
+  <data name="The recorded pipelines are removed. They're compiled again only if the game creates them again while recording, and the compile plan goes back to what the game's files give.
+
+The recorder itself stays in; the game's files aren't touched." xml:space="preserve">
+    <value>已采集的管线将被移除。只有当游戏在采集期间再次创建它们时，才会重新编译，并且预编译方案将恢复为游戏文件提供的状态。
+
+采集器本身会保留；游戏文件不会被修改。</value>
+  </data>
+  <data name="SCSKiller couldn't find this game's key in its exe (protected exes hide it). If you have the key, paste it here: it's checked against the game's files and kept on this PC only." xml:space="preserve">
+    <value>SCSKiller 未能在该游戏的 exe 文件中找到其密钥（受保护的 exe 会隐藏密钥）。如果你有密钥，请在此处粘贴：该密钥会与游戏文件进行核对，且仅保留在此电脑上。</value>
+  </data>
+  <data name="This is a global {0} driver setting: it applies to every game on this PC, not only the ones SCSKiller compiles, and stays until you change it. Windows will ask for administrator permission.
+
+" xml:space="preserve">
+    <value>这是一个全局 {0} 驱动设置：它会影响这台电脑上的所有游戏，而不仅仅是 SCSKiller 会预编译的游戏，并会一直保留，直到你更改为止。Windows 会请求管理员权限。
+
+</value>
+  </data>
+  <data name="; " xml:space="preserve">
+    <value>；</value>
+  </data>
+  <data name=". " xml:space="preserve">
+    <value>。</value>
+  </data>
+  <data name="Turn on recording and play with ray tracing on. " xml:space="preserve">
+    <value>请开启采集，并在游戏中启用光线追踪后游玩。</value>
+  </data>
+  <data name="Turn on recording and play with ray tracing on for about 5 minutes. " xml:space="preserve">
+    <value>请开启采集，并在游戏中启用光线追踪后游玩约 5 分钟。</value>
+  </data>
+  <data name="rt|not compiled" xml:space="preserve">
+    <value>未预编译</value>
+    <comment>Game page: the ray-traced effects row</comment>
+  </data>
+  <data name="Use default (on)" xml:space="preserve">
+    <value>跟随全局（开启）</value>
+  </data>
+  <data name="Use default (off)" xml:space="preserve">
+    <value>跟随全局（关闭）</value>
+  </data>
+  <data name="Starts the game offline without EasyAntiCheat. SCSKiller removes its files when the game exits (after a crash: at the next logon). If any are left when you play online, you could be banned. Steam must be running; don't uninstall SCSKiller mid-session." xml:space="preserve">
+    <value>在不使用 EasyAntiCheat 的情况下以离线模式启动游戏。SCSKiller 会在游戏退出后删除其文件（崩溃后：下次登录时）。如果你在线游戏时仍有残留文件，可能会被禁赛。Steam 必须正在运行；不要在会话中途卸载 SCSKiller。</value>
+  </data>
+  <data name="Couldn't start {0}: {1}" xml:space="preserve">
+    <value>无法启动 {0}：{1}</value>
+  </data>
+  <data name="Couldn't start {0} through {1}: {2}" xml:space="preserve">
+    <value>无法通过 {1} 启动 {0}：{2}</value>
+  </data>
+  <data name="note|driver {0}" xml:space="preserve">
+    <value>驱动 {0}</value>
+    <comment>Library row tooltip: the driver a game was compiled for</comment>
+  </data>
+  <data name="compiled for driver {0} on {1:d}" xml:space="preserve">
+    <value>已于 {1:d} 为驱动 {0} 预编译</value>
+  </data>
+  <data name=" About {0}." xml:space="preserve">
+    <value> 预计耗时 {0}。</value>
+  </data>
+  <data name=" About {0} instead of {1}." xml:space="preserve">
+    <value> 预计耗时 {0}，普通预编译约需 {1}。</value>
+  </data>
+  <data name="Compiled {0} in {1}, for driver {2}." xml:space="preserve">
+    <value>{0} 为驱动 {2} 完成预编译，耗时 {1}。</value>
+  </data>
+  <data name="Compiled {0}, for driver {1}." xml:space="preserve">
+    <value>{0} 为驱动 {1} 完成预编译。</value>
+  </data>
+  <data name="{0}: " xml:space="preserve">
+    <value>{0}：</value>
+  </data>
+  <data name="{0} left" xml:space="preserve">
+    <value>剩余 {0}</value>
+  </data>
+  <data name="Free on {0}" xml:space="preserve">
+    <value>{0} 上的可用空间</value>
+  </data>
+  <data name="Recording in {0} game{1}" xml:space="preserve">
+    <value>已安装采集器：{0} 款游戏</value>
+  </data>
+  <data name="{0} and {1}" xml:space="preserve">
+    <value>{0}和{1}</value>
+  </data>
+  <data name="Supporter: {0}, until {1:d MMM yyyy}." xml:space="preserve">
+    <value>支持者：{0}，有效期至 {1:yyyy年M月d日}。</value>
+  </data>
+  <data name="Supporter: {0}." xml:space="preserve">
+    <value>支持者：{0}。</value>
+  </data>
+  <data name="SCSKiller {0} is ready: it installs the next time SCSKiller starts or quits, or use Restart to update at the top." xml:space="preserve">
+    <value>SCSKiller {0} 已就绪：将在 SCSKiller 下次启动或退出时安装，你也可以使用顶部的“重启以更新”。</value>
+  </data>
+  <data name="SCSKiller {0} is ready: use Restart to update at the top." xml:space="preserve">
+    <value>SCSKiller {0} 已就绪：请使用顶部的“重启以更新”。</value>
+  </data>
+  <data name="This queue adds about {0} to the shader cache ({1}), {2} more than the {3} free under the AMD driver's fixed {4} limit. The driver then trims the least recently used caches, older games' included, and those games stutter until compiled again." xml:space="preserve">
+    <value>此队列会向着色器缓存添加约 {0}（{1}），比 AMD 驱动固定的 {4} 上限下剩余的 {3} 可用空间多出 {2}。驱动随后会清理最近最少使用的缓存（包括较早游戏的缓存），这些游戏在重新预编译前会再次出现卡顿。</value>
+  </data>
+  <data name="list|, " xml:space="preserve">
+    <value>、</value>
+    <comment>A list of names (games, supporter benefits)</comment>
+  </data>
+  <data name="community|not yet" xml:space="preserve">
+    <value>未收录</value>
+    <comment>Game page, Details: "In the community database" row</comment>
+  </data>
+  <data name="Warmed for driver {0}" xml:space="preserve">
+    <value>已为驱动 {0} 预编译</value>
+  </data>
+  <data name="Partly warmed for driver {0}: {1}% of the {2} pipelines its first launch created still compiled" xml:space="preserve">
+    <value>已为驱动 {0} 部分预编译：首次启动时创建的 {2} 个管线中，仍有 {1}% 在游戏内编译</value>
+  </data>
+  <data name="Partly warmed for driver {0}: {1}% of the {2} pipelines its first launch created still compiled, even after a careful compile" xml:space="preserve">
+    <value>已为驱动 {0} 部分预编译：首次启动时创建的 {2} 个管线中，即使执行了稳妥预编译，仍有 {1}% 在游戏内编译</value>
+  </data>
+  <data name="A careful compile ({0} threads, in passes) reaches more of them" xml:space="preserve">
+    <value>稳妥预编译（{0} 个线程，分批进行）可覆盖更多管线</value>
+  </data>
+  <data name="A careful compile ({0} threads, in passes) reaches more of them, in about {1}" xml:space="preserve">
+    <value>稳妥预编译（{0} 个线程，分批进行）可覆盖更多管线，耗时约 {1}</value>
+  </data>
+  <data name="A careful compile ({0} threads, in passes) reaches more of them: the next compile is careful" xml:space="preserve">
+    <value>稳妥预编译（{0} 个线程，分批进行）可覆盖更多管线：下次将进行稳妥预编译</value>
+  </data>
+  <data name="A careful compile ({0} threads, in passes) reaches more of them, in about {1}: the next compile is careful" xml:space="preserve">
+    <value>稳妥预编译（{0} 个线程，分批进行）可覆盖更多管线，耗时约 {1}：下次将进行稳妥预编译</value>
+  </data>
+  <data name="Compiles {0} pipelines" xml:space="preserve">
+    <value>可预编译 {0} 个管线</value>
+  </data>
+  <data name="{0} more shader combinations use shader slots SCSKiller can't rebuild yet" xml:space="preserve">
+    <value>还有 {0} 个管线使用了 SCSKiller 暂时无法重建的着色器槽位</value>
+  </data>
+  <data name="Ray-traced effects aren't compiled: they need a recording, which {0} blocks" xml:space="preserve">
+    <value>光线追踪效果尚未预编译：需要采集，但 {0} 会阻止该操作</value>
+  </data>
+  <data name="Ray-traced effects aren't compiled: they need a recording, which {0} blocks unless you record an offline session (game page)" xml:space="preserve">
+    <value>光线追踪效果尚未预编译：需要采集，但 {0} 会阻止该操作，除非你采集一次离线游玩（见游戏详情页）</value>
+  </data>
+  <data name="{0} is installed as d3d12.dll, and the recorder can't run alongside it: renamed it stops working" xml:space="preserve">
+    <value>{0} 以 d3d12.dll 形式安装，采集器无法与之同时运行：重命名后它会失效</value>
+  </data>
+  <data name="Restart SCSKiller to use {0}" xml:space="preserve">
+    <value>重启 SCSKiller 以使用 {0}</value>
+  </data>
+  <data name="The community database had a problem (error {0}). It retries at the next scan." xml:space="preserve">
+    <value>社区数据库出现问题（错误 {0}）。将在下次扫描时重试。</value>
+  </data>
+  <data name="The community database refused the request (error {0})." xml:space="preserve">
+    <value>社区数据库拒绝了请求（错误 {0}）。</value>
+  </data>
+  <data name="another d3d12.dll is already there" xml:space="preserve">
+    <value>已存在另一个 d3d12.dll</value>
+  </data>
+  <data name="another d3d12.dll is there that stops working renamed" xml:space="preserve">
+    <value>已存在另一个 d3d12.dll，且重命名后会失效</value>
+  </data>
+  <data name="vkd3d-proton runs the game on Vulkan, whose pipelines a D3D12 warm doesn't compile" xml:space="preserve">
+    <value>vkd3d-proton 通过 Vulkan 运行游戏，D3D12 预编译无法编译其管线</value>
+  </data>
+  <data name="the game folder needs administrator" xml:space="preserve">
+    <value>游戏文件夹需要管理员权限</value>
+  </data>
+  <data name="not DirectX 12" xml:space="preserve">
+    <value>不是 DirectX 12</value>
+  </data>
+  <data name="a d3d12.dll in the game's package folder loads instead of the recorder" xml:space="preserve">
+    <value>游戏包文件夹中的 d3d12.dll 会代替采集器被加载</value>
+  </data>
+  <data name="an HDR mod changes every pipeline" xml:space="preserve">
+    <value>HDR 模组会更改所有管线</value>
+  </data>
+  <data name="OptiScaler is installed as d3d12.dll, and renamed it stops working (it picks its role from its file name). To record alongside it, rename it to dxgi.dll (or winmm.dll or version.dll if a dxgi.dll is already there): OptiScaler supports those names" xml:space="preserve">
+    <value>OptiScaler 以 d3d12.dll 形式安装，重命名后会失效（它根据文件名确定自身角色）。若要与它一同采集，请将其重命名为 dxgi.dll（若已有 dxgi.dll，则改为 winmm.dll 或 version.dll）：OptiScaler 支持这些名称</value>
+  </data>
+  <data name="a careful compile only changes how the recorded pipelines compile, and there is no recording yet (turn recording on and play)" xml:space="preserve">
+    <value>稳妥预编译只会改变已采集管线的编译方式，而目前还没有采集数据（请开启采集并游玩）</value>
+  </data>
+  <data name="a 5-minute recording lets SCSKiller rebuild the rest" xml:space="preserve">
+    <value>采集 5 分钟即可让 SCSKiller 重建其余部分</value>
+  </data>
+  <data name="part of this game's shader cache was removed by the driver's size limit; compile again" xml:space="preserve">
+    <value>该游戏的部分着色器缓存已因驱动的大小限制被删除；请重新预编译</value>
+  </data>
+  <data name="this game's shader cache was removed (by the driver's size limit or a shader cache reset); compile again" xml:space="preserve">
+    <value>该游戏的着色器缓存已被删除（因驱动的大小限制或着色器缓存重置）；请重新预编译</value>
+  </data>
+  <data name="Ray-traced effects aren't compiled: they need a recording, once you confirm its game folder" xml:space="preserve">
+    <value>光线追踪效果尚未预编译：需要采集，请先确认游戏文件夹</value>
+  </data>
+  <data name="The community database didn't accept this PC's sign-in. Refresh status or sign in again in Settings." xml:space="preserve">
+    <value>社区数据库未接受此电脑的登录信息。请在“设置”中刷新状态或重新登录。</value>
+  </data>
+  <data name="Your Patreon membership doesn't include the community database right now." xml:space="preserve">
+    <value>你的 Patreon 会员资格目前不包含社区数据库。</value>
+  </data>
+  <data name="The community database's daily limit is reached. Downloads resume later by themselves." xml:space="preserve">
+    <value>社区数据库已达到每日下载上限。下载稍后会自动恢复。</value>
+  </data>
+  <data name="The community database is busy right now. Downloads resume later by themselves." xml:space="preserve">
+    <value>社区数据库当前繁忙。下载稍后会自动恢复。</value>
+  </data>
+  <data name="Can't reach the community database right now. Compiling works as usual from your own files." xml:space="preserve">
+    <value>当前无法连接社区数据库。预编译仍会照常使用你自己的文件。</value>
+  </data>
+  <data name="The community database didn't answer in time. It retries at the next scan." xml:space="preserve">
+    <value>社区数据库未能及时响应。将在下次扫描时重试。</value>
+  </data>
+  <data name="The community database sent a list this version can't read. An update of SCSKiller may fix it." xml:space="preserve">
+    <value>社区数据库发送的列表无法被当前版本读取。更新 SCSKiller 或许能解决。</value>
+  </data>
+  <data name="The community database gave an answer this version doesn't understand. An update of SCSKiller may fix it." xml:space="preserve">
+    <value>社区数据库返回了当前版本无法识别的响应。更新 SCSKiller 或许能解决。</value>
+  </data>
+  <data name="A community recording didn't match its checksum and was ignored. It's downloaded again at the next scan." xml:space="preserve">
+    <value>一份社区采集数据与校验和不匹配，已被忽略。将在下次扫描时重新下载。</value>
+  </data>
+  <data name="A community recording this version can't read was ignored. An update of SCSKiller may fix it." xml:space="preserve">
+    <value>已忽略一份当前版本无法读取的社区采集数据。更新 SCSKiller 或许能解决。</value>
+  </data>
+  <data name="An upscaler pack didn't match its checksum and was ignored. It's downloaded again at the next scan." xml:space="preserve">
+    <value>一个超分组件包与校验和不匹配，已被忽略。将在下次扫描时重新下载。</value>
+  </data>
+  <data name="An upscaler pack this version can't read was ignored. An update of SCSKiller may fix it." xml:space="preserve">
+    <value>已忽略一个当前版本无法读取的超分组件包。更新 SCSKiller 或许能解决。</value>
+  </data>
+  <data name="community shader hash database" xml:space="preserve">
+    <value>社区着色器哈希数据库</value>
+    <comment>Settings, Account: supporter benefits</comment>
+  </data>
+  <data name="beta builds" xml:space="preserve">
+    <value>测试版</value>
+    <comment>Settings, Account: supporter benefits</comment>
+  </data>
+  <data name="alpha builds" xml:space="preserve">
+    <value>抢先版</value>
+    <comment>Settings, Account: supporter benefits</comment>
+  </data>
+  <data name="priority requests" xml:space="preserve">
+    <value>优先处理请求</value>
+    <comment>Settings, Account: supporter benefits</comment>
+  </data>
+  <data name="Unreal Engine " xml:space="preserve">
+    <value> Unreal Engine </value>
+    <comment>Library summary: "12 Unreal Engine games found"</comment>
+  </data>
+</root>

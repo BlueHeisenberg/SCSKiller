@@ -1,0 +1,2077 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="SCSKiller is still running" xml:space="preserve">
+    <value>SCSKiller is still running</value>
+  </data>
+  <data name="It's in the notification area; right-click the icon to quit." xml:space="preserve">
+    <value>It's in the notification area; right-click the icon to quit.</value>
+  </data>
+  <data name="Cancel" xml:space="preserve">
+    <value>Cancel</value>
+  </data>
+  <data name="Resume" xml:space="preserve">
+    <value>Resume</value>
+  </data>
+  <data name="Pause compiling" xml:space="preserve">
+    <value>Pause compiling</value>
+  </data>
+  <data name="Quit now (loses unsaved cache)" xml:space="preserve">
+    <value>Quit now (loses unsaved cache)</value>
+  </data>
+  <data name="Quit" xml:space="preserve">
+    <value>Quit</value>
+  </data>
+  <data name="Stopping the compile so the graphics driver can save its shader cache" xml:space="preserve">
+    <value>Stopping the compile so the graphics driver can save its shader cache</value>
+  </data>
+  <data name="SCSKiller: finishing, the driver is saving the shader cache" xml:space="preserve">
+    <value>SCSKiller: finishing, the driver is saving the shader cache</value>
+  </data>
+  <data name="SCSKiller: idle" xml:space="preserve">
+    <value>SCSKiller: idle</value>
+  </data>
+  <data name="SCSKiller: checking games for more to compile" xml:space="preserve">
+    <value>SCSKiller: checking games for more to compile</value>
+  </data>
+  <data name="SCSKiller: paused ({0})" xml:space="preserve">
+    <value>SCSKiller: paused ({0})</value>
+  </data>
+  <data name="Compiling {0}, {1:0}%" xml:space="preserve">
+    <value>Compiling {0}, {1:0}%</value>
+  </data>
+  <data name="Compiling {0}" xml:space="preserve">
+    <value>Compiling {0}</value>
+  </data>
+  <data name="1 game needs" xml:space="preserve">
+    <value>1 game needs</value>
+  </data>
+  <data name="{0} games need" xml:space="preserve">
+    <value>{0} games need</value>
+  </data>
+  <data name="{0} driver updated" xml:space="preserve">
+    <value>{0} driver updated</value>
+  </data>
+  <data name="Driver {0} cleared the shader cache. {1} rebuilding: " xml:space="preserve">
+    <value>Driver {0} cleared the shader cache. {1} rebuilding: </value>
+  </data>
+  <data name=", about {0}." xml:space="preserve">
+    <value>, about {0}.</value>
+  </data>
+  <data name="New shaders to compile" xml:space="preserve">
+    <value>New shaders to compile</value>
+  </data>
+  <data name="{0} has {1:N0} new pipeline{2}. Compile now so they don't stutter." xml:space="preserve">
+    <value>{0} has {1:N0} new pipeline{2}. Compile now so they don't stutter.</value>
+  </data>
+  <data name="{0} games have new shaders to compile" xml:space="preserve">
+    <value>{0} games have new shaders to compile</value>
+  </data>
+  <data name="Driver " xml:space="preserve">
+    <value>Driver </value>
+  </data>
+  <data name=" Otherwise it installs the next time SCSKiller starts or quits." xml:space="preserve">
+    <value> Otherwise it installs the next time SCSKiller starts or quits.</value>
+  </data>
+  <data name="Finishing the compile…" xml:space="preserve">
+    <value>Finishing the compile…</value>
+  </data>
+  <data name="Restart to update" xml:space="preserve">
+    <value>Restart to update</value>
+  </data>
+  <data name="Open SCSKiller" xml:space="preserve">
+    <value>Open SCSKiller</value>
+  </data>
+  <data name="today at {0:t}" xml:space="preserve">
+    <value>today at {0:t}</value>
+  </data>
+  <data name="yesterday at {0:t}" xml:space="preserve">
+    <value>yesterday at {0:t}</value>
+  </data>
+  <data name="on {0:d}" xml:space="preserve">
+    <value>on {0:d}</value>
+  </data>
+  <data name="Unknown engine" xml:space="preserve">
+    <value>Unknown engine</value>
+  </data>
+  <data name="UE {0}" xml:space="preserve">
+    <value>UE {0}</value>
+  </data>
+  <data name="anti-cheat" xml:space="preserve">
+    <value>anti-cheat</value>
+  </data>
+  <data name="{0} shader-compilation stutter: {1}.
+Source: {2} (checked {3})" xml:space="preserve">
+    <value>{0} shader-compilation stutter: {1}.
+Source: {2} (checked {3})</value>
+  </data>
+  <data name="Severe" xml:space="preserve">
+    <value>Severe</value>
+  </data>
+  <data name="Moderate" xml:space="preserve">
+    <value>Moderate</value>
+  </data>
+  <data name="Other" xml:space="preserve">
+    <value>Other</value>
+  </data>
+  <data name="Added by you" xml:space="preserve">
+    <value>Added by you</value>
+  </data>
+  <data name="Estimated driver cache if compiled" xml:space="preserve">
+    <value>Estimated driver cache if compiled</value>
+  </data>
+  <data name="Compiling: play when it finishes" xml:space="preserve">
+    <value>Compiling: play when it finishes</value>
+  </data>
+  <data name="Couldn't find how {0} starts {1}: refresh the library." xml:space="preserve">
+    <value>Couldn't find how {0} starts {1}: refresh the library.</value>
+  </data>
+  <data name="Start {0}" xml:space="preserve">
+    <value>Start {0}</value>
+  </data>
+  <data name="Play through {0}" xml:space="preserve">
+    <value>Play through {0}</value>
+  </data>
+  <data name="no thumbnail" xml:space="preserve">
+    <value>no thumbnail</value>
+  </data>
+  <data name="{0} upscalers" xml:space="preserve">
+    <value>{0} upscalers</value>
+  </data>
+  <data name="Partly warmed" xml:space="preserve">
+    <value>Partly warmed</value>
+  </data>
+  <data name="Warmed" xml:space="preserve">
+    <value>Warmed</value>
+  </data>
+  <data name="Ready to compile" xml:space="preserve">
+    <value>Ready to compile</value>
+  </data>
+  <data name="Needs a recording" xml:space="preserve">
+    <value>Needs a recording</value>
+  </data>
+  <data name="Needs a 5-min recording" xml:space="preserve">
+    <value>Needs a 5-min recording</value>
+  </data>
+  <data name="Needs rebuilding" xml:space="preserve">
+    <value>Needs rebuilding</value>
+  </data>
+  <data name="Not compiled" xml:space="preserve">
+    <value>Not compiled</value>
+  </data>
+  <data name="Encrypted game files" xml:space="preserve">
+    <value>Encrypted game files</value>
+  </data>
+  <data name="Not supported yet" xml:space="preserve">
+    <value>Not supported yet</value>
+  </data>
+  <data name="driver {0} · {1:0}% still compiled at its first launch" xml:space="preserve">
+    <value>driver {0} · {1:0}% still compiled at its first launch</value>
+  </data>
+  <data name=" · a recording compiles the rest" xml:space="preserve">
+    <value> · a recording compiles the rest</value>
+  </data>
+  <data name="{0} blocks recording" xml:space="preserve">
+    <value>{0} blocks recording</value>
+  </data>
+  <data name="recorder on: play for about 5 minutes" xml:space="preserve">
+    <value>recorder on: play for about 5 minutes</value>
+  </data>
+  <data name="Playing now" xml:space="preserve">
+    <value>Playing now</value>
+  </data>
+  <data name="Playing now · " xml:space="preserve">
+    <value>Playing now · </value>
+  </data>
+  <data name="In queue" xml:space="preserve">
+    <value>In queue</value>
+  </data>
+  <data name="Add to queue" xml:space="preserve">
+    <value>Add to queue</value>
+  </data>
+  <data name="Running" xml:space="preserve">
+    <value>Running</value>
+  </data>
+  <data name="Play" xml:space="preserve">
+    <value>Play</value>
+  </data>
+  <data name="{0} is running" xml:space="preserve">
+    <value>{0} is running</value>
+  </data>
+  <data name="Recommended to compile" xml:space="preserve">
+    <value>Recommended to compile</value>
+  </data>
+  <data name="{0} game{1}" xml:space="preserve">
+    <value>{0} game{1}</value>
+  </data>
+  <data name=" · known to stutter · {0} compiled" xml:space="preserve">
+    <value> · known to stutter · {0} compiled</value>
+  </data>
+  <data name=" · known to stutter" xml:space="preserve">
+    <value> · known to stutter</value>
+  </data>
+  <data name="{0} of {1} shown" xml:space="preserve">
+    <value>{0} of {1} shown</value>
+  </data>
+  <data name="No games match “{0}”" xml:space="preserve">
+    <value>No games match “{0}”</value>
+  </data>
+  <data name="Add all ready ({0})" xml:space="preserve">
+    <value>Add all ready ({0})</value>
+  </data>
+  <data name="Add all recommended ({0})" xml:space="preserve">
+    <value>Add all recommended ({0})</value>
+  </data>
+  <data name="Compile queue ({0})" xml:space="preserve">
+    <value>Compile queue ({0})</value>
+  </data>
+  <data name="Ask me first" xml:space="preserve">
+    <value>Ask me first</value>
+  </data>
+  <data name="When the PC is idle" xml:space="preserve">
+    <value>When the PC is idle</value>
+  </data>
+  <data name="Off" xml:space="preserve">
+    <value>Off</value>
+  </data>
+  <data name="A notification offers compile now, when idle, or skip" xml:space="preserve">
+    <value>A notification offers compile now, when idle, or skip</value>
+  </data>
+  <data name="Rebuilds on its own while you're away from the PC" xml:space="preserve">
+    <value>Rebuilds on its own while you're away from the PC</value>
+  </data>
+  <data name="Rebuild games yourself from the Library" xml:space="preserve">
+    <value>Rebuild games yourself from the Library</value>
+  </data>
+  <data name="of {0} threads" xml:space="preserve">
+    <value>of {0} threads</value>
+  </data>
+  <data name="Checking Steam, Epic, Xbox, EA, GOG, Ubisoft Connect, Battle.net, PURPLE, HoYoPlay and Gaijin, then which engine each game uses. " xml:space="preserve">
+    <value>Checking Steam, Epic, Xbox, EA, GOG, Ubisoft Connect, Battle.net, PURPLE, HoYoPlay and Gaijin, then which engine each game uses. </value>
+  </data>
+  <data name="The first scan reads every game's files, so it can take a minute." xml:space="preserve">
+    <value>The first scan reads every game's files, so it can take a minute.</value>
+  </data>
+  <data name="Re-reading every game's engine and anti-cheat; the list updates when it's done." xml:space="preserve">
+    <value>Re-reading every game's engine and anti-cheat; the list updates when it's done.</value>
+  </data>
+  <data name="The list updates when it's done." xml:space="preserve">
+    <value>The list updates when it's done.</value>
+  </data>
+  <data name="Scan failed: " xml:space="preserve">
+    <value>Scan failed: </value>
+  </data>
+  <data name="Checked the server a few minutes ago." xml:space="preserve">
+    <value>Checked the server a few minutes ago.</value>
+  </data>
+  <data name="Couldn't reach the SCSKiller server. The lists stay as they were." xml:space="preserve">
+    <value>Couldn't reach the SCSKiller server. The lists stay as they were.</value>
+  </data>
+  <data name="{0} stores" xml:space="preserve">
+    <value>{0} stores</value>
+  </data>
+  <data name=" and " xml:space="preserve">
+    <value> and </value>
+  </data>
+  <data name="Looking for games…" xml:space="preserve">
+    <value>Looking for games…</value>
+  </data>
+  <data name="{0} {1}game{2} found{3} · {4} ready to compile" xml:space="preserve">
+    <value>{0} {1}game{2} found{3} · {4} ready to compile</value>
+  </data>
+  <data name=" in " xml:space="preserve">
+    <value> in </value>
+  </data>
+  <data name="Below-normal priority" xml:space="preserve">
+    <value>Below-normal priority</value>
+  </data>
+  <data name="Idle priority" xml:space="preserve">
+    <value>Idle priority</value>
+  </data>
+  <data name=" · about {0:N0} pipelines/s measured" xml:space="preserve">
+    <value> · about {0:N0} pipelines/s measured</value>
+  </data>
+  <data name="limit unknown" xml:space="preserve">
+    <value>limit unknown</value>
+  </data>
+  <data name="· DirectX 12 {0} of {1} limit" xml:space="preserve">
+    <value>· DirectX 12 {0} of {1} limit</value>
+  </data>
+  <data name="of {0} limit" xml:space="preserve">
+    <value>of {0} limit</value>
+  </data>
+  <data name="no limit" xml:space="preserve">
+    <value>no limit</value>
+  </data>
+  <data name="Driver default limit may evict games" xml:space="preserve">
+    <value>Driver default limit may evict games</value>
+  </data>
+  <data name="The cache is nearly full" xml:space="preserve">
+    <value>The cache is nearly full</value>
+  </data>
+  <data name="compiled for driver {0}" xml:space="preserve">
+    <value>compiled for driver {0}</value>
+  </data>
+  <data name="not fully compiled yet: {0} of it is in the driver cache" xml:space="preserve">
+    <value>not fully compiled yet: {0} of it is in the driver cache</value>
+  </data>
+  <data name="not compiled yet" xml:space="preserve">
+    <value>not compiled yet</value>
+  </data>
+  <data name="its shader cache is empty: compile it again" xml:space="preserve">
+    <value>its shader cache is empty: compile it again</value>
+  </data>
+  <data name="In the community database: {0:N0} pipeline{1} recorded by other players. Patreon supporters compile them without recording." xml:space="preserve">
+    <value>In the community database: {0:N0} pipeline{1} recorded by other players. Patreon supporters compile them without recording.</value>
+  </data>
+  <data name="Patreon membership" xml:space="preserve">
+    <value>Patreon membership</value>
+  </data>
+  <data name="Sign in with Patreon" xml:space="preserve">
+    <value>Sign in with Patreon</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="Compile carefully" xml:space="preserve">
+    <value>Compile carefully</value>
+  </data>
+  <data name="Compile without ray tracing (partial)" xml:space="preserve">
+    <value>Compile without ray tracing (partial)</value>
+  </data>
+  <data name="Compile" xml:space="preserve">
+    <value>Compile</value>
+  </data>
+  <data name="Compiles the pipelines recorded in the game in passes on few threads, so the driver keeps more of them. This game has no recording yet, so there is nothing to compile carefully." xml:space="preserve">
+    <value>Compiles the pipelines recorded in the game in passes on few threads, so the driver keeps more of them. This game has no recording yet, so there is nothing to compile carefully.</value>
+  </data>
+  <data name="Compiles the pipelines recorded in the game in passes on {0} threads, so the driver keeps more of them; the rest at full speed." xml:space="preserve">
+    <value>Compiles the pipelines recorded in the game in passes on {0} threads, so the driver keeps more of them; the rest at full speed.</value>
+  </data>
+  <data name=" After the last compile, the game's first launch still compiled {0:0}% of its pipelines." xml:space="preserve">
+    <value> After the last compile, the game's first launch still compiled {0:0}% of its pipelines.</value>
+  </data>
+  <data name="Clear cache ({0})" xml:space="preserve">
+    <value>Clear cache ({0})</value>
+  </data>
+  <data name="Clear cache" xml:space="preserve">
+    <value>Clear cache</value>
+  </data>
+  <data name="Deletes this game's shader caches (the driver's and Windows', and the game's own if you choose) so its next run starts cold" xml:space="preserve">
+    <value>Deletes this game's shader caches (the driver's and Windows', and the game's own if you choose) so its next run starts cold</value>
+  </data>
+  <data name="SCSKiller learns this game's driver cache files the first time it compiles it or sees it running" xml:space="preserve">
+    <value>SCSKiller learns this game's driver cache files the first time it compiles it or sees it running</value>
+  </data>
+  <data name="Source ({0})" xml:space="preserve">
+    <value>Source ({0})</value>
+  </data>
+  <data name="Source: {0} ({1})" xml:space="preserve">
+    <value>Source: {0} ({1})</value>
+  </data>
+  <data name=" · custom fork" xml:space="preserve">
+    <value> · custom fork</value>
+  </data>
+  <data name="No anti-cheat" xml:space="preserve">
+    <value>No anti-cheat</value>
+  </data>
+  <data name="No anti-cheat found: this game can be recorded" xml:space="preserve">
+    <value>No anti-cheat found: this game can be recorded</value>
+  </data>
+  <data name="{0} treats an extra d3d12.dll as tampering: this game is never recorded" xml:space="preserve">
+    <value>{0} treats an extra d3d12.dll as tampering: this game is never recorded</value>
+  </data>
+  <data name="DLSS (by the driver)" xml:space="preserve">
+    <value>DLSS (by the driver)</value>
+  </data>
+  <data name="Also compiles: " xml:space="preserve">
+    <value>Also compiles: </value>
+  </data>
+  <data name="Detected: " xml:space="preserve">
+    <value>Detected: </value>
+  </data>
+  <data name="Upscaler DLLs next to the game. Their pipelines are compiled with it once a recording of any game has seen that DLL version" xml:space="preserve">
+    <value>Upscaler DLLs next to the game. Their pipelines are compiled with it once a recording of any game has seen that DLL version</value>
+  </data>
+  <data name=": on this PC, or for FSR and XeSS on any PC that shares them" xml:space="preserve">
+    <value>: on this PC, or for FSR and XeSS on any PC that shares them</value>
+  </data>
+  <data name=" (this plan: {0} of theirs)" xml:space="preserve">
+    <value> (this plan: {0} of theirs)</value>
+  </data>
+  <data name="Record more play" xml:space="preserve">
+    <value>Record more play</value>
+  </data>
+  <data name="Record 5 minutes of play" xml:space="preserve">
+    <value>Record 5 minutes of play</value>
+  </data>
+  <data name=" Everything else is compiled." xml:space="preserve">
+    <value> Everything else is compiled.</value>
+  </data>
+  <data name=" Everything else compiles from the game files already." xml:space="preserve">
+    <value> Everything else compiles from the game files already.</value>
+  </data>
+  <data name="Turn on recording and play as usual for about 5 minutes. SCSKiller learns this game's shader layout from it, then it can compile." xml:space="preserve">
+    <value>Turn on recording and play as usual for about 5 minutes. SCSKiller learns this game's shader layout from it, then it can compile.</value>
+  </data>
+  <data name="Known once its first compile starts" xml:space="preserve">
+    <value>Known once its first compile starts</value>
+  </data>
+  <data name="Covers" xml:space="preserve">
+    <value>Covers</value>
+  </data>
+  <data name="Will cover" xml:space="preserve">
+    <value>Will cover</value>
+  </data>
+  <data name=" every DirectX 11 shader in the game files" xml:space="preserve">
+    <value> every DirectX 11 shader in the game files</value>
+  </data>
+  <data name="Measured again on the next compile" xml:space="preserve">
+    <value>Measured again on the next compile</value>
+  </data>
+  <data name="Its new plan covers" xml:space="preserve">
+    <value>Its new plan covers</value>
+  </data>
+  <data name="Its last plan covered" xml:space="preserve">
+    <value>Its last plan covered</value>
+  </data>
+  <data name=" all the shader combinations found in this game" xml:space="preserve">
+    <value> all the shader combinations found in this game</value>
+  </data>
+  <data name=" about {0}% of the shader combinations found in this game" xml:space="preserve">
+    <value> about {0}% of the shader combinations found in this game</value>
+  </data>
+  <data name="Found in the game files" xml:space="preserve">
+    <value>Found in the game files</value>
+  </data>
+  <data name="Your play recordings" xml:space="preserve">
+    <value>Your play recordings</value>
+  </data>
+  <data name="Your recording and the community database" xml:space="preserve">
+    <value>Your recording and the community database</value>
+  </data>
+  <data name="The community database" xml:space="preserve">
+    <value>The community database</value>
+  </data>
+  <data name="has a recording for this version" xml:space="preserve">
+    <value>has a recording for this version</value>
+  </data>
+  <data name="not in it yet" xml:space="preserve">
+    <value>not in it yet</value>
+  </data>
+  <data name="Its upscalers, learned from recordings" xml:space="preserve">
+    <value>Its upscalers, learned from recordings</value>
+  </data>
+  <data name="Its upscalers, from shared packs" xml:space="preserve">
+    <value>Its upscalers, from shared packs</value>
+  </data>
+  <data name="Its upscalers, from recordings and shared packs" xml:space="preserve">
+    <value>Its upscalers, from recordings and shared packs</value>
+  </data>
+  <data name="DirectX 11 shaders" xml:space="preserve">
+    <value>DirectX 11 shaders</value>
+  </data>
+  <data name="Ray-traced effects" xml:space="preserve">
+    <value>Ray-traced effects</value>
+  </data>
+  <data name="off in this game" xml:space="preserve">
+    <value>off in this game</value>
+  </data>
+  <data name="inline, from the game files" xml:space="preserve">
+    <value>inline, from the game files</value>
+  </data>
+  <data name="covered" xml:space="preserve">
+    <value>covered</value>
+  </data>
+  <data name="being checked" xml:space="preserve">
+    <value>being checked</value>
+  </data>
+  <data name="not seen while recording" xml:space="preserve">
+    <value>not seen while recording</value>
+  </data>
+  <data name="inline ones covered" xml:space="preserve">
+    <value>inline ones covered</value>
+  </data>
+  <data name="mostly covered" xml:space="preserve">
+    <value>mostly covered</value>
+  </data>
+  <data name="need a recording" xml:space="preserve">
+    <value>need a recording</value>
+  </data>
+  <data name="Community recording downloaded {0:d}" xml:space="preserve">
+    <value>Community recording downloaded {0:d}</value>
+  </data>
+  <data name=" · yours shared {0:d}" xml:space="preserve">
+    <value> · yours shared {0:d}</value>
+  </data>
+  <data name="Shared with the community database {0:d}" xml:space="preserve">
+    <value>Shared with the community database {0:d}</value>
+  </data>
+  <data name="which {0} blocks" xml:space="preserve">
+    <value>which {0} blocks</value>
+  </data>
+  <data name="Anything else compiles while you play: confirm the game's folder (Game folder… above) to record what's missing." xml:space="preserve">
+    <value>Anything else compiles while you play: confirm the game's folder (Game folder… above) to record what's missing.</value>
+  </data>
+  <data name="Anything else compiles while you play: {0} blocks the recording that would find it." xml:space="preserve">
+    <value>Anything else compiles while you play: {0} blocks the recording that would find it.</value>
+  </data>
+  <data name="The rest use shader slots this game's engine adds." xml:space="preserve">
+    <value>The rest use shader slots this game's engine adds.</value>
+  </data>
+  <data name=" A 5-minute recording lets SCSKiller rebuild them." xml:space="preserve">
+    <value> A 5-minute recording lets SCSKiller rebuild them.</value>
+  </data>
+  <data name="The rest use shader slots SCSKiller can't rebuild yet, so they still compile while you play." xml:space="preserve">
+    <value>The rest use shader slots SCSKiller can't rebuild yet, so they still compile while you play.</value>
+  </data>
+  <data name="SCSKiller hasn't seen how the game sets the rest up yet." xml:space="preserve">
+    <value>SCSKiller hasn't seen how the game sets the rest up yet.</value>
+  </data>
+  <data name=" Playing longer with recording on teaches it." xml:space="preserve">
+    <value> Playing longer with recording on teaches it.</value>
+  </data>
+  <data name="Recording is on: anything new you play is added the next time it compiles." xml:space="preserve">
+    <value>Recording is on: anything new you play is added the next time it compiles.</value>
+  </data>
+  <data name="Last time you played, {0:N0} still had to compile." xml:space="preserve">
+    <value>Last time you played, {0:N0} still had to compile.</value>
+  </data>
+  <data name=" Recording picks them up." xml:space="preserve">
+    <value> Recording picks them up.</value>
+  </data>
+  <data name="Nothing was missing last time you played." xml:space="preserve">
+    <value>Nothing was missing last time you played.</value>
+  </data>
+  <data name="Nothing SCSKiller knows of is missing." xml:space="preserve">
+    <value>Nothing SCSKiller knows of is missing.</value>
+  </data>
+  <data name="A few effects are only put together while you play." xml:space="preserve">
+    <value>A few effects are only put together while you play.</value>
+  </data>
+  <data name=" A short recording picks them up." xml:space="preserve">
+    <value> A short recording picks them up.</value>
+  </data>
+  <data name="Some shader states are guesses." xml:space="preserve">
+    <value>Some shader states are guesses.</value>
+  </data>
+  <data name="Some shader states are guesses; a longer recording makes them exact." xml:space="preserve">
+    <value>Some shader states are guesses; a longer recording makes them exact.</value>
+  </data>
+  <data name="Ray-traced effects aren't compiled yet" xml:space="preserve">
+    <value>Ray-traced effects aren't compiled yet</value>
+  </data>
+  <data name="Some shaders still compile while you play" xml:space="preserve">
+    <value>Some shaders still compile while you play</value>
+  </data>
+  <data name="All" xml:space="preserve">
+    <value>All</value>
+  </data>
+  <data name="not yet" xml:space="preserve">
+    <value>not yet</value>
+  </data>
+  <data name="Compile time" xml:space="preserve">
+    <value>Compile time</value>
+  </data>
+  <data name="Compile time (estimate)" xml:space="preserve">
+    <value>Compile time (estimate)</value>
+  </data>
+  <data name="{0} min {1} s" xml:space="preserve">
+    <value>{0} min {1} s</value>
+  </data>
+  <data name="Disk space" xml:space="preserve">
+    <value>Disk space</value>
+  </data>
+  <data name="Disk space (estimate)" xml:space="preserve">
+    <value>Disk space (estimate)</value>
+  </data>
+  <data name="None" xml:space="preserve">
+    <value>None</value>
+  </data>
+  <data name="Stutters last time you played" xml:space="preserve">
+    <value>Stutters last time you played</value>
+  </data>
+  <data name="Compiles while you played" xml:space="preserve">
+    <value>Compiles while you played</value>
+  </data>
+  <data name="Pipelines in the plan" xml:space="preserve">
+    <value>Pipelines in the plan</value>
+  </data>
+  <data name="Shaders in the game files" xml:space="preserve">
+    <value>Shaders in the game files</value>
+  </data>
+  <data name="Shader combinations found" xml:space="preserve">
+    <value>Shader combinations found</value>
+  </data>
+  <data name="Left out" xml:space="preserve">
+    <value>Left out</value>
+  </data>
+  <data name=" (shader slots SCSKiller can't rebuild)" xml:space="preserve">
+    <value> (shader slots SCSKiller can't rebuild)</value>
+  </data>
+  <data name=" ({0:N0} for shader slots SCSKiller can't rebuild)" xml:space="preserve">
+    <value> ({0:N0} for shader slots SCSKiller can't rebuild)</value>
+  </data>
+  <data name="Left out for shader slots SCSKiller can't rebuild" xml:space="preserve">
+    <value>Left out for shader slots SCSKiller can't rebuild</value>
+  </data>
+  <data name="Recorded pipelines" xml:space="preserve">
+    <value>Recorded pipelines</value>
+  </data>
+  <data name="Built from the game files" xml:space="preserve">
+    <value>Built from the game files</value>
+  </data>
+  <data name="Upscaler pipelines" xml:space="preserve">
+    <value>Upscaler pipelines</value>
+  </data>
+  <data name="Ray tracing shader libraries" xml:space="preserve">
+    <value>Ray tracing shader libraries</value>
+  </data>
+  <data name=" (not used by the game)" xml:space="preserve">
+    <value> (not used by the game)</value>
+  </data>
+  <data name=" ({0:N0} not compiled)" xml:space="preserve">
+    <value> ({0:N0} not compiled)</value>
+  </data>
+  <data name="Shaders that trace rays inline" xml:space="preserve">
+    <value>Shaders that trace rays inline</value>
+  </data>
+  <data name="In the community database" xml:space="preserve">
+    <value>In the community database</value>
+  </data>
+  <data name="{0:N0} pipelines" xml:space="preserve">
+    <value>{0:N0} pipelines</value>
+  </data>
+  <data name="Community recording" xml:space="preserve">
+    <value>Community recording</value>
+  </data>
+  <data name="Synthesized pipeline templates" xml:space="preserve">
+    <value>Synthesized pipeline templates</value>
+  </data>
+  <data name="Shader layouts" xml:space="preserve">
+    <value>Shader layouts</value>
+  </data>
+  <data name="Stage units exact / inferred / guessed" xml:space="preserve">
+    <value>Stage units exact / inferred / guessed</value>
+  </data>
+  <data name="Vertex layouts from a recording" xml:space="preserve">
+    <value>Vertex layouts from a recording</value>
+  </data>
+  <data name="Driver cache" xml:space="preserve">
+    <value>Driver cache</value>
+  </data>
+  <data name=" measured" xml:space="preserve">
+    <value> measured</value>
+  </data>
+  <data name=" estimated" xml:space="preserve">
+    <value> estimated</value>
+  </data>
+  <data name="tested on this engine version" xml:space="preserve">
+    <value>tested on this engine version</value>
+  </data>
+  <data name="not needed (DirectX 11)" xml:space="preserve">
+    <value>not needed (DirectX 11)</value>
+  </data>
+  <data name="learned from recording" xml:space="preserve">
+    <value>learned from recording</value>
+  </data>
+  <data name="not tested on this engine version yet" xml:space="preserve">
+    <value>not tested on this engine version yet</value>
+  </data>
+  <data name="shipped with the shaders" xml:space="preserve">
+    <value>shipped with the shaders</value>
+  </data>
+  <data name="First compile" xml:space="preserve">
+    <value>First compile</value>
+  </data>
+  <data name="Last compile" xml:space="preserve">
+    <value>Last compile</value>
+  </data>
+  <data name=" Nothing failed." xml:space="preserve">
+    <value> Nothing failed.</value>
+  </data>
+  <data name=" The driver skipped {0:N0} combination{1}." xml:space="preserve">
+    <value> The driver skipped {0:N0} combination{1}.</value>
+  </data>
+  <data name=" It uses {0} of disk space." xml:space="preserve">
+    <value> It uses {0} of disk space.</value>
+  </data>
+  <data name="Its shader cache was cleared. The last compile took {0}." xml:space="preserve">
+    <value>Its shader cache was cleared. The last compile took {0}.</value>
+  </data>
+  <data name="It takes about {0} and runs in the background, so you can keep using the PC." xml:space="preserve">
+    <value>It takes about {0} and runs in the background, so you can keep using the PC.</value>
+  </data>
+  <data name="It runs in the background, so you can keep using the PC." xml:space="preserve">
+    <value>It runs in the background, so you can keep using the PC.</value>
+  </data>
+  <data name=" It adds about {0} to the driver's shader cache." xml:space="preserve">
+    <value> It adds about {0} to the driver's shader cache.</value>
+  </data>
+  <data name="{0:N0} skipped" xml:space="preserve">
+    <value>{0:N0} skipped</value>
+  </data>
+  <data name="{0:N0} {1} skipped: {2} in this version of the game. Nothing to do." xml:space="preserve">
+    <value>{0:N0} {1} skipped: {2} in this version of the game. Nothing to do.</value>
+  </data>
+  <data name="its shader isn't" xml:space="preserve">
+    <value>its shader isn't</value>
+  </data>
+  <data name="their shaders aren't" xml:space="preserve">
+    <value>their shaders aren't</value>
+  </data>
+  <data name="{0:N0} {1} skipped: {2} the GPU driver. If the game uses {3}, it compiles {4} itself." xml:space="preserve">
+    <value>{0:N0} {1} skipped: {2} the GPU driver. If the game uses {3}, it compiles {4} itself.</value>
+  </data>
+  <data name="it crashes" xml:space="preserve">
+    <value>it crashes</value>
+  </data>
+  <data name="they crash" xml:space="preserve">
+    <value>they crash</value>
+  </data>
+  <data name="{0:N0} need{1} a recording on this PC: the game or a mod builds {2} while it runs, so they're in no game file. Play with &quot;Record while I play&quot; on to catch them." xml:space="preserve">
+    <value>{0:N0} need{1} a recording on this PC: the game or a mod builds {2} while it runs, so they're in no game file. Play with "Record while I play" on to catch them.</value>
+  </data>
+  <data name="its shaders" xml:space="preserve">
+    <value>its shaders</value>
+  </data>
+  <data name="their shaders" xml:space="preserve">
+    <value>their shaders</value>
+  </data>
+  <data name="Last time you played · {0}" xml:space="preserve">
+    <value>Last time you played · {0}</value>
+  </data>
+  <data name="Nothing had to compile while you played: all {0:N0} shader combinations the game used were ready." xml:space="preserve">
+    <value>Nothing had to compile while you played: all {0:N0} shader combinations the game used were ready.</value>
+  </data>
+  <data name="Nothing had to compile while you played." xml:space="preserve">
+    <value>Nothing had to compile while you played.</value>
+  </data>
+  <data name=" (it took {0:0} ms)" xml:space="preserve">
+    <value> (it took {0:0} ms)</value>
+  </data>
+  <data name=" (the longest took {0:0} ms)" xml:space="preserve">
+    <value> (the longest took {0:0} ms)</value>
+  </data>
+  <data name="{0:N0} had to compile while you played{1}." xml:space="preserve">
+    <value>{0:N0} had to compile while you played{1}.</value>
+  </data>
+  <data name=" {0:N0} compiled while the game started." xml:space="preserve">
+    <value> {0:N0} compiled while the game started.</value>
+  </data>
+  <data name=" The other {0:N0} were ready." xml:space="preserve">
+    <value> The other {0:N0} were ready.</value>
+  </data>
+  <data name="Ray tracing pipelines: {0:N0} ready, {1:N0} compiled while you played" xml:space="preserve">
+    <value>Ray tracing pipelines: {0:N0} ready, {1:N0} compiled while you played</value>
+  </data>
+  <data name=", {0:N0} while the game started." xml:space="preserve">
+    <value>, {0:N0} while the game started.</value>
+  </data>
+  <data name="{0:N0} ray-traced pipeline{1} the driver partly recompiles every launch." xml:space="preserve">
+    <value>{0:N0} ray-traced pipeline{1} the driver partly recompiles every launch.</value>
+  </data>
+  <data name="Startup (the game's own shader precompile and first load): {0}. In play: {1:N0} frames of 50 ms or more, " xml:space="preserve">
+    <value>Startup (the game's own shader precompile and first load): {0}. In play: {1:N0} frames of 50 ms or more, </value>
+  </data>
+  <data name="{0:N0} of 100 ms or more. Frame times stay on this PC." xml:space="preserve">
+    <value>{0:N0} of 100 ms or more. Frame times stay on this PC.</value>
+  </data>
+  <data name="{0:0} ms" xml:space="preserve">
+    <value>{0:0} ms</value>
+  </data>
+  <data name="shader compile" xml:space="preserve">
+    <value>shader compile</value>
+  </data>
+  <data name="other hitch" xml:space="preserve">
+    <value>other hitch</value>
+  </data>
+  <data name="quitting" xml:space="preserve">
+    <value>quitting</value>
+  </data>
+  <data name="loading, compiling shaders" xml:space="preserve">
+    <value>loading, compiling shaders</value>
+  </data>
+  <data name="loading" xml:space="preserve">
+    <value>loading</value>
+  </data>
+  <data name="no stutters from shader compiles" xml:space="preserve">
+    <value>no stutters from shader compiles</value>
+  </data>
+  <data name="{0:N0} stutter{1} from shader compiles (worst {2})" xml:space="preserve">
+    <value>{0:N0} stutter{1} from shader compiles (worst {2})</value>
+  </data>
+  <data name=", no other hitches" xml:space="preserve">
+    <value>, no other hitches</value>
+  </data>
+  <data name=", {0:N0} other hitch{1}" xml:space="preserve">
+    <value>, {0:N0} other hitch{1}</value>
+  </data>
+  <data name=", 1% low {0:0} fps." xml:space="preserve">
+    <value>, 1% low {0:0} fps.</value>
+  </data>
+  <data name=" Loading: " xml:space="preserve">
+    <value> Loading: </value>
+  </data>
+  <data name="{0:N0} slow frame{1} compiling shaders (worst {2})" xml:space="preserve">
+    <value>{0:N0} slow frame{1} compiling shaders (worst {2})</value>
+  </data>
+  <data name="{0:N0} slow frame{1}" xml:space="preserve">
+    <value>{0:N0} slow frame{1}</value>
+  </data>
+  <data name="{0:N0} other{1}" xml:space="preserve">
+    <value>{0:N0} other{1}</value>
+  </data>
+  <data name="{0:N0} requests: {1:N0} from the game's own library, {2:N0} already in the driver cache, {3:N0} compiled during play" xml:space="preserve">
+    <value>{0:N0} requests: {1:N0} from the game's own library, {2:N0} already in the driver cache, {3:N0} compiled during play</value>
+  </data>
+  <data name=", {0:N0} while the game started" xml:space="preserve">
+    <value>, {0:N0} while the game started</value>
+  </data>
+  <data name=", {0:N0} ray-traced pipelines the driver partly recompiles every launch" xml:space="preserve">
+    <value>, {0:N0} ray-traced pipelines the driver partly recompiles every launch</value>
+  </data>
+  <data name="; ray tracing pipelines {0:N0} ready, {1:N0} compiled during play" xml:space="preserve">
+    <value>; ray tracing pipelines {0:N0} ready, {1:N0} compiled during play</value>
+  </data>
+  <data name="{0} treats an extra d3d12.dll as tampering, so this game is compiled from its files only." xml:space="preserve">
+    <value>{0} treats an extra d3d12.dll as tampering, so this game is compiled from its files only.</value>
+  </data>
+  <data name="Not available: {0} treats an extra d3d12.dll as tampering, so this game is compiled from its files only." xml:space="preserve">
+    <value>Not available: {0} treats an extra d3d12.dll as tampering, so this game is compiled from its files only.</value>
+  </data>
+  <data name="Not available until you confirm the game's folder (Game folder… above): SCSKiller checks all of it for anti-cheat before it records." xml:space="preserve">
+    <value>Not available until you confirm the game's folder (Game folder… above): SCSKiller checks all of it for anti-cheat before it records.</value>
+  </data>
+  <data name="Not available: {0}." xml:space="preserve">
+    <value>Not available: {0}.</value>
+  </data>
+  <data name="Adds a small d3d12.dll next to the game to catch anything the plan missed and time each frame, so this page shows what stuttered. Remove any time." xml:space="preserve">
+    <value>Adds a small d3d12.dll next to the game to catch anything the plan missed and time each frame, so this page shows what stuttered. Remove any time.</value>
+  </data>
+  <data name=" The last launch wasn't recorded: {0}." xml:space="preserve">
+    <value> The last launch wasn't recorded: {0}.</value>
+  </data>
+  <data name="Record alongside {0}" xml:space="preserve">
+    <value>Record alongside {0}</value>
+  </data>
+  <data name="{0}'s d3d12.dll is renamed while the recorder is in, and restored exactly as it was when it's removed." xml:space="preserve">
+    <value>{0}'s d3d12.dll is renamed while the recorder is in, and restored exactly as it was when it's removed.</value>
+  </data>
+  <data name="Offline session running…" xml:space="preserve">
+    <value>Offline session running…</value>
+  </data>
+  <data name="Record offline without EasyAntiCheat (at your own risk)" xml:space="preserve">
+    <value>Record offline without EasyAntiCheat (at your own risk)</value>
+  </data>
+  <data name="The recording uses {0} (in the game folder and SCSKiller's copy)" xml:space="preserve">
+    <value>The recording uses {0} (in the game folder and SCSKiller's copy)</value>
+  </data>
+  <data name=". Raise the limit in Settings, or clear the recording." xml:space="preserve">
+    <value>. Raise the limit in Settings, or clear the recording.</value>
+  </data>
+  <data name="Close the game first" xml:space="preserve">
+    <value>Close the game first</value>
+  </data>
+  <data name="Deletes the recorded pipelines; the recorder stays in" xml:space="preserve">
+    <value>Deletes the recorded pipelines; the recorder stays in</value>
+  </data>
+  <data name="Move {0} to the top" xml:space="preserve">
+    <value>Move {0} to the top</value>
+  </data>
+  <data name="Move {0} up" xml:space="preserve">
+    <value>Move {0} up</value>
+  </data>
+  <data name="Move {0} down" xml:space="preserve">
+    <value>Move {0} down</value>
+  </data>
+  <data name="Remove {0} from the queue" xml:space="preserve">
+    <value>Remove {0} from the queue</value>
+  </data>
+  <data name="Reading shaders" xml:space="preserve">
+    <value>Reading shaders</value>
+  </data>
+  <data name="Building plan" xml:space="preserve">
+    <value>Building plan</value>
+  </data>
+  <data name="Preparing files" xml:space="preserve">
+    <value>Preparing files</value>
+  </data>
+  <data name="Paused" xml:space="preserve">
+    <value>Paused</value>
+  </data>
+  <data name="{0} · {1:0.0}% · {2:N0} of {3:N0} pipelines" xml:space="preserve">
+    <value>{0} · {1:0.0}% · {2:N0} of {3:N0} pipelines</value>
+  </data>
+  <data name=" · {0:N0} failed" xml:space="preserve">
+    <value> · {0:N0} failed</value>
+  </data>
+  <data name=" · {0:N0} skipped" xml:space="preserve">
+    <value> · {0:N0} skipped</value>
+  </data>
+  <data name="Pause" xml:space="preserve">
+    <value>Pause</value>
+  </data>
+  <data name="{0} of {1}" xml:space="preserve">
+    <value>{0} of {1}</value>
+  </data>
+  <data name="CPU use: {0} of {1} threads, {2} priority" xml:space="preserve">
+    <value>CPU use: {0} of {1} threads, {2} priority</value>
+  </data>
+  <data name="below-normal" xml:space="preserve">
+    <value>below-normal</value>
+  </data>
+  <data name="idle" xml:space="preserve">
+    <value>idle</value>
+  </data>
+  <data name="Nothing queued" xml:space="preserve">
+    <value>Nothing queued</value>
+  </data>
+  <data name="{0} game{1} · " xml:space="preserve">
+    <value>{0} game{1} · </value>
+  </data>
+  <data name="about {0} in total{1}" xml:space="preserve">
+    <value>about {0} in total{1}</value>
+  </data>
+  <data name=", plus plans to build" xml:space="preserve">
+    <value>, plus plans to build</value>
+  </data>
+  <data name="time known once the plans are built" xml:space="preserve">
+    <value>time known once the plans are built</value>
+  </data>
+  <data name=" · not started" xml:space="preserve">
+    <value> · not started</value>
+  </data>
+  <data name="After this queue the cache is close to its {0} limit; older games may be evicted." xml:space="preserve">
+    <value>After this queue the cache is close to its {0} limit; older games may be evicted.</value>
+  </data>
+  <data name="Failed: {0}" xml:space="preserve">
+    <value>Failed: {0}</value>
+  </data>
+  <data name="Stopped at {0:N0} of {1:N0}: add it again to continue" xml:space="preserve">
+    <value>Stopped at {0:N0} of {1:N0}: add it again to continue</value>
+  </data>
+  <data name="Stopped" xml:space="preserve">
+    <value>Stopped</value>
+  </data>
+  <data name="Done · " xml:space="preserve">
+    <value>Done · </value>
+  </data>
+  <data name="Done" xml:space="preserve">
+    <value>Done</value>
+  </data>
+  <data name="{0:N0} pipelines{1}" xml:space="preserve">
+    <value>{0:N0} pipelines{1}</value>
+  </data>
+  <data name=" + {0:N0} DirectX 11 shaders" xml:space="preserve">
+    <value> + {0:N0} DirectX 11 shaders</value>
+  </data>
+  <data name="plan is built first" xml:space="preserve">
+    <value>plan is built first</value>
+  </data>
+  <data name="16 GB (driver default)" xml:space="preserve">
+    <value>16 GB (driver default)</value>
+  </data>
+  <data name="32 GB" xml:space="preserve">
+    <value>32 GB</value>
+  </data>
+  <data name="100 GB" xml:space="preserve">
+    <value>100 GB</value>
+  </data>
+  <data name="Unlimited" xml:space="preserve">
+    <value>Unlimited</value>
+  </data>
+  <data name="{0} shader cache size" xml:space="preserve">
+    <value>{0} shader cache size</value>
+  </data>
+  <data name="Low" xml:space="preserve">
+    <value>Low</value>
+  </data>
+  <data name="Medium" xml:space="preserve">
+    <value>Medium</value>
+  </data>
+  <data name="High" xml:space="preserve">
+    <value>High</value>
+  </data>
+  <data name="Couldn't read the setting" xml:space="preserve">
+    <value>Couldn't read the setting</value>
+  </data>
+  <data name="Now: Off" xml:space="preserve">
+    <value>Now: Off</value>
+  </data>
+  <data name="Now: On, {0}" xml:space="preserve">
+    <value>Now: On, {0}</value>
+  </data>
+  <data name="Setting on but the NVIDIA task is missing: click Apply to repair" xml:space="preserve">
+    <value>Setting on but the NVIDIA task is missing: click Apply to repair</value>
+  </data>
+  <data name="Global driver setting, the same one as NVIDIA App › Graphics › Shader Cache Size. " xml:space="preserve">
+    <value>Global driver setting, the same one as NVIDIA App › Graphics › Shader Cache Size. </value>
+  </data>
+  <data name="Global driver setting. " xml:space="preserve">
+    <value>Global driver setting. </value>
+  </data>
+  <data name="When the cache is full the driver deletes older entries, and those games stutter again." xml:space="preserve">
+    <value>When the cache is full the driver deletes older entries, and those games stutter again.</value>
+  </data>
+  <data name="The AMD driver's DirectX 12 shader cache is fixed at {0}; it has no size setting. " xml:space="preserve">
+    <value>The AMD driver's DirectX 12 shader cache is fixed at {0}; it has no size setting. </value>
+  </data>
+  <data name="Past it, the driver removes the least recently used games' caches when a game starts, and SCSKiller shows those games as needing a compile again." xml:space="preserve">
+    <value>Past it, the driver removes the least recently used games' caches when a game starts, and SCSKiller shows those games as needing a compile again.</value>
+  </data>
+  <data name="SCSKiller can't change the cache size of {0} drivers yet, so it only shows what is used. " xml:space="preserve">
+    <value>SCSKiller can't change the cache size of {0} drivers yet, so it only shows what is used. </value>
+  </data>
+  <data name="If games get evicted, raise the limit in your GPU vendor's control panel." xml:space="preserve">
+    <value>If games get evicted, raise the limit in your GPU vendor's control panel.</value>
+  </data>
+  <data name="Unknown" xml:space="preserve">
+    <value>Unknown</value>
+  </data>
+  <data name="Disabled" xml:space="preserve">
+    <value>Disabled</value>
+  </data>
+  <data name=" (driver default)" xml:space="preserve">
+    <value> (driver default)</value>
+  </data>
+  <data name="Couldn't update the sign-in check: " xml:space="preserve">
+    <value>Couldn't update the sign-in check: </value>
+  </data>
+  <data name="Last rebuilt for driver {0}" xml:space="preserve">
+    <value>Last rebuilt for driver {0}</value>
+  </data>
+  <data name=" · {0} skipped: {1}" xml:space="preserve">
+    <value> · {0} skipped: {1}</value>
+  </data>
+  <data name="Recordings use {0} in {1} game{2}" xml:space="preserve">
+    <value>Recordings use {0} in {1} game{2}</value>
+  </data>
+  <data name="No recordings on disk" xml:space="preserve">
+    <value>No recordings on disk</value>
+  </data>
+  <data name="Auto picks the best limit for this PC's memory ({0} GB here, with {1} GB of RAM). Set it lower to keep more memory free while compiling." xml:space="preserve">
+    <value>Auto picks the best limit for this PC's memory ({0} GB here, with {1} GB of RAM). Set it lower to keep more memory free while compiling.</value>
+  </data>
+  <data name="{0} GB" xml:space="preserve">
+    <value>{0} GB</value>
+  </data>
+  <data name="Auto ({0} GB)" xml:space="preserve">
+    <value>Auto ({0} GB)</value>
+  </data>
+  <data name="Below-normal priority." xml:space="preserve">
+    <value>Below-normal priority.</value>
+  </data>
+  <data name="Idle priority." xml:space="preserve">
+    <value>Idle priority.</value>
+  </data>
+  <data name=" Fewer threads = slower compile, quieter PC." xml:space="preserve">
+    <value> Fewer threads = slower compile, quieter PC.</value>
+  </data>
+  <data name="The list of games it covers is checked for everyone; the shared hashes need a Patreon subscription." xml:space="preserve">
+    <value>The list of games it covers is checked for everyone; the shared hashes need a Patreon subscription.</value>
+  </data>
+  <data name="Your Patreon membership doesn't include it right now. What was downloaded before keeps working." xml:space="preserve">
+    <value>Your Patreon membership doesn't include it right now. What was downloaded before keeps working.</value>
+  </data>
+  <data name="Checking your supporter status…" xml:space="preserve">
+    <value>Checking your supporter status…</value>
+  </data>
+  <data name="Supporter status not checked yet." xml:space="preserve">
+    <value>Supporter status not checked yet.</value>
+  </data>
+  <data name="No supporter benefits right now. They start once your Patreon membership is active: then click Refresh status." xml:space="preserve">
+    <value>No supporter benefits right now. They start once your Patreon membership is active: then click Refresh status.</value>
+  </data>
+  <data name="Stable" xml:space="preserve">
+    <value>Stable</value>
+  </data>
+  <data name="Beta (Patreon supporter)" xml:space="preserve">
+    <value>Beta (Patreon supporter)</value>
+  </data>
+  <data name="Alpha (Patreon backer)" xml:space="preserve">
+    <value>Alpha (Patreon backer)</value>
+  </data>
+  <data name="Internal" xml:space="preserve">
+    <value>Internal</value>
+  </data>
+  <data name="Checking for updates…" xml:space="preserve">
+    <value>Checking for updates…</value>
+  </data>
+  <data name="Updates download in the background and install the next time SCSKiller starts or quits, never during a compile or a game." xml:space="preserve">
+    <value>Updates download in the background and install the next time SCSKiller starts or quits, never during a compile or a game.</value>
+  </data>
+  <data name="Updates download in the background; Restart to update installs them." xml:space="preserve">
+    <value>Updates download in the background; Restart to update installs them.</value>
+  </data>
+  <data name=" Leaving an early channel keeps this build until Stable passes it." xml:space="preserve">
+    <value> Leaving an early channel keeps this build until Stable passes it.</value>
+  </data>
+  <data name="No licence stated" xml:space="preserve">
+    <value>No licence stated</value>
+  </data>
+  <data name="Microsoft licence" xml:space="preserve">
+    <value>Microsoft licence</value>
+  </data>
+  <data name="No licence text is published with it." xml:space="preserve">
+    <value>No licence text is published with it.</value>
+  </data>
+  <data name="Version " xml:space="preserve">
+    <value>Version </value>
+  </data>
+  <data name=" · {0}{1} channel" xml:space="preserve">
+    <value> · {0}{1} channel</value>
+  </data>
+  <data name="Downloading…" xml:space="preserve">
+    <value>Downloading…</value>
+  </data>
+  <data name="sign in with Patreon first" xml:space="preserve">
+    <value>sign in with Patreon first</value>
+  </data>
+  <data name="Saved to " xml:space="preserve">
+    <value>Saved to </value>
+  </data>
+  <data name="Couldn't download it: " xml:space="preserve">
+    <value>Couldn't download it: </value>
+  </data>
+  <data name="Downloading SCSKiller {0}…" xml:space="preserve">
+    <value>Downloading SCSKiller {0}…</value>
+  </data>
+  <data name="SCSKiller is up to date." xml:space="preserve">
+    <value>SCSKiller is up to date.</value>
+  </data>
+  <data name="Library" xml:space="preserve">
+    <value>Library</value>
+  </data>
+  <data name="{0}'s folder" xml:space="preserve">
+    <value>{0}'s folder</value>
+  </data>
+  <data name="Save" xml:space="preserve">
+    <value>Save</value>
+  </data>
+  <data name="Couldn't set the game folder" xml:space="preserve">
+    <value>Couldn't set the game folder</value>
+  </data>
+  <data name="OK" xml:space="preserve">
+    <value>OK</value>
+  </data>
+  <data name="Remove {0} from the library?" xml:space="preserve">
+    <value>Remove {0} from the library?</value>
+  </data>
+  <data name="SCSKiller forgets the game and takes its recorder out of the game's folder. The game's own files stay, and you can add it again any time." xml:space="preserve">
+    <value>SCSKiller forgets the game and takes its recorder out of the game's folder. The game's own files stay, and you can add it again any time.</value>
+  </data>
+  <data name="Remove" xml:space="preserve">
+    <value>Remove</value>
+  </data>
+  <data name="Couldn't remove the game" xml:space="preserve">
+    <value>Couldn't remove the game</value>
+  </data>
+  <data name="The game will compile shaders during play again until you re-warm it." xml:space="preserve">
+    <value>The game will compile shaders during play again until you re-warm it.</value>
+  </data>
+  <data name=" Anti-cheat game: only the driver cache is cleared." xml:space="preserve">
+    <value> Anti-cheat game: only the driver cache is cleared.</value>
+  </data>
+  <data name="Measuring the cache files…
+
+" xml:space="preserve">
+    <value>Measuring the cache files…
+
+</value>
+  </data>
+  <data name="Clear the shader cache of {0}?" xml:space="preserve">
+    <value>Clear the shader cache of {0}?</value>
+  </data>
+  <data name="Nothing was cleared: no shader-cache files of this game were found." xml:space="preserve">
+    <value>Nothing was cleared: no shader-cache files of this game were found.</value>
+  </data>
+  <data name="No cache files on disk now" xml:space="preserve">
+    <value>No cache files on disk now</value>
+  </data>
+  <data name="Also delete the game's own shader cache ({0}). It rebuilds it at its next start, which then takes longer." xml:space="preserve">
+    <value>Also delete the game's own shader cache ({0}). It rebuilds it at its next start, which then takes longer.</value>
+  </data>
+  <data name="Clear the recording of {0}?" xml:space="preserve">
+    <value>Clear the recording of {0}?</value>
+  </data>
+  <data name="Clear recording" xml:space="preserve">
+    <value>Clear recording</value>
+  </data>
+  <data name="Nothing was cleared: no recording of this game was found." xml:space="preserve">
+    <value>Nothing was cleared: no recording of this game was found.</value>
+  </data>
+  <data name="Start {0} offline without EasyAntiCheat?" xml:space="preserve">
+    <value>Start {0} offline without EasyAntiCheat?</value>
+  </data>
+  <data name=" Online play isn't possible in that session." xml:space="preserve">
+    <value> Online play isn't possible in that session.</value>
+  </data>
+  <data name="Record offline session" xml:space="preserve">
+    <value>Record offline session</value>
+  </data>
+  <data name="Change…" xml:space="preserve">
+    <value>Change…</value>
+  </data>
+  <data name="Before it records, SCSKiller checks the whole game folder for anti-cheat. " xml:space="preserve">
+    <value>Before it records, SCSKiller checks the whole game folder for anti-cheat. </value>
+  </data>
+  <data name="Pick the game's own folder, not one that holds other games." xml:space="preserve">
+    <value>Pick the game's own folder, not one that holds other games.</value>
+  </data>
+  <data name="Game" xml:space="preserve">
+    <value>Game</value>
+  </data>
+  <data name="Program (the recorder goes next to it)" xml:space="preserve">
+    <value>Program (the recorder goes next to it)</value>
+  </data>
+  <data name="Game folder" xml:space="preserve">
+    <value>Game folder</value>
+  </data>
+  <data name="Use this folder" xml:space="preserve">
+    <value>Use this folder</value>
+  </data>
+  <data name="Couldn't open the folder picker: " xml:space="preserve">
+    <value>Couldn't open the folder picker: </value>
+  </data>
+  <data name="Add game" xml:space="preserve">
+    <value>Add game</value>
+  </data>
+  <data name="Couldn't open the file picker" xml:space="preserve">
+    <value>Couldn't open the file picker</value>
+  </data>
+  <data name="Couldn't add this game" xml:space="preserve">
+    <value>Couldn't add this game</value>
+  </data>
+  <data name="Add {0}" xml:space="preserve">
+    <value>Add {0}</value>
+  </data>
+  <data name="you added it already" xml:space="preserve">
+    <value>you added it already</value>
+  </data>
+  <data name="SCSKiller found it in {0}" xml:space="preserve">
+    <value>SCSKiller found it in {0}</value>
+  </data>
+  <data name="Already in your library" xml:space="preserve">
+    <value>Already in your library</value>
+  </data>
+  <data name="{0} is in the list: {1}." xml:space="preserve">
+    <value>{0} is in the list: {1}.</value>
+  </data>
+  <data name="Open" xml:space="preserve">
+    <value>Open</value>
+  </data>
+  <data name="{0}: {1}. Refresh the library to see it." xml:space="preserve">
+    <value>{0}: {1}. Refresh the library to see it.</value>
+  </data>
+  <data name="0x followed by 64 hex digits" xml:space="preserve">
+    <value>0x followed by 64 hex digits</value>
+  </data>
+  <data name="AES key" xml:space="preserve">
+    <value>AES key</value>
+  </data>
+  <data name="Why can't {0} be compiled?" xml:space="preserve">
+    <value>Why can't {0} be compiled?</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>Close</value>
+  </data>
+  <data name="Unlock" xml:space="preserve">
+    <value>Unlock</value>
+  </data>
+  <data name="That key didn't work" xml:space="preserve">
+    <value>That key didn't work</value>
+  </data>
+  <data name="It doesn't open this game's files." xml:space="preserve">
+    <value>It doesn't open this game's files.</value>
+  </data>
+  <data name="Record {0}?" xml:space="preserve">
+    <value>Record {0}?</value>
+  </data>
+  <data name="SCSKiller adds a small d3d12.dll next to the game that writes down every pipeline it creates. " xml:space="preserve">
+    <value>SCSKiller adds a small d3d12.dll next to the game that writes down every pipeline it creates. </value>
+  </data>
+  <data name="Play for about 5 minutes, close the game, then add it to the compile queue. You can remove it any time from the game's page." xml:space="preserve">
+    <value>Play for about 5 minutes, close the game, then add it to the compile queue. You can remove it any time from the game's page.</value>
+  </data>
+  <data name="Add recorder" xml:space="preserve">
+    <value>Add recorder</value>
+  </data>
+  <data name="Couldn't add the recorder" xml:space="preserve">
+    <value>Couldn't add the recorder</value>
+  </data>
+  <data name="Set the shader cache limit to {0}?" xml:space="preserve">
+    <value>Set the shader cache limit to {0}?</value>
+  </data>
+  <data name="Raising it deletes nothing. Lowering it below what is used now makes the driver delete older entries, and those games stutter again. " xml:space="preserve">
+    <value>Raising it deletes nothing. Lowering it below what is used now makes the driver delete older entries, and those games stutter again. </value>
+  </data>
+  <data name="You can switch back to the driver default here at any time." xml:space="preserve">
+    <value>You can switch back to the driver default here at any time.</value>
+  </data>
+  <data name="Change limit" xml:space="preserve">
+    <value>Change limit</value>
+  </data>
+  <data name="Cancelled." xml:space="preserve">
+    <value>Cancelled.</value>
+  </data>
+  <data name="Shader cache limit set to {0}." xml:space="preserve">
+    <value>Shader cache limit set to {0}.</value>
+  </data>
+  <data name="The limit was not changed: " xml:space="preserve">
+    <value>The limit was not changed: </value>
+  </data>
+  <data name="Turn off NVIDIA Auto Shader Compilation?" xml:space="preserve">
+    <value>Turn off NVIDIA Auto Shader Compilation?</value>
+  </data>
+  <data name="Turn on NVIDIA Auto Shader Compilation ({0})?" xml:space="preserve">
+    <value>Turn on NVIDIA Auto Shader Compilation ({0})?</value>
+  </data>
+  <data name="Auto Shader Compilation is a beta feature by NVIDIA®." xml:space="preserve">
+    <value>Auto Shader Compilation is a beta feature by NVIDIA®.</value>
+  </data>
+  <data name="Turn off" xml:space="preserve">
+    <value>Turn off</value>
+  </data>
+  <data name="Turn on" xml:space="preserve">
+    <value>Turn on</value>
+  </data>
+  <data name="Turned off." xml:space="preserve">
+    <value>Turned off.</value>
+  </data>
+  <data name="Turned on ({0})." xml:space="preserve">
+    <value>Turned on ({0}).</value>
+  </data>
+  <data name="Not changed: " xml:space="preserve">
+    <value>Not changed: </value>
+  </data>
+  <data name="{0:0.#} GB" xml:space="preserve">
+    <value>{0:0.#} GB</value>
+  </data>
+  <data name="{0:0} MB" xml:space="preserve">
+    <value>{0:0} MB</value>
+  </data>
+  <data name=": {0:N0} known pipelines, compiled with the game" xml:space="preserve">
+    <value>: {0:N0} known pipelines, compiled with the game</value>
+  </data>
+  <data name=": compiled by the NVIDIA driver itself" xml:space="preserve">
+    <value>: compiled by the NVIDIA driver itself</value>
+  </data>
+  <data name=": detected; added after a recording sees them" xml:space="preserve">
+    <value>: detected; added after a recording sees them</value>
+  </data>
+  <data name="SCSKiller doesn't compile on Intel GPUs yet: how Intel's driver caches shaders hasn't been measured. Support is planned." xml:space="preserve">
+    <value>SCSKiller doesn't compile on Intel GPUs yet: how Intel's driver caches shaders hasn't been measured. Support is planned.</value>
+  </data>
+  <data name="SCSKiller doesn't compile on Qualcomm GPUs yet: how Qualcomm's driver caches shaders hasn't been measured." xml:space="preserve">
+    <value>SCSKiller doesn't compile on Qualcomm GPUs yet: how Qualcomm's driver caches shaders hasn't been measured.</value>
+  </data>
+  <data name="SCSKiller doesn't compile on this GPU yet: it only knows how NVIDIA and AMD drivers cache shaders." xml:space="preserve">
+    <value>SCSKiller doesn't compile on this GPU yet: it only knows how NVIDIA and AMD drivers cache shaders.</value>
+  </data>
+  <data name="Driver {0} · {1:0}% still compiled" xml:space="preserve">
+    <value>Driver {0} · {1:0}% still compiled</value>
+  </data>
+  <data name="Recorder on: play with ray tracing" xml:space="preserve">
+    <value>Recorder on: play with ray tracing</value>
+  </data>
+  <data name="Ray tracing needs a recording" xml:space="preserve">
+    <value>Ray tracing needs a recording</value>
+  </data>
+  <data name="Ray tracing needs a 5-min recording" xml:space="preserve">
+    <value>Ray tracing needs a 5-min recording</value>
+  </data>
+  <data name="Driver {0}" xml:space="preserve">
+    <value>Driver {0}</value>
+  </data>
+  <data name=" · partly covered" xml:space="preserve">
+    <value> · partly covered</value>
+  </data>
+  <data name="Recording paused: limit reached" xml:space="preserve">
+    <value>Recording paused: limit reached</value>
+  </data>
+  <data name="Recorder on: play 5 minutes" xml:space="preserve">
+    <value>Recorder on: play 5 minutes</value>
+  </data>
+  <data name="For ray-traced effects" xml:space="preserve">
+    <value>For ray-traced effects</value>
+  </data>
+  <data name=" · in the community database" xml:space="preserve">
+    <value> · in the community database</value>
+  </data>
+  <data name="Play into the game world" xml:space="preserve">
+    <value>Play into the game world</value>
+  </data>
+  <data name="Turn on Record and play" xml:space="preserve">
+    <value>Turn on Record and play</value>
+  </data>
+  <data name="Ray tracing not compiled" xml:space="preserve">
+    <value>Ray tracing not compiled</value>
+  </data>
+  <data name="Ray tracing blocked by {0}" xml:space="preserve">
+    <value>Ray tracing blocked by {0}</value>
+  </data>
+  <data name="No ray tracing seen while recording" xml:space="preserve">
+    <value>No ray tracing seen while recording</value>
+  </data>
+  <data name="Path tracing needs a recording" xml:space="preserve">
+    <value>Path tracing needs a recording</value>
+  </data>
+  <data name="Partly covered" xml:space="preserve">
+    <value>Partly covered</value>
+  </data>
+  <data name="Not tested on this engine version" xml:space="preserve">
+    <value>Not tested on this engine version</value>
+  </data>
+  <data name="DirectX 11; DirectX 12 needs a recording" xml:space="preserve">
+    <value>DirectX 11; DirectX 12 needs a recording</value>
+  </data>
+  <data name="DirectX 11 and 12" xml:space="preserve">
+    <value>DirectX 11 and 12</value>
+  </data>
+  <data name="{0} changes all its pipelines" xml:space="preserve">
+    <value>{0} changes all its pipelines</value>
+  </data>
+  <data name="Blocked by {0}" xml:space="preserve">
+    <value>Blocked by {0}</value>
+  </data>
+  <data name="Needs a recording: confirm its folder" xml:space="preserve">
+    <value>Needs a recording: confirm its folder</value>
+  </data>
+  <data name="No DirectX shaders" xml:space="preserve">
+    <value>No DirectX shaders</value>
+  </data>
+  <data name="Engine not supported yet" xml:space="preserve">
+    <value>Engine not supported yet</value>
+  </data>
+  <data name="Couldn't read the game files" xml:space="preserve">
+    <value>Couldn't read the game files</value>
+  </data>
+  <data name="Runs on " xml:space="preserve">
+    <value>Runs on </value>
+  </data>
+  <data name="Not supported on this GPU yet" xml:space="preserve">
+    <value>Not supported on this GPU yet</value>
+  </data>
+  <data name="Driver {0} cleared its cache" xml:space="preserve">
+    <value>Driver {0} cleared its cache</value>
+  </data>
+  <data name="The driver trimmed its cache" xml:space="preserve">
+    <value>The driver trimmed its cache</value>
+  </data>
+  <data name="Its shader cache was removed" xml:space="preserve">
+    <value>Its shader cache was removed</value>
+  </data>
+  <data name="The compile missed the game's cache" xml:space="preserve">
+    <value>The compile missed the game's cache</value>
+  </data>
+  <data name="The exe name's case changed" xml:space="preserve">
+    <value>The exe name's case changed</value>
+  </data>
+  <data name="Game updated" xml:space="preserve">
+    <value>Game updated</value>
+  </data>
+  <data name="Game shaders changed" xml:space="preserve">
+    <value>Game shaders changed</value>
+  </data>
+  <data name="SCSKiller can compile more" xml:space="preserve">
+    <value>SCSKiller can compile more</value>
+  </data>
+  <data name="Maximum mode: more to compile" xml:space="preserve">
+    <value>Maximum mode: more to compile</value>
+  </data>
+  <data name="Follow Windows" xml:space="preserve">
+    <value>Follow Windows</value>
+    <comment>Settings language selector</comment>
+  </data>
+  <data name="Welcome to SCSKiller" xml:space="preserve">
+    <value>Welcome to SCSKiller</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="SCSKiller is free and open source. Everything it does on your PC is free, with no account needed." xml:space="preserve">
+    <value>SCSKiller is free and open source. Everything it does on your PC is free, with no account needed.</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="Patreon supporters get access to the community shader hash database and to beta and alpha builds. Patreon pays for the servers that run it." xml:space="preserve">
+    <value>Patreon supporters get access to the community shader hash database and to beta and alpha builds. Patreon pays for the servers that run it.</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="Once a day the app tells our server that an install is active, with its version and GPU vendor and no identifier; you can turn that off in Settings." xml:space="preserve">
+    <value>Once a day the app tells our server that an install is active, with its version and GPU vendor and no identifier; you can turn that off in Settings.</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="About supporting SCSKiller" xml:space="preserve">
+    <value>About supporting SCSKiller</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="Help improve the community shader hash database (shared anonymously)" xml:space="preserve">
+    <value>Help improve the community shader hash database (shared anonymously)</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="Continue without" xml:space="preserve">
+    <value>Continue without</value>
+    <comment>First-run welcome</comment>
+  </data>
+  <data name="Compile now" xml:space="preserve">
+    <value>Compile now</value>
+    <comment>Notification buttons</comment>
+  </data>
+  <data name="When idle" xml:space="preserve">
+    <value>When idle</value>
+    <comment>Notification buttons</comment>
+  </data>
+  <data name="Skip" xml:space="preserve">
+    <value>Skip</value>
+    <comment>Notification buttons</comment>
+  </data>
+  <data name="Show" xml:space="preserve">
+    <value>Show</value>
+    <comment>Notification buttons</comment>
+  </data>
+  <data name="Encrypted game files (needs the game's AES key)" xml:space="preserve">
+    <value>Encrypted game files (needs the game's AES key)</value>
+  </data>
+  <data name="No shaders found (no shader library, no global shader cache)" xml:space="preserve">
+    <value>No shaders found (no shader library, no global shader cache)</value>
+  </data>
+  <data name="Not in the community database yet" xml:space="preserve">
+    <value>Not in the community database yet</value>
+  </data>
+  <data name="Its anti-cheat" xml:space="preserve">
+    <value>Its anti-cheat</value>
+  </data>
+  <data name="Needs a recording, once you confirm its game folder" xml:space="preserve">
+    <value>Needs a recording, once you confirm its game folder</value>
+  </data>
+  <data name="No recording needed" xml:space="preserve">
+    <value>No recording needed</value>
+  </data>
+  <data name="Planned from a recording" xml:space="preserve">
+    <value>Planned from a recording</value>
+  </data>
+  <data name="Turn on recording and play for about 5 minutes" xml:space="preserve">
+    <value>Turn on recording and play for about 5 minutes</value>
+  </data>
+  <data name="The recording has no draws: play into the game world" xml:space="preserve">
+    <value>The recording has no draws: play into the game world</value>
+  </data>
+  <data name="The driver's shader cache is disabled, so there is nothing to compile into. Set a cache size first." xml:space="preserve">
+    <value>The driver's shader cache is disabled, so there is nothing to compile into. Set a cache size first.</value>
+  </data>
+  <data name="NvOSC.exe was not found in the NVIDIA driver's folder (it needs driver r610 or newer)" xml:space="preserve">
+    <value>NvOSC.exe was not found in the NVIDIA driver's folder (it needs driver r610 or newer)</value>
+  </data>
+  <data name="This NVIDIA driver can't switch Auto Shader Compilation from outside the NVIDIA App (no NvAPI_DRS_SetSettingEx)" xml:space="preserve">
+    <value>This NVIDIA driver can't switch Auto Shader Compilation from outside the NVIDIA App (no NvAPI_DRS_SetSettingEx)</value>
+  </data>
+  <data name="Switching NVIDIA Auto Shader Compilation needs administrator rights" xml:space="preserve">
+    <value>Switching NVIDIA Auto Shader Compilation needs administrator rights</value>
+  </data>
+  <data name="Couldn't read its files: {0}" xml:space="preserve">
+    <value>Couldn't read its files: {0}</value>
+  </data>
+  <data name="Runs on {0}" xml:space="preserve">
+    <value>Runs on {0}</value>
+  </data>
+  <data name="{0} (last run)" xml:space="preserve">
+    <value>{0} (last run)</value>
+  </data>
+  <data name="Needs a recording, which {0} blocks" xml:space="preserve">
+    <value>Needs a recording, which {0} blocks</value>
+  </data>
+  <data name="Needs a recording, which {0} blocks unless you record an offline session (game page)" xml:space="preserve">
+    <value>Needs a recording, which {0} blocks unless you record an offline session (game page)</value>
+  </data>
+  <data name="No raw DXBC/DXIL shaders in its files ({0} GB sampled): shaders are compressed or packed: needs an engine reader" xml:space="preserve">
+    <value>No raw DXBC/DXIL shaders in its files ({0} GB sampled): shaders are compressed or packed: needs an engine reader</value>
+  </data>
+  <data name="Only {0} raw compute shaders: graphics shaders are compressed or packed: needs an engine reader" xml:space="preserve">
+    <value>Only {0} raw compute shaders: graphics shaders are compressed or packed: needs an engine reader</value>
+  </data>
+  <data name="Only {0} raw graphics shaders: the rest are compressed or packed: needs an engine reader" xml:space="preserve">
+    <value>Only {0} raw graphics shaders: the rest are compressed or packed: needs an engine reader</value>
+  </data>
+  <data name="Shader dump version {0}: SCSKiller reads version {1}" xml:space="preserve">
+    <value>Shader dump version {0}: SCSKiller reads version {1}</value>
+  </data>
+  <data name="Listed with {0}, but the game runs {1}" xml:space="preserve">
+    <value>Listed with {0}, but the game runs {1}</value>
+  </data>
+  <data name="Unity {0}: none of {1} built-in shaders has DirectX (d3d11) code this reader can read" xml:space="preserve">
+    <value>Unity {0}: none of {1} built-in shaders has DirectX (d3d11) code this reader can read</value>
+  </data>
+  <data name="No D3D shaders ({0})" xml:space="preserve">
+    <value>No D3D shaders ({0})</value>
+  </data>
+  <data name="No shader containers in its packages' material files (commonest files: {0})" xml:space="preserve">
+    <value>No shader containers in its packages' material files (commonest files: {0})</value>
+  </data>
+  <data name="Luma isn't supported with {0} yet" xml:space="preserve">
+    <value>Luma isn't supported with {0} yet</value>
+  </data>
+  <data name="ReShade must be next to the game's exe to compile through {0}" xml:space="preserve">
+    <value>ReShade must be next to the game's exe to compile through {0}</value>
+  </data>
+  <data name="Set LoadReshade=true in OptiScaler.ini to compile through {0}" xml:space="preserve">
+    <value>Set LoadReshade=true in OptiScaler.ini to compile through {0}</value>
+  </data>
+  <data name="Fix the section headers in OptiScaler.ini to compile through {0}" xml:space="preserve">
+    <value>Fix the section headers in OptiScaler.ini to compile through {0}</value>
+  </data>
+  <data name="Rename ReShade to dxgi.dll next to the exe to compile through {0}" xml:space="preserve">
+    <value>Rename ReShade to dxgi.dll next to the exe to compile through {0}</value>
+  </data>
+  <data name="NvOSC.exe {0} did not finish within a minute" xml:space="preserve">
+    <value>NvOSC.exe {0} did not finish within a minute</value>
+  </data>
+  <data name="The setting was saved, but NvOSC.exe {0} failed (exit code {1})" xml:space="preserve">
+    <value>The setting was saved, but NvOSC.exe {0} failed (exit code {1})</value>
+  </data>
+  <data name="On" xml:space="preserve">
+    <value>On</value>
+  </data>
+  <data name="{0} s" xml:space="preserve">
+    <value>{0} s</value>
+  </data>
+  <data name="{0} min" xml:space="preserve">
+    <value>{0} min</value>
+  </data>
+  <data name="{0} h" xml:space="preserve">
+    <value>{0} h</value>
+  </data>
+  <data name="{0} h {1} min" xml:space="preserve">
+    <value>{0} h {1} min</value>
+  </data>
+  <data name="{0:0.0} s" xml:space="preserve">
+    <value>{0:0.0} s</value>
+  </data>
+  <data name="SCSKiller measurement" xml:space="preserve">
+    <value>SCSKiller measurement</value>
+  </data>
+  <data name="Recording paused: limit reached ({0})" xml:space="preserve">
+    <value>Recording paused: limit reached ({0})</value>
+  </data>
+  <data name="This GPU's driver reuses ray tracing pipelines only exactly as the game builds them, and which ones it builds isn't in its files." xml:space="preserve">
+    <value>This GPU's driver reuses ray tracing pipelines only exactly as the game builds them, and which ones it builds isn't in its files.</value>
+  </data>
+  <data name="SCSKiller can't rebuild {0}'s ray tracing layout from the game files yet." xml:space="preserve">
+    <value>SCSKiller can't rebuild {0}'s ray tracing layout from the game files yet.</value>
+  </data>
+  <data name="this engine" xml:space="preserve">
+    <value>this engine</value>
+  </data>
+  <data name="another mod" xml:space="preserve">
+    <value>another mod</value>
+  </data>
+  <data name="Ray-traced effects need one short recording" xml:space="preserve">
+    <value>Ray-traced effects need one short recording</value>
+  </data>
+  <data name="Ray-traced effects need one short recording, or a community recording for this version" xml:space="preserve">
+    <value>Ray-traced effects need one short recording, or a community recording for this version</value>
+  </data>
+  <data name="no ray tracing seen while recording: turn it on in the game and play to cover it" xml:space="preserve">
+    <value>no ray tracing seen while recording: turn it on in the game and play to cover it</value>
+  </data>
+  <data name="ray tracing that uses separate pipelines (such as path tracing) is compiled only from a recording" xml:space="preserve">
+    <value>ray tracing that uses separate pipelines (such as path tracing) is compiled only from a recording</value>
+  </data>
+  <data name="Shader-compilation stutter persisted through Patch 4; SCSKiller cut its startup shader compile from 813 s to 3.2 s of compile time" xml:space="preserve">
+    <value>Shader-compilation stutter persisted through Patch 4; SCSKiller cut its startup shader compile from 813 s to 3.2 s of compile time</value>
+  </data>
+  <data name="Skipping its optional shader precompile causes stutter entering new locations (the director confirmed it)" xml:space="preserve">
+    <value>Skipping its optional shader precompile causes stutter entering new locations (the director confirmed it)</value>
+  </data>
+  <data name="Its own &quot;Preparing Shaders&quot; step is incomplete: shader and traversal stutter remain" xml:space="preserve">
+    <value>Its own "Preparing Shaders" step is incomplete: shader and traversal stutter remain</value>
+  </data>
+  <data name="Severe UE5 shader-compilation hitches; its precompile is incomplete and patch 2.0 made it worse" xml:space="preserve">
+    <value>Severe UE5 shader-compilation hitches; its precompile is incomplete and patch 2.0 made it worse</value>
+  </data>
+  <data name="Players still report shader-compilation stutter; a larger driver shader cache helps" xml:space="preserve">
+    <value>Players still report shader-compilation stutter; a larger driver shader cache helps</value>
+  </data>
+  <data name="Compiles shaders once at first launch but not again after a driver update" xml:space="preserve">
+    <value>Compiles shaders once at first launch but not again after a driver update</value>
+  </data>
+  <data name="No shader precompile step; players still report shader-compilation stutter" xml:space="preserve">
+    <value>No shader precompile step; players still report shader-compilation stutter</value>
+  </data>
+  <data name="Shader-compilation stutter on first-time events; players raise the driver shader cache to 100 GB" xml:space="preserve">
+    <value>Shader-compilation stutter on first-time events; players raise the driver shader cache to 100 GB</value>
+  </data>
+  <data name="Both shader-compilation and traversal stutter reported" xml:space="preserve">
+    <value>Both shader-compilation and traversal stutter reported</value>
+  </data>
+  <data name="UE5 shader-compilation stutter is a known ongoing issue; patches haven't eliminated it" xml:space="preserve">
+    <value>UE5 shader-compilation stutter is a known ongoing issue; patches haven't eliminated it</value>
+  </data>
+  <data name="Major shader-compilation stutter returned after patch v3.02; deleting and recompiling the shader cache doesn't fix it" xml:space="preserve">
+    <value>Major shader-compilation stutter returned after patch v3.02; deleting and recompiling the shader cache doesn't fix it</value>
+  </data>
+  <data name="Shaders compile on exit but aren't remapped on next boot, causing on-the-fly shader-compilation stutter until rebuilt (an engine-level cache bug, documented on Proton)" xml:space="preserve">
+    <value>Shaders compile on exit but aren't remapped on next boot, causing on-the-fly shader-compilation stutter until rebuilt (an engine-level cache bug, documented on Proton)</value>
+  </data>
+  <data name="Digital Foundry put its launch pauses down to shader compiles, but Valve found most big hitches on Steam Deck weren't. In one session after compiling, SCSKiller measured 37 in-play frames of 50 ms or more: 2 on a ray tracing pipeline compile, 35 with no compile under them" xml:space="preserve">
+    <value>Digital Foundry put its launch pauses down to shader compiles, but Valve found most big hitches on Steam Deck weren't. In one session after compiling, SCSKiller measured 37 in-play frames of 50 ms or more: 2 on a ray tracing pipeline compile, 35 with no compile under them</value>
+  </data>
+  <data name="SCSKiller measured 73 pipeline compiles that blocked the game for 20 ms or more in 3.3 minutes of play with a cold cache, none after compiling; DX12 shader-compilation stutter in this game is well documented" xml:space="preserve">
+    <value>SCSKiller measured 73 pipeline compiles that blocked the game for 20 ms or more in 3.3 minutes of play with a cold cache, none after compiling; DX12 shader-compilation stutter in this game is well documented</value>
+  </data>
+  <data name="UE5's own shader-precompile systems (5.1-5.4) don't work properly without extra developer work, per Digital Foundry - a general UE5 engine gap this game inherits" xml:space="preserve">
+    <value>UE5's own shader-precompile systems (5.1-5.4) don't work properly without extra developer work, per Digital Foundry - a general UE5 engine gap this game inherits</value>
+  </data>
+  <data name="Shader-compilation stutter with no precompile step" xml:space="preserve">
+    <value>Shader-compilation stutter with no precompile step</value>
+  </data>
+  <data name="Stutters the first time an enemy or effect appears, not on repeats" xml:space="preserve">
+    <value>Stutters the first time an enemy or effect appears, not on repeats</value>
+  </data>
+  <data name="Shader and traversal stutter; an 850 MB patch did not fix it" xml:space="preserve">
+    <value>Shader and traversal stutter; an 850 MB patch did not fix it</value>
+  </data>
+  <data name="Heavy shader compilation at startup and on level loads (Digital Foundry Direct)" xml:space="preserve">
+    <value>Heavy shader compilation at startup and on level loads (Digital Foundry Direct)</value>
+  </data>
+  <data name="Major PSO stutters during play; SCSKiller measured 92 shader stutters on a cold run and 0 after one compile" xml:space="preserve">
+    <value>Major PSO stutters during play; SCSKiller measured 92 shader stutters on a cold run and 0 after one compile</value>
+  </data>
+  <data name="Shader-compilation stutter remains during play; SCSKiller measured 38 shader stutters (worst 4.6 s) on a cold run and 1 after one compile" xml:space="preserve">
+    <value>Shader-compilation stutter remains during play; SCSKiller measured 38 shader stutters (worst 4.6 s) on a cold run and 1 after one compile</value>
+  </data>
+  <data name="Its DirectX 12 build compiles shaders while you play; SCSKiller measured 9 shader stutters (worst 1.4 s) on a cold run and 0 after one compile" xml:space="preserve">
+    <value>Its DirectX 12 build compiles shaders while you play; SCSKiller measured 9 shader stutters (worst 1.4 s) on a cold run and 0 after one compile</value>
+  </data>
+  <data name="Driver changed: {0} -&gt; {1}" xml:space="preserve">
+    <value>Driver changed: {0} -&gt; {1}</value>
+  </data>
+  <data name="{0:N0} new pipeline{1} recorded" xml:space="preserve">
+    <value>{0:N0} new pipeline{1} recorded</value>
+  </data>
+  <data name="{0:N0} new pipeline{1}" xml:space="preserve">
+    <value>{0:N0} new pipeline{1}</value>
+  </data>
+  <data name="{0:N0} new pipeline{1} recorded; compile again to include them" xml:space="preserve">
+    <value>{0:N0} new pipeline{1} recorded; compile again to include them</value>
+  </data>
+  <data name="{0:N0} new pipeline{1}; compile again to include them" xml:space="preserve">
+    <value>{0:N0} new pipeline{1}; compile again to include them</value>
+  </data>
+  <data name="segheap\scskiller_warm.exe not found next to the app or in proxy\build\Release" xml:space="preserve">
+    <value>segheap\scskiller_warm.exe not found next to the app or in proxy\build\Release</value>
+  </data>
+  <data name="scskiller_warm.exe not found next to the app or in proxy\build\Release" xml:space="preserve">
+    <value>scskiller_warm.exe not found next to the app or in proxy\build\Release</value>
+  </data>
+  <data name="Compiling" xml:space="preserve">
+    <value>Compiling</value>
+  </data>
+  <data name="Paused: {0}" xml:space="preserve">
+    <value>Paused: {0}</value>
+  </data>
+  <data name="Compiling: {0}" xml:space="preserve">
+    <value>Compiling: {0}</value>
+  </data>
+  <data name="starts when the PC is idle" xml:space="preserve">
+    <value>starts when the PC is idle</value>
+  </data>
+  <data name="waits for another SCSKiller compile of this game" xml:space="preserve">
+    <value>waits for another SCSKiller compile of this game</value>
+  </data>
+  <data name="paused until the PC is idle" xml:space="preserve">
+    <value>paused until the PC is idle</value>
+  </data>
+  <data name="already compiled: the new plan adds nothing" xml:space="preserve">
+    <value>already compiled: the new plan adds nothing</value>
+  </data>
+  <data name="plan built" xml:space="preserve">
+    <value>plan built</value>
+  </data>
+  <data name="{0} failed (the driver rejected them)" xml:space="preserve">
+    <value>{0} failed (the driver rejected them)</value>
+  </data>
+  <data name="{0} skipped (a shader not in this install)" xml:space="preserve">
+    <value>{0} skipped (a shader not in this install)</value>
+  </data>
+  <data name="{0} skipped ({1} the GPU driver)" xml:space="preserve">
+    <value>{0} skipped ({1} the GPU driver)</value>
+  </data>
+  <data name="Checking {0} game{1} for more to compile (while idle)" xml:space="preserve">
+    <value>Checking {0} game{1} for more to compile (while idle)</value>
+  </data>
+  <data name="paused while {0} is running" xml:space="preserve">
+    <value>paused while {0} is running</value>
+  </data>
+  <data name="stopped while {0} is running: continues when it exits" xml:space="preserve">
+    <value>stopped while {0} is running: continues when it exits</value>
+  </data>
+  <data name="no progress for {0} min" xml:space="preserve">
+    <value>no progress for {0} min</value>
+  </data>
+  <data name="retrying ray tracing with fewer threads ({0})" xml:space="preserve">
+    <value>retrying ray tracing with fewer threads ({0})</value>
+  </data>
+  <data name="recovering from a GPU driver crash" xml:space="preserve">
+    <value>recovering from a GPU driver crash</value>
+  </data>
+  <data name="careful compile: the plan's other pipelines at full speed" xml:space="preserve">
+    <value>careful compile: the plan's other pipelines at full speed</value>
+  </data>
+  <data name="careful compile: recorded pipelines, pass {0} of {1}" xml:space="preserve">
+    <value>careful compile: recorded pipelines, pass {0} of {1}</value>
+  </data>
+  <data name=", " xml:space="preserve">
+    <value>, </value>
+  </data>
+  <data name="." xml:space="preserve">
+    <value>.</value>
+  </data>
+  <data name="SCSKiller {0} is ready. Restarting stops a running compile safely (the driver saves its cache first) and continues it afterwards." xml:space="preserve">
+    <value>SCSKiller {0} is ready. Restarting stops a running compile safely (the driver saves its cache first) and continues it afterwards.</value>
+  </data>
+  <data name="The recorded pipelines are removed. They're compiled again only if the game creates them again while recording, and the compile plan goes back to what the game's files give.
+
+The recorder itself stays in; the game's files aren't touched." xml:space="preserve">
+    <value>The recorded pipelines are removed. They're compiled again only if the game creates them again while recording, and the compile plan goes back to what the game's files give.
+
+The recorder itself stays in; the game's files aren't touched.</value>
+  </data>
+  <data name="SCSKiller couldn't find this game's key in its exe (protected exes hide it). If you have the key, paste it here: it's checked against the game's files and kept on this PC only." xml:space="preserve">
+    <value>SCSKiller couldn't find this game's key in its exe (protected exes hide it). If you have the key, paste it here: it's checked against the game's files and kept on this PC only.</value>
+  </data>
+  <data name="This is a global {0} driver setting: it applies to every game on this PC, not only the ones SCSKiller compiles, and stays until you change it. Windows will ask for administrator permission.
+
+" xml:space="preserve">
+    <value>This is a global {0} driver setting: it applies to every game on this PC, not only the ones SCSKiller compiles, and stays until you change it. Windows will ask for administrator permission.
+
+</value>
+  </data>
+  <data name="; " xml:space="preserve">
+    <value>; </value>
+  </data>
+  <data name=". " xml:space="preserve">
+    <value>. </value>
+  </data>
+  <data name="Turn on recording and play with ray tracing on. " xml:space="preserve">
+    <value>Turn on recording and play with ray tracing on. </value>
+  </data>
+  <data name="Turn on recording and play with ray tracing on for about 5 minutes. " xml:space="preserve">
+    <value>Turn on recording and play with ray tracing on for about 5 minutes. </value>
+  </data>
+  <data name="rt|not compiled" xml:space="preserve">
+    <value>not compiled</value>
+    <comment>Game page: the ray-traced effects row</comment>
+  </data>
+  <data name="Use default (on)" xml:space="preserve">
+    <value>Use default (on)</value>
+  </data>
+  <data name="Use default (off)" xml:space="preserve">
+    <value>Use default (off)</value>
+  </data>
+  <data name="Starts the game offline without EasyAntiCheat. SCSKiller removes its files when the game exits (after a crash: at the next logon). If any are left when you play online, you could be banned. Steam must be running; don't uninstall SCSKiller mid-session." xml:space="preserve">
+    <value>Starts the game offline without EasyAntiCheat. SCSKiller removes its files when the game exits (after a crash: at the next logon). If any are left when you play online, you could be banned. Steam must be running; don't uninstall SCSKiller mid-session.</value>
+  </data>
+  <data name="Couldn't start {0}: {1}" xml:space="preserve">
+    <value>Couldn't start {0}: {1}</value>
+  </data>
+  <data name="Couldn't start {0} through {1}: {2}" xml:space="preserve">
+    <value>Couldn't start {0} through {1}: {2}</value>
+  </data>
+  <data name="note|driver {0}" xml:space="preserve">
+    <value>driver {0}</value>
+    <comment>Library row tooltip: the driver a game was compiled for</comment>
+  </data>
+  <data name="compiled for driver {0} on {1:d}" xml:space="preserve">
+    <value>compiled for driver {0} on {1:d}</value>
+  </data>
+  <data name=" About {0}." xml:space="preserve">
+    <value> About {0}.</value>
+  </data>
+  <data name=" About {0} instead of {1}." xml:space="preserve">
+    <value> About {0} instead of {1}.</value>
+  </data>
+  <data name="Compiled {0} in {1}, for driver {2}." xml:space="preserve">
+    <value>Compiled {0} in {1}, for driver {2}.</value>
+  </data>
+  <data name="Compiled {0}, for driver {1}." xml:space="preserve">
+    <value>Compiled {0}, for driver {1}.</value>
+  </data>
+  <data name="{0}: " xml:space="preserve">
+    <value>{0}: </value>
+  </data>
+  <data name="{0} left" xml:space="preserve">
+    <value>{0} left</value>
+  </data>
+  <data name="Free on {0}" xml:space="preserve">
+    <value>Free on {0}</value>
+  </data>
+  <data name="Recording in {0} game{1}" xml:space="preserve">
+    <value>Recording in {0} game{1}</value>
+  </data>
+  <data name="{0} and {1}" xml:space="preserve">
+    <value>{0} and {1}</value>
+  </data>
+  <data name="Supporter: {0}, until {1:d MMM yyyy}." xml:space="preserve">
+    <value>Supporter: {0}, until {1:d MMM yyyy}.</value>
+  </data>
+  <data name="Supporter: {0}." xml:space="preserve">
+    <value>Supporter: {0}.</value>
+  </data>
+  <data name="SCSKiller {0} is ready: it installs the next time SCSKiller starts or quits, or use Restart to update at the top." xml:space="preserve">
+    <value>SCSKiller {0} is ready: it installs the next time SCSKiller starts or quits, or use Restart to update at the top.</value>
+  </data>
+  <data name="SCSKiller {0} is ready: use Restart to update at the top." xml:space="preserve">
+    <value>SCSKiller {0} is ready: use Restart to update at the top.</value>
+  </data>
+  <data name="This queue adds about {0} to the shader cache ({1}), {2} more than the {3} free under the AMD driver's fixed {4} limit. The driver then trims the least recently used caches, older games' included, and those games stutter until compiled again." xml:space="preserve">
+    <value>This queue adds about {0} to the shader cache ({1}), {2} more than the {3} free under the AMD driver's fixed {4} limit. The driver then trims the least recently used caches, older games' included, and those games stutter until compiled again.</value>
+  </data>
+  <data name="list|, " xml:space="preserve">
+    <value>, </value>
+    <comment>A list of names (games, supporter benefits)</comment>
+  </data>
+  <data name="community|not yet" xml:space="preserve">
+    <value>not yet</value>
+    <comment>Game page, Details: "In the community database" row</comment>
+  </data>
+  <data name="Warmed for driver {0}" xml:space="preserve">
+    <value>Warmed for driver {0}</value>
+  </data>
+  <data name="Partly warmed for driver {0}: {1}% of the {2} pipelines its first launch created still compiled" xml:space="preserve">
+    <value>Partly warmed for driver {0}: {1}% of the {2} pipelines its first launch created still compiled</value>
+  </data>
+  <data name="Partly warmed for driver {0}: {1}% of the {2} pipelines its first launch created still compiled, even after a careful compile" xml:space="preserve">
+    <value>Partly warmed for driver {0}: {1}% of the {2} pipelines its first launch created still compiled, even after a careful compile</value>
+  </data>
+  <data name="A careful compile ({0} threads, in passes) reaches more of them" xml:space="preserve">
+    <value>A careful compile ({0} threads, in passes) reaches more of them</value>
+  </data>
+  <data name="A careful compile ({0} threads, in passes) reaches more of them, in about {1}" xml:space="preserve">
+    <value>A careful compile ({0} threads, in passes) reaches more of them, in about {1}</value>
+  </data>
+  <data name="A careful compile ({0} threads, in passes) reaches more of them: the next compile is careful" xml:space="preserve">
+    <value>A careful compile ({0} threads, in passes) reaches more of them: the next compile is careful</value>
+  </data>
+  <data name="A careful compile ({0} threads, in passes) reaches more of them, in about {1}: the next compile is careful" xml:space="preserve">
+    <value>A careful compile ({0} threads, in passes) reaches more of them, in about {1}: the next compile is careful</value>
+  </data>
+  <data name="Compiles {0} pipelines" xml:space="preserve">
+    <value>Compiles {0} pipelines</value>
+  </data>
+  <data name="{0} more shader combinations use shader slots SCSKiller can't rebuild yet" xml:space="preserve">
+    <value>{0} more shader combinations use shader slots SCSKiller can't rebuild yet</value>
+  </data>
+  <data name="Ray-traced effects aren't compiled: they need a recording, which {0} blocks" xml:space="preserve">
+    <value>Ray-traced effects aren't compiled: they need a recording, which {0} blocks</value>
+  </data>
+  <data name="Ray-traced effects aren't compiled: they need a recording, which {0} blocks unless you record an offline session (game page)" xml:space="preserve">
+    <value>Ray-traced effects aren't compiled: they need a recording, which {0} blocks unless you record an offline session (game page)</value>
+  </data>
+  <data name="{0} is installed as d3d12.dll, and the recorder can't run alongside it: renamed it stops working" xml:space="preserve">
+    <value>{0} is installed as d3d12.dll, and the recorder can't run alongside it: renamed it stops working</value>
+  </data>
+  <data name="Restart SCSKiller to use {0}" xml:space="preserve">
+    <value>Restart SCSKiller to use {0}</value>
+  </data>
+  <data name="The community database had a problem (error {0}). It retries at the next scan." xml:space="preserve">
+    <value>The community database had a problem (error {0}). It retries at the next scan.</value>
+  </data>
+  <data name="The community database refused the request (error {0})." xml:space="preserve">
+    <value>The community database refused the request (error {0}).</value>
+  </data>
+  <data name="another d3d12.dll is already there" xml:space="preserve">
+    <value>another d3d12.dll is already there</value>
+  </data>
+  <data name="another d3d12.dll is there that stops working renamed" xml:space="preserve">
+    <value>another d3d12.dll is there that stops working renamed</value>
+  </data>
+  <data name="vkd3d-proton runs the game on Vulkan, whose pipelines a D3D12 warm doesn't compile" xml:space="preserve">
+    <value>vkd3d-proton runs the game on Vulkan, whose pipelines a D3D12 warm doesn't compile</value>
+  </data>
+  <data name="the game folder needs administrator" xml:space="preserve">
+    <value>the game folder needs administrator</value>
+  </data>
+  <data name="not DirectX 12" xml:space="preserve">
+    <value>not DirectX 12</value>
+  </data>
+  <data name="a d3d12.dll in the game's package folder loads instead of the recorder" xml:space="preserve">
+    <value>a d3d12.dll in the game's package folder loads instead of the recorder</value>
+  </data>
+  <data name="an HDR mod changes every pipeline" xml:space="preserve">
+    <value>an HDR mod changes every pipeline</value>
+  </data>
+  <data name="OptiScaler is installed as d3d12.dll, and renamed it stops working (it picks its role from its file name). To record alongside it, rename it to dxgi.dll (or winmm.dll or version.dll if a dxgi.dll is already there): OptiScaler supports those names" xml:space="preserve">
+    <value>OptiScaler is installed as d3d12.dll, and renamed it stops working (it picks its role from its file name). To record alongside it, rename it to dxgi.dll (or winmm.dll or version.dll if a dxgi.dll is already there): OptiScaler supports those names</value>
+  </data>
+  <data name="a careful compile only changes how the recorded pipelines compile, and there is no recording yet (turn recording on and play)" xml:space="preserve">
+    <value>a careful compile only changes how the recorded pipelines compile, and there is no recording yet (turn recording on and play)</value>
+  </data>
+  <data name="a 5-minute recording lets SCSKiller rebuild the rest" xml:space="preserve">
+    <value>a 5-minute recording lets SCSKiller rebuild the rest</value>
+  </data>
+  <data name="part of this game's shader cache was removed by the driver's size limit; compile again" xml:space="preserve">
+    <value>part of this game's shader cache was removed by the driver's size limit; compile again</value>
+  </data>
+  <data name="this game's shader cache was removed (by the driver's size limit or a shader cache reset); compile again" xml:space="preserve">
+    <value>this game's shader cache was removed (by the driver's size limit or a shader cache reset); compile again</value>
+  </data>
+  <data name="Ray-traced effects aren't compiled: they need a recording, once you confirm its game folder" xml:space="preserve">
+    <value>Ray-traced effects aren't compiled: they need a recording, once you confirm its game folder</value>
+  </data>
+  <data name="The community database didn't accept this PC's sign-in. Refresh status or sign in again in Settings." xml:space="preserve">
+    <value>The community database didn't accept this PC's sign-in. Refresh status or sign in again in Settings.</value>
+  </data>
+  <data name="Your Patreon membership doesn't include the community database right now." xml:space="preserve">
+    <value>Your Patreon membership doesn't include the community database right now.</value>
+  </data>
+  <data name="The community database's daily limit is reached. Downloads resume later by themselves." xml:space="preserve">
+    <value>The community database's daily limit is reached. Downloads resume later by themselves.</value>
+  </data>
+  <data name="The community database is busy right now. Downloads resume later by themselves." xml:space="preserve">
+    <value>The community database is busy right now. Downloads resume later by themselves.</value>
+  </data>
+  <data name="Can't reach the community database right now. Compiling works as usual from your own files." xml:space="preserve">
+    <value>Can't reach the community database right now. Compiling works as usual from your own files.</value>
+  </data>
+  <data name="The community database didn't answer in time. It retries at the next scan." xml:space="preserve">
+    <value>The community database didn't answer in time. It retries at the next scan.</value>
+  </data>
+  <data name="The community database sent a list this version can't read. An update of SCSKiller may fix it." xml:space="preserve">
+    <value>The community database sent a list this version can't read. An update of SCSKiller may fix it.</value>
+  </data>
+  <data name="The community database gave an answer this version doesn't understand. An update of SCSKiller may fix it." xml:space="preserve">
+    <value>The community database gave an answer this version doesn't understand. An update of SCSKiller may fix it.</value>
+  </data>
+  <data name="A community recording didn't match its checksum and was ignored. It's downloaded again at the next scan." xml:space="preserve">
+    <value>A community recording didn't match its checksum and was ignored. It's downloaded again at the next scan.</value>
+  </data>
+  <data name="A community recording this version can't read was ignored. An update of SCSKiller may fix it." xml:space="preserve">
+    <value>A community recording this version can't read was ignored. An update of SCSKiller may fix it.</value>
+  </data>
+  <data name="An upscaler pack didn't match its checksum and was ignored. It's downloaded again at the next scan." xml:space="preserve">
+    <value>An upscaler pack didn't match its checksum and was ignored. It's downloaded again at the next scan.</value>
+  </data>
+  <data name="An upscaler pack this version can't read was ignored. An update of SCSKiller may fix it." xml:space="preserve">
+    <value>An upscaler pack this version can't read was ignored. An update of SCSKiller may fix it.</value>
+  </data>
+  <data name="community shader hash database" xml:space="preserve">
+    <value>community shader hash database</value>
+    <comment>Settings, Account: supporter benefits</comment>
+  </data>
+  <data name="beta builds" xml:space="preserve">
+    <value>beta builds</value>
+    <comment>Settings, Account: supporter benefits</comment>
+  </data>
+  <data name="alpha builds" xml:space="preserve">
+    <value>alpha builds</value>
+    <comment>Settings, Account: supporter benefits</comment>
+  </data>
+  <data name="priority requests" xml:space="preserve">
+    <value>priority requests</value>
+    <comment>Settings, Account: supporter benefits</comment>
+  </data>
+  <data name="Unreal Engine " xml:space="preserve">
+    <value>Unreal Engine </value>
+    <comment>Library summary: "12 Unreal Engine games found"</comment>
+  </data>
+</root>

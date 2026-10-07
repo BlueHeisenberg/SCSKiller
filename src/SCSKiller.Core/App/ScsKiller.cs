@@ -54,7 +54,7 @@ public sealed partial class ScsKiller : IScsKiller
     QueueStage _stage;
     IWarmRun? _run;
     CancellationTokenSource? _itemCts;
-    volatile string? _pauseWhy;                      // why Watch suspended the running warm (game running, user at the PC)
+    volatile FormattableString? _pauseWhy;           // why Watch suspended the running warm (game running, user at the PC)
     // How running games' processes were launched, by exe file name (case-insensitive), when it differs from the install's
     // file name in case: noted by Running(), taken into the game's record by MergeLaunched.
     readonly ConcurrentDictionary<string, LaunchedExe> _launched = new(StringComparer.OrdinalIgnoreCase);
@@ -981,7 +981,8 @@ public sealed partial class ScsKiller : IScsKiller
     }
 
     /// <summary>A warming item's note when its done count stopped moving (<see cref="StallAfter"/>): "no progress for 3 min".</summary>
-    public static string StalledNote(TimeSpan since) => $"no progress for {Math.Max(1, (int)since.TotalMinutes)} min";
+    public static string StalledNote(TimeSpan since) => StalledMessage(since).ToString();
+    static FormattableString StalledMessage(TimeSpan since) => $"no progress for {Math.Max(1, (int)since.TotalMinutes)} min";
 
     /// <summary>A warming item that stopped moving: its note says for how long, and it has no time estimate.</summary>
     public static bool Stalled(QueueItem q) => q.Stage == QueueStage.Warming && q.Note?.StartsWith("no progress") == true;
@@ -3626,11 +3627,13 @@ public sealed partial class ScsKiller : IScsKiller
         QueueChanged?.Invoke(item);
     }
 
-    void SetCurrent(QueueStage stage, string? note = null)
+    void SetCurrent(QueueStage stage, FormattableString? note) => SetCurrent(stage, note?.ToString(), note);
+
+    void SetCurrent(QueueStage stage, string? note = null, FormattableString? noteFormat = null)
     {
         QueueItem? item;
         lock (_lock) item = _queue.FirstOrDefault(q => q.GameId == _current);
-        if (item != null) Set(item with { Stage = stage, Note = note });
+        if (item != null) Set(item with { Stage = stage, Note = note, NoteFormat = noteFormat });
     }
 
     bool UserIdle => IdleTime() >= IdleAfter;
@@ -3733,7 +3736,8 @@ public sealed partial class ScsKiller : IScsKiller
         void Stage(QueueStage s, string? error = null)
         {
             if (s is not QueueStage.Paused) _stage = s;
-            bool paused = s is not (QueueStage.Done or QueueStage.Failed or QueueStage.Stopped) && (!_go.IsSet || _pauseWhy != null);
+            var pauseWhy = _pauseWhy;
+            bool paused = s is not (QueueStage.Done or QueueStage.Failed or QueueStage.Stopped) && (!_go.IsSet || pauseWhy != null);
             if (paused || (progress?.Done ?? -1) != lastDone)
             {
                 lastDone = progress?.Done ?? -1;
@@ -3741,10 +3745,14 @@ public sealed partial class ScsKiller : IScsKiller
             }
             // a finished warm's note: what failed (the driver rejected it) and what was skipped (a shader not in this install);
             // a warm that stopped moving: for how long (the estimate would be a guess)
-            var note = paused ? _pauseWhy : s is QueueStage.Done or QueueStage.Stopped && progress is { } p ? WarmCounts(p.Failed, p.Skipped, crashed)
-                : s == QueueStage.Warming && advanced.Elapsed > StallAfter ? StalledNote(advanced.Elapsed)
+            var since = advanced.Elapsed;
+            FormattableString? noteFormat = paused ? pauseWhy
+                : s == QueueStage.Warming && since > StallAfter ? StalledMessage(since)
+                : s == QueueStage.Warming ? progress?.NoteFormat : null;
+            var note = paused ? pauseWhy?.ToString() : s is QueueStage.Done or QueueStage.Stopped && progress is { } p ? WarmCounts(p.Failed, p.Skipped, crashed)
+                : s == QueueStage.Warming && since > StallAfter ? StalledNote(since)
                 : s == QueueStage.Warming ? progress?.Note : null;   // e.g. "retrying ray tracing with fewer threads (8)"
-            Set(new QueueItem(id, paused ? QueueStage.Paused : s, progress, error, note));
+            Set(new QueueItem(id, paused ? QueueStage.Paused : s, progress, error, note) { NoteFormat = noteFormat });
         }
         var state = Games.FirstOrDefault(s => s.Game.Id == id);
         var installed = state == null ? null : Current(state.Game);
@@ -4064,8 +4072,9 @@ public sealed partial class ScsKiller : IScsKiller
                 continue;
             }
             var playing = background && Settings.PauseWhileGaming ? GameNameIn(running) : null;
-            _pauseWhy = playing != null ? $"paused while {playing} is running" : WaitsForIdle(id) ? "paused until the PC is idle" : null;
-            var want = _go.IsSet ? _pauseWhy : _pauseWhy ?? "paused";
+            _pauseWhy = playing != null ? (FormattableString)$"paused while {playing} is running" : WaitsForIdle(id) ? (FormattableString)$"paused until the PC is idle" : null;
+            var why = _pauseWhy?.ToString();
+            var want = _go.IsSet ? why : why ?? "paused";
             if (want == applied) continue;
             applied = want;
             if (want == null) { run.Resume(); SetCurrent(QueueStage.Warming); }
@@ -4075,7 +4084,7 @@ public sealed partial class ScsKiller : IScsKiller
         return (await run.Completion, yielded);
     }
 
-    static string StoppedFor(string name) => $"stopped while {name} is running: continues when it exits";
+    static FormattableString StoppedFor(string name) => $"stopped while {name} is running: continues when it exits";
 
     /// <summary>Waits while a process named like the warm's exe runs (see RunItem), shown as Paused with the reason;
     /// <paramref name="learn"/> attributes the cache files the game holds open meanwhile (every few seconds).</summary>

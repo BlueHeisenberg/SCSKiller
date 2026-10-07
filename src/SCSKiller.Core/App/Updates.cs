@@ -185,8 +185,8 @@ public static class AutoInstall
         staged != null && UpdateChannels.Installs(staged.Channel, chosen, buildChannel, ent);
 
     public static string ReadyNote(string version, Settings s) => s.InstallUpdatesAutomatically
-        ? $"SCSKiller {version} is ready: it installs the next time SCSKiller starts or quits, or use Restart to update at the top."
-        : $"SCSKiller {version} is ready: use Restart to update at the top.";
+        ? Loc.Format($"SCSKiller {version} is ready: it installs the next time SCSKiller starts or quits, or use Restart to update at the top.")
+        : Loc.Format($"SCSKiller {version} is ready: use Restart to update at the top.");
 }
 
 /// <summary>Where updates and their source come from. <see cref="GhRepo"/> is compiled in: renaming the public repo

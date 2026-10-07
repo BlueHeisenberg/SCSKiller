@@ -11,6 +11,12 @@ namespace SCSKiller.Tests;
 /// folder is %TEMP%\scskiller-test and nothing else marks the GPU busy.</summary>
 static partial class TestEnv
 {
+    /// <summary>Core's display text follows the UI culture (Loc), and the build ships the zh-Hans resources: the tests
+    /// expect the English whatever the machine's display language. A test that needs another culture sets its own.</summary>
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    internal static void EnglishDisplayText() =>
+        System.Globalization.CultureInfo.DefaultThreadCurrentUICulture = System.Globalization.CultureInfo.CurrentUICulture = System.Globalization.CultureInfo.InvariantCulture;
+
     static partial void TeamDefaults(ref string? devDir, ref string? gpuBusyFile);
 
     static readonly string? BusyFile;

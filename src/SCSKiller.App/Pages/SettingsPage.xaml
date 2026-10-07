@@ -6,7 +6,15 @@
 
     <ScrollViewer x:Name="Scroller">
         <StackPanel Padding="36,28,36,28" Spacing="16">
-            <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock x:Uid="SettingsPage_Settings" Style="{StaticResource TitleTextBlockStyle}" />
+
+            <Border Style="{StaticResource Card}" Padding="20">
+                <StackPanel Spacing="8">
+                    <ComboBox x:Uid="SettingsPage_LanguageBox" x:Name="LanguageBox" MinWidth="240"
+                              ItemsSource="{x:Bind Vm.LanguageNames}" SelectedIndex="{x:Bind Vm.LanguageIndex, Mode=TwoWay}" />
+                    <TextBlock x:Uid="SettingsPage_LanguageNote" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
 
             <Border Style="{StaticResource Card}" Padding="20">
                 <StackPanel Spacing="14">
@@ -21,11 +29,11 @@
                             <ColumnDefinition />
                         </Grid.ColumnDefinitions>
                         <StackPanel Spacing="2">
-                            <TextBlock Text="Current limit" Style="{StaticResource Caption}" />
+                            <TextBlock x:Uid="SettingsPage_CurrentLimit" Style="{StaticResource Caption}" />
                             <TextBlock Text="{x:Bind Vm.CurrentLimit, Mode=OneWay}" Style="{StaticResource Section}" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Spacing="2">
-                            <TextBlock Text="Used now" Style="{StaticResource Caption}" />
+                            <TextBlock x:Uid="SettingsPage_UsedNow" Style="{StaticResource Caption}" />
                             <TextBlock Text="{x:Bind Vm.Used, Mode=OneWay}" Style="{StaticResource Section}" />
                         </StackPanel>
                         <StackPanel Grid.Column="2" Spacing="2">
@@ -41,19 +49,19 @@
                                 <ColumnDefinition />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="NewLimitLabel" Text="New limit" VerticalAlignment="Center" />
+                            <TextBlock x:Uid="SettingsPage_NewLimitLabel" x:Name="NewLimitLabel" VerticalAlignment="Center" />
                             <ComboBox x:Name="SizeBox" Grid.Column="1" ItemsSource="{x:Bind local:SettingsVm.SizeLabels}" MinWidth="220"
                                       SelectedIndex="{x:Bind Vm.SizeIndex, Mode=TwoWay}" AutomationProperties.LabeledBy="{x:Bind NewLimitLabel}" />
                             <Button x:Name="ApplyButton" Grid.Column="3" Style="{StaticResource AccentButtonStyle}" Click="OnApply">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <FontIcon Glyph="&#xEA18;" FontSize="14" />
-                                    <TextBlock Text="Apply (needs administrator)" />
+                                    <TextBlock x:Uid="SettingsPage_ApplyNeedsAdministrator" />
                                 </StackPanel>
                             </Button>
                         </Grid>
                         <InfoBar IsOpen="{x:Bind Vm.HasApplyMessage, Mode=OneWay}" Visibility="{x:Bind Vm.HasApplyMessage, Mode=OneWay}" Message="{x:Bind Vm.ApplyMessage, Mode=OneWay}"
                                  Severity="{x:Bind Vm.ApplySeverity, Mode=OneWay}" IsClosable="False" />
-                        <TextBlock Text="You can switch back to the driver default here at any time." Style="{StaticResource Caption}" />
+                        <TextBlock x:Uid="SettingsPage_YouCanSwitchBack" Style="{StaticResource Caption}" />
                     </StackPanel>
                     <InfoBar IsOpen="{x:Bind Vm.NotConfigurable}" Visibility="{x:Bind Vm.NotConfigurable}" Severity="Informational" IsClosable="False" Message="{x:Bind Vm.NotConfigurableText}" />
                 </StackPanel>
@@ -71,53 +79,52 @@
 
                 <Border Style="{StaticResource Card}" Padding="20">
                     <StackPanel Spacing="12">
-                        <TextBlock Text="After a driver update" Style="{StaticResource Section}" />
-                        <TextBlock Text="A new driver throws away every compiled shader, so compiled games stutter again until they are rebuilt."
+                        <TextBlock x:Uid="SettingsPage_AfterADriverUpdate" Style="{StaticResource Section}" />
+                        <TextBlock x:Uid="SettingsPage_ANewDriverThrows"
                                    Style="{StaticResource Secondary}" TextWrapping="Wrap" />
-                        <RadioButtons SelectedIndex="{x:Bind Vm.DriverMode, Mode=TwoWay}" AutomationProperties.Name="When to rebuild">
-                            <RadioButton AutomationProperties.Name="Ask me">
+                        <RadioButtons x:Uid="SettingsPage_WhenToRebuild" SelectedIndex="{x:Bind Vm.DriverMode, Mode=TwoWay}">
+                            <RadioButton x:Uid="SettingsPage_AskMe">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Ask me" />
-                                    <TextBlock Text="A notification offers Compile now, When idle, or Skip. Nothing starts on its own." Style="{StaticResource Caption}" />
+                                    <TextBlock x:Uid="SettingsPage_AskMeTextBlock" />
+                                    <TextBlock x:Uid="SettingsPage_ANotificationOffersCompile" Style="{StaticResource Caption}" />
                                 </StackPanel>
                             </RadioButton>
-                            <RadioButton AutomationProperties.Name="Automatically, only while the PC is idle">
+                            <RadioButton x:Uid="SettingsPage_AutomaticallyOnlyWhileThe">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Automatically, only while the PC is idle" />
-                                    <TextBlock Text="Stops the moment you touch the mouse or keyboard and picks up where it left off." Style="{StaticResource Caption}" />
+                                    <TextBlock x:Uid="SettingsPage_AutomaticallyOnlyWhileTheTextBlock" />
+                                    <TextBlock x:Uid="SettingsPage_StopsTheMomentYou" Style="{StaticResource Caption}" />
                                 </StackPanel>
                             </RadioButton>
-                            <RadioButton AutomationProperties.Name="Off">
+                            <RadioButton x:Uid="SettingsPage_Off">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Off" />
-                                    <TextBlock Text="Rebuild games yourself from the Library." Style="{StaticResource Caption}" />
+                                    <TextBlock x:Uid="SettingsPage_OffTextBlock" />
+                                    <TextBlock x:Uid="SettingsPage_RebuildGamesYourselfFrom" Style="{StaticResource Caption}" />
                                 </StackPanel>
                             </RadioButton>
                         </RadioButtons>
                         <TextBlock Text="{x:Bind Vm.LastRebuilt, Mode=OneWay}" Style="{StaticResource Caption}" Visibility="{x:Bind Vm.HasLastRebuilt, Mode=OneWay}" />
                         <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
-                        <CheckBox Content="Pause background compiling while another game is running" IsChecked="{x:Bind Vm.PauseWhileGaming, Mode=TwoWay}" />
+                        <CheckBox x:Uid="SettingsPage_PauseBackgroundCompilingWhile" IsChecked="{x:Bind Vm.PauseWhileGaming, Mode=TwoWay}" />
                         <Grid>
-                            <TextBlock Text="Threads for background rebuilds" />
+                            <TextBlock x:Uid="SettingsPage_ThreadsForBackgroundRebuilds" />
                             <TextBlock Text="{x:Bind Vm.BackgroundThreadsText, Mode=OneWay}" HorizontalAlignment="Right" />
                         </Grid>
-                        <Slider Minimum="1" Maximum="{x:Bind Vm.MaxThreads}" StepFrequency="1" Value="{x:Bind Vm.BackgroundThreads, Mode=TwoWay}"
-                                AutomationProperties.Name="Threads for background rebuilds" />
+                        <Slider x:Uid="SettingsPage_ThreadsForBackgroundRebuildsSlider" Minimum="1" Maximum="{x:Bind Vm.MaxThreads}" StepFrequency="1" Value="{x:Bind Vm.BackgroundThreads, Mode=TwoWay}" />
                         <StackPanel Spacing="12" Visibility="{x:Bind Vm.IsNvidia}">
                             <StackPanel Spacing="8">
-                                <CheckBox x:Name="AutoBox" Content="Auto Shader Compilation (NVIDIA beta)" IsChecked="{x:Bind Vm.AutoOn, Mode=TwoWay}" />
+                                <CheckBox x:Uid="SettingsPage_AutoBox" x:Name="AutoBox" IsChecked="{x:Bind Vm.AutoOn, Mode=TwoWay}" />
                                 <Grid ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <ComboBox Header="System utilization" ItemsSource="{x:Bind local:SettingsVm.AutoLevels}" SelectedIndex="{x:Bind Vm.AutoLevelIndex, Mode=TwoWay}"
+                                    <ComboBox x:Uid="SettingsPage_SystemUtilization" ItemsSource="{x:Bind local:SettingsVm.AutoLevels}" SelectedIndex="{x:Bind Vm.AutoLevelIndex, Mode=TwoWay}"
                                               IsEnabled="{Binding IsChecked, ElementName=AutoBox}" MinWidth="140" />
                                     <Button x:Name="AutoApplyButton" Grid.Column="2" Click="OnApplyAuto" VerticalAlignment="Bottom">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <FontIcon Glyph="&#xEA18;" FontSize="14" />
-                                            <TextBlock Text="Apply (needs administrator)" />
+                                            <TextBlock x:Uid="SettingsPage_ApplyNeedsAdministratorTextBlock" />
                                         </StackPanel>
                                     </Button>
                                 </Grid>
@@ -125,8 +132,7 @@
                                 <InfoBar IsOpen="{x:Bind Vm.HasAutoMessage, Mode=OneWay}" Visibility="{x:Bind Vm.HasAutoMessage, Mode=OneWay}" Message="{x:Bind Vm.AutoMessage, Mode=OneWay}"
                                          Severity="{x:Bind Vm.AutoSeverity, Mode=OneWay}" IsClosable="False" />
                             </StackPanel>
-                            <InfoBar IsOpen="True" Severity="Informational" IsClosable="False" Title="We recommend enabling it"
-                                     Message="A beta feature of the NVIDIA App: after a driver update it re-compiles the games you have already played. SCSKiller adds everything else, so both together are best. The overlap costs little: shaders NVIDIA already rebuilt take about 1 ms each here." />
+                            <InfoBar x:Uid="SettingsPage_WeRecommendEnablingIt" IsOpen="True" Severity="Informational" IsClosable="False" />
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -139,33 +145,31 @@
 
                     <Border x:Name="PatreonCard" Style="{StaticResource Card}" Padding="20">
                         <StackPanel Spacing="12">
-                            <TextBlock Text="Patreon and community database" Style="{StaticResource Section}" />
+                            <TextBlock x:Uid="SettingsPage_PatreonAndCommunityDatabase" Style="{StaticResource Section}" />
                             <StackPanel Spacing="12" Visibility="{x:Bind Patreon.SignedOut, Mode=OneWay}">
-                                <TextBlock Text="Patreon supporters get the community shader hash database and beta and alpha builds. Sign in with the Patreon account you support SCSKiller with."
+                                <TextBlock x:Uid="SettingsPage_PatreonSupportersGetThe"
                                            Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                                 <StackPanel Orientation="Horizontal" Spacing="12">
-                                    <Button Style="{StaticResource AccentButtonStyle}" Content="Sign in with Patreon" Click="OnSignIn" IsEnabled="{x:Bind Patreon.Idle, Mode=OneWay}" />
-                                    <Button Content="Cancel" Click="OnCancelSignIn" Visibility="{x:Bind Patreon.SigningIn, Mode=OneWay}" />
+                                    <Button x:Uid="SettingsPage_SignInWithPatreon" Style="{StaticResource AccentButtonStyle}" Click="OnSignIn" IsEnabled="{x:Bind Patreon.Idle, Mode=OneWay}" />
+                                    <Button x:Uid="SettingsPage_Cancel" Click="OnCancelSignIn" Visibility="{x:Bind Patreon.SigningIn, Mode=OneWay}" />
                                 </StackPanel>
-                                <TextBlock Text="Finish signing in in your browser. Nothing else is needed here." Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                <TextBlock x:Uid="SettingsPage_FinishSigningInIn" Style="{StaticResource Caption}" TextWrapping="Wrap"
                                            Visibility="{x:Bind Patreon.SigningIn, Mode=OneWay}" />
                             </StackPanel>
                             <StackPanel Spacing="12" Visibility="{x:Bind Patreon.SignedIn, Mode=OneWay}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Signed in with Patreon" />
+                                    <TextBlock x:Uid="SettingsPage_SignedInWithPatreon" />
                                     <TextBlock Text="{x:Bind Patreon.Benefits, Mode=OneWay}" Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Spacing="12">
-                                    <Button Content="Refresh status" Click="OnRefreshAccount" IsEnabled="{x:Bind Patreon.Idle, Mode=OneWay}" />
-                                    <Button Content="Sign out" Click="OnSignOut" IsEnabled="{x:Bind Patreon.CanSignOut, Mode=OneWay}" />
+                                    <Button x:Uid="SettingsPage_RefreshStatus" Click="OnRefreshAccount" IsEnabled="{x:Bind Patreon.Idle, Mode=OneWay}" />
+                                    <Button x:Uid="SettingsPage_SignOut" Click="OnSignOut" IsEnabled="{x:Bind Patreon.CanSignOut, Mode=OneWay}" />
                                     <ProgressRing IsActive="{x:Bind Patreon.Busy, Mode=OneWay}" Width="16" Height="16" />
                                 </StackPanel>
-                                <InfoBar IsOpen="{x:Bind Patreon.OffersSharing, Mode=OneWay}" Visibility="{x:Bind Patreon.OffersSharing, Mode=OneWay}" Severity="Success" IsClosable="False"
-                                         Title="You're in. Want to help improve the community shader hash database?"
-                                         Message="Your game shader hashes are shared anonymously, never linked to your Patreon account.">
+                                <InfoBar x:Uid="SettingsPage_YoureInWantTo" IsOpen="{x:Bind Patreon.OffersSharing, Mode=OneWay}" Visibility="{x:Bind Patreon.OffersSharing, Mode=OneWay}" Severity="Success" IsClosable="False">
                                     <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
-                                        <Button Style="{StaticResource AccentButtonStyle}" Content="Share anonymously" Click="OnShare" />
-                                        <Button Content="Not now" Click="OnNotNow" />
+                                        <Button x:Uid="SettingsPage_ShareAnonymously" Style="{StaticResource AccentButtonStyle}" Click="OnShare" />
+                                        <Button x:Uid="SettingsPage_NotNow" Click="OnNotNow" />
                                     </StackPanel>
                                 </InfoBar>
                             </StackPanel>
@@ -173,28 +177,28 @@
                                      Severity="Warning" IsClosable="False" />
                             <StackPanel Spacing="8" Visibility="{x:Bind Patreon.ShowsUpdates, Mode=OneWay}">
                                 <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
-                                <ComboBox Header="Update channel" ItemsSource="{x:Bind Patreon.ChannelLabels, Mode=OneWay}" SelectedIndex="{x:Bind Patreon.ChannelIndex, Mode=TwoWay}"
+                                <ComboBox x:Uid="SettingsPage_UpdateChannel" ItemsSource="{x:Bind Patreon.ChannelLabels, Mode=OneWay}" SelectedIndex="{x:Bind Patreon.ChannelIndex, Mode=TwoWay}"
                                           IsEnabled="{x:Bind Patreon.CanPickChannel, Mode=OneWay}" MinWidth="260" Visibility="{x:Bind Patreon.ShowsChannels, Mode=OneWay}" />
                                 <TextBlock Text="{x:Bind Patreon.ChannelNote, Mode=OneWay}" Style="{StaticResource Caption}" TextWrapping="Wrap" />
-                                <Button Content="Go back to stable now" Click="OnBackToStable" IsEnabled="{x:Bind Patreon.CanPickChannel, Mode=OneWay}" Visibility="{x:Bind Patreon.OffersBackToStable, Mode=OneWay}" />
+                                <Button x:Uid="SettingsPage_GoBackToStable" Click="OnBackToStable" IsEnabled="{x:Bind Patreon.CanPickChannel, Mode=OneWay}" Visibility="{x:Bind Patreon.OffersBackToStable, Mode=OneWay}" />
                                 <InfoBar IsOpen="{x:Bind Patreon.HasUpdateProblem, Mode=OneWay}" Visibility="{x:Bind Patreon.HasUpdateProblem, Mode=OneWay}"
                                          Message="{x:Bind Patreon.UpdateProblem, Mode=OneWay}" Severity="Warning" IsClosable="False" />
                             </StackPanel>
                             <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
                             <StackPanel Spacing="4">
-                                <CheckBox IsChecked="{x:Bind Patreon.UseCommunityDb, Mode=TwoWay}" IsEnabled="{x:Bind Patreon.HasDb, Mode=OneWay}" AutomationProperties.Name="Download shared shader hashes">
+                                <CheckBox x:Uid="SettingsPage_DownloadSharedShaderHashes" IsChecked="{x:Bind Patreon.UseCommunityDb, Mode=TwoWay}" IsEnabled="{x:Bind Patreon.HasDb, Mode=OneWay}">
                                     <StackPanel Spacing="2">
-                                        <TextBlock Text="Download shared shader hashes" TextWrapping="Wrap" />
-                                        <TextBlock Text="Hashes other players recorded for your games, so they compile without you recording them first. No game files: your GPU compiles everything from your own install. Upscaler pipelines (FSR, XeSS) download for everyone, without it."
+                                        <TextBlock x:Uid="SettingsPage_DownloadSharedShaderHashesTextBlock" TextWrapping="Wrap" />
+                                        <TextBlock x:Uid="SettingsPage_HashesOtherPlayersRecorded"
                                                    Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                     </StackPanel>
                                 </CheckBox>
                                 <TextBlock Text="{x:Bind Patreon.DbNote, Mode=OneWay}" Visibility="{x:Bind Patreon.HasDbNote, Mode=OneWay}" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="28,0,0,0" />
                             </StackPanel>
-                            <CheckBox IsChecked="{x:Bind Vm.ShareRecordings, Mode=TwoWay}" AutomationProperties.Name="Share anonymous shader hashes">
+                            <CheckBox x:Uid="SettingsPage_ShareAnonymousShaderHashes" IsChecked="{x:Bind Vm.ShareRecordings, Mode=TwoWay}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Share anonymous shader hashes" TextWrapping="Wrap" />
-                                    <TextBlock Text="Helps everyone get better coverage. Your recordings' upscaler pipelines (FSR, XeSS) also reach everyone with the same upscaler version. Never linked to your Patreon account; nothing else about your games leaves your PC. Free for everyone." Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                    <TextBlock x:Uid="SettingsPage_ShareAnonymousShaderHashesTextBlock" TextWrapping="Wrap" />
+                                    <TextBlock x:Uid="SettingsPage_HelpsEveryoneGetBetter" Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
                         </StackPanel>
@@ -202,26 +206,24 @@
 
                     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="20">
                         <StackPanel Spacing="12">
-                            <TextBlock Text="Compile speed when you run the queue" Style="{StaticResource Section}" />
+                            <TextBlock x:Uid="SettingsPage_CompileSpeedWhenYou" Style="{StaticResource Section}" />
                             <Grid>
-                                <TextBlock Text="Compile threads" />
+                                <TextBlock x:Uid="SettingsPage_CompileThreads" />
                                 <TextBlock Text="{x:Bind Vm.ThreadsText, Mode=OneWay}" HorizontalAlignment="Right" />
                             </Grid>
-                            <Slider Minimum="1" Maximum="{x:Bind Vm.MaxThreads}" StepFrequency="1" Value="{x:Bind Vm.Threads, Mode=TwoWay}"
-                                    AutomationProperties.Name="Compile threads" />
+                            <Slider x:Uid="SettingsPage_CompileThreadsSlider" Minimum="1" Maximum="{x:Bind Vm.MaxThreads}" StepFrequency="1" Value="{x:Bind Vm.Threads, Mode=TwoWay}" />
                             <TextBlock Text="{x:Bind Vm.PriorityNote, Mode=OneWay}" Style="{StaticResource Caption}" />
                             <Grid>
-                                <TextBlock Text="Maximum memory for compiling" />
+                                <TextBlock x:Uid="SettingsPage_MaximumMemoryForCompiling" />
                                 <TextBlock Text="{x:Bind Vm.MaxCompileMemoryText, Mode=OneWay}" HorizontalAlignment="Right" />
                             </Grid>
-                            <Slider Minimum="0" Maximum="16" StepFrequency="1" Value="{x:Bind Vm.MaxCompileMemory, Mode=TwoWay}"
-                                    AutomationProperties.Name="Maximum memory for compiling (0 = Auto)" />
+                            <Slider x:Uid="SettingsPage_MaximumMemoryForCompilingSlider" Minimum="0" Maximum="16" StepFrequency="1" Value="{x:Bind Vm.MaxCompileMemory, Mode=TwoWay}" />
                             <TextBlock Text="{x:Bind Vm.MaxCompileMemoryNote}" TextWrapping="Wrap" Style="{StaticResource Caption}" />
                             <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
-                            <CheckBox IsChecked="{x:Bind Vm.MaximumPlans, Mode=TwoWay}" AutomationProperties.Name="Maximum mode: also compile every shader pairing">
+                            <CheckBox x:Uid="SettingsPage_MaximumModeAlsoCompile" IsChecked="{x:Bind Vm.MaximumPlans, Mode=TwoWay}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Maximum mode: also compile every shader pairing" TextWrapping="Wrap" />
-                                    <TextBlock Text="Seems to help most on AMD. Compiles take longer and use more disk space."
+                                    <TextBlock x:Uid="SettingsPage_MaximumModeAlsoCompileTextBlock" TextWrapping="Wrap" />
+                                    <TextBlock x:Uid="SettingsPage_SeemsToHelpMost"
                                                Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
@@ -231,39 +233,39 @@
 
                 <Border Grid.Row="1" Style="{StaticResource Card}" Padding="20">
                     <StackPanel Spacing="12">
-                        <TextBlock Text="In the background" Style="{StaticResource Section}" />
-                        <CheckBox IsChecked="{x:Bind Vm.StartWithWindows, Mode=TwoWay}" AutomationProperties.Name="Start SCSKiller when Windows starts">
+                        <TextBlock x:Uid="SettingsPage_InTheBackground" Style="{StaticResource Section}" />
+                        <CheckBox x:Uid="SettingsPage_StartSCSKillerWhenWindows" IsChecked="{x:Bind Vm.StartWithWindows, Mode=TwoWay}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Start SCSKiller when Windows starts" TextWrapping="Wrap" />
-                                <TextBlock Text="It waits in the notification area, next to the clock, to offer a rebuild after a driver update."
+                                <TextBlock x:Uid="SettingsPage_StartSCSKillerWhenWindowsTextBlock" TextWrapping="Wrap" />
+                                <TextBlock x:Uid="SettingsPage_ItWaitsInThe"
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
-                        <CheckBox IsChecked="{x:Bind Vm.CloseQuits, Mode=TwoWay}" AutomationProperties.Name="Closing the window quits SCSKiller">
+                        <CheckBox x:Uid="SettingsPage_ClosingTheWindowQuits" IsChecked="{x:Bind Vm.CloseQuits, Mode=TwoWay}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Closing the window quits SCSKiller" TextWrapping="Wrap" />
-                                <TextBlock Text="A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps SCSKiller there; right-click its icon to quit."
+                                <TextBlock x:Uid="SettingsPage_ClosingTheWindowQuitsTextBlock" TextWrapping="Wrap" />
+                                <TextBlock x:Uid="SettingsPage_ARunningCompileFinishes"
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
-                        <CheckBox IsChecked="{x:Bind Vm.ScanAtStart, Mode=TwoWay}" AutomationProperties.Name="Scan games when SCSKiller starts">
+                        <CheckBox x:Uid="SettingsPage_ScanGamesWhenSCSKiller" IsChecked="{x:Bind Vm.ScanAtStart, Mode=TwoWay}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Scan games when SCSKiller starts" TextWrapping="Wrap" />
-                                <TextBlock Text="Reads again what changed in each game's folders. Off: the last list shows, and a game is read again when you refresh, when it exits, or when Steam or the Xbox app updates it."
+                                <TextBlock x:Uid="SettingsPage_ScanGamesWhenSCSKillerTextBlock" TextWrapping="Wrap" />
+                                <TextBlock x:Uid="SettingsPage_ReadsAgainWhatChanged"
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
-                        <CheckBox IsChecked="{x:Bind Vm.NotifyNewShaders, Mode=TwoWay}" AutomationProperties.Name="Notify me when games have new shaders to compile">
+                        <CheckBox x:Uid="SettingsPage_NotifyMeWhenGames" IsChecked="{x:Bind Vm.NotifyNewShaders, Mode=TwoWay}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Notify me when games have new shaders to compile" TextWrapping="Wrap" />
-                                <TextBlock Text="A compiled game gains pipelines from its recording, the shared shader hashes or an SCSKiller update. You're told once, never while you play."
+                                <TextBlock x:Uid="SettingsPage_NotifyMeWhenGamesTextBlock" TextWrapping="Wrap" />
+                                <TextBlock x:Uid="SettingsPage_ACompiledGameGains"
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
-                        <CheckBox IsChecked="{x:Bind Vm.ActiveCheck, Mode=TwoWay}" AutomationProperties.Name="Send an anonymous daily check">
+                        <CheckBox x:Uid="SettingsPage_SendAnAnonymousDaily" IsChecked="{x:Bind Vm.ActiveCheck, Mode=TwoWay}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Send an anonymous daily check" TextWrapping="Wrap" />
-                                <TextBlock Text="Counts active installs: once a day, the app's version and your GPU vendor, with no identifier. Nothing about your PC or games."
+                                <TextBlock x:Uid="SettingsPage_SendAnAnonymousDailyTextBlock" TextWrapping="Wrap" />
+                                <TextBlock x:Uid="SettingsPage_CountsActiveInstallsOnce"
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
@@ -278,12 +280,11 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Record in all compatible games" Style="{StaticResource Section}" />
-                                <TextBlock Text="Adds a small d3d12.dll to games without anti-cheat to catch shaders the plan missed and time each frame, so the game page shows what stuttered. Frame times stay on this PC. Never used in anti-cheat games. Switch off to remove it from every game you haven't turned it on for yourself."
+                                <TextBlock x:Uid="SettingsPage_RecordInAllCompatible" Style="{StaticResource Section}" />
+                                <TextBlock x:Uid="SettingsPage_AddsASmallD3d12"
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
-                            <ToggleSwitch Grid.Column="1" MinWidth="0" VerticalAlignment="Top" OnContent="" OffContent="" IsOn="{x:Bind Vm.RecordAllGames, Mode=TwoWay}"
-                                          AutomationProperties.Name="Record in all compatible games" />
+                            <ToggleSwitch x:Uid="SettingsPage_RecordInAllCompatibleToggleSwitch" Grid.Column="1" MinWidth="0" VerticalAlignment="Top" OnContent="" OffContent="" IsOn="{x:Bind Vm.RecordAllGames, Mode=TwoWay}" />
                         </Grid>
                         <TextBlock Text="{x:Bind Vm.RecordingCount, Mode=OneWay}" Style="{StaticResource Caption}" TextWrapping="Wrap" />
                         <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" Margin="0,6" />
@@ -292,14 +293,14 @@
                                 <ColumnDefinition />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="RecordingLimitLabel" Text="Recording limit per game" VerticalAlignment="Center" />
+                            <TextBlock x:Uid="SettingsPage_RecordingLimitLabel" x:Name="RecordingLimitLabel" VerticalAlignment="Center" />
                             <ComboBox Grid.Column="1" ItemsSource="{x:Bind local:SettingsVm.RecordingLimitLabels}" MinWidth="140"
                                       SelectedIndex="{x:Bind Vm.RecordingLimitIndex, Mode=TwoWay}" AutomationProperties.LabeledBy="{x:Bind RecordingLimitLabel}" />
                         </Grid>
-                        <TextBlock Text="Counts the recording in the game's folder and SCSKiller's copy of it. At the limit the game plays as usual: new pipelines just aren't recorded."
+                        <TextBlock x:Uid="SettingsPage_CountsTheRecordingIn"
                                    Style="{StaticResource Caption}" TextWrapping="Wrap" />
                         <TextBlock Text="{x:Bind Vm.RecordingSpace, Mode=OneWay}" TextWrapping="Wrap" />
-                        <Expander Header="Space by game" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Visibility="{x:Bind Vm.HasRecordings, Mode=OneWay}">
+                        <Expander x:Uid="SettingsPage_SpaceByGame" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Visibility="{x:Bind Vm.HasRecordings, Mode=OneWay}">
                             <ItemsRepeater ItemsSource="{x:Bind Vm.Recordings, Mode=OneWay}">
                                 <ItemsRepeater.Layout><StackLayout Spacing="8" /></ItemsRepeater.Layout>
                                 <ItemsRepeater.ItemTemplate>

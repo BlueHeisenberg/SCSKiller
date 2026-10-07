@@ -32,7 +32,7 @@ public sealed partial class DetailPage : Page
     {
         Vm = new DetailVm((string)e.Parameter);
         Vm.ReadCaches();
-        Crumbs.ItemsSource = new[] { "Library", Vm.Name };
+        Crumbs.ItemsSource = new[] { Loc.Text("Library"), Vm.Name };
         Vm.PropertyChanged += (_, _) => DrawFrames();
         Bindings.Update();
         DrawFrames();
@@ -41,11 +41,11 @@ public sealed partial class DetailPage : Page
     async void OnGameFolder(object _, RoutedEventArgs __)
     {
         var game = Vm.Row.State.Game;
-        if (await GameFolderDialog.ShowAsync(XamlRoot, game, $"{game.Name}'s folder", "Save") is not { } folder) return;
+        if (await GameFolderDialog.ShowAsync(XamlRoot, game, Loc.Format($"{game.Name}'s folder"), Loc.Text("Save")) is not { } folder) return;
         try { await Task.Run(() => App.Core.AddManualGame(game.ExePath, folder)); }   // checks the folder again, then the game
         catch (Exception ex)
         {
-            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't set the game folder", Content = ex.Message, CloseButtonText = "OK" });
+            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = Loc.Text("Couldn't set the game folder"), Content = ex.Message, CloseButtonText = Loc.Text("OK") });
             return;
         }
         Vm.Refresh();
@@ -54,13 +54,13 @@ public sealed partial class DetailPage : Page
     async void OnRemoveGame(object _, RoutedEventArgs __)
     {
         var id = Vm.Row.Id;
-        if (!await App.ConfirmAsync(this, $"Remove {Vm.Name} from the library?",
-                "SCSKiller forgets the game and takes its recorder out of the game's folder. The game's own files stay, and you can add it again any time.",
-                "Remove")) return;
+        if (!await App.ConfirmAsync(this, Loc.Format($"Remove {Vm.Name} from the library?"),
+                Loc.Text("SCSKiller forgets the game and takes its recorder out of the game's folder. The game's own files stay, and you can add it again any time."),
+                Loc.Text("Remove"))) return;
         try { await Task.Run(() => App.Core.RemoveManualGame(id)); }   // refused while a compile of it runs
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
         {
-            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't remove the game", Content = ex.Message, CloseButtonText = "OK" });
+            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = Loc.Text("Couldn't remove the game"), Content = ex.Message, CloseButtonText = Loc.Text("OK") });
             return;
         }
         App.Main.Navigate(typeof(LibraryPage));
@@ -170,16 +170,16 @@ public sealed partial class DetailPage : Page
     async void OnClearCache(object _, RoutedEventArgs __)
     {
         var (vm, id) = (Vm, Vm.Row.Id);
-        var note = "The game will compile shaders during play again until you re-warm it."
-            + (!vm.NoAntiCheat ? " Anti-cheat game: only the driver cache is cleared." : "");
-        var text = new TextBlock { TextWrapping = TextWrapping.Wrap, Text = "Measuring the cache files…\n\n" + note };
+        var note = Loc.Text("The game will compile shaders during play again until you re-warm it.")
+            + (!vm.NoAntiCheat ? Loc.Text(" Anti-cheat game: only the driver cache is cleared.") : "");
+        var text = new TextBlock { TextWrapping = TextWrapping.Wrap, Text = Loc.Text("Measuring the cache files…\n\n") + note };
         var ownText = new TextBlock { TextWrapping = TextWrapping.Wrap };
         var alsoOwn = new CheckBox { Content = ownText, Visibility = Visibility.Collapsed };
         _ = Measure();
-        if (await App.ShowAsync(App.Confirm(this, $"Clear the shader cache of {vm.Name}?", new StackPanel { Spacing = 12, Children = { text, alsoOwn } }, "Clear cache"))
+        if (await App.ShowAsync(App.Confirm(this, Loc.Format($"Clear the shader cache of {vm.Name}?"), new StackPanel { Spacing = 12, Children = { text, alsoOwn } }, Loc.Text("Clear cache")))
             != ContentDialogResult.Primary) return;
         var withOwn = alsoOwn.IsChecked == true;
-        try { vm.Error = await Task.Run(() => App.Core.ClearGameCache(id, withOwn)) ? null : "Nothing was cleared: no shader-cache files of this game were found."; }
+        try { vm.Error = await Task.Run(() => App.Core.ClearGameCache(id, withOwn)) ? null : Loc.Text("Nothing was cleared: no shader-cache files of this game were found."); }
         catch (Exception ex) { vm.Error = ex.Message; }
         vm.ReadCaches();
         vm.Refresh();
@@ -192,8 +192,8 @@ public sealed partial class DetailPage : Page
                 var all = await Task.Run(() => App.Core.GameCaches(id, gamePrecache: true));
                 static bool Own(CachePart p) => p.Name is Core.App.ScsKiller.PipelinePart or Core.App.ScsKiller.PrecachePart;
                 var (parts, own) = (all.Where(p => !Own(p)).ToList(), all.Where(Own).ToList());
-                text.Text = (parts.Count > 0 ? string.Join(" · ", parts.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}")) : "No cache files on disk now") + ".\n\n" + note;
-                ownText.Text = $"Also delete the game's own shader cache ({Format.Bytes(own.Sum(p => p.Bytes))}). It rebuilds it at its next start, which then takes longer.";
+                text.Text = (parts.Count > 0 ? string.Join(" · ", parts.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}")) : Loc.Text("No cache files on disk now")) + Loc.Text(".") + "\n\n" + note;
+                ownText.Text = Loc.Format($"Also delete the game's own shader cache ({Format.Bytes(own.Sum(p => p.Bytes))}). It rebuilds it at its next start, which then takes longer.");
                 alsoOwn.Visibility = own.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             }
             catch (Exception ex) { text.Text = Describe(ex) + "\n\n" + note; }
@@ -203,13 +203,12 @@ public sealed partial class DetailPage : Page
     async void OnClearRecording(object _, RoutedEventArgs __)
     {
         var (vm, id) = (Vm, Vm.Row.Id);
-        if (!await App.ConfirmAsync(this, $"Clear the recording of {vm.Name}?",
-                "The recorded pipelines are removed. They're compiled again only if the game creates them again while recording, "
-                + "and the compile plan goes back to what the game's files give.\n\nThe recorder itself stays in; the game's files aren't touched.",
-                "Clear recording")) return;
+        if (!await App.ConfirmAsync(this, Loc.Format($"Clear the recording of {vm.Name}?"),
+                Loc.Text("The recorded pipelines are removed. They're compiled again only if the game creates them again while recording, and the compile plan goes back to what the game's files give.\n\nThe recorder itself stays in; the game's files aren't touched."),
+                Loc.Text("Clear recording"))) return;
         vm.ClearingRecording = true;
         vm.Refresh();
-        try { vm.Error = await Task.Run(() => App.Core.ClearRecording(id)) ? null : "Nothing was cleared: no recording of this game was found."; }
+        try { vm.Error = await Task.Run(() => App.Core.ClearRecording(id)) ? null : Loc.Text("Nothing was cleared: no recording of this game was found."); }
         catch (Exception ex) { vm.Error = ex.Message; }
         vm.ClearingRecording = false;
         vm.Refresh();
@@ -239,9 +238,9 @@ public sealed partial class DetailPage : Page
     async void OnRecordOffline(object _, RoutedEventArgs __)
     {
         var (vm, id) = (Vm, Vm.Row.Id);
-        if (!await App.ConfirmAsync(this, $"Start {vm.Name} offline without EasyAntiCheat?",
-                new TextBlock { TextWrapping = TextWrapping.Wrap, Text = DetailVm.OfflineRisk + " Online play isn't possible in that session." },
-                "Record offline session")) return;
+        if (!await App.ConfirmAsync(this, Loc.Format($"Start {vm.Name} offline without EasyAntiCheat?"),
+                new TextBlock { TextWrapping = TextWrapping.Wrap, Text = DetailVm.OfflineRisk + Loc.Text(" Online play isn't possible in that session.") },
+                Loc.Text("Record offline session"))) return;
         vm.OfflineStarting = true;
         vm.Refresh();
         Task session;

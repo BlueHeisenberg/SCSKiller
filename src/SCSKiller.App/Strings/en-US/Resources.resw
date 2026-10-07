@@ -1,0 +1,775 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="MainWindow_AppTitleBar.Subtitle" xml:space="preserve">
+    <value>Shader Compilation Stutter Killer</value>
+    <comment>MainWindow.xaml</comment>
+  </data>
+  <data name="MainWindow_UpdateText.Text" xml:space="preserve">
+    <value>Restart to update</value>
+    <comment>MainWindow.xaml</comment>
+  </data>
+  <data name="MainWindow_LibraryItem.Content" xml:space="preserve">
+    <value>Library</value>
+    <comment>MainWindow.xaml</comment>
+  </data>
+  <data name="MainWindow_QueueItem.Content" xml:space="preserve">
+    <value>Compile queue</value>
+    <comment>MainWindow.xaml</comment>
+  </data>
+  <data name="MainWindow_SettingsItem.Content" xml:space="preserve">
+    <value>Settings</value>
+    <comment>MainWindow.xaml</comment>
+  </data>
+  <data name="MainWindow_AboutItem.Content" xml:space="preserve">
+    <value>About</value>
+    <comment>MainWindow.xaml</comment>
+  </data>
+  <data name="AboutPage_About.Text" xml:space="preserve">
+    <value>About</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_ShaderCompilationStutterKiller.Text" xml:space="preserve">
+    <value>Shader Compilation Stutter Killer</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_CheckForUpdates.Content" xml:space="preserve">
+    <value>Check for updates</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_InstallUpdatesAutomatically.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Install updates automatically</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_InstallUpdatesAutomaticallyTextBlock.Text" xml:space="preserve">
+    <value>Install updates automatically</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_ADownloadedUpdateInstalls.Text" xml:space="preserve">
+    <value>A downloaded update installs the next time SCSKiller starts or quits, never during a compile, an offline session or a game. Off: only Restart to update installs it.</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_DownloadSourceCode.Content" xml:space="preserve">
+    <value>Download source code</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_CompilesYourGamesShaders.Text" xml:space="preserve">
+    <value>Compiles your games' shaders into the graphics driver's cache ahead of time, so they don't stutter the first time you play them.</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_SCSKillerLicence.Text" xml:space="preserve">
+    <value>SCSKiller licence:</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_GPL30Or.Text" xml:space="preserve">
+    <value> GPL-3.0-or-later, with an additional permission for Oodle, the Windows App SDK and graphics driver libraries (LICENSE-EXCEPTION.txt)</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_Website.Content" xml:space="preserve">
+    <value>Website</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_SourceCode.Content" xml:space="preserve">
+    <value>Source code</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_SupportOnPatreon.Content" xml:space="preserve">
+    <value>Support on Patreon</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_TrademarksBox.Header" xml:space="preserve">
+    <value>Trademarks</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_ThirdPartyComponents.Text" xml:space="preserve">
+    <value>Third-party components</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="AboutPage_OpenOneToRead.Text" xml:space="preserve">
+    <value>Open one to read its licence. The same list, with notes, is in THIRD-PARTY-NOTICES.md next to the app.</value>
+    <comment>AboutPage.xaml</comment>
+  </data>
+  <data name="DetailPage_GameFolder.Content" xml:space="preserve">
+    <value>Game folder…</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_GameFolder.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>The folder SCSKiller checks for anti-cheat before it records this game</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_RemoveFromLibrary.Content" xml:space="preserve">
+    <value>Remove from library</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_RemoveFromLibrary.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Forget this game. Its recorder leaves the game folder; the game's own files stay.</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_PlayingNow.Text" xml:space="preserve">
+    <value>● Playing now</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_Refresh.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Refresh</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_Refresh.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Re-read this game's cache size, recording and last session</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_KnownToStutter.Text" xml:space="preserve">
+    <value>Known to stutter</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_TurnOnRecording.Content" xml:space="preserve">
+    <value>Turn on recording</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_TurnOnRecordingButton.Content" xml:space="preserve">
+    <value>Turn on recording</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_ShaderCoverage.Text" xml:space="preserve">
+    <value>Shader coverage</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_ShadersInTheGame.Text" xml:space="preserve">
+    <value>Shaders in the game</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_WhereTheShadersCome.Text" xml:space="preserve">
+    <value>Where the shaders come from</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_DetailsExpander.Header" xml:space="preserve">
+    <value>Details</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_FrameTimesLastTime.Text" xml:space="preserve">
+    <value>Frame times last time you played</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_ShaderCompile.Text" xml:space="preserve">
+    <value>shader compile</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_OtherHitch.Text" xml:space="preserve">
+    <value>other hitch</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_LoadingQuitting.Text" xml:space="preserve">
+    <value>loading, quitting</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_LoadingCompilingShaders.Text" xml:space="preserve">
+    <value>loading, compiling shaders</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_SlowFramesExpander.Header" xml:space="preserve">
+    <value>Slow frames</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_CarefulCompile.Text" xml:space="preserve">
+    <value>Careful compile</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_CarefulSwitch.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Careful compile</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_RecordWhileIPlay.Text" xml:space="preserve">
+    <value>Record while I play</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_RecordSwitch.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Record while I play</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_BanRisk.Title" xml:space="preserve">
+    <value>Ban risk</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_ClearRecording.Content" xml:space="preserve">
+    <value>Clear recording</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_PlayWithItOn.Text" xml:space="preserve">
+    <value>Play with it on and your last session shows here: how much was ready and what still stuttered.</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_ReadyInTheGames.Text" xml:space="preserve">
+    <value>Ready in the game's own library</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_ReadyInTheDriver.Text" xml:space="preserve">
+    <value>Ready in the driver cache</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="DetailPage_CompiledDuringPlay.Text" xml:space="preserve">
+    <value>Compiled during play</value>
+    <comment>DetailPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Library.Text" xml:space="preserve">
+    <value>Library</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_ReReadsEveryGames.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Re-reads every game's cache size, recordings and status, and finds new games. Shift+click also re-checks every game's engine and anti-cheat (slower).</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Refresh.Text" xml:space="preserve">
+    <value>Refresh</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_AddAGame.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Add a game</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_AddAGame.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Add a game no store lists (another launcher, or a game in a folder of its own) by picking its .exe</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_AddAGameTextBlock.Text" xml:space="preserve">
+    <value>Add a game…</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_QueueEveryGameKnown.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Queue every game known to stutter that is ready to compile</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_DriverShaderCache.Text" xml:space="preserve">
+    <value>Driver shader cache</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_DriverShaderCacheUse.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Driver shader cache use</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Change.Content" xml:space="preserve">
+    <value>Change</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Change.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Change the driver shader cache size</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_AfterADriverUpdate.Text" xml:space="preserve">
+    <value>After a driver update</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_ChangeHyperlinkButton.Content" xml:space="preserve">
+    <value>Change</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_ChangeHyperlinkButton.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Change what happens after a driver update</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_CompileSpeed.Text" xml:space="preserve">
+    <value>Compile speed</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_ChangeHyperlinkButton2.Content" xml:space="preserve">
+    <value>Change</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_ChangeHyperlinkButton2.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Change compile speed</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_CheckingForNewAnd.Text" xml:space="preserve">
+    <value>Checking for new and changed games…</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Search.PlaceholderText" xml:space="preserve">
+    <value>Search by name, store or engine</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Search.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Search games</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Game.Text" xml:space="preserve">
+    <value>Game</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Shaders.Text" xml:space="preserve">
+    <value>Shaders</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Pipelines.Text" xml:space="preserve">
+    <value>Pipelines</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Cache.Text" xml:space="preserve">
+    <value>Cache</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Time.Text" xml:space="preserve">
+    <value>Time</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Status.Text" xml:space="preserve">
+    <value>Status</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_TryPartOfThe.Text" xml:space="preserve">
+    <value>Try part of the name, a store (Steam, GOG…) or an engine (UE 5).</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_LookingForYourGames.Text" xml:space="preserve">
+    <value>Looking for your games…</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_List.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Games</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_KnownToStutter.Text" xml:space="preserve">
+    <value>Known to stutter</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Details.Content" xml:space="preserve">
+    <value>Details</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Record.Content" xml:space="preserve">
+    <value>Record</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="LibraryPage_Why.Content" xml:space="preserve">
+    <value>Why?</value>
+    <comment>LibraryPage.xaml</comment>
+  </data>
+  <data name="QueuePage_CompileQueue.Text" xml:space="preserve">
+    <value>Compile queue</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_AfterAnUpdateSCSKiller.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>After an update SCSKiller rebuilds the plans of compiled games in the background, without compiling. A game with more to compile shows it in the Library.</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_CompilesRunOutsideThe.Text" xml:space="preserve">
+    <value>Compiles run outside the game, under the game's name. Keep the game closed while it runs.</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_CompileQueueTextBlock.Text" xml:space="preserve">
+    <value>Compile queue</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Stop.Content" xml:space="preserve">
+    <value>Stop</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Stop.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Finishes the compiles in flight, then stops. Add the game again to continue where it stopped.</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_RaiseTheLimit.Content" xml:space="preserve">
+    <value>Raise the limit</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_GameInRunOrder.Text" xml:space="preserve">
+    <value>Game (in run order)</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Time.Text" xml:space="preserve">
+    <value>Time</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Cache.Text" xml:space="preserve">
+    <value>Cache</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_AddGamesFromThe.Text" xml:space="preserve">
+    <value>Add games from the Library</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_PressAddToQueue.Text" xml:space="preserve">
+    <value>Press Add to queue on a game, then Compile queue.</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_OpenTheLibrary.Content" xml:space="preserve">
+    <value>Open the Library</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_StopAndRemove.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Stop and remove</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_CompileProgress.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Compile progress</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_WaitingGames.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Waiting games</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_DragToReorder.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Drag to reorder</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_MoveToTop.Content" xml:space="preserve">
+    <value>Move to top</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_MoveUp.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Move up</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_MoveDown.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Move down</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Remove.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Remove</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Finished.Text" xml:space="preserve">
+    <value>Finished</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_ClearFinished.Content" xml:space="preserve">
+    <value>Clear finished</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_RemoveButton.[using:Microsoft.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Remove</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_CompileThreads.Text" xml:space="preserve">
+    <value>Compile threads</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_CompileThreadsSlider.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Compile threads</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_Priority.Header" xml:space="preserve">
+    <value>Priority</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_BelowNormalFastestThe.Content" xml:space="preserve">
+    <value>Below normal: fastest, the PC stays usable</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="QueuePage_IdleOnlyRunsWhen.Content" xml:space="preserve">
+    <value>Idle only: runs when nothing else needs the CPU</value>
+    <comment>QueuePage.xaml</comment>
+  </data>
+  <data name="SettingsPage_Settings.Text" xml:space="preserve">
+    <value>Settings</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_LanguageBox.Header" xml:space="preserve">
+    <value>Display language</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_LanguageNote.Text" xml:space="preserve">
+    <value>Restart SCSKiller to apply the language change.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_CurrentLimit.Text" xml:space="preserve">
+    <value>Current limit</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_UsedNow.Text" xml:space="preserve">
+    <value>Used now</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_NewLimitLabel.Text" xml:space="preserve">
+    <value>New limit</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ApplyNeedsAdministrator.Text" xml:space="preserve">
+    <value>Apply (needs administrator)</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_YouCanSwitchBack.Text" xml:space="preserve">
+    <value>You can switch back to the driver default here at any time.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AfterADriverUpdate.Text" xml:space="preserve">
+    <value>After a driver update</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ANewDriverThrows.Text" xml:space="preserve">
+    <value>A new driver throws away every compiled shader, so compiled games stutter again until they are rebuilt.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_WhenToRebuild.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>When to rebuild</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AskMe.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Ask me</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AskMeTextBlock.Text" xml:space="preserve">
+    <value>Ask me</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ANotificationOffersCompile.Text" xml:space="preserve">
+    <value>A notification offers Compile now, When idle, or Skip. Nothing starts on its own.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AutomaticallyOnlyWhileThe.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Automatically, only while the PC is idle</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AutomaticallyOnlyWhileTheTextBlock.Text" xml:space="preserve">
+    <value>Automatically, only while the PC is idle</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_StopsTheMomentYou.Text" xml:space="preserve">
+    <value>Stops the moment you touch the mouse or keyboard and picks up where it left off.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_Off.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Off</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_OffTextBlock.Text" xml:space="preserve">
+    <value>Off</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_RebuildGamesYourselfFrom.Text" xml:space="preserve">
+    <value>Rebuild games yourself from the Library.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_PauseBackgroundCompilingWhile.Content" xml:space="preserve">
+    <value>Pause background compiling while another game is running</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ThreadsForBackgroundRebuilds.Text" xml:space="preserve">
+    <value>Threads for background rebuilds</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ThreadsForBackgroundRebuildsSlider.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Threads for background rebuilds</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AutoBox.Content" xml:space="preserve">
+    <value>Auto Shader Compilation (NVIDIA beta)</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SystemUtilization.Header" xml:space="preserve">
+    <value>System utilization</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ApplyNeedsAdministratorTextBlock.Text" xml:space="preserve">
+    <value>Apply (needs administrator)</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_WeRecommendEnablingIt.Title" xml:space="preserve">
+    <value>We recommend enabling it</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_WeRecommendEnablingIt.Message" xml:space="preserve">
+    <value>A beta feature of the NVIDIA App: after a driver update it re-compiles the games you have already played. SCSKiller adds everything else, so both together are best. The overlap costs little: shaders NVIDIA already rebuilt take about 1 ms each here.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_PatreonAndCommunityDatabase.Text" xml:space="preserve">
+    <value>Patreon and community database</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_PatreonSupportersGetThe.Text" xml:space="preserve">
+    <value>Patreon supporters get the community shader hash database and beta and alpha builds. Sign in with the Patreon account you support SCSKiller with.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SignInWithPatreon.Content" xml:space="preserve">
+    <value>Sign in with Patreon</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_Cancel.Content" xml:space="preserve">
+    <value>Cancel</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_FinishSigningInIn.Text" xml:space="preserve">
+    <value>Finish signing in in your browser. Nothing else is needed here.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SignedInWithPatreon.Text" xml:space="preserve">
+    <value>Signed in with Patreon</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_RefreshStatus.Content" xml:space="preserve">
+    <value>Refresh status</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SignOut.Content" xml:space="preserve">
+    <value>Sign out</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_YoureInWantTo.Title" xml:space="preserve">
+    <value>You're in. Want to help improve the community shader hash database?</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_YoureInWantTo.Message" xml:space="preserve">
+    <value>Your game shader hashes are shared anonymously, never linked to your Patreon account.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ShareAnonymously.Content" xml:space="preserve">
+    <value>Share anonymously</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_NotNow.Content" xml:space="preserve">
+    <value>Not now</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_UpdateChannel.Header" xml:space="preserve">
+    <value>Update channel</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_GoBackToStable.Content" xml:space="preserve">
+    <value>Go back to stable now</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_DownloadSharedShaderHashes.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Download shared shader hashes</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_DownloadSharedShaderHashesTextBlock.Text" xml:space="preserve">
+    <value>Download shared shader hashes</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_HashesOtherPlayersRecorded.Text" xml:space="preserve">
+    <value>Hashes other players recorded for your games, so they compile without you recording them first. No game files: your GPU compiles everything from your own install. Upscaler pipelines (FSR, XeSS) download for everyone, without it.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ShareAnonymousShaderHashes.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Share anonymous shader hashes</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ShareAnonymousShaderHashesTextBlock.Text" xml:space="preserve">
+    <value>Share anonymous shader hashes</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_HelpsEveryoneGetBetter.Text" xml:space="preserve">
+    <value>Helps everyone get better coverage. Your recordings' upscaler pipelines (FSR, XeSS) also reach everyone with the same upscaler version. Never linked to your Patreon account; nothing else about your games leaves your PC. Free for everyone.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_CompileSpeedWhenYou.Text" xml:space="preserve">
+    <value>Compile speed when you run the queue</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_CompileThreads.Text" xml:space="preserve">
+    <value>Compile threads</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_CompileThreadsSlider.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Compile threads</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_MaximumMemoryForCompiling.Text" xml:space="preserve">
+    <value>Maximum memory for compiling</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_MaximumMemoryForCompilingSlider.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Maximum memory for compiling (0 = Auto)</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_MaximumModeAlsoCompile.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Maximum mode: also compile every shader pairing</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_MaximumModeAlsoCompileTextBlock.Text" xml:space="preserve">
+    <value>Maximum mode: also compile every shader pairing</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SeemsToHelpMost.Text" xml:space="preserve">
+    <value>Seems to help most on AMD. Compiles take longer and use more disk space.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_InTheBackground.Text" xml:space="preserve">
+    <value>In the background</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_StartSCSKillerWhenWindows.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Start SCSKiller when Windows starts</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_StartSCSKillerWhenWindowsTextBlock.Text" xml:space="preserve">
+    <value>Start SCSKiller when Windows starts</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ItWaitsInThe.Text" xml:space="preserve">
+    <value>It waits in the notification area, next to the clock, to offer a rebuild after a driver update.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ClosingTheWindowQuits.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Closing the window quits SCSKiller</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ClosingTheWindowQuitsTextBlock.Text" xml:space="preserve">
+    <value>Closing the window quits SCSKiller</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ARunningCompileFinishes.Text" xml:space="preserve">
+    <value>A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps SCSKiller there; right-click its icon to quit.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ScanGamesWhenSCSKiller.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Scan games when SCSKiller starts</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ScanGamesWhenSCSKillerTextBlock.Text" xml:space="preserve">
+    <value>Scan games when SCSKiller starts</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ReadsAgainWhatChanged.Text" xml:space="preserve">
+    <value>Reads again what changed in each game's folders. Off: the last list shows, and a game is read again when you refresh, when it exits, or when Steam or the Xbox app updates it.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_NotifyMeWhenGames.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Notify me when games have new shaders to compile</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_NotifyMeWhenGamesTextBlock.Text" xml:space="preserve">
+    <value>Notify me when games have new shaders to compile</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_ACompiledGameGains.Text" xml:space="preserve">
+    <value>A compiled game gains pipelines from its recording, the shared shader hashes or an SCSKiller update. You're told once, never while you play.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SendAnAnonymousDaily.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Send an anonymous daily check</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SendAnAnonymousDailyTextBlock.Text" xml:space="preserve">
+    <value>Send an anonymous daily check</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_CountsActiveInstallsOnce.Text" xml:space="preserve">
+    <value>Counts active installs: once a day, the app's version and your GPU vendor, with no identifier. Nothing about your PC or games.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_RecordInAllCompatible.Text" xml:space="preserve">
+    <value>Record in all compatible games</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_AddsASmallD3d12.Text" xml:space="preserve">
+    <value>Adds a small d3d12.dll to games without anti-cheat to catch shaders the plan missed and time each frame, so the game page shows what stuttered. Frame times stay on this PC. Never used in anti-cheat games. Switch off to remove it from every game you haven't turned it on for yourself.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_RecordInAllCompatibleToggleSwitch.[using:Microsoft.UI.Xaml.Automation]AutomationProperties.Name" xml:space="preserve">
+    <value>Record in all compatible games</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_RecordingLimitLabel.Text" xml:space="preserve">
+    <value>Recording limit per game</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_CountsTheRecordingIn.Text" xml:space="preserve">
+    <value>Counts the recording in the game's folder and SCSKiller's copy of it. At the limit the game plays as usual: new pipelines just aren't recorded.</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+  <data name="SettingsPage_SpaceByGame.Header" xml:space="preserve">
+    <value>Space by game</value>
+    <comment>SettingsPage.xaml</comment>
+  </data>
+</root>

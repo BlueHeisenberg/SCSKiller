@@ -233,7 +233,7 @@ sealed class WarmRun : IWarmRun
             }
             long carried = 0;   // failures the earlier processes counted (before their retry point, or in earlier passes)
             var lastCarried = false;   // the last process's failures are in carried already
-            string? note = null;
+            FormattableString? note = null;
             var skip = new List<long>();
             var crashed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var removals = 0;
@@ -244,7 +244,7 @@ sealed class WarmRun : IWarmRun
             string? stage = null;         // the last process's staging folder (its stage event)
             for (var n = 1; ; n++)
             {
-                var passNote = passes == null ? null : passes.IsFast(pass) ? "careful compile: the plan's other pipelines at full speed"
+                FormattableString? passNote = passes == null ? null : passes.IsFast(pass) ? (FormattableString)$"careful compile: the plan's other pipelines at full speed"
                     : $"careful compile: recorded pipelines, pass {passes.Number(pass)} of {passes.CarefulCount}";
                 var report = progress == null ? null : new Adjusted(progress, carried, note ?? passNote, passes?.Total);
                 var lastPass = passes == null || pass == passes.Count - 1;
@@ -284,8 +284,8 @@ sealed class WarmRun : IWarmRun
                         break;
                     }
                     removals += removed ? 1 : 0;
-                    note = removed ? "recovering from a GPU driver crash" : $"retrying ray tracing with fewer threads ({r.RtThreads})";
-                    progress?.Report(new WarmProgress(Whole(r.Done), passes?.Total ?? r.Total, carried, 0, Growth(), Note: note));
+                    note = removed ? (FormattableString)$"recovering from a GPU driver crash" : $"retrying ray tracing with fewer threads ({r.RtThreads})";
+                    progress?.Report(new WarmProgress(Whole(r.Done), passes?.Total ?? r.Total, carried, 0, Growth(), Note: note.ToString()) { NoteFormat = note });
                     _p = Launch(r.From, r.RtThreads, skip, removed ? r.Isolate ?? [] : []);
                 }
             }
@@ -307,9 +307,9 @@ sealed class WarmRun : IWarmRun
 
     /// <summary>A later process's progress, as the whole warm's: its failures plus the earlier ones', with the retry or pass
     /// note; a careful warm's total is every pass's items.</summary>
-    sealed class Adjusted(IProgress<WarmProgress> inner, long carried, string? note, long? total) : IProgress<WarmProgress>
+    sealed class Adjusted(IProgress<WarmProgress> inner, long carried, FormattableString? note, long? total) : IProgress<WarmProgress>
     {
-        public void Report(WarmProgress p) => inner.Report(p with { Total = total ?? p.Total, Failed = p.Failed + carried, Note = note });
+        public void Report(WarmProgress p) => inner.Report(p with { Total = total ?? p.Total, Failed = p.Failed + carried, Note = note?.ToString(), NoteFormat = note });
     }
 
     public void Pause()

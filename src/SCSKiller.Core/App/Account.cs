@@ -17,9 +17,9 @@ public sealed record AccountStatus(IReadOnlyList<string> Ent, DateTimeOffset? Un
     static readonly Dictionary<string, string> Names = new() { ["db"] = "community shader hash database", ["beta"] = "beta builds", ["alpha"] = "alpha builds", ["prio"] = "priority requests" };
 
     /// <summary>The Account card's line, e.g. "Supporter: beta builds and alpha builds."; null when no flag is shown.</summary>
-    public string? Benefits => Ent.Where(Names.ContainsKey).Select(k => Names[k]).ToList() is { Count: > 0 } names
-        ? "Supporter: " + (names.Count > 1 ? string.Join(", ", names[..^1]) + " and " + names[^1] : names[0])
-            + (Until is { } until ? $", until {until.ToLocalTime():d MMM yyyy}." : ".")
+    public string? Benefits => Ent.Where(Names.ContainsKey).Select(k => Loc.Text(Names[k])).ToList() is { Count: > 0 } names
+        ? (names.Count > 1 ? Loc.Format($"{string.Join(Loc.Text(", ", "list"), names[..^1])} and {names[^1]}") : names[0]) is var list
+            && Until is { } until ? Loc.Format($"Supporter: {list}, until {until.ToLocalTime():d MMM yyyy}.") : Loc.Format($"Supporter: {list}.")
         : null;
 }
 

@@ -5,6 +5,11 @@ All notable changes to the SCSKiller app and command line. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The app is available in Simplified Chinese. "Display language" in Settings follows Windows by default or picks a
+  language, applied the next time SCSKiller starts. The command line stays in English.
+
 ### Fixed
 
 - In a narrow window the Library's buttons wrap onto another line under the summary instead of being cut off.

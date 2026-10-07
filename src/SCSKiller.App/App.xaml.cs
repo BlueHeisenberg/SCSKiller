@@ -35,7 +35,31 @@ public partial class App : Application
     static readonly CancellationTokenSource stopWatching = new();
     static Task watcher = Task.CompletedTask;
 
-    public App() => InitializeComponent();
+    public App()
+    {
+        ApplyLanguage(Environment.GetCommandLineArgs());
+        InitializeComponent();
+    }
+
+    /// <summary>One language for both resource systems, before any UI: XAML's (x:Uid) and the code's text (Loc). --language
+    /// picks it for this run; --fake and --screenshots never read the real settings (English without --language);
+    /// otherwise the setting, and with "Follow Windows" the first of Windows' preferred languages SCSKiller has (Loc.Resolve).</summary>
+    static void ApplyLanguage(string[] args)
+    {
+        var at = Array.IndexOf(args, "--language");
+        var chosen = at >= 0 && at + 1 < args.Length ? args[at + 1]
+            : args.Contains("--fake") || args.Contains("--screenshots") ? Loc.Languages[0].Name
+            : new AppStore(AppStore.DefaultDir).LoadSettings().Language;
+        // "Follow Windows" stores an empty tag: it resolves to Windows' languages, then the system UI culture, then English.
+        // PrimaryLanguageOverride and CultureInfo never get "".
+        IEnumerable<string> preferred;
+        try { preferred = Windows.System.UserProfile.GlobalizationPreferences.Languages; }
+        catch (COMException) { preferred = []; }
+        var culture = Loc.Resolve(chosen, preferred.Append(System.Globalization.CultureInfo.CurrentUICulture.Name));
+        if (string.IsNullOrWhiteSpace(culture.Name)) culture = Loc.Languages[0];   // Resolve never returns the invariant culture; kept as a guard
+        Microsoft.Windows.Globalization.ApplicationLanguages.PrimaryLanguageOverride = culture.Name;
+        System.Globalization.CultureInfo.CurrentUICulture = System.Globalization.CultureInfo.DefaultThreadCurrentUICulture = culture;
+    }
 
     public static bool Quitting => quitting;
     /// <summary>Closing the window hides it to the notification area (the tray's Quit really quits).</summary>
@@ -221,8 +245,8 @@ public partial class App : Application
         toldAboutTray = true;
         AppNotificationManager.Default.Show(new AppNotificationBuilder()
             .AddArgument("action", "open")
-            .AddText("SCSKiller is still running")
-            .AddText("It's in the notification area; right-click the icon to quit.")
+            .AddText(Loc.Text("SCSKiller is still running"))
+            .AddText(Loc.Text("It's in the notification area; right-click the icon to quit."))
             .BuildNotification());
     }
 
@@ -239,14 +263,14 @@ public partial class App : Application
             root.Loaded -= OnLoaded;
             var c = await fetch ?? WelcomeContent.Default;
             var panel = new StackPanel { Spacing = 12 };
-            foreach (var p in c.Paragraphs) panel.Children.Add(new TextBlock { Text = p, TextWrapping = TextWrapping.Wrap });
-            if (c.Link != null) panel.Children.Add(new HyperlinkButton { Content = c.Link.Text, NavigateUri = new Uri(c.Link.Url), Padding = new Thickness(0) });
-            var share = new CheckBox { Content = c.Share, IsChecked = false };   // never pre-ticked: that isn't consent
+            foreach (var p in c.Paragraphs) panel.Children.Add(new TextBlock { Text = Loc.Text(p), TextWrapping = TextWrapping.Wrap });
+            if (c.Link != null) panel.Children.Add(new HyperlinkButton { Content = Loc.Text(c.Link.Text), NavigateUri = new Uri(c.Link.Url), Padding = new Thickness(0) });
+            var share = new CheckBox { Content = Loc.Text(c.Share), IsChecked = false };   // never pre-ticked: that isn't consent
             panel.Children.Add(share);
             var dialog = new ContentDialog
             {
-                XamlRoot = root.XamlRoot, Title = c.Title, Content = new ScrollViewer { Content = panel },
-                PrimaryButtonText = c.SignIn, CloseButtonText = c.Dismiss, DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = root.XamlRoot, Title = Loc.Text(c.Title), Content = new ScrollViewer { Content = panel },
+                PrimaryButtonText = Loc.Text(c.SignIn), CloseButtonText = Loc.Text(c.Dismiss), DefaultButton = ContentDialogButton.Primary,
             };
             ContentDialogResult result;
             try { result = await dialog.ShowAsync(); }
@@ -262,7 +286,7 @@ public partial class App : Application
 
     public static ContentDialog Confirm(Page page, string title, object content, string primaryText, ContentDialogButton defaultButton = ContentDialogButton.Close) => new()
     {
-        XamlRoot = page.XamlRoot, Title = title, Content = content, PrimaryButtonText = primaryText, CloseButtonText = "Cancel", DefaultButton = defaultButton,
+        XamlRoot = page.XamlRoot, Title = title, Content = content, PrimaryButtonText = primaryText, CloseButtonText = Loc.Text("Cancel"), DefaultButton = defaultButton,
     };
 
     /// <summary>None when another dialog is open: WinUI shows one at a time and throws, which an async void
@@ -297,14 +321,14 @@ public partial class App : Application
         var t = new Tray(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"))
         {
             Open = ShowWindow,
-            PauseLabel = () => Running() is not { } q ? null : q.Stage == QueueStage.Paused ? "Resume" : "Pause compiling",
+            PauseLabel = () => Running() is not { } q ? null : q.Stage == QueueStage.Paused ? Loc.Text("Resume") : Loc.Text("Pause compiling"),
             PauseOrResume = () => Fmt.PauseOrResume(Running()),
             Quit = () => _ = QuitAsync(),
-            QuitLabel = () => quitNow != null ? "Quit now (loses unsaved cache)" : "Quit",
+            QuitLabel = () => quitNow != null ? Loc.Text("Quit now (loses unsaved cache)") : Loc.Text("Quit"),
             SessionEnding = hwnd =>
             {
                 if (Running() == null) return;
-                ShutdownBlockReasonCreate(hwnd, "Stopping the compile so the graphics driver can save its shader cache");
+                ShutdownBlockReasonCreate(hwnd, Loc.Text("Stopping the compile so the graphics driver can save its shader cache"));
                 StopAll();
             },
             SessionEnd = hwnd =>
@@ -325,12 +349,12 @@ public partial class App : Application
         if (tray == null) return;
         var q = Running();
         var name = q == null ? null : Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId;
-        tray.Tip = quitting ? "SCSKiller: finishing, the driver is saving the shader cache"
-            : q == null ? "SCSKiller: idle"
-            : q.PlanCheck ? "SCSKiller: checking games for more to compile"
-            : q.Stage == QueueStage.Paused ? $"SCSKiller: paused ({name})"
-            : q is { Stage: QueueStage.Warming, Progress: { Total: > 0 } p } ? $"Compiling {name}, {100.0 * p.Done / p.Total:0}%"
-            : $"Compiling {name}";
+        tray.Tip = quitting ? Loc.Text("SCSKiller: finishing, the driver is saving the shader cache")
+            : q == null ? Loc.Text("SCSKiller: idle")
+            : q.PlanCheck ? Loc.Text("SCSKiller: checking games for more to compile")
+            : q.Stage == QueueStage.Paused ? Loc.Format($"SCSKiller: paused ({name})")
+            : q is { Stage: QueueStage.Warming, Progress: { Total: > 0 } p } ? Loc.Format($"Compiling {name}, {100.0 * p.Done / p.Total:0}%")
+            : Loc.Format($"Compiling {name}");
     }
 
     static QueueItem? Running() => Core.Queue.FirstOrDefault(Format.Running);
@@ -381,15 +405,15 @@ public partial class App : Application
     static AppNotification DriverToast(IReadOnlyList<GameState> stale)
     {
         var time = TimeSpan.FromTicks(stale.Sum(g => (g.EstimatedWarmTime ?? TimeSpan.Zero).Ticks));
-        string games = stale.Count == 1 ? "1 game needs" : $"{stale.Count} games need";
+        string games = stale.Count == 1 ? Loc.Text("1 game needs") : Loc.Format($"{stale.Count} games need");
         return new AppNotificationBuilder()
             .AddArgument("action", "open")
-            .AddText($"{Fmt.Vendor(Core.Vendor.Vendor)} driver updated")
-            .AddText($"Driver {Core.Vendor.Gpu.DriverVersion} cleared the shader cache. {games} rebuilding: " +
-                     $"{string.Join(", ", stale.Select(g => g.Game.Name))}" + (time > TimeSpan.Zero ? $", about {Format.Duration(time)}." : "."))
-            .AddButton(new AppNotificationButton("Compile now").AddArgument("action", "now"))
-            .AddButton(new AppNotificationButton("When idle").AddArgument("action", "idle"))
-            .AddButton(new AppNotificationButton("Skip").AddArgument("action", "skip"))
+            .AddText(Loc.Format($"{Fmt.Vendor(Core.Vendor.Vendor)} driver updated"))
+            .AddText(Loc.Format($"Driver {Core.Vendor.Gpu.DriverVersion} cleared the shader cache. {games} rebuilding: ") +
+                     $"{string.Join(Loc.Text(", ", "list"), stale.Select(g => g.Game.Name))}" + (time > TimeSpan.Zero ? Loc.Format($", about {Format.Duration(time)}.") : Loc.Text(".")))
+            .AddButton(new AppNotificationButton(Loc.Text("Compile now")).AddArgument("action", "now"))
+            .AddButton(new AppNotificationButton(Loc.Text("When idle")).AddArgument("action", "idle"))
+            .AddButton(new AppNotificationButton(Loc.Text("Skip")).AddArgument("action", "skip"))
             .BuildNotification();
     }
 
@@ -410,11 +434,11 @@ public partial class App : Application
         var n = NewShaders.Count(games[0]);
         return new AppNotificationBuilder()
             .AddArgument("action", "shaders-show").AddArgument("games", ids)
-            .AddText("New shaders to compile")
-            .AddText(games.Count == 1 ? $"{games[0].Game.Name} has {n:N0} new pipeline{(n == 1 ? "" : "s")}. Compile now so they don't stutter."
-                : $"{games.Count} games have new shaders to compile")
-            .AddButton(new AppNotificationButton("Compile now").AddArgument("action", "shaders-compile").AddArgument("games", ids))
-            .AddButton(new AppNotificationButton("Show").AddArgument("action", "shaders-show").AddArgument("games", ids))
+            .AddText(Loc.Text("New shaders to compile"))
+            .AddText(games.Count == 1 ? Loc.Format($"{games[0].Game.Name} has {n:N0} new pipeline{(n == 1 ? "" : "s")}. Compile now so they don't stutter.")
+                : Loc.Format($"{games.Count} games have new shaders to compile"))
+            .AddButton(new AppNotificationButton(Loc.Text("Compile now")).AddArgument("action", "shaders-compile").AddArgument("games", ids))
+            .AddButton(new AppNotificationButton(Loc.Text("Show")).AddArgument("action", "shaders-show").AddArgument("games", ids))
             .BuildNotification();
     }
 
