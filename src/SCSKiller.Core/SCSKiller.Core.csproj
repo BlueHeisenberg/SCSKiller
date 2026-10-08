@@ -19,6 +19,17 @@
     <PackageReference Include="NSec.Cryptography" Version="26.4.0" />
   </ItemGroup>
 
+  <!-- Source 2 (Source2Reader): VPKs and compiled VFX shaders. CS2's vcs version 72 needs a ValveResourceFormat newer than
+       20.0.6980; until one is on NuGet, -p:ValveResourceFormatSource=<checkout> builds against its source (ValvePak 6,
+       which renamed its namespace) -->
+  <ItemGroup>
+    <PackageReference Include="ValveResourceFormat" Version="20.0.6980" Condition="'$(ValveResourceFormatSource)' == ''" />
+    <ProjectReference Include="$(ValveResourceFormatSource)\ValveResourceFormat\ValveResourceFormat.csproj" Condition="'$(ValveResourceFormatSource)' != ''" />
+  </ItemGroup>
+  <PropertyGroup Condition="'$(ValveResourceFormatSource)' != ''">
+    <DefineConstants>$(DefineConstants);VALVEPAK6</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <EmbeddedResource Include="Games\known-stutter.json" LogicalName="SCSKiller.Core.Games.known-stutter.json" />
     <EmbeddedResource Include="Games\game-verdicts.json" LogicalName="SCSKiller.Core.Games.game-verdicts.json" />

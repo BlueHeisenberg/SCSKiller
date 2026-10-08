@@ -47,6 +47,8 @@ SCSKiller's own licence: GPL-3.0-or-later (LICENSE), with an additional permissi
 | libsodium (libsodium.dll) | 1.0.22 | ISC | Copyright (c) 2013-2026 Frank Denis | https://libsodium.org | [L28](#l28) |
 | Vulkan-Headers (proxy/third_party/vulkan) | 1.4 (source tree) | Apache-2.0 | Copyright 2015-2026 The Khronos Group Inc. | https://github.com/KhronosGroup/Vulkan-Headers | [L4](#l4) |
 | AMD GPU Services (amd_ags_x64.dll) | 6.3.1 | MIT | Copyright (c) 2025 Advanced Micro Devices, Inc. | https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK | [L29](#l29) |
+| ValveResourceFormat | 20.0.6980 | MIT | Copyright (c) 2015 ValveResourceFormat Contributors | https://github.com/ValveResourceFormat/ValveResourceFormat | [L30](#l30) |
+| ValvePak | 5.x (6.0 with ValveResourceFormat after 20.0) | MIT | Copyright (c) 2008 Rick (rick 'at' gibbed 'dot' us), Copyright (c) 2016 ValvePak Contributors | https://github.com/ValveResourceFormat/ValvePak | [L31](#l31) |
 
 ### Notes
 
@@ -1456,6 +1458,63 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```
+
+### L30
+
+Used by: ValveResourceFormat
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2015 ValveResourceFormat Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L31
+
+Used by: ValvePak
+
+```text
+MIT License
+
+Copyright (c) 2008 Rick (rick 'at' gibbed 'dot' us)
+Copyright (c) 2016 ValvePak Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ## Trademarks

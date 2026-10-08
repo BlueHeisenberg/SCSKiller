@@ -135,6 +135,7 @@ public sealed partial class ScsKiller : IScsKiller
         new EngineReaders(("Unreal", new UnrealReader(AppStore.DefaultDir)), (FromSoftReader.Family, new FromSoftReader(AppStore.DefaultDir)),
             (UnityReader.Family, new UnityReader()), (ReEngine.ReEngineReader.Family, new ReEngine.ReEngineReader(AppStore.DefaultDir)),
             (RedEngine.RedEngineReader.Family, new RedEngine.RedEngineReader()), (Dagor.DagorReader.Family, new Dagor.DagorReader()), (Northlight.NorthlightReader.Family, new Northlight.NorthlightReader()),
+            (Source2.Source2Reader.Family, new Source2.Source2Reader()),
             (CarvedReader.Family, new CarvedReader()));
 
     public IGpuVendorBackend Vendor { get; }
