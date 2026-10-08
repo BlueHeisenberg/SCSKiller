@@ -86,19 +86,14 @@ public sealed class Psarc : IDisposable
     }
 
     /// <summary>The entry's bytes, unpacked.</summary>
-    public byte[] Read(Entry e)
-    {
-        byte[] b = [];
-        Read(e, ref b);
-        return b;
-    }
+    public byte[] Read(Entry e) => e.Size > MaxEntry ? throw new InvalidDataException($"{e.Name}: {e.Size} bytes, over {MaxEntry}") : Unpack(e.Block, e.Size, e.Offset);
 
     /// <summary>The entry unpacked into the start of <paramref name="buffer"/>, which is replaced when too small (a caller
     /// reading many entries reuses one); returns the entry's size.</summary>
     public int Read(Entry e, ref byte[] buffer)
     {
         if (e.Size > MaxEntry) throw new InvalidDataException($"{e.Name}: {e.Size} bytes, over {MaxEntry}");
-        if (buffer.Length < e.Size) buffer = new byte[(e.Size + 0xFFFFF) & ~0xFFFFFL];
+        if (buffer.Length < e.Size) buffer = new byte[(e.Size + 0xFFFFF) & ~0xFFFFFL];   // rounded up to 1 MiB: grows a few times, not per entry
         Unpack(e.Block, e.Size, e.Offset, buffer);
         return (int)e.Size;
     }
