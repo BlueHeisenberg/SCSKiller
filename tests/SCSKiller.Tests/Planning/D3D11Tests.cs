@@ -10,11 +10,12 @@ using Xunit.Abstractions;
 namespace SCSKiller.Tests.Planning;
 
 /// <summary>D3D11 plans (NVIDIA: the driver caches per shader, keyed on the exe name): every shader of the game's SM5
-/// platform once, as '1' items (u32 stage + sha1 of a 'B' blob in gen.db). A game that may run on either API gets both.</summary>
+/// platform once, as '1' items (u32 stage + sha1 of a 'B' blob in gen.db). A game that may run on either API gets both.
+/// AMD: the pixel and compute shaders only (Planner.D3D11Warms).</summary>
 public class D3D11Tests(ITestOutputHelper output)
 {
     static readonly EngineInfo Ue426 = new("Unreal", "4.26", null, "D3D11", false, null);
-    const string All11 = "compiles every DirectX 11 shader";
+    const string All11 = "compiles every DirectX 11 shader", Amd11 = "compiles every DirectX 11 pixel and compute shader";
 
     [Fact]
     public void CheckCompilesDirectX11OnNvidia()
@@ -33,6 +34,9 @@ public class D3D11Tests(ITestOutputHelper output)
         Assert.Equal(new PlanCheck(Readiness.Ready, $"{FromSource}; also {All11} (the game may run on either)"), C(UnrealRhi.Ambiguous, "4.25"));
         Assert.Equal(new PlanCheck(Readiness.Ready, $"{All11} (the game may run on either); for DirectX 12, {Planner.Record}"),
             C(UnrealRhi.Ambiguous, "4.19"));
+        // AMD compiles a VS with its input layout: its pixel and compute shaders only
+        Assert.Equal(new PlanCheck(Readiness.Ready, Amd11), C("D3D11", caps: Ff7.Amd));
+        Assert.StartsWith($"{Amd11} (the game may run on either)", C(UnrealRhi.Ambiguous, "4.19", Ff7.Amd).Reason);
         // a vendor whose D3D11 cache isn't measured
         var other = Ff7.Nvidia with { Profile = "unmeasured" };
         Assert.Equal(new PlanCheck(Readiness.Unsupported, "runs on DirectX 11"), C("D3D11", caps: other));
@@ -80,6 +84,11 @@ public class D3D11Tests(ITestOutputHelper output)
         Assert.All(dx11, r => Assert.Contains(r.Tag, "12"));
         Assert.Equal("D3D11 PCD3D_SM5", plan11.Platform);
         Assert.Empty(Items(Build("D3D12").Body));
+
+        // AMD: the pixel and compute shaders, no VS, GS or HS+DS pair (they need the game's layouts or draw behind a generated VS)
+        var amd = new Planner().Build(Ff7.Game, Ue426, index, null, Ff7.Amd, Path.Combine(dir, "amd"), new Progress<string>(output.WriteLine), CancellationToken.None);
+        Assert.Equal(sm5.Where(s => s.Stage is Stage.Pixel or Stage.Compute).Select(s => (s.Stage, s.Sha1)), Items(PlanFile.Read(amd.FilePath).Records.ToList()));
+        Assert.Equal(2, amd.Stats.D3D11Shaders);
 
         // materialized: each D3D11 item's blob in gen.db, pulled through the reader
         var work = Path.Combine(dir, "work");

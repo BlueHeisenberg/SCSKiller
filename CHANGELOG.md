@@ -4,6 +4,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+### New
+
+- **DirectX 11 games on AMD** compile their pixel and compute shaders. Vertex shaders still compile in game: AMD's
+  driver builds each one for the game's vertex layout, which only the game knows.
+
 ## [1.2.4] - 2026-10-08
 
 ### New
