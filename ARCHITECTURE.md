@@ -85,6 +85,7 @@ Everything vendor- or engine-specific sits behind one interface: a new GPU vendo
 | `src/SCSKiller.Core/RedEngine/` | `IEngineReader` for REDengine 3 (The Witcher 3, DX12) |
 | `src/SCSKiller.Core/Northlight/` | `IEngineReader` for Remedy's Northlight (Control, DX12) |
 | `src/SCSKiller.Core/Dagor/` | `IEngineReader` for Gaijin's Dagor Engine (War Thunder) |
+| `src/SCSKiller.Core/Tank/` | `IEngineReader` for Blizzard's Tank engine (Overwatch, Steam's static TACT container) |
 | `src/SCSKiller.Core/Carved/` | `IEngineReader` for any game that ships raw DXBC/DXIL containers in its files |
 | `src/SCSKiller.Core/Planning/` | The planner, root-signature rules, the plan and recording formats, materialization |
 | `src/SCSKiller.Core/Vendors/` | NVIDIA and AMD backends and their per-application cache (`IAppCache`) |
@@ -362,6 +363,12 @@ open game files read-only and never launch or attach to the game.
   "D3D11 or D3D12"). The dumps compatibility mode selects are the reader's `IndexStamp`: a warm is stale ("game shaders
   changed since the warm") once they change. Gaijin's launcher installs are found from `HKCU\Software\Gaijin\<project>`,
   the exe from `BattlEye\BELauncher.ini` (`GaijinSource`).
+- **Tank** (`Tank/`): Overwatch's Steam install, a static TACT container (`data\.build.config`, `data\data.CCC.AAA`: BLTE
+  blobs back to back). The root manifest is encrypted per build, so every blob is walked; a ShaderCode asset starts with
+  8 bytes 0xFF and holds one container in a gzip member. Build 154088: 99,504 DirectX 11 shaders (SM 5.0) and 218,013
+  DXIL ones, none with a root signature. DirectX 12 builds them at run time and a game with anti-cheat is never recorded,
+  so only the DirectX 11 set is indexed (one pool per data file). GraphicsApi: `GraphicsAPI` in
+  `Documents\Overwatch\Settings\Settings_v0.ini`. Battle.net's CASC install isn't read.
 - **Carved** (`Carved/`): any other game that ships raw DXBC/DXIL containers. Files are carved, each container
   validated and reflected; a file of pipeline records becomes one shader map per record. Dawn (Marvel's Guardians of the
   Galaxy) names its pipelines in `bin\rawpso.store2`: one record per pipeline gives its root signature (a container in

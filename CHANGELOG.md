@@ -4,6 +4,16 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+### New
+
+- **Overwatch (Steam)** compiles its DirectX 11 shaders on NVIDIA. DirectX 12 isn't supported: the game builds its root
+  signatures at run time and its anti-cheat keeps the recorder out.
+
+### Fixed
+
+- **Overwatch on Steam** keeps the recorder out: the Blizzard storage its folder carries (`data\.build.config`) counts
+  as anti-cheat, as Battle.net's files already did.
+
 ## [1.2.4] - 2026-10-08
 
 ### New
