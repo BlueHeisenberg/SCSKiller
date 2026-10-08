@@ -180,6 +180,33 @@ public class NaughtyDogReaderTests
         Ff7.CheckWarmReady(Path.Combine(dir, "work"));
     }
 
+    /// <summary>A rootless VS takes its PS's root signature: where that one doesn't cover the VS (here its constant buffer is
+    /// visible to the pixel stage only), the pair is a guess the game can't make. It's left out as "rs_mismatch", not planned
+    /// for the runtime to reject (8,145 PSOs of The Last of Us Part II's first warm), and not a gap of the plan.</summary>
+    [Fact]
+    public void LeavesOutAVsItsPixelShadersRootSignatureDoesntCover()
+    {
+        var d = Data.Value;
+        var dir = Ff7.TempDir("naughtydog-mismatch");
+        var main = Path.Combine(dir, @"build\pc\main");
+        Directory.CreateDirectory(main);
+        var pixelOnly = Hlsl.RootSignature("CBV(b0, visibility=SHADER_VISIBILITY_PIXEL), DescriptorTable(SRV(t0)), StaticSampler(s0)");
+        File.WriteAllBytes(Path.Combine(main, "world.psarc"), Psarc(("pak68/a.pak", [.. Record(0, d.Vs, null), .. Record(1, d.Ps, pixelOnly)]),
+            ("pak68/b.pak", [.. Record(0, d.GlobalVs, null), .. Record(1, d.GlobalPs, d.RootSig)])));
+        var game = d.Game with { InstallDir = dir };
+        var reader = new NaughtyDogReader();
+        var engine = reader.Detect(game)!;
+        var index = reader.Index(game, engine, null, CancellationToken.None);
+        var log = new List<string>();
+        var plan = new Planner().Build(game, engine, index, null, Ff7.Nvidia with { PerStageCache = true }, Ff7.TempDir("naughtydog-mismatch-plan"), new Log(log.Add), CancellationToken.None);
+        Assert.Contains(log, l => l.Contains("rs_mismatch 1"));
+        Assert.Equal((0L, 1L), (plan.Stats.Uncovered, plan.Stats.Generated));
+        var body = PlanFile.Read(plan.FilePath).Records.Where(r => r.Tag == 'S').Select(r => PsoDb.Parse(r).Stages.Values.ToHashSet()).ToList();
+        Assert.Equal(new[] { Sha(d.GlobalVs), Sha(d.GlobalPs) }.ToHashSet(), Assert.Single(body));
+    }
+
+    sealed class Log(Action<string> a) : IProgress<string> { public void Report(string value) => a(value); }
+
     /// <summary>The Last of Us Part II ships tlou-ii.exe and, bigger, tlou-ii-l.exe ("rtm legacy config"): the plain one is the
     /// game launcher.exe starts.</summary>
     [Fact]

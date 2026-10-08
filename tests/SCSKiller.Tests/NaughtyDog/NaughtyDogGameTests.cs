@@ -54,7 +54,21 @@ public class NaughtyDogGameTests(ITestOutputHelper output)
             var plan = planner.Build(game, engine, index, null, Ff7.Nvidia with { PerStageCache = true }, dir0,
                 new Progress<string>(output.WriteLine), CancellationToken.None, maximum);
             output.WriteLine($"plan (maximum {maximum}) {sw.Elapsed.TotalSeconds:F1}s, {new FileInfo(plan.FilePath).Length >> 10} KiB: {plan.Stats}");
+            // a rootless VS paired with a PS whose root signature doesn't cover it is left out ("rs_mismatch": the runtime
+            // rejected 8,145 such PSOs in a warm without the check), not counted as a gap; every shader still compiles somewhere
             Assert.Equal(0, plan.Stats.Uncovered);
+            Assert.False(ScsKiller.IsPartial(plan.Stats));
+            var body = PlanFile.Read(plan.FilePath).Records.ToList();
+            var planned = body.Where(r => r.Tag is 'S' or 'G' or 'C').SelectMany(r => PsoDb.Parse(r).Stages.Values)
+                .Concat(body.Where(r => r.Tag == 'P').SelectMany(r => PsoDb.ParseItem(r.Payload).Stages.Values)).ToHashSet();
+            var missing = index.Shaders.Values.Where(s => !planned.Contains(s.Sha1) && (s.Stage != Stage.Vertex || Planner.Rasterizable(s))).ToList();
+            output.WriteLine($"shaders in no pipeline: {missing.Count} ({string.Join(", ", missing.GroupBy(s => s.Stage).Select(g => $"{g.Count()} {g.Key}"))})");
+            var wave64 = index.Maps.Where(m => m.Platform != "D3D12").SelectMany(m => m.Shaders).ToHashSet();
+            output.WriteLine($"  of them {missing.Count(s => wave64.Contains(s.Sha1))} on another wave-lane platform, {missing.Count(s => s.Stage == Stage.Pixel && s.RootSignature == null)} rootless pixel shaders, "
+                + $"{missing.Count(s => s.Stage == Stage.Vertex)} vertex shaders no pixel shader's root signature covers");
+            // measured: 4 wave64 compute shaders (not for NVIDIA), Ps_CopyRefraction (no root signature), 12 VSs (the real warm's
+            // rejects: every pairing has a root signature that leaves out their registers)
+            Assert.True(missing.Count(s => !wave64.Contains(s.Sha1)) <= 13, $"{missing.Count} shaders in no pipeline");
             if (maximum) continue;
 
             // every shader of the plan read back from the archives, as a compile does; the folder holds game shader bytes: deleted

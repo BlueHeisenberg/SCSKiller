@@ -66,6 +66,7 @@ public sealed class NaughtyDogReader : IEngineReader
         var found = new List<(string Sha, Loc At, string? Rs)>[work.Count];
         var infos = new ConcurrentDictionary<string, ShaderInfo?>();
         var rsLocs = new ConcurrentDictionary<string, Loc>();
+        var rsBlobs = new ConcurrentDictionary<string, byte[]>();   // a few hundred, for the planner's guard
         var lanePlatform = new ConcurrentDictionary<string, string>();   // shaders a 32-lane GPU can't run (CarvedReader.LanePlatform)
         long read = 0;
         int bad = 0;
@@ -90,7 +91,7 @@ public sealed class NaughtyDogReader : IEngineReader
                 if (r.RsSize > 0)
                 {
                     rs = Convert.ToHexStringLower(SHA1.HashData(b.AsSpan(r.Rs, r.RsSize)));
-                    rsLocs.TryAdd(rs, new Loc(f.FullName, e.Index, r.Rs, r.RsSize));
+                    if (rsLocs.TryAdd(rs, new Loc(f.FullName, e.Index, r.Rs, r.RsSize))) rsBlobs[rs] = b.AsSpan(r.Rs, r.RsSize).ToArray();
                 }
                 if (!infos.ContainsKey(sha))
                 {
@@ -140,9 +141,14 @@ public sealed class NaughtyDogReader : IEngineReader
         foreach (var sha in locs.Keys.Where(infos.ContainsKey))
         {
             var info = infos[sha]!;
-            // a shader stored with several root signatures (measured: 425 pixel and compute shaders of 144,690) takes the one
-            // it's stored with most: its partner VS carries none, so the pick decides no other stage's
-            var rs = rsOf.TryGetValue(sha, out var count) ? count.OrderByDescending(c => c.Value).ThenBy(c => c.Key, StringComparer.Ordinal).First().Key : null;
+            // a shader stored with several root signatures (measured: 425 pixel and compute shaders of 144,690) takes one that
+            // covers what it declares, the one it's stored with most first (its partner VS carries none: the pick is the pair's)
+            string? rs = null;
+            if (rsOf.TryGetValue(sha, out var count))
+            {
+                var order = count.OrderByDescending(c => c.Value).ThenBy(c => c.Key, StringComparer.Ordinal).Select(c => c.Key).ToList();
+                rs = order.Count == 1 ? order[0] : order.FirstOrDefault(h => Planning.RootSig.Uncovered(Planning.RootSig.Parse(rsBlobs[h]), info.Stage, info) == null) ?? order[0];
+            }
             if (count is { Count: > 1 }) several++;
             shaders[sha] = info with { Counts = CarvedReader.Counts(info.Bindings), RootSignature = rs };
         }
@@ -155,7 +161,7 @@ public sealed class NaughtyDogReader : IEngineReader
             + string.Join(", ", shaders.Values.GroupBy(s => s.Stage).OrderByDescending(g => g.Count()).Select(g => $"{g.Count()} {g.Key}"))
             + $"), {rsLocs.Count} root signatures, {maps.Count} pools" + (several > 0 ? $"; {several} shaders stored with several root signatures given their most common one" : "")
             + (bad > 0 ? $"; {bad} unparseable" : "") + $" ({sw.Elapsed.TotalSeconds:F1}s)");
-        return new ShaderIndex(Convert.ToHexStringLower(content.GetHashAndReset()), [.. platforms], shaders, maps);
+        return new ShaderIndex(Convert.ToHexStringLower(content.GetHashAndReset()), [.. platforms], shaders, maps, rsBlobs);
     }
 
     /// <summary>Unpacks each package holding a requested container once and re-slices it; one whose bytes changed since (game
