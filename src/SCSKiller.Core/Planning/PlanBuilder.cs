@@ -283,11 +283,13 @@ sealed class PlanBuilder
             + (embeddedRs > 0 ? $"{(ownOnly ? "" : "; ")}{embeddedRs} shaders carry their own root signature{(ownN > 0 ? $", {ownOk}/{ownN} recorded PSOs created with it" : "")}" : "") + (synth ? ", synthesized templates allowed" : ""));
 
         // D3D11: every shader of the game's SM5 platform once (Unreal PCD3D_SM5; the carver's DXBC containers), no pairing;
-        // hull and domain shaders as HS+DS pairs of one map (the warm needs both to draw), every one in at least one pair
+        // hull and domain shaders as HS+DS pairs of one map (the warm needs both to draw), every one in at least one pair;
+        // only the stages the vendor's cache keeps apart from the game's state (Planner.D3D11Warms)
         plat11 = index.Platforms.Contains("PCD3D_SM5") ? "PCD3D_SM5" : null;
         if (!engine.GraphicsApi.StartsWith("D3D11") || !Planner.D3D11Cache(caps)) return;
         var maps11 = index.Maps.Where(m => m.Platform == (plat11 ?? m.Platform)).Select(m => m.Shaders.Where(h => bc.TryGetValue(h, out var s) && Planner.IsD3D11(s)).Select(h => bc[h]).ToList()).ToList();
-        d3d11 = maps11.SelectMany(m => m).Where(s => s.Stage is not (Stage.Hull or Stage.Domain)).Select(s => s.Sha1).Distinct().ToList();
+        d3d11 = maps11.SelectMany(m => m).Where(s => s.Stage is not (Stage.Hull or Stage.Domain) && Planner.D3D11Warms(caps, s.Stage)).Select(s => s.Sha1).Distinct().ToList();
+        if (!Planner.D3D11Warms(caps, Stage.Hull)) return;
         var paired = new HashSet<string>();
         foreach (var (h, d) in maps11.SelectMany(Planner.TessPairs)) // greedy: a pair is kept when it brings a shader no kept pair has
             if (paired.Add(h.Sha1) | paired.Add(d.Sha1)) tess11.Add((h.Sha1, d.Sha1));

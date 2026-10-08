@@ -72,7 +72,7 @@ stutter only, not traversal or streaming stutter, and a shader it couldn't find 
 
 ## Features
 
-- **NVIDIA and AMD**, DirectX 12 games, and DirectX 11 games on NVIDIA.
+- **NVIDIA and AMD**, DirectX 12 games, and DirectX 11 games (on AMD their pixel and compute shaders).
 - **Finds your games** in Steam, Epic Games, EA app, GOG, Ubisoft Connect, Xbox (PC), Battle.net, PURPLE, HoYoPlay and
   Gaijin, plus games you add yourself.
 - **Puts games known to stutter on top**, with the reason, and marks games whose engine prepares its shaders itself.
@@ -94,7 +94,7 @@ stutter only, not traversal or streaming stutter, and a shader it couldn't find 
 |---|---|
 | OS | Windows 10 (version 2004) or 11, 64-bit |
 | GPU | NVIDIA or AMD |
-| Games | DirectX 12, DirectX 11 on NVIDIA |
+| Games | DirectX 12, DirectX 11 (on AMD, its pixel and compute shaders) |
 
 Intel GPUs aren't supported yet: I don't have one to test on. If you'd like to sponsor an Intel Arc GPU, get in touch at
 [contact@scskiller.com](mailto:contact@scskiller.com).

@@ -285,8 +285,19 @@ pipelines, not taken from documentation. `VendorCaps` holds the result per vendo
 
 Keyed on the exe file name on both vendors. Creating a shader is lazy: the driver compiles at the first draw or
 dispatch that uses it, and caches per shader, not per pipeline. On NVIDIA blend, render-target format, input layout,
-depth, MSAA and SRV formats don't change the result, so SCSKiller warms D3D11 games on NVIDIA only (`Planner.D3D11Cache`).
-On AMD the input layout recompiles the VS, so a D3D11 warm there would need the game's real layouts.
+depth, MSAA and SRV formats don't change the result, so SCSKiller warms every D3D11 shader there (`Planner.D3D11Cache`).
+
+On AMD the input layout recompiles the VS: an element's format (a TEXCOORD fed as R16G16_FLOAT, not R32G32_FLOAT) or its
+buffer slot costs a cold compile (16-18 ms against 0.3 ms). A PS isn't recompiled for a render-target format of any shape
+(R16G16B16A16_FLOAT, R32G32B32A32_FLOAT, R10G10B10A2_UNORM, R32_FLOAT), blend, depth or MSAA, nor for a VS it hasn't been
+drawn with, and the cache persists across processes under the exe name (36 ms cold, 1.2 ms in a second process). So
+the warm takes only pixel and compute shaders there (`Planner.D3D11Warms`): a VS needs the game's real layouts, and a
+GS, HS or DS draws behind a generated VS, which isn't measured. Measured with `probe11` (`SCSKILLER_PROBE_VENDOR=1002`)
+on a Radeon iGPU (Raphael, driver 24.30.18), not a discrete GPU. A D3D11 device per warm thread writes its own slot
+file; a later process opens every slot. Overwatch on that iGPU, its main menu after a cache reset: about 9 cores for
+90 s, then 5 until 270 s (975 CPU-s by 120 s, 640 MiB written); after a warm of its 88,209 pixel and 50 compute shaders,
+about 7 cores for 60 s, then the 2 cores a fully cached start takes (581 CPU-s by 120 s, against 239 fully cached), and
+the game wrote 192 MiB (its 11,244 VS). Whether `DxCache` has a size cap, as `DxcCache` does, isn't known.
 
 ### Ray tracing
 

@@ -76,8 +76,8 @@ public static class Format
             GameStatus.Ready when ScsKiller.IsPartial(s.Plan) => "Partly covered",
             GameStatus.Ready when Has(Planning.Planner.UntestedNote) => "Not tested on this engine version",
             GameStatus.Ready when Has("for DirectX 12, ") => "DirectX 11; DirectX 12 needs a recording",
-            GameStatus.Ready when Has("also compiles every DirectX 11 shader") => "DirectX 11 and 12",
-            GameStatus.Ready when Starts("compiles every DirectX 11 shader") => "DirectX 11",
+            GameStatus.Ready when Has("also compiles every DirectX 11 ") => "DirectX 11 and 12",   // "shader", or "pixel and compute shader" on AMD
+            GameStatus.Ready when Starts("compiles every DirectX 11 ") => "DirectX 11",
             GameStatus.Ready => null,
             _ when s.ShaderModBlocks => $"{s.ShaderMod} changes all its pipelines",
             _ when s.AntiCheat != AntiCheat.None && Starts("needs a recording, which") => $"Blocked by {AntiCheatName(s.AntiCheat)}" + (s.InCommunityDb == true ? " · in the community database" : ""),

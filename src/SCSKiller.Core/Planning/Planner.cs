@@ -49,13 +49,24 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     /// <summary>Bump when the plan for the same game and inputs changes (new pipeline kinds, root-signature rules, D3D11):
     /// the app then rebuilds plans (warmed games' when idle, ScsKiller.CheckPlans) and offers a re-warm only where the new
     /// plan has records the warm didn't replay.</summary>
-    public const int Version = 33;
+    public const int Version = 34;
 
     /// <summary>The vendor's D3D11 driver cache persists across processes, is keyed on the exe file name and caches per
     /// shader, whatever the state or the other stages (measured on NVIDIA, proxy/probe11.cpp): a staged warm
-    /// that creates and draws/dispatches each shader once fills it. ponytail: measured for "nvidia-1" only; becomes the
+    /// that creates and draws/dispatches each shader once fills it. AMD caches the same way, except that it compiles a VS
+    /// with its input layout (<see cref="D3D11Warms"/>). ponytail: measured for "nvidia-1" and "amd-1" only; becomes the
     /// proposed VendorCaps.D3D11CacheKeyedByExeName once that's in the contract.</summary>
-    internal static bool D3D11Cache(VendorCaps caps) => caps.Profile == "nvidia-1";
+    internal static bool D3D11Cache(VendorCaps caps) => caps.Profile is "nvidia-1" or "amd-1";
+
+    /// <summary>The D3D11 stages a warm compiles on this vendor: all of them on NVIDIA. AMD compiles a VS with its input
+    /// layout (an element's format or buffer slot recompiles it) and leaves a PS alone whatever the render-target format,
+    /// blend, depth or MSAA (probe11 on a Radeon iGPU, ARCHITECTURE.md), so only pixel and compute shaders there: a VS
+    /// needs the game's real layouts, and a GS, HS or DS draws behind a generated VS (not measured).</summary>
+    internal static bool D3D11Warms(VendorCaps caps, Stage stage) => caps.Profile != "amd-1" || stage is Stage.Pixel or Stage.Compute;
+
+    /// <summary>What a D3D11 plan compiles, as the check says it.</summary>
+    static string D3D11What(VendorCaps caps) =>
+        D3D11Warms(caps, Stage.Vertex) ? "compiles every DirectX 11 shader" : "compiles every DirectX 11 pixel and compute shader";
 
     /// <summary>The vendor's driver caches a ray tracing collection on its own, so a collection compiled by the warm makes
     /// the game's pipelines linking it cheap (NVIDIA, selftest dxr: per-shader collections cached across processes,
@@ -83,13 +94,13 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         var api = engine.GraphicsApi;
         var dx11 = api.StartsWith("D3D11") && D3D11Cache(caps);
         if (!api.Contains("D3D12"))
-            return dx11 ? new(Readiness.Ready, "compiles every DirectX 11 shader" + api[5..])
+            return dx11 ? new(Readiness.Ready, D3D11What(caps) + api[5..])
                 : new(Readiness.Unsupported, $"runs on {(api.StartsWith("D3D11") ? "DirectX 11" + api[5..] : api)}");
         var dx12 = CheckD3D12(engine, recording, caps, api.StartsWith("D3D12") || dx11 ? "" : "; " + Dx12Only);
         if (!dx11) return dx12;
         // may run on either: DX11 shaders help whatever DX12 still needs (a recording can come later)
-        return new(Readiness.Ready, dx12.Readiness == Readiness.Ready ? $"{dx12.Reason}; also compiles every DirectX 11 shader (the game may run on either)"
-            : $"compiles every DirectX 11 shader (the game may run on either); for DirectX 12, {dx12.Reason}");
+        return new(Readiness.Ready, dx12.Readiness == Readiness.Ready ? $"{dx12.Reason}; also {D3D11What(caps)} (the game may run on either)"
+            : $"{D3D11What(caps)} (the game may run on either); for DirectX 12, {dx12.Reason}");
     }
 
     static PlanCheck CheckD3D12(EngineInfo engine, Recording? recording, VendorCaps caps, string maybe)

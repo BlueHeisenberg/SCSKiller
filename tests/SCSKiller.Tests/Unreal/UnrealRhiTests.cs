@@ -253,7 +253,8 @@ public class UnrealRhiTests(ITestOutputHelper output)
         var ue = new EngineInfo("Unreal", "4.26", null, "D3D11", false, null);
         Assert.Equal(new PlanCheck(Readiness.Unsupported, "runs on DirectX 11"), p.Check(Ff7.Game, ue, null, Ff7.Nvidia with { Profile = "unmeasured" }));
         Assert.Equal(new PlanCheck(Readiness.Unsupported, "runs on DirectX 11 (user setting)"), p.Check(Ff7.Game, ue with { GraphicsApi = "D3D11 (user setting)" }, null, Ff7.Nvidia with { Profile = "unmeasured" }));
-        Assert.Equal(new PlanCheck(Readiness.Unsupported, "runs on DirectX 11 (last run)"), p.Check(Ff7.Game, ue with { GraphicsApi = "D3D11 (last run)" }, null, Ff7.Amd));
+        Assert.Equal(new PlanCheck(Readiness.Unsupported, "runs on DirectX 11 (last run)"), p.Check(Ff7.Game, ue with { GraphicsApi = "D3D11 (last run)" }, null, Ff7.Amd with { Profile = "unmeasured" }));
+        Assert.Equal(new PlanCheck(Readiness.Ready, "compiles every DirectX 11 pixel and compute shader (last run)"), p.Check(Ff7.Game, ue with { GraphicsApi = "D3D11 (last run)" }, null, Ff7.Amd));
         Assert.Equal(new PlanCheck(Readiness.Unsupported, "runs on Vulkan"), p.Check(Ff7.Game, ue with { GraphicsApi = "Vulkan" }, null, Ff7.Nvidia));
         Assert.Equal(Readiness.Ready, p.Check(Ff7.Game, ue with { GraphicsApi = "D3D12 (user setting)" }, null, Ff7.Nvidia).Readiness);
         var both = p.Check(Ff7.Game, ue with { GraphicsApi = UnrealRhi.Ambiguous }, null, Ff7.Nvidia);

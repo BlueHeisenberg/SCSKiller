@@ -73,6 +73,8 @@ public class FormatTests
             (S(GameStatus.Ready, Core.Planning.Planner.Untested), "Not tested on this engine version"),
             (S(GameStatus.Ready, "compiles every DirectX 11 shader"), "DirectX 11"),
             (S(GameStatus.Ready, "no recording needed; also compiles every DirectX 11 shader (the game may run on either)"), "DirectX 11 and 12"),
+            (S(GameStatus.Ready, "compiles every DirectX 11 pixel and compute shader"), "DirectX 11"),   // AMD
+            (S(GameStatus.Ready, "no recording needed; also compiles every DirectX 11 pixel and compute shader (the game may run on either)"), "DirectX 11 and 12"),
             (S(GameStatus.Ready, "compiles every DirectX 11 shader (the game may run on either); for DirectX 12, turn on recording and play for about 5 minutes"), "DirectX 11; DirectX 12 needs a recording"),
             (S(GameStatus.Ready, "no recording needed; ray-traced effects aren't compiled: they need a recording, which BattlEye blocks", ac: AntiCheat.BattlEye), "Ray tracing blocked by BattlEye"),
             (S(GameStatus.NeedsRecording, Core.Planning.Planner.Record), "Turn on Record and play"),
