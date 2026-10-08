@@ -4,6 +4,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+### New
+
+- **Counter-Strike 2 and Deadlock** (Source 2) compile every DirectX 11 shader on NVIDIA. If the game is set to Vulkan,
+  in its launch options or boot.vcfg, it shows as not supported.
+
 ## [1.2.4] - 2026-10-08
 
 ### New
