@@ -49,10 +49,24 @@ public class NaughtyDogGameTests(ITestOutputHelper output)
         foreach (var maximum in new[] { false, true })
         {
             sw.Restart();
-            var plan = new Planner().Build(game, engine, index, null, Ff7.Nvidia with { PerStageCache = true }, Ff7.TempDir($"naughtydog-tlou2-{maximum}"),
+            var dir0 = Ff7.TempDir($"naughtydog-tlou2-{maximum}");
+            var planner = new Planner();
+            var plan = planner.Build(game, engine, index, null, Ff7.Nvidia with { PerStageCache = true }, dir0,
                 new Progress<string>(output.WriteLine), CancellationToken.None, maximum);
             output.WriteLine($"plan (maximum {maximum}) {sw.Elapsed.TotalSeconds:F1}s, {new FileInfo(plan.FilePath).Length >> 10} KiB: {plan.Stats}");
             Assert.Equal(0, plan.Stats.Uncovered);
+            if (maximum) continue;
+
+            // every shader of the plan read back from the archives, as a compile does; the folder holds game shader bytes: deleted
+            var work = Path.Combine(dir0, "work");
+            sw.Restart();
+            try
+            {
+                planner.Materialize(plan, game, engine, reader, null, work, CancellationToken.None);
+                output.WriteLine($"materialize {sw.Elapsed.TotalSeconds:F1}s, {Directory.EnumerateFiles(work).Sum(f => new FileInfo(f).Length) >> 20} MB, peak working set {Process.GetCurrentProcess().PeakWorkingSet64 >> 20} MB");
+                Ff7.CheckWarmReady(work);
+            }
+            finally { Directory.Delete(work, true); }
         }
     }
 }
