@@ -7,7 +7,9 @@
 //                       query wait.
 //   state seed       - compile the same heavy VS/PS (already warmed once, untimed), then time
 //                       the FIRST draw under each of several fixed-function state variants
-//                       (default/blend/rtformat/layout/depth/msaa).
+//                       (default/blend/rtformat/layout/depth/msaa/rt32f/rt10a2/rtr32f/uvfmt: render-target
+//                       formats of other shapes, and a TEXCOORD fed as R16G16_FLOAT instead of R32G32_FLOAT).
+// SCSKILLER_PROBE_VENDOR=<PCI vendor id, hex> runs every child on that vendor's adapter (an iGPU beside a dGPU).
 //   pair1 vsSeed psSeed         - draw once with two fresh shaders (both never seen anywhere).
 //   pair2 vsSeed psSeed vsSeed2 psSeed2 - vsSeed/psSeed reproduce pair1's bytecode (already seen
 //                       cross-process); vsSeed2/psSeed2 are fresh. Draws: seen-VS+fresh-PS,
@@ -26,6 +28,8 @@
 #include <dxgi.h>
 #include "probe_util.h"
 #include <cstring>
+#include <cstdlib>
+#include <cstdio>
 #include <vector>
 #include <algorithm>
 #include <functional>
@@ -93,7 +97,8 @@ static ID3D11Buffer* make_vb(ID3D11Device* dev, const void* data, UINT bytes) {
     return b;
 }
 
-struct Variant { const wchar_t* name; DXGI_FORMAT rtv_fmt; UINT samples; bool blend; bool depth; bool split_layout; };
+struct Variant { const wchar_t* name; DXGI_FORMAT rtv_fmt; UINT samples; bool blend; bool depth; bool split_layout;
+                 DXGI_FORMAT uv_fmt = DXGI_FORMAT_R32G32_FLOAT; };
 
 // One draw call under the given fixed-function state, timed end-to-end (see timed_gpu).
 static double draw_variant(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11VertexShader* vs, ID3D11PixelShader* ps,
@@ -120,10 +125,10 @@ static double draw_variant(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11Ve
     } else {
         D3D11_INPUT_ELEMENT_DESC ie[2] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0}};
+            {"TEXCOORD", 0, v.uv_fmt, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0}};
         dev->CreateInputLayout(ie, 2, vsblob->GetBufferPointer(), vsblob->GetBufferSize(), &il);
-        vb0 = make_vb(dev, posuv, sizeof posuv);
-        vbs[0] = vb0; strides[0] = 20; nbufs = 1;
+        vb0 = make_vb(dev, posuv, sizeof posuv);   // uv_fmt R16G16: a 16-byte stride, the values don't matter
+        vbs[0] = vb0; strides[0] = v.uv_fmt == DXGI_FORMAT_R32G32_FLOAT ? 20 : 16; nbufs = 1;
     }
 
     D3D11_TEXTURE2D_DESC rtd = {64, 64, 1, 1, v.rtv_fmt, {v.samples, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET};
@@ -198,17 +203,21 @@ static Common make_common(ID3D11Device* dev) {
     dev->CreateBuffer(&cbd, &cbi, &c.cb);
     return c;
 }
-// scskiller_warm's default adapter: the hardware one with the most dedicated VRAM
+// scskiller_warm's default adapter: the hardware one with the most dedicated VRAM. SCSKILLER_PROBE_VENDOR (a PCI vendor
+// id in hex, e.g. 1002 for AMD) picks that vendor's adapter instead, to measure an integrated GPU beside a discrete one.
 static ID3D11Device* make_device(ID3D11DeviceContext** ctx) {
     IDXGIFactory1* f = nullptr;
     IDXGIAdapter1 *best = nullptr, *a;
     DXGI_ADAPTER_DESC1 bd{}, d;
+    char vendor_env[16] = {};
+    UINT vendor = GetEnvironmentVariableA("SCSKILLER_PROBE_VENDOR", vendor_env, sizeof vendor_env) ? strtoul(vendor_env, nullptr, 16) : 0;
     CreateDXGIFactory1(IID_PPV_ARGS(&f));
     for (UINT i = 0; f && f->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; ++i) {
         a->GetDesc1(&d);
-        if (!(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) && (!best || d.DedicatedVideoMemory > bd.DedicatedVideoMemory)) std::swap(best, a), bd = d;
+        if (!(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) && (!vendor || d.VendorId == vendor) && (!best || d.DedicatedVideoMemory > bd.DedicatedVideoMemory)) std::swap(best, a), bd = d;
         if (a) a->Release();
     }
+    if (best) fwprintf(stderr, L"ADAPTER %ls (vendor %04x)\n", bd.Description, bd.VendorId);
     ID3D11Device* dev = nullptr;
     D3D_FEATURE_LEVEL fl[] = {D3D_FEATURE_LEVEL_11_0}, got;
     if (best) D3D11CreateDevice(best, D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, fl, 1, D3D11_SDK_VERSION, &dev, &got, ctx), best->Release();
@@ -289,6 +298,10 @@ static int child_state(unsigned seed) {
         {L"layout",  DXGI_FORMAT_R8G8B8A8_UNORM, 1, false, false, true},
         {L"depth",   DXGI_FORMAT_R8G8B8A8_UNORM, 1, false, true,  false},
         {L"msaa",    DXGI_FORMAT_R8G8B8A8_UNORM, 4, false, false, false},
+        {L"rt32f",   DXGI_FORMAT_R32G32B32A32_FLOAT, 1, false, false, false},
+        {L"rt10a2",  DXGI_FORMAT_R10G10B10A2_UNORM, 1, false, false, false},
+        {L"rtr32f",  DXGI_FORMAT_R32_FLOAT, 1, false, false, false},
+        {L"uvfmt",   DXGI_FORMAT_R8G8B8A8_UNORM, 1, false, false, false, DXGI_FORMAT_R16G16_FLOAT},
     };
     // One untimed warm draw first so the VS/PS bytecode-level compile (if lazy) is already paid for.
     draw_variant(dev, ctx, vs, ps, vsb, cb, srv, smp, variants[0]);
