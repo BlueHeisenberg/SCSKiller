@@ -22,6 +22,7 @@ public class NaughtyDogGameTests(ITestOutputHelper output)
         var dir = TestEnv.GameDir("The Last of Us Part II");
         var game = new Game("steam:2531310", "The Last of Us Part II Remastered", Store.Steam, dir, Path.Combine(dir, "tlou-ii.exe"));
         if (!Directory.Exists(Path.Combine(dir, "build"))) return;
+        Assert.Equal(game.ExePath, GameFiles.FindExe(dir));   // what launcher.exe starts, not the bigger "rtm legacy" tlou-ii-l.exe
         var sw = Stopwatch.StartNew();
         var engine = ScsKiller.DefaultReaders().Detect(game)!;
         output.WriteLine($"detect {sw.Elapsed.TotalSeconds:F1}s: {engine}; anti-cheat {GameFiles.DetectAntiCheat(game)}");

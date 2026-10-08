@@ -49,15 +49,19 @@ public static class GameFiles
         return guess == null ? null : NotPlus(LaunchedExe(installDir, guess, exes), exes);
     }
 
-    /// <summary>&lt;Name&gt;.exe for &lt;Name&gt;_Plus.exe beside it, whatever their sizes: the Ubisoft+ build, which only
-    /// subscribers run (the watcher follows it when it runs).</summary>
+    /// <summary>&lt;Name&gt;.exe for a variant build beside it, whatever their sizes (the watcher follows the variant when it
+    /// runs): &lt;Name&gt;_Plus.exe, the Ubisoft+ build, which only subscribers run; &lt;Name&gt;-l.exe, Naughty Dog's "rtm legacy
+    /// config" (Steam's launch options for The Last of Us Part II: its launcher.exe starts tlou-ii.exe, the bigger
+    /// tlou-ii-l.exe being the legacy one).</summary>
     static string NotPlus(string exe, IReadOnlyList<FileInfo> exes)
     {
         var name = Path.GetFileNameWithoutExtension(exe);
-        if (!name.EndsWith("_Plus", StringComparison.OrdinalIgnoreCase)) return exe;
-        var plain = Path.Combine(Path.GetDirectoryName(exe)!, name[..^"_Plus".Length] + ".exe");
+        if (VariantSuffixes.FirstOrDefault(s => name.EndsWith(s, StringComparison.OrdinalIgnoreCase)) is not { } suffix) return exe;
+        var plain = Path.Combine(Path.GetDirectoryName(exe)!, name[..^suffix.Length] + ".exe");
         return exes.FirstOrDefault(f => f.FullName.Equals(plain, StringComparison.OrdinalIgnoreCase))?.FullName ?? exe;
     }
+
+    static readonly string[] VariantSuffixes = ["_Plus", "-l"];
 
     /// <summary>An exe <see cref="FindExe"/> never picks by its path or name: a helper, a redistributable's, patcher's or installer's copy, or one an Xbox app game's config marks as not the game.</summary>
     internal static bool NotTheGameExe(string installDir, string exe, ISet<string>? excluded = null) =>
