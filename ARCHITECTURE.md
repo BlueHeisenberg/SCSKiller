@@ -84,6 +84,7 @@ Everything vendor- or engine-specific sits behind one interface: a new GPU vendo
 | `src/SCSKiller.Core/ReEngine/` | `IEngineReader` for Capcom's RE Engine |
 | `src/SCSKiller.Core/RedEngine/` | `IEngineReader` for REDengine 3 (The Witcher 3, DX12) |
 | `src/SCSKiller.Core/Northlight/` | `IEngineReader` for Remedy's Northlight (Control, DX12) |
+| `src/SCSKiller.Core/NaughtyDog/` | `IEngineReader` for Naughty Dog's PSARC archives (The Last of Us Part II, DX12) |
 | `src/SCSKiller.Core/Dagor/` | `IEngineReader` for Gaijin's Dagor Engine (War Thunder) |
 | `src/SCSKiller.Core/Carved/` | `IEngineReader` for any game that ships raw DXBC/DXIL containers in its files |
 | `src/SCSKiller.Core/Planning/` | The planner, root-signature rules, the plan and recording formats, materialization |
@@ -362,6 +363,21 @@ open game files read-only and never launch or attach to the game.
   "D3D11 or D3D12"). The dumps compatibility mode selects are the reader's `IndexStamp`: a warm is stale ("game shaders
   changed since the warm") once they change. Gaijin's launcher installs are found from `HKCU\Software\Gaijin\<project>`,
   the exe from `BattlEye\BELauncher.ini` (`GaijinSource`).
+- **Naughty Dog** (`NaughtyDog/`): the PSARC archives under `build\pc` (`Psarc`; zlib, Oodle read but unmeasured),
+  some wrapped in DirectStorage blocks (`DSAR`, stored or LZ4). Every shader is an `ndshader` record: a 40-byte header,
+  its DXIL container, then, for pixel and compute shaders, the root signature the game creates from it (an RTS0-only
+  container); vertex shaders carry none and take their pixel shader's. Records sit in the level and actor packages
+  (`*.pak`, texture dictionaries skipped: 45 GB without a shader) and in the engine's own single-shader files
+  (`shaders\bytecode\*.?xo`). Nothing the reader can read pairs a VS with its PS (`default.pso`, the shipped pipeline
+  list, names them by Naughty Dog's own hash, which few shipped shaders match), so each package is one pool and an
+  archive's single-shader files another, paired by linkage. A shader stored with several root signatures takes the most
+  common one that covers it. The index hands the planner the root-signature blobs (`ShaderIndex.RootSignatureBlobs`), so
+  the pre-emit guard checks each pairing: a VS that its PS's root signature doesn't cover is a pairing the game can't make
+  (`rs_mismatch`), left out without counting as a gap. Entries run to 669 MB, so those over 64 MB unpack one at a time.
+  The Last of Us Part II Remastered: 100 archives, 71 GB unpacked in about 25 s, 164,321 shaders, 337 root signatures;
+  planned without a recording, 160,751 pipelines on NVIDIA (37,736 mismatched pairings left out; without the check the
+  runtime rejected 8,145), all compiled in about 7 minutes on an RTX 5080. Its `tlou-ii-l.exe`, bigger than `tlou-ii.exe`, is the "rtm legacy" build: `FindExe` takes the
+  plain name, as it does over a `_Plus` twin.
 - **Carved** (`Carved/`): any other game that ships raw DXBC/DXIL containers. Files are carved, each container
   validated and reflected; a file of pipeline records becomes one shader map per record. Dawn (Marvel's Guardians of the
   Galaxy) names its pipelines in `bin\rawpso.store2`: one record per pipeline gives its root signature (a container in
