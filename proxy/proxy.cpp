@@ -218,7 +218,7 @@ static const wchar_t* const kAntiCheatMarkers[] = {  // GameFiles.Markers; "*x":
     L"RiotClientUxRender.exe",
     L"NeacClient.exe", L"NeacSafe64.sys", L"NeacSafe64_ex.sys",
     L"BlackCall.aes", L"BlackCall64.aes", L"BlackCat64.sys", L"HShield", L"PunkBuster", L"PnkBstrA.exe", L"pbsvc.exe", L"pbsv.dll",
-    L"equ8_conf.json", L".build.info", L".product.db", L"Warframe.x64.exe", L"gameguard.des", L"DenuvoAC", L"denuvo-anti-cheat.sys", L"denuvo-anti-cheat-runtime.dll",
+    L"equ8_conf.json", L".build.info", L".product.db", L".build.config", L"Warframe.x64.exe", L"gameguard.des", L"DenuvoAC", L"denuvo-anti-cheat.sys", L"denuvo-anti-cheat-runtime.dll",
     L"denuvo-anti-cheat-update-service.exe", L"Denuvo Anti-Cheat Installer.exe", L"*.xem", L"*_BE.exe"};
 static const size_t kEasyAntiCheatMarkers = 5;  // the list's first entries
 static std::atomic<int> g_admission;  // 0 undecided, 1 records, -1 pass-through

@@ -4,6 +4,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+### Fixed
+
+- **Overwatch on Steam** keeps the recorder out: the Blizzard storage its folder carries (`data\.build.config`) counts
+  as anti-cheat, as Battle.net's files already did.
+
 ## [1.2.4] - 2026-10-08
 
 ### New

@@ -963,10 +963,12 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
     }
 
     /// <summary>A Blizzard game installed by Battle.net but listed by another store, or added by hand, has no battlenet: id:
-    /// Battle.net's own files in its folder mark it.</summary>
+    /// Battle.net's own files in its folder mark it, and so does the static container a Steam install carries (Overwatch:
+    /// data\.build.config, no Battle.net file anywhere).</summary>
     [Theory]
     [InlineData(".build.info")]
     [InlineData(".product.db")]
+    [InlineData(@"data\.build.config")]
     public void BattleNet_install_files_mark_a_game_listed_elsewhere(string marker)
     {
         var dir = Directory.CreateTempSubdirectory("scskiller-anticheat-test-").FullName;
@@ -977,6 +979,7 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
             File.WriteAllBytes(exe, [0]);
             var game = new Game("steam:1", "Blizzard game", Store.Steam, dir, exe);
             Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(game));
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(dir, marker))!);
             File.WriteAllText(Path.Combine(dir, marker), "");
             Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(game));
         }

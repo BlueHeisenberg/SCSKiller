@@ -381,6 +381,7 @@ public static class GameFiles
         ("PunkBuster", AntiCheat.Other), ("PnkBstrA.exe", AntiCheat.Other), ("pbsvc.exe", AntiCheat.Other), ("pbsv.dll", AntiCheat.Other),
         ("equ8_conf.json", AntiCheat.Other),
         (".build.info", AntiCheat.Other), (".product.db", AntiCheat.Other),   // Battle.net's install: a Blizzard game another store lists, or one added by hand
+        (".build.config", AntiCheat.Other),   // a Blizzard game's static TACT container (Overwatch on Steam: data\.build.config): Battle.net's files aren't there
         ("Warframe.x64.exe", AntiCheat.Other),   // Digital Extremes' own client-side detection: no driver or folder of its own
         ("gameguard.des", AntiCheat.Other),
         ("DenuvoAC", AntiCheat.Other), ("denuvo-anti-cheat.sys", AntiCheat.Other), ("denuvo-anti-cheat-runtime.dll", AntiCheat.Other),
