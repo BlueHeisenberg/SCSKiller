@@ -44,7 +44,7 @@ static std::string_view chunk(std::string_view c, const char* fourcc) {
 }
 
 struct Sig { std::string name; uint32_t index, sv, type, reg, minp; uint8_t mask; };  // sv: D3D10_SB_NAME, type: 1 uint 2 int 3 float
-enum { SV_POSITION = 1, SV_VERTEX_ID = 6, SV_INSTANCE_ID = 8, SV_SAMPLE_INDEX = 10 };
+enum { SV_POSITION = 1, SV_RENDER_TARGET_ARRAY_INDEX = 4, SV_VIEWPORT_ARRAY_INDEX = 5, SV_VERTEX_ID = 6, SV_INSTANCE_ID = 8, SV_SAMPLE_INDEX = 10 };
 
 // ISGN/OSGN: 24-byte elements; ISG1/OSG1: + leading stream and trailing min precision (32); OSG5: + stream (28).
 static std::vector<Sig> signature(std::string_view c, bool in, std::string* raw = nullptr) {
@@ -153,7 +153,13 @@ static std::string partner_vs(const Shader& s) {
             if (start < c) return {};  // overlapping elements: not a signature fxc produced
             if (start > c) pad(start - c);
             if (e->sv == SV_POSITION) f += "float4 pos:SV_Position;", pos = true, w = 4 - start;
-            else f += (e->sv ? "" : m) + hlsl_type(*e, w) + " e" + std::to_string(fields++) + ":" + e->name + std::to_string(e->index) + ";";
+            else {
+                // These system-value semantics have no numeric suffix in HLSL. Appending the DXBC
+                // signature index turns them into user semantics, so the partner VS no longer links.
+                std::string semantic = e->name;
+                if (e->sv != SV_RENDER_TARGET_ARRAY_INDEX && e->sv != SV_VIEWPORT_ARRAY_INDEX) semantic += std::to_string(e->index);
+                f += (e->sv ? "" : m) + hlsl_type(*e, w) + " e" + std::to_string(fields++) + ":" + semantic + ";";
+            }
             c = start + w;
         }
         if (c < 4) pad(4 - c);
