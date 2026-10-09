@@ -6,8 +6,9 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ### New
 
-- **The Last of Us Part II Remastered** compiles without a recording on NVIDIA: SCSKiller reads the shaders in Naughty
-  Dog's archives. On AMD it needs a recording, like other games.
+- **The Last of Us Part I** and **The Last of Us Part II Remastered** compile without a recording on NVIDIA: SCSKiller
+  reads the shaders in Naughty Dog's archives. Part I's main-menu shader build then finishes in about a minute. On AMD
+  they need a recording, like other games.
 
 ## [1.2.4] - 2026-10-08
 

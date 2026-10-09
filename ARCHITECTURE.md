@@ -376,7 +376,11 @@ open game files read-only and never launch or attach to the game.
   (`rs_mismatch`), left out without counting as a gap. Entries run to 669 MB, so those over 64 MB unpack one at a time.
   The Last of Us Part II Remastered: 100 archives, 71 GB unpacked in about 25 s, 164,321 shaders, 337 root signatures;
   planned without a recording, 160,751 pipelines on NVIDIA (37,736 mismatched pairings left out; without the check the
-  runtime rejected 8,145), all compiled in about 7 minutes on an RTX 5080. Its `tlou-ii-l.exe`, bigger than `tlou-ii.exe`, is the "rtm legacy" build: `FindExe` takes the
+  runtime rejected 8,145), all compiled in about 7 minutes on an RTX 5080. The Last of Us Part I reads unchanged: 26
+  archives, 19 of them Oodle and none wrapped in DSAR, the same v3 records; 149,177 shaders, 160,583 pipelines. A
+  session after its warm: 99.1% of 126,772 creates hit the cache, none compiled during play, and the main menu's
+  precompile (115,760 creates) took about a minute. Its `launcher.exe` checks the CPU's AVX2/AVX-512 before starting
+  `tlou-i.exe`; `tlou-i-l.exe` is taken to be the build for older CPUs (not disassembled). Its `tlou-ii-l.exe`, bigger than `tlou-ii.exe`, is the "rtm legacy" build: `FindExe` takes the
   plain name, as it does over a `_Plus` twin.
 - **Carved** (`Carved/`): any other game that ships raw DXBC/DXIL containers. Files are carved, each container
   validated and reflected; a file of pipeline records becomes one shader map per record. Dawn (Marvel's Guardians of the
