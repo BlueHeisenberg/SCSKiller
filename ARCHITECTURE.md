@@ -162,9 +162,8 @@ pipelines, not taken from documentation. `VendorCaps` holds the result per vendo
   `0002` and `bc2f`. So files match a game by the exe hash alone, whatever their type. The driver keeps them open while
   the device lives, which is how `NvidiaAppCache` learns a game's keys. Files are pre-sized in powers of two and not
   sparse, so the size on disk is real disk use. The u64 at offset 8, after the `nvph` magic, is how much of a file is
-  filled. Where that isn't plausible (some types keep other data there), the start of the zero tail stands in, found
-  by a binary search over 1 MiB blocks, since the driver writes from the front (`NvidiaAppCache.UsedBytes`, shown as
-  "in use"). No size cap or eviction shows up to 12 GB.
+  filled, where that is plausible (some types keep other data there). SCSKiller reads only the files' names, sizes and
+  which processes hold them, never their contents. No size cap or eviction shows up to 12 GB.
   A warmed game none of whose warm's keys has a file left (a shader cache reset) is Stale (`GameRecord.WarmedKeys`).
 - **A second process with the same name running at the same time gets its own files** (key + 1). So a game and its warm
   must never run together: the queue doesn't start a warm while the game runs, and stops a running warm gracefully when
@@ -205,8 +204,7 @@ pipelines, not taken from documentation. `VendorCaps` holds the result per vendo
   encrypted game's config can't be read, so it isn't detected. The flag doesn't change the status: only a judged first
   launch marks a game. The verdict comes before the ray tracing recording note: a recording can't help a game the warm
   doesn't reach. An Unsupported status (a game verdict included) comes before it, and `CompileUnreached` isn't set under it.
-- A `.nvph` file of 4 GiB or more filled past 90% (`NvidiaAppCache.UsedBytes`) is flagged on the game page: at
-  94-97% a game lost hits on its own entries and the file didn't grow.
+- A game whose 4 GiB `.nvph` file was 94-97% full lost hits on its own entries, and the file didn't grow.
 
 ### AMD, D3D12
 
@@ -219,7 +217,9 @@ pipelines, not taken from documentation. `VendorCaps` holds the result per vendo
   install folder's name and the exe's path inside it (`--stage-path`). Since the name hash is only a hint, a game's
   real keys are **learned** from the cache files a process named like it holds open, during its warms and while it's
   played (`GameRecord.CacheKeys`). A game whose learned keys were never warmed is Stale: "the compile didn't reach
-  this game's cache: the game uses another driver-cache key".
+  this game's cache: the game uses another driver-cache key", while the next warm runs differently (an AGS app name
+  proven since, another exe name case, an Xbox package identity). Otherwise it is Unsupported, "Not compatible", out of
+  the queue (`ScsKiller.CantReach`), until a launch shows the game holding a key the warm filled.
 - **A device created through AGS with an app name is keyed on that name** (`agsDriverExtensionsDX12_CreateDevice`,
   non-empty `pAppName`): FNV-1a-32 of its UTF-16LE bytes, case-sensitive, whatever the exe's name or path. The engine
   name, versions and AGS build don't change it. A profile matched on the app name wins over everything (`Phoenix`:
@@ -750,9 +750,9 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
   folder has none of its own, as for any recorded game; Clear recording deletes it too. On the game page, "Record while I play"'s
   switch allows offline sessions for such a game, and while it is on the card has the ban-risk warning and the button.
 - **Shader mods** (`Games.ReShade.Detect`): ReShade in the exe's folder, else the install root: any DLL there whose
-  version resource names ReShade, or one of its usual names (dxgi.dll, d3d12.dll, ...) holding its description or its
-  add-on export. Only the build with full add-on support loads add-on files; the standard one is known by its "only
-  limited add-on functionality" warning, and its add-ons never count. Its add-ons (`*.addon`, `*.addon64`) are the ones
+  version resource names ReShade, or one of its usual names (dxgi.dll, d3d12.dll, ...) holding its description or exporting
+  `ReShadeRegisterAddon` (Special K and add-on hosts hold that name too, to look it up). Only the build with full add-on
+  support loads add-on files; the standard one is known by its "only limited add-on functionality" warning, and its add-ons never count. Its add-ons (`*.addon`, `*.addon64`) are the ones
   in ReShade.ini's `[ADDON] AddonPath`, else its folder, less `DisabledAddons`; each is classed by what it does to the
   game's pipelines. One that replaces shaders is known by a string its release builds always log where they register
   their pipeline hooks: RenoDX's `utils::shader attached.`, Luma's config-version warning; others (renodx-dlss5,
@@ -791,7 +791,9 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
   SimpleIni may read such a header across lines. OptiScaler and its ini are part of what the warm depends on. Any other layer
   a copy can't reproduce (`ReShadeInstall.Block`: Luma; ReShade only in another store's game's install root above
   the exe; ReShade64.dll beside an OptiScaler that doesn't load it; an .asi, ReShade64.dll or a renamed DLL another loader
-  may or may not pick up): a LayoutInjecting add-on in it (`GameState.ShaderModBlocks`) makes the game Unsupported with that case and its
+  may or may not pick up; Special K beside the exe as dxgi.dll or d3d12.dll, or another of those names the exe imports,
+  which loads ReShade as a plug-in from its own folders or the exe's, and the add-ons beside the exe itself, whatever
+  ReShade's AddonPath): a LayoutInjecting add-on in it (`GameState.ShaderModBlocks`) makes the game Unsupported with that case and its
   fix as the reason, never queued, planned, compiled or shared, checked again right before each warm starts, and the
   recorder taken out at once (`TakeOutNow`) and kept out; a ReplacesShaders one only adds a note, and the game compiles
   without the layer. Each file is read once per size and write time, up to 128 MB; anti-cheat installs aren't read.
@@ -816,8 +818,10 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
   when the recorder is installed, after an import, after an index of another build and after Clear recording. Arming
   the recorder of a game whose installed build has no index (never compiled, or updated since) indexes it in the
   background first (`ScsKiller.IndexForRecorder`, the app only): the compile's index (`ScsKiller.Index`), one game at a
-  time on a below-normal thread, waiting while the watcher sees a game play (`Settings.PauseWhileGaming`), skipped
-  while the game's compile runs, and cancelled when the game or its compile starts; it reads again when the exe
+  time on below-normal threads in background mode (low I/O priority), the engine reader's workers included. It waits
+  while the watcher sees a game play (`Settings.PauseWhileGaming`), while the started queue has items, and while any
+  SCSKiller process runs one (`Busy`). It is cancelled when the game starts, and when any compile starts, which queues
+  it again to wait for the queue; it reads again when the exe
   changed during the read, and an index counts as the installed build's only while the exe is the one it read. A game
   whose shaders can't be indexed (encrypted, unsupported), one whose index isn't kept (`Sharing.SaveShipped`), and a
   launch before that index ends have no shipped shaders in the file and are recorded with every shader's bytes. A

@@ -60,7 +60,7 @@ public partial class AppTests
     [Fact]
     public async Task The_proxy_admits_only_the_process_the_app_started_for_an_offline_session()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warm) return;
         var bin = Path.GetDirectoryName(warm)!;
         var dir = Path.Combine(_root, "offline");
@@ -114,7 +114,7 @@ public partial class AppTests
     [Fact]
     public async Task An_offline_session_records_and_leaves_the_folder_as_it_was_when_its_process_exits()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         EasyAntiCheatBeside();
         if (OfflineKiller() is not { } k) return;
         await Listed(async () =>
@@ -157,7 +157,7 @@ public partial class AppTests
     [InlineData(false)]
     public async Task An_offline_session_left_behind_is_cleaned_up_by_the_helper_or_the_next_start(bool helper)
     {
-        UseLiveLedger();
+        UseProxyLedger();
         EasyAntiCheatBeside();
         if (OfflineKiller() is not { } k) return;
         await Listed(async () =>
@@ -259,15 +259,59 @@ public partial class AppTests
         });
     }
 
-    /// <summary>A session as a crash leaves it: the journal, and <paramref name="files"/> written under those names.</summary>
+    /// <summary>A session as a crash leaves it: the journal, and <paramref name="files"/> written under those names (the
+    /// proxy as d3d12.dll, the app id as steam_appid.txt, its hash recorded).</summary>
     AppStore Journal(string[] created, string[]? files = null, int pid = 0, long started = 0, string? exe = null, bool resumed = true)
     {
         var store = new AppStore(Path.Combine(_root, "data"));
         var rec = store.LoadGame(_game.Id);
         rec.OfflineSession = new(_game.Id, exe ?? _game.ExePath, _game.InstallDir, Names(_exeDir), created, pid, started, resumed);
+        foreach (var f in files ?? created)
+        {
+            var path = Path.Combine(_exeDir, f);
+            if (f == "d3d12.dll") File.Copy(_proxy, path);
+            else File.WriteAllText(path, f == ScsKiller.SteamAppIdFile ? "480" : "x");
+            if (f == ScsKiller.SteamAppIdFile) rec.RecorderFiles[f] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)));
+        }
         store.SaveGame(_game.Id, rec);
-        foreach (var f in files ?? created) File.WriteAllText(Path.Combine(_exeDir, f), "x");
         return store;
+    }
+
+    /// <summary>A session cut off, then a mod's d3d12.dll and the user's own steam_appid.txt put under its names: the
+    /// cleanup deletes only what is proven SCSKiller's, by its own names, the proxy's export or the bytes it wrote, and
+    /// ends, leaving those. Without them, nothing it created is left.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void An_offline_cleanup_deletes_only_what_is_proven_ours(bool replaced)
+    {
+        var before = Names(_exeDir);
+        var store = Journal(["d3d12.dll", "d3d12.dll.scskiller-new", "scskiller.ini", "scskiller.ini.scskiller-new", ScsKiller.SteamAppIdFile,
+            ScsKiller.ArmedFile, "scskiller.log"]);
+        var (mod, appId) = (Path.Combine(_exeDir, "d3d12.dll"), Path.Combine(_exeDir, ScsKiller.SteamAppIdFile));
+        if (replaced)
+        {
+            File.WriteAllBytes(mod, [.. "MZ ReShade "u8]);
+            File.WriteAllText(appId, "480\r\n");
+        }
+        Assert.Null(ScsKiller.CleanOfflineSession(store, _game.Id, _ => false, _ => { }));
+        Assert.Null(store.LoadGame(_game.Id).OfflineSession);
+        Assert.Equal((replaced ? before.Append("d3d12.dll").Append(ScsKiller.SteamAppIdFile) : before).Order(), Names(_exeDir));
+        if (!replaced) return;
+        Assert.Equal("MZ ReShade "u8.ToArray(), File.ReadAllBytes(mod));
+        Assert.Equal("480\r\n", File.ReadAllText(appId));
+    }
+
+    /// <summary>A proxy of another SCSKiller build (our export, other bytes) under the session's d3d12.dll goes too: none is
+    /// left in an EasyAntiCheat game's folder.</summary>
+    [Fact]
+    public void An_offline_cleanup_deletes_any_build_of_our_proxy()
+    {
+        var before = Names(_exeDir);
+        var store = Journal(["d3d12.dll"]);
+        File.WriteAllBytes(Path.Combine(_exeDir, "d3d12.dll"), [.. "MZ older proxy SCSKiller_StartWarm "u8]);
+        Assert.Null(ScsKiller.CleanOfflineSession(store, _game.Id, _ => false, _ => { }));
+        Assert.Equal(before, Names(_exeDir));
     }
 
     /// <summary>What a launch loads goes first, and leaves the journal at once: the recording's merge waiting for its lock
@@ -353,7 +397,7 @@ public partial class AppTests
     [Fact]
     public async Task An_update_and_an_offline_session_exclude_each_other()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         EasyAntiCheatBeside();
         if (OfflineKiller() is not { } k) return;
         await Listed(async () =>
@@ -403,7 +447,7 @@ public partial class AppTests
     [Fact]
     public async Task An_offline_session_whose_cleanup_helper_cannot_start_is_refused()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         EasyAntiCheatBeside();
         if (OfflineKiller() is not { } k) return;
         await Listed(async () =>
@@ -429,7 +473,7 @@ public partial class AppTests
     [Fact]
     public async Task An_offline_session_runs_beside_a_dinput8_mod_loader_and_leaves_it()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         EasyAntiCheatBeside();
         var loader = Planning.MiddlewarePackTests.Pe("dinput8.dll", Guid.NewGuid().ToByteArray());
         File.WriteAllBytes(Path.Combine(_exeDir, "dinput8.dll"), loader);
@@ -455,7 +499,7 @@ public partial class AppTests
     [InlineData(ScsKiller.ChainName)]
     public async Task An_offline_session_beside_a_d3d12_mod_is_refused_naming_it(string name)
     {
-        UseLiveLedger();
+        UseProxyLedger();
         EasyAntiCheatBeside();
         if (OfflineKiller() is not { } k) return;
         var mod = Planning.MiddlewarePackTests.Pe("d3d12.dll", Guid.NewGuid().ToByteArray());

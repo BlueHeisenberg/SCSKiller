@@ -211,8 +211,8 @@ public partial class AppTests
     }
 
     /// <summary>Started on a PC without the ledger folder, the session runs and its cleanup leaves the folder as it was. A
-    /// ledger folder that can't be made stops the start with nothing left behind. The built proxy reads the real ledger,
-    /// so the process here is a pass-through.</summary>
+    /// ledger folder that can't be made stops the start with nothing left behind. The built proxy reads the run's ledger,
+    /// not this test's, so the process here is a pass-through.</summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

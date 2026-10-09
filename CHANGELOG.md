@@ -4,6 +4,47 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-10-10
+
+### Faster and steadier
+
+- **Compiles with long chains of ray tracing pipelines keep going**, as in The Callisto Protocol and Black Myth: Wukong
+  with a community recording. Each pipeline in such a chain waits for the one it builds on, and 1.2.4 counted that wait
+  as a driver hang. The compile then restarted the same stretch again and again with fewer threads. A wait for another
+  pipeline no longer counts as a hang.
+- **A compile no longer stays at about 100% without finishing.** At its end, the driver could hang while letting go of
+  a ray tracing pipeline, and the compile waited for it forever. That last step now has a time limit, and the compile
+  ends.
+- **Compile clicked while SCSKiller checks a game's plan in the background** runs with your compile settings. 1.2.4 kept
+  it as background work, at idle priority and with the background thread count, so it could run far slower than set.
+- **Reading a game's shaders in the background no longer slows a compile.** 1.2.4 does that work when a game's recorder
+  is set up, at a higher priority than the compile, and it slowed a running compile by up to a fifth. It now runs
+  below the compile, stops when any compile starts, and waits until the queue is done.
+- **The cache size shown is the size on disk again**, as in 1.2.3 (NVIDIA). 1.2.4 opened the driver's cache files to
+  measure how much of them was in use, and showing a size doesn't need that. SCSKiller no longer touches the driver's
+  cache files for this.
+- **"Not compatible"** for a game whose shaders the driver keeps under a different cache than the one SCSKiller's
+  compile fills, as seen on AMD with Black Myth: Wukong. 1.2.4 kept offering to compile it again, which could never
+  help, so the same game was rebuilt over and over. The game page now says so and suggests clearing its cache to free
+  the space. A driver update offers the game again, even after Clear cache, since the new driver may read the cache
+  SCSKiller fills.
+
+### Recorder and anti-cheat
+
+- **The recorder no longer crashes games with a dxgi.dll mod in their folder**, like OptiScaler in Onimusha: Way of the
+  Sword. It hooked the mod's own swap chain as if it were Windows', which could crash the game. It now measures frame
+  times only through Windows' own DirectX.
+- **More anti-cheat is recognised**: NetEase Protect (Aniimo) and Halo Infinite's Arbiter. The recorder must never load
+  into a game with anti-cheat, so it now stays out of these.
+- **Cleaning up after an offline session deletes only SCSKiller's own files.** It deleted every file by the names the
+  session could create. So after a session that ended abnormally, it could delete a mod's d3d12.dll or your own
+  steam_appid.txt put in the game's folder later. A file SCSKiller didn't write is now left alone.
+
+### Mods
+
+- **Special K** beside a game's exe is no longer taken for ReShade. SCSKiller copied it as if it were ReShade, so the
+  compile of a game that loads RenoDX through Special K failed. That game now shows why it can't compile.
+
 ## [1.2.4] - 2026-10-08
 
 ### New

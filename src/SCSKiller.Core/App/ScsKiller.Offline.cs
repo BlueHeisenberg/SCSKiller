@@ -148,7 +148,7 @@ public sealed partial class ScsKiller
                 // fresh, not the scan's: EasyAntiCheat and nothing else
                 if (GameFiles.DetectAntiCheat(g) != AntiCheat.EasyAntiCheat || GameFiles.DetectAntiCheat(g, ignore: AntiCheat.EasyAntiCheat) != AntiCheat.None)
                     return "its install has another anti-cheat, or couldn't be read whole";
-                // never alongside a mod: none of the names the session creates may be there (the cleanup deletes them whatever they hold)
+                // never alongside a mod: none of the names the session creates may be there
                 if (RecorderOwnFiles.Concat(created).FirstOrDefault(f => Path.Exists(Path.Combine(dir, f))) is { } there) return $"{there} is already in its folder";
                 if (!addAppId && File.ReadAllText(appIdFile).Trim() != entry.AppId) return $"its folder has a {SteamAppIdFile} with another app id";
                 if (ReShade.Detect(g) is { } mod) return $"ReShade ({Path.GetFileName(mod.Dll)}) is in its folder";
@@ -289,10 +289,12 @@ public sealed partial class ScsKiller
     }
 
     /// <summary>The one cleanup of an offline session, in the app and in the helper (one at a time, across processes), never
-    /// while its process runs: its attestation revoked; the names it journaled that a launch loads deleted first, whatever
-    /// the files hold (none existed before it); then the recorder's data files, once its recording is merged, which waits
-    /// while another process <paramref name="runs"/> from the folder. A name is dropped from the journal once the folder,
-    /// listed whole, shows it gone, so a retry never deletes a file put there later. The session stays recorded, and its
+    /// while its process runs: its attestation revoked; the names it journaled that a launch loads deleted first; then the
+    /// recorder's data files, once its recording is merged, which waits while another process <paramref name="runs"/> from
+    /// the folder. A file goes by name only under SCSKiller's own names; d3d12.dll only when it is our proxy (its export or
+    /// the hash the session recorded), steam_appid.txt only with the bytes the session wrote. A name is dropped from the
+    /// journal once the folder, listed whole, shows it gone, or holds a file that isn't ours there (a mod, the user's own:
+    /// left), so a retry never deletes a file put there later. The session stays recorded, and its
     /// logon entry, until the journal is empty; then the folder's names are compared with the ones it had before (a
     /// difference is logged, nothing else deleted). Null when nothing of it is left, else what is.</summary>
     internal static List<string>? CleanOfflineSession(AppStore store, string id, Func<OfflineSession, bool> runs, Action<string> log)
@@ -328,12 +330,23 @@ public sealed partial class ScsKiller
         }
         // a held armed file that Revoke renamed aside is one the session created too
         var aside = Listed()?.Where(f => f.StartsWith(ArmedFile + ".", StringComparison.OrdinalIgnoreCase) && f.EndsWith(".revoked", StringComparison.OrdinalIgnoreCase)).ToList() ?? [];
-        Delete(s.Created.Where(f => !data.Contains(f)).Concat(aside));   // what a launch loads goes first, before any wait for the recording
-        // each name confirmed gone leaves the journal at once: one recreated later is never the session's
+        // null: not read (gone, or unreadable now): never deleted, kept in the journal while it is there
+        bool? Ours(string file)
+        {
+            if (file.StartsWith("scskiller", StringComparison.OrdinalIgnoreCase) || file.EndsWith(TempSuffix, StringComparison.OrdinalIgnoreCase)) return true;
+            var path = Path.Combine(dir, file);
+            if (!File.Exists(path)) return null;
+            try { return file is "d3d12.dll" or "d3d11.dll" && IsOurProxy(path) || rec.RecorderFiles.TryGetValue(file, out var hash) && Sha256(path) == hash; }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+        }
+        var ours = s.Created.Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(f => f, Ours, StringComparer.OrdinalIgnoreCase);
+        foreach (var (file, _) in ours.Where(o => o.Value == false)) log($"{name}: left {Path.Combine(dir, file)}: not SCSKiller's");
+        Delete(s.Created.Where(f => !data.Contains(f) && ours[f] == true).Concat(aside));   // what a launch loads goes first, before any wait for the recording
+        // each name confirmed gone, or not ours, leaves the journal at once: one recreated later is never the session's
         void Retire()
         {
             if (Listed() is not { } listed) return;
-            var kept = s.Created.Where(listed.Contains).ToArray();
+            var kept = s.Created.Where(f => listed.Contains(f) && ours[f] != false).ToArray();
             if (kept.Length == s.Created.Length) return;
             rec.OfflineSession = s = s with { Created = kept };
             foreach (var file in rec.RecorderFiles.Keys.Where(f => !kept.Contains(f)).ToList()) rec.RecorderFiles.Remove(file);

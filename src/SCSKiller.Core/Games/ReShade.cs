@@ -31,6 +31,7 @@ public enum LayerBlock
     OptiScalerIni,      // ...that does, in an OptiScaler.ini with a section header not whole on its line: SimpleIni may read
                         // it across lines, so a copy can't be sure its paths and update check are out
     UnloadedName,       // an .asi, ReShade64.dll or a renamed file another loader may or may not pick up
+    SpecialK,           // Special K under a name the game loads: it loads ReShade as a plug-in, from its own folders or this one
 }
 
 /// <summary>ReShade next to the game: its DLL (whatever its name), ReShade.ini and ReShade.log when present, and the
@@ -42,8 +43,9 @@ public enum LayerBlock
 /// LoadReshade=true (OptiScaler then loads it from the exe's folder); null = no OptiScaler there</param>
 /// <param name="OptiScaler">that OptiScaler's DLL; null = none</param>
 /// <param name="OptiScalerIniOdd">its OptiScaler.ini has a section header that isn't a whole [name] on its line</param>
+/// <param name="SpecialK">Special K beside it under a name the game loads; <paramref name="Dll"/> is Special K's when no ReShade is there</param>
 public sealed record ReShadeInstall(string Dll, bool LoadsAddons, string? Ini, string? Log, IReadOnlyList<ReShadeAddon> Addons, bool BesideExe = true,
-    bool? OptiScalerLoads = null, string? OptiScaler = null, bool OptiScalerIniOdd = false)
+    bool? OptiScalerLoads = null, string? OptiScaler = null, bool OptiScalerIniOdd = false, bool SpecialK = false)
 {
     /// <summary>The OptiScaler that loads ReShade64.dll: a copy of the layer runs through it too, as the game does.</summary>
     public string? Loader => OptiScalerLoads == true ? OptiScaler : null;
@@ -59,6 +61,7 @@ public sealed record ReShadeInstall(string Dll, bool LoadsAddons, string? Ini, s
     public LayerBlock Block =>
         Addons.Any(a => a is { Disabled: false, Mod: "Luma" }) ? LayerBlock.Luma
         : !BesideExe ? LayerBlock.NotBesideExe
+        : SpecialK ? LayerBlock.SpecialK
         : OptiScalerLoads == true ? OptiScalerIniOdd ? LayerBlock.OptiScalerIni : LayerBlock.None
         : Loaded.Contains(Path.GetFileName(Dll), StringComparer.OrdinalIgnoreCase) ? LayerBlock.None
         : OptiScalerLoads == false ? LayerBlock.OptiScalerOff
@@ -89,8 +92,9 @@ public static class ReShade
 {
     static readonly EnumerationOptions Flat = new() { IgnoreInaccessible = true };
 
-    // Raw bytes for a DLL without a readable version resource: its FileDescription, and the export add-ons register through
-    static readonly byte[][] Identity = [Encoding.Unicode.GetBytes("ReShade post-processing injector"), "ReShadeRegisterAddon"u8.ToArray()];
+    // Raw bytes for a DLL without a readable version resource: its FileDescription. The export add-ons register through is
+    // read from the export table: Special K and add-on hosts hold the name too, to look it up.
+    static readonly byte[][] Identity = [Encoding.Unicode.GetBytes("ReShade post-processing injector")];
     // only in the standard build, which loads no add-on files
     static readonly byte[][] Limited = ["only limited add-on functionality"u8.ToArray()];
     // the names ReShade loads under next to the exe, read whole when the version resource doesn't name it
@@ -195,7 +199,15 @@ public static class ReShade
     static ReShadeInstall? At(string dir, Game game, string exeDir, string? root)
     {
         var files = List(dir);
+        var besideExe = dir.Equals(exeDir, StringComparison.OrdinalIgnoreCase);
         var dll = files?.FirstOrDefault(f => (Ext(f, ".dll") || Ext(f, ".asi")) && IsReShade(f));
+        var sk = besideExe || dir.Equals(root, StringComparison.OrdinalIgnoreCase)
+            ? files?.FirstOrDefault(f => f != dll && Array.FindIndex(ReShadeInstall.Loaded, n => n.Equals(f.Name, StringComparison.OrdinalIgnoreCase)) is var i and >= 0
+                && (i < 2 || Imports(game.ExePath).Contains(f.Name, StringComparer.OrdinalIgnoreCase)) && IsSpecialK(f)) : null;
+        // every D3D12 game loads Loaded's first two names; Special K loads the add-ons in the exe's folder itself, whatever
+        // its own folder and ReShade's AddonPath, and ReShade from there or its own folders
+        var hostAddons = sk == null ? [] : (besideExe ? files! : List(exeDir) ?? []).Where(f => Ext(f, ".addon") || Ext(f, ".addon64")).ToList();
+        dll ??= hostAddons.Count > 0 ? sk : null;
         if (dll == null) return null;
         string? Named(string name) => files!.FirstOrDefault(f => f.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.FullName;
         // ReShade reads its ini and resolves AddonPath in its own folder
@@ -203,16 +215,15 @@ public static class ReShade
         var (addonPath, disabled) = ini != null ? Config(new FileInfo(ini)) : (null, []);
         var addonDir = addonPath != null ? GameFiles.DirKey(Path.Combine(dir, addonPath)) : dir;
         var verdicts = log != null ? LogVerdicts(new FileInfo(log)) : null;
-        var addons = (addonDir == dir ? files! : List(addonDir) ?? []).Where(f => Ext(f, ".addon") || Ext(f, ".addon64"))
+        var addons = (addonDir == dir ? files! : List(addonDir) ?? []).Where(f => Ext(f, ".addon") || Ext(f, ".addon64")).Concat(addonDir == exeDir ? [] : hostAddons)
             .Select(f =>
             {
                 var a = Classify(f, verdicts, log);
                 return a with { Disabled = disabled.Any(d => Disables(d, a, f)) };
             }).ToList();
-        var besideExe = dir.Equals(exeDir, StringComparison.OrdinalIgnoreCase);
         // OptiScaler loads ReShade from the exe's folder under this one name only
         var (loads, opti, odd) = besideExe && dll.Name.Equals("ReShade64.dll", StringComparison.OrdinalIgnoreCase) ? OptiScalerLoads(files!, game.ExePath) : (null, null, false);
-        return new(dll.FullName, Find(dll, "limited", Limited) != 0, ini, log, addons, besideExe || dir.Equals(root, StringComparison.OrdinalIgnoreCase), loads, opti?.FullName, odd);
+        return new(dll.FullName, Find(dll, "limited", Limited) != 0, ini, log, addons, besideExe || dir.Equals(root, StringComparison.OrdinalIgnoreCase), loads, opti?.FullName, odd, sk != null);
     }
 
     /// <summary>Whether an OptiScaler the game loads loads ReShade64.dll: its OptiScaler.ini, next to it, sets [Plugins]
@@ -306,6 +317,19 @@ public static class ReShade
     static bool IsOptiScaler(FileInfo f) => Cached(f, "optiscaler", () => new[] { Middleware.ExportName(f.FullName), FileVersionInfo.GetVersionInfo(f.FullName).ProductName }
         .Any(n => n?.StartsWith("OptiScaler", StringComparison.OrdinalIgnoreCase) == true)) is true;
 
+    static bool IsSpecialK(FileInfo f) => Cached(f, "specialk", () => new[] { Middleware.ExportName(f.FullName), FileVersionInfo.GetVersionInfo(f.FullName).ProductName }
+        .Any(n => n != null && (n.StartsWith("SpecialK", StringComparison.OrdinalIgnoreCase) || n.StartsWith("Special K", StringComparison.OrdinalIgnoreCase)))) is true;
+
+    static bool ExportsAddonApi(FileInfo f) => Cached(f, "addonexport", () =>
+    {
+        try
+        {
+            using var pe = PeFile.Open(f.FullName);
+            return PeFile.ExportNames(pe).Contains("ReShadeRegisterAddon");
+        }
+        catch (Exception e) when (e is BadImageFormatException or InvalidOperationException) { return false; }
+    }) is true;
+
     static List<FileInfo>? List(string dir)
     {
         try { return new DirectoryInfo(dir).EnumerateFiles("*", Flat).ToList(); }
@@ -347,7 +371,7 @@ public static class ReShade
 
     static bool IsReShade(FileInfo f) =>
         Cached(f, "product", () => FileVersionInfo.GetVersionInfo(f.FullName).ProductName == "ReShade") is true
-        || Names.Contains(f.Name, StringComparer.OrdinalIgnoreCase) && Find(f, "identity", Identity) >= 0;
+        || Names.Contains(f.Name, StringComparer.OrdinalIgnoreCase) && (Find(f, "description", Identity) >= 0 || ExportsAddonApi(f));
 
     static ReShadeAddon Classify(FileInfo f, IReadOnlyDictionary<string, AddonKind>? verdicts, string? log)
     {

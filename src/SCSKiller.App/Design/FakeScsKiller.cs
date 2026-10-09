@@ -104,7 +104,7 @@ public sealed class FakeScsKiller : IScsKiller
             G("Sample.AtomicHeart", "Atomic Heart", "4.27", "AtomicHeart-WinGDK-Shipping.exe", 157_069, GameStatus.Warmed, "", at: "xbox",
                 plan: new PlanStats(0, 188_730, 212, 118, false, StageSets: 188_730), cache: 4_500_000_000, time: TimeSpan.FromMinutes(7)) with
             {
-                WarmedDriverVersion = "610.88", WarmedAt = DateTimeOffset.Now.AddHours(-1), LastWarmTime = TimeSpan.FromSeconds(372), CacheOnDisk = 4_294_967_296, CacheInUse = 2_790_000_000,
+                WarmedDriverVersion = "610.88", WarmedAt = DateTimeOffset.Now.AddHours(-1), LastWarmTime = TimeSpan.FromSeconds(372), CacheOnDisk = 4_294_967_296,
                 LastWarmFailed = 0, LastWarmSkipped = 0, LastSession = new SessionStats(TimeSpan.FromMinutes(41), 2_310, 0, 2_310, 0, 1.2),
             },
             // a warm on a D3D12 runtime without the game's Agility SDK: the driver rejected most of the plan

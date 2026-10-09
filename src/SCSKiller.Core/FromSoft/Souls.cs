@@ -31,7 +31,7 @@ public static class Souls
         int inSize = p.Modulus!.Length, outSize = inSize - 1;
         var input = file.ToArray();
         var output = new byte[input.Length / inSize * outSize];
-        Parallel.For(0, input.Length / inSize, k => // ~0.35 ms a block (Elden Ring's Data2.bhd: 28k blocks)
+        Parallel.For(0, input.Length / inSize, new ParallelOptions { TaskScheduler = TaskScheduler.Current }, k => // ~0.35 ms a block (Elden Ring's Data2.bhd: 28k blocks)
         {
             var m = BigInteger.ModPow(new BigInteger(input.AsSpan(k * inSize, inSize), isUnsigned: true, isBigEndian: true), e, n);
             var b = m.ToByteArray(isUnsigned: true, isBigEndian: true);

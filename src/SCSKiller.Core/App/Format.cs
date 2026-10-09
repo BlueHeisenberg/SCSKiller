@@ -96,9 +96,6 @@ public static class Format
     public static string ModNote(GameState s) =>
         s is { ShaderMod: not null, ShaderModBlocks: false } && s.Status != GameStatus.Unsupported ? "; " + ScsKiller.ShaderModNote(s) : "";
 
-    /// <summary>The game page's note after the reason when an NVIDIA cache file is nearly full; none for an unsupported game.</summary>
-    public static string CacheFileNote(GameState s) => s.CacheFileFull && s.Status != GameStatus.Unsupported ? ". " + Sentence(ScsKiller.CacheFileFullNote) : "";
-
     /// <summary>Recorder in, not long enough yet: the DirectX 12 hint stays, a DirectX 11 run never loads the recorder.</summary>
     public static string RecorderOnNote(GameState s) => "recorder on: play for about 5 minutes"
         + (s.StatusReason.Contains(Planning.Planner.Dx12Only, StringComparison.Ordinal) ? ", " + Planning.Planner.Dx12Only : "");

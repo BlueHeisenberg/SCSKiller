@@ -59,9 +59,6 @@ static class Fmt
     public static TimeSpan? CompileTime(GameState s) => s.LastWarmTime ?? s.EstimatedWarmTime;
     /// <summary>Tooltip for an estimated (not measured) cache value; null when measured.</summary>
     public static string? CacheTip(GameState s) => s.CacheOnDisk == null && s.EstimatedCacheBytes != null ? "Estimated driver cache if compiled" : null;
-    /// <summary>"4.0 GB on disk · 2.6 GB in use" when the driver's files are filled less than their size; null otherwise.</summary>
-    public static string? CacheInUse(GameState s) =>
-        s is { CacheOnDisk: { } disk, CacheInUse: { } used } && used < disk ? $"{Format.Bytes(disk)} on disk · {Format.Bytes(used)} in use" : null;
     /// <summary>One middleware tag: what it compiles and its DLLs.</summary>
     public static string TagTip(MiddlewareTag t) => Format.Middleware(t) + "\n    " + string.Join(", ", t.Dlls);
     public static bool Active(QueueItem q) => q.Stage is not (QueueStage.Done or QueueStage.Failed or QueueStage.Stopped);
@@ -264,8 +261,8 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     public string Shaders => Fmt.N(s.ShaderCount);
     public string Pipelines => Fmt.N(ScsKiller.PlanPipelines(s));
     public string Cache => Fmt.Cache(s);
-    public string? CacheTip => Fmt.CacheTip(s) ?? Fmt.CacheInUse(s);
-    public Style CacheStyle => Fmt.Style(Fmt.CacheTip(s) != null ? "Secondary" : "BodyTextBlockStyle");
+    public string? CacheTip => Fmt.CacheTip(s);
+    public Style CacheStyle => Fmt.Style(CacheTip != null ? "Secondary" : "BodyTextBlockStyle");
     public string Time => Format.Duration(Fmt.CompileTime(s));
 
     bool Partly => ScsKiller.IsPartlyWarmed(s);
@@ -281,6 +278,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.NeedsRecording when ScsKiller.NeverRecorded(s) => ScsKiller.NothingRecordedTitle,
         GameStatus.NeedsRecording => ScsKiller.RecordedEnough(s) ? "Needs a recording" : "Needs a 5-min recording",
         GameStatus.Stale => "Needs rebuilding",
+        _ when s.StatusReason == ScsKiller.CantReachReason => "Not compatible",
         _ => s.ShaderModBlocks ? "Not compiled" : s.Engine?.Encrypted == true ? "Encrypted game files" : s.NotPlanned ? "Not supported" : "Not supported yet",
     };
     /// <summary>The whole reason: the row's tooltip and the game page's status text.</summary>
@@ -593,7 +591,7 @@ public sealed class DetailVm(string id) : Bindable
     public string StatusTitle => Row.StatusText;
     public string StatusReason => Sentence(s.Status switch
     {
-        _ when s.CompileUnreached => s.StatusReason + (s.WarmedAt != null && !s.CacheFileFull ? ". " + Sentence(ScsKiller.ClearForGameNote) : ""),
+        _ when s.CompileUnreached => s.StatusReason + (s.WarmedAt != null ? ". " + Sentence(ScsKiller.ClearForGameNote) : ""),
         _ when ScsKiller.IsPartlyCompiled(s) => ScsKiller.RefusedNote(s) + ". An SCSKiller update could fix it",
         GameStatus.Warmed when ScsKiller.IsPartlyWarmed(s) => s.StatusReason,
         GameStatus.Warmed => $"compiled for {(ScsKiller.BothApis(s.Plan) ? "DirectX 11 and DirectX 12, for " : "")}driver {s.WarmedDriverVersion}" + (s.WarmedAt is { } t ? $" on {t.LocalDateTime:d}" : "")
@@ -604,8 +602,7 @@ public sealed class DetailVm(string id) : Bindable
             + (Row.Note != null ? ". " + Sentence(s.StatusReason) : ""),
         GameStatus.NeedsRecording => HasDbTeaser ? Row.FullNote.Replace("; " + ScsKiller.InDbNote, "") : Row.FullNote,   // the teaser says it
         _ => HasDbTeaser ? s.StatusReason.Replace("; " + ScsKiller.InDbNote, "") : s.StatusReason,
-    } + (s.Status == GameStatus.NeedsRecording ? "" : Format.ModNote(s))   // FullNote has it
-        + Format.CacheFileNote(s))
+    } + (s.Status == GameStatus.NeedsRecording ? "" : Format.ModNote(s)))   // FullNote has it
         + (IsPartlyCompiled || s.CompileUnreached ? "." : "");
     public bool IsPartlyCompiled => ScsKiller.IsPartlyCompiled(s);
     public const string PartlyCompiledWhy = "SCSKiller compiled this game, but the graphics driver refused a large part of it. This happens when the driver or Windows can't build pipelines the way the game does. The refused ones are built by the game the first time it needs them, which is when they can stutter. SCSKiller compiles them again after a driver update.";
@@ -811,9 +808,6 @@ public sealed class DetailVm(string id) : Bindable
     public bool HasDiskValue => s.CacheOnDisk != null || s.EstimatedCacheBytes != null;
     public string DiskLabel => s.CacheOnDisk != null ? "Disk space" : "Disk space (estimate)";
     public string DiskValue => Format.Bytes(s.CacheOnDisk ?? s.EstimatedCacheBytes);
-    public string? DiskInUse => Fmt.CacheInUse(s);
-    public string DiskInUseShort => s.CacheInUse is { } used ? $"{Format.Bytes(used)} in use" : "";
-    public bool HasDiskInUse => DiskInUse != null;
     public bool HasShaderCount => s.ShaderCount != null;
     public string ShaderCount => Fmt.N(s.ShaderCount);
     // measured frames when the recorder timed them, else the compile count
@@ -844,7 +838,7 @@ public sealed class DetailVm(string id) : Bindable
         P != null ? new("Shader layouts", $"{P.RootSignatures:N0} · {RootSigSource(P)}") : null,
         P is { } u && u.ExactUnits + u.InferredUnits + u.GuessedUnits > 0 ? new("Stage units exact / inferred / guessed", $"{u.ExactUnits:N0} / {u.InferredUnits:N0} / {u.GuessedUnits:N0}") : null,
         P is { LayoutCoverage: > 0 } ? new("Vertex layouts from a recording", $"{P.LayoutCoverage:P1}") : null,
-        s.CacheOnDisk != null || s.EstimatedCacheBytes != null ? new("Driver cache", Fmt.CacheInUse(s) ?? Fmt.Cache(s) + (s.CacheOnDisk != null ? " measured" : " estimated")) : null,
+        s.CacheOnDisk != null || s.EstimatedCacheBytes != null ? new("Driver cache", Fmt.Cache(s) + (s.CacheOnDisk != null ? " measured" : " estimated")) : null,
     }.OfType<DetailRow>().ToList();
 
 
@@ -1281,7 +1275,7 @@ public sealed class SettingsVm : Bindable
     public string BackgroundThreadsText => $"{S.BackgroundThreads} of {Environment.ProcessorCount}";
     public double MaxThreads => Environment.ProcessorCount;
     public bool HasLastRebuilt => LastRebuilt != "";
-    public string LastRebuilt => App.Core.Games.Where(g => g.WarmedDriverVersion != null).MaxBy(g => g.WarmedAt)?.WarmedDriverVersion is { } v ? $"Last rebuilt for driver {v}" : "";
+    public string LastRebuilt => App.Core.Games.Where(g => g.WarmedAt != null && g.WarmedDriverVersion != null).MaxBy(g => g.WarmedAt)?.WarmedDriverVersion is { } v ? $"Last rebuilt for driver {v}" : "";
 
     public bool? MaximumPlans { get => S.MaximumPlans; set { if (value is { } v && v != S.MaximumPlans) S = S with { MaximumPlans = v }; } }
     public bool? ShareRecordings { get => S.ShareRecordings; set { if (value is { } v && v != S.ShareRecordings) S = S with { ShareRecordings = v }; } }

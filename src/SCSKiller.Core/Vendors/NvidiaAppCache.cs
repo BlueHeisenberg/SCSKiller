@@ -26,65 +26,9 @@ public sealed class NvidiaAppCache(string dir) : IAppCache
 
     public long SizeOf(IEnumerable<string> keys) => FilesOf(keys).Sum(f => f.Length);
 
-    /// <summary>The bytes the driver has filled in these keys' files (<see cref="UsedBytes"/>; a file that can't be read
-    /// counts whole), at most <see cref="SizeOf"/>.</summary>
-    public long UsedOf(IEnumerable<string> keys) => FilesOf(keys).Sum(f => UsedBytes(f) ?? f.Length);
-
     public IReadOnlySet<string> KeysOpenBy(string exeFileName) => !Directory.Exists(Dir) ? new HashSet<string>()
         : AppCacheFiles.KeysOpenBy(exeFileName, Directory.EnumerateFiles(Dir, "*.nvph")
             .Select(f => (Path: f, Key: Key(Path.GetFileName(f))!)).Where(f => f.Key != null));
 
     public int Delete(IEnumerable<string> keys) => AppCacheFiles.DeleteAll(FilesOf(keys));
-
-    /// <summary>Measured: a game whose file of 4 GiB was 94-97% full lost hits on its own entries, and the file didn't grow.</summary>
-    public const long FullFileBytes = 4L << 30;
-    public const double FullShare = 0.9;
-
-    /// <summary>A file of these keys of <see cref="FullFileBytes"/> or more whose data reaches <see cref="FullShare"/> of it.</summary>
-    public bool NearlyFull(IEnumerable<string> keys) => FilesOf(keys).Any(f => f.Length >= FullFileBytes && Fill(f) >= FullShare);
-
-    /// <summary>The share of the file the driver has filled (<see cref="UsedBytes"/>); 0 when it can't be read.</summary>
-    internal static double Fill(FileInfo f, int block = 1 << 20) =>
-        f.Length > 0 && UsedBytes(f, block) is { } used ? used / (double)f.Length : 0;
-
-    static readonly Dictionary<string, (long Length, DateTime Written, DateTime At, long Used)> dataEnds = [];
-
-    /// <summary>How much of the file the driver has filled. It pre-sizes files in powers of two and writes from the front:
-    /// the u64 at offset 8 after the "nvph" magic, or where the zero tail starts when that isn't plausible (some types keep
-    /// other data there). Null when the file can't be read. Read only, shared with the driver and a running game.</summary>
-    public static long? UsedBytes(FileInfo f, int block = 1 << 20)
-    {
-        try
-        {
-            using var h = File.OpenHandle(f.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            long length = RandomAccess.GetLength(h);
-            Span<byte> header = stackalloc byte[16];
-            var used = RandomAccess.Read(h, header, 0) == header.Length && header[..4].SequenceEqual("nvph"u8)
-                ? System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(header[8..]) : -1;
-            if (used >= header.Length && used <= length) return used;
-            // the search reads one block per halving: cached for a minute while the file looks unchanged (a pre-sized
-            // file keeps its length, and its write time may lag while the driver holds it open)
-            lock (dataEnds)
-                if (dataEnds.TryGetValue(f.FullName, out var c) && c.Length == f.Length && c.Written == f.LastWriteTimeUtc
-                    && DateTime.UtcNow - c.At < TimeSpan.FromMinutes(1)) return c.Used;
-            var end = DataEnd(h, length, block);
-            lock (dataEnds) dataEnds[f.FullName] = (f.Length, f.LastWriteTimeUtc, DateTime.UtcNow, end);
-            return end;
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
-    }
-
-    /// <summary>Where the zero tail starts, to the block, by a binary search.</summary>
-    static long DataEnd(Microsoft.Win32.SafeHandles.SafeFileHandle h, long length, int block)
-    {
-        long lo = 0, hi = (length + block - 1) / block;
-        var buf = new byte[block];
-        while (lo < hi)
-        {
-            long mid = (lo + hi) / 2;
-            int n = RandomAccess.Read(h, buf, mid * block);
-            if (buf.AsSpan(0, n).ContainsAnyExcept((byte)0)) lo = mid + 1; else hi = mid;
-        }
-        return Math.Min(lo * block, length);
-    }
 }

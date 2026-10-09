@@ -376,12 +376,14 @@ public static class GameFiles
         ("LoR.exe", AntiCheat.Other), ("Lion-Win64-Shipping.exe", AntiCheat.Other),   // Legends of Runeterra, 2XKO
         ("RiotClientServices.exe", AntiCheat.Other), ("RiotClientUx.exe", AntiCheat.Other), ("RiotClientUxRender.exe", AntiCheat.Other),
         ("NeacClient.exe", AntiCheat.Other), ("NeacSafe64.sys", AntiCheat.Other), ("NeacSafe64_ex.sys", AntiCheat.Other),
+        ("NEP2.dll", AntiCheat.Other), ("NEPCleaner.exe", AntiCheat.Other),   // NetEase Protect (Aniimo)
         ("BlackCall.aes", AntiCheat.Other), ("BlackCall64.aes", AntiCheat.Other), ("BlackCat64.sys", AntiCheat.Other),
         ("HShield", AntiCheat.Other),
         ("PunkBuster", AntiCheat.Other), ("PnkBstrA.exe", AntiCheat.Other), ("pbsvc.exe", AntiCheat.Other), ("pbsv.dll", AntiCheat.Other),
         ("equ8_conf.json", AntiCheat.Other),
         (".build.info", AntiCheat.Other), (".product.db", AntiCheat.Other),   // Battle.net's install: a Blizzard game another store lists, or one added by hand
         ("Warframe.x64.exe", AntiCheat.Other),   // Digital Extremes' own client-side detection: no driver or folder of its own
+        ("arbiter.dll", AntiCheat.Other),   // Arbiter, Halo Infinite's own anti-cheat, in the game's root
         ("gameguard.des", AntiCheat.Other),
         ("DenuvoAC", AntiCheat.Other), ("denuvo-anti-cheat.sys", AntiCheat.Other), ("denuvo-anti-cheat-runtime.dll", AntiCheat.Other),
         ("denuvo-anti-cheat-update-service.exe", AntiCheat.Other), ("Denuvo Anti-Cheat Installer.exe", AntiCheat.Other),

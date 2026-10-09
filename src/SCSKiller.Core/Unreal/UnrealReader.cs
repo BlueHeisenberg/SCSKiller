@@ -287,7 +287,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             if (arc == null) { log?.Report($"{lib.File.Path}: unsupported shader archive layout, skipped"); continue; }
             var sha = new string[arc.Count];
             var (bad, failed) = (0, 0);
-            Parallel.ForEach(arc.Codes, new ParallelOptions { CancellationToken = ct }, work =>
+            Parallel.ForEach(arc.Codes, new ParallelOptions { TaskScheduler = TaskScheduler.Current, CancellationToken = ct }, work =>
             {
                 IEnumerable<(int, byte[])> codes;
                 try { codes = work(); }
@@ -388,7 +388,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             if (left.IsEmpty) break;
             using var arc = opener.Open(provider, lib.File, out _);   // skipped at indexing too
             if (arc == null) continue;
-            Parallel.ForEach(arc.Codes, new ParallelOptions { CancellationToken = ct }, work =>
+            Parallel.ForEach(arc.Codes, new ParallelOptions { TaskScheduler = TaskScheduler.Current, CancellationToken = ct }, work =>
             {
                 IEnumerable<(int, byte[])> codes;
                 try { codes = work(); }
@@ -458,7 +458,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         long read = 0;
         int carved = 0, unparsed = 0, unreadable = 0, undecoded = 0, bad = 0;
         var budget = ByteBudget.FromFreeMemory();
-        Parallel.ForEach(files, new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Environment.ProcessorCount }, f =>
+        Parallel.ForEach(files, new ParallelOptions { TaskScheduler = TaskScheduler.Current, CancellationToken = ct, MaxDegreeOfParallelism = Environment.ProcessorCount }, f =>
         {
             var global = IsGlobalCache(f);
             var owns = global ? true : OwnsShaderMaps(provider, f);
@@ -515,7 +515,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
             for (var line = r.ReadLine(); line != null; line = r.ReadLine())
                 if (line.Split(' ', 4) is [var h, var fmt, var off, var path] && sha1s.Contains(h)) at[h] = (fmt[0], int.Parse(off), path);
         var budget = ByteBudget.FromFreeMemory();
-        Parallel.ForEach(at.GroupBy(a => a.Value.Path), new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Environment.ProcessorCount }, g =>
+        Parallel.ForEach(at.GroupBy(a => a.Value.Path), new ParallelOptions { TaskScheduler = TaskScheduler.Current, CancellationToken = ct, MaxDegreeOfParallelism = Environment.ProcessorCount }, g =>
         {
             if (!provider.Files.TryGetValue(g.Key, out var f)) return; // gone since indexing: those items fail at replay
             using var held = budget.Take(PackageSize(provider, f));
@@ -871,7 +871,7 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         var maps = new ConcurrentBag<ShaderMap>();
         var n = 0;
         var budget = ByteBudget.FromFreeMemory();
-        Parallel.ForEach(provider.Files.Values.Where(f => f.IsUePackage || IsGlobalCache(f)).ToList(), new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Environment.ProcessorCount }, f =>
+        Parallel.ForEach(provider.Files.Values.Where(f => f.IsUePackage || IsGlobalCache(f)).ToList(), new ParallelOptions { TaskScheduler = TaskScheduler.Current, CancellationToken = ct, MaxDegreeOfParallelism = Environment.ProcessorCount }, f =>
         {
             var global = IsGlobalCache(f);
             if (!global && OwnsShaderMaps(provider, f) == false) return;

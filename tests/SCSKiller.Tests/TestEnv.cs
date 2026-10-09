@@ -45,6 +45,52 @@ static partial class TestEnv
     internal static void BuildCodecs() => SCSKiller.Core.App.Codecs.DirOverride =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SCSKiller-build", "codecs");
 
+    /// <summary>The ledger the tests arm in and the built proxy and selftest read (SCSKILLER_TEST_LEDGER_DIR, inherited by
+    /// every process a test starts), never the user's %LOCALAPPDATA%\SCSKiller\armed.</summary>
+    public static readonly string Ledger = Path.Combine(Path.GetTempPath(), "scskiller-test-ledger-" + Guid.NewGuid().ToString("N")[..8], "armed");
+
+    /// <summary>The user's live ledger folder: watched and read, never written.</summary>
+    public static readonly string LiveLedger = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SCSKiller", "armed");
+
+    static readonly bool LiveLedgerExisted = Directory.Exists(LiveLedger);
+
+    // every name created, changed, renamed or deleted there while the tests run; the user's own app may add some
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> LiveLedgerSeen = new(StringComparer.OrdinalIgnoreCase);
+    static FileSystemWatcher? _liveLedgerWatch;
+    static volatile bool _liveLedgerWatchLost;
+
+    /// <summary>Fails when a test's own ledger names (<paramref name="keys"/>) reached <see cref="LiveLedger"/>: seen there,
+    /// or a refusal left there, or the folder was made during the run. The watcher is best-effort (an event may land after
+    /// the check); the refusal and the folder are read as they are.</summary>
+    public static void AssertLiveLedgerUntouched(IReadOnlySet<string> keys)
+    {
+        Assert.False(_liveLedgerWatchLost, "the live ledger's watcher lost events");
+        Assert.True(LiveLedgerExisted || !Directory.Exists(LiveLedger), "the live ledger folder was made during the run");
+        Assert.DoesNotContain(LiveLedgerSeen.Keys, n => keys.Contains(n.Split('.')[0]));
+        Assert.DoesNotContain(keys, k => File.Exists(Path.Combine(LiveLedger, k + ".refused")));
+    }
+
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    internal static void TestLedger()
+    {
+        Environment.SetEnvironmentVariable("SCSKILLER_TEST_LEDGER_DIR", Ledger);
+        SCSKiller.Core.App.ScsKiller.LedgerDir = Ledger;
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            try { Directory.Delete(Path.GetDirectoryName(Ledger)!, true); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        };
+        if (!LiveLedgerExisted) return;
+        _liveLedgerWatch = new FileSystemWatcher(LiveLedger) { NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite, InternalBufferSize = 64 * 1024 };
+        FileSystemEventHandler seen = (_, e) => LiveLedgerSeen.TryAdd(e.Name!, 0);
+        _liveLedgerWatch.Created += seen;
+        _liveLedgerWatch.Changed += seen;
+        _liveLedgerWatch.Deleted += seen;
+        _liveLedgerWatch.Renamed += (_, e) => { LiveLedgerSeen.TryAdd(e.Name!, 0); LiveLedgerSeen.TryAdd(e.OldName!, 0); };
+        _liveLedgerWatch.Error += (_, _) => _liveLedgerWatchLost = true;
+        _liveLedgerWatch.EnableRaisingEvents = true;
+    }
+
     /// <summary>SCSKILLER_TEST_GAMES_ROOT's folders, then Steam's libraries' steamapps\common, existing ones only.</summary>
     public static readonly IReadOnlyList<string> SteamCommon = FindSteamCommon();
 

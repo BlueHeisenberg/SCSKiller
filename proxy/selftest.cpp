@@ -36,6 +36,7 @@
 #include "vk_spirv.h"
 #include "probe_util.h"
 #include "ledger_key.h"
+#include "sys_dxgi.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -3228,6 +3229,98 @@ static int frames_fg_rows(const std::wstring& dir, const wchar_t* queue, bool ov
     return 0;
 }
 
+// `selftest sysdxgi` (no proxy): sys_dxgi.h against a copy of System32's dxgi.dll mapped from another folder, as a game
+// folder's dxgi.dll is. Prints "factory <0|1>" (a factory's vtable is in System32's), "copy <0|1>" (the copy's
+// CreateDXGIFactory1 is), "exe <0|1>" (a function of this exe is) and "heap <0|1>".
+static int sys_dxgi_rows() {
+    HMODULE sys = system_dxgi();
+    auto create = sys ? (decltype(&CreateDXGIFactory1))GetProcAddress(sys, "CreateDXGIFactory1") : nullptr;
+    IDXGIFactory1* f = nullptr;
+    CHECK(create && SUCCEEDED(create(IID_PPV_ARGS(&f))));
+    printf("factory %d\n", module_of(*(void**)f) == sys);
+    f->Release();
+    wchar_t tmp[MAX_PATH], sysdir[MAX_PATH];
+    CHECK(GetTempPathW(MAX_PATH, tmp) && GetSystemDirectoryW(sysdir, MAX_PATH));
+    const std::wstring dir = std::wstring(tmp) + L"scskiller-sysdxgi-" + std::to_wstring(GetCurrentProcessId()), copy = dir + L"\\dxgi.dll";
+    CHECK(CreateDirectoryW(dir.c_str(), nullptr) && CopyFileW((std::wstring(sysdir) + L"\\dxgi.dll").c_str(), copy.c_str(), FALSE));
+    HMODULE c = LoadLibraryExW(copy.c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES);  // mapped as a module, its DllMain not run
+    void* cf = c ? (void*)GetProcAddress(c, "CreateDXGIFactory1") : nullptr;
+    CHECK(c && c != sys && module_of(cf) == c);
+    printf("copy %d\n", module_of(cf) == sys);
+    FreeLibrary(c), DeleteFileW(copy.c_str()), RemoveDirectoryW(dir.c_str());
+    printf("exe %d\n", module_of((void*)&sys_dxgi_rows) == sys);
+    std::vector<void*> heap(16);
+    printf("heap %d\n", module_of(heap.data()) == sys);
+    return 0;
+}
+
+// `selftest frameswrap <n>`: a mod's swap chain wrapper (OptiScaler as dxgi.dll) through the proxy's hooked factory. The
+// factory's CreateSwapChainForHwnd is hooked before the proxy's device: it makes the real swap chain through the
+// factory's vtable (the proxy's hook, nested) and returns a wrapper of it whose vtable is this exe's. n Presents and n
+// Present1s through the wrapper. Prints "wrapper ours <0|1>" (its Present is the proxy's), "real ours <0|1>" (the real
+// swap chain's is) and "frames <n>".
+struct Wrap { void** vt; IDXGISwapChain1* real; LONG ref; };
+static void* g_wrap_vt[23];
+static void* g_wrap_create;
+static thread_local bool t_wrapping;
+static HRESULT STDMETHODCALLTYPE wrap_qi(Wrap* w, REFIID riid, void** pp) {
+    for (const IID& i : {__uuidof(IUnknown), __uuidof(IDXGIObject), __uuidof(IDXGIDeviceSubObject), __uuidof(IDXGISwapChain), __uuidof(IDXGISwapChain1)})
+        if (riid == i) return InterlockedIncrement(&w->ref), *pp = w, S_OK;
+    return *pp = nullptr, E_NOINTERFACE;
+}
+static ULONG STDMETHODCALLTYPE wrap_addref(Wrap* w) { return InterlockedIncrement(&w->ref); }
+static ULONG STDMETHODCALLTYPE wrap_release(Wrap* w) {
+    ULONG n = InterlockedDecrement(&w->ref);
+    if (!n) w->real->Release(), delete w;
+    return n;
+}
+static HRESULT STDMETHODCALLTYPE wrap_present(Wrap* w, UINT sync, UINT flags) { return w->real->Present(sync, flags); }
+static HRESULT STDMETHODCALLTYPE wrap_present1(Wrap* w, UINT sync, UINT flags, const DXGI_PRESENT_PARAMETERS* p) { return w->real->Present1(sync, flags, p); }
+static HRESULT STDMETHODCALLTYPE wrap_unused() { return E_NOTIMPL; }
+static HRESULT STDMETHODCALLTYPE wrap_create(IDXGIFactory2* f, IUnknown* dev, HWND wnd, const DXGI_SWAP_CHAIN_DESC1* d,
+                                             const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fs, IDXGIOutput* o, IDXGISwapChain1** pp) {
+    if (t_wrapping) return ((decltype(&wrap_create))g_wrap_create)(f, dev, wnd, d, fs, o, pp);
+    IDXGISwapChain1* real = nullptr;
+    t_wrapping = true;
+    HRESULT hr = f->CreateSwapChainForHwnd(dev, wnd, d, fs, o, &real);
+    t_wrapping = false;
+    if (SUCCEEDED(hr)) *pp = (IDXGISwapChain1*)new Wrap{g_wrap_vt, real, 1};
+    return hr;
+}
+static int frames_wrap_rows(const std::wstring& dir, int n) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    auto proxy_create = m ? (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice") : nullptr;
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    CHECK(proxy_create && SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+    for (auto& s : g_wrap_vt) s = (void*)wrap_unused;
+    g_wrap_vt[0] = (void*)wrap_qi, g_wrap_vt[1] = (void*)wrap_addref, g_wrap_vt[2] = (void*)wrap_release;
+    g_wrap_vt[8] = (void*)wrap_present, g_wrap_vt[22] = (void*)wrap_present1;
+    void** fvt = *(void***)f;
+    DWORD old;
+    CHECK(VirtualProtect(&fvt[15], sizeof(void*), PAGE_READWRITE, &old));
+    g_wrap_create = fvt[15], fvt[15] = (void*)wrap_create;
+    VirtualProtect(&fvt[15], sizeof(void*), old, &old);
+    ID3D12Device* dev = nullptr;
+    ID3D12CommandQueue* q = nullptr;
+    D3D12_COMMAND_QUEUE_DESC qd = {};
+    CHECK(SUCCEEDED(proxy_create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))) && SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q))));
+    HWND wnd = CreateWindowExW(0, L"STATIC", L"scskiller frameswrap", WS_OVERLAPPEDWINDOW, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr);
+    DXGI_SWAP_CHAIN_DESC1 d = {64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2};
+    d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    IDXGISwapChain1* sc = nullptr;
+    CHECK(wnd && SUCCEEDED(f->CreateSwapChainForHwnd(q, wnd, &d, nullptr, nullptr, &sc)) && *(void***)sc == g_wrap_vt);
+    printf("wrapper ours %d\n", module_of(g_wrap_vt[8]) == m || module_of(g_wrap_vt[22]) == m);
+    void** rvt = *(void***)((Wrap*)sc)->real;
+    printf("real ours %d\n", module_of(rvt[8]) == m && module_of(rvt[22]) == m);
+    DXGI_PRESENT_PARAMETERS p = {};
+    for (int i = 0; i < n; ++i) sc->Present(0, 0), sc->Present1(0, 0, &p);
+    Sleep(2500);  // the proxy writes the frames once a second
+    printf("frames %ld\n", frames_in(dir));
+    return 0;
+}
+
 // `selftest framesheld`: presents on WARP through the proxy while scskiller_frames.bin is held open by another handle, so
 // the proxy's first writes of it fail, then one present after it is let go. Prints "drift_us <n>": how far that frame's
 // time in the file is from its QueryPerformanceCounter, from the file's launch record (frames lost, never time).
@@ -3436,7 +3529,7 @@ static int unload_rows(const std::wstring& dir) {
 
 // The app's attestation for this exe, as ScsKiller.WriteAttestation writes it: scskiller.armed here (its nonce kept when it
 // has one, so copies of this exe running from the same folder share it) and the ledger entry
-// %LOCALAPPDATA%\SCSKiller\armed\<the first of ledger_keys>, removed when this process exits.
+// <ledger_dir>\<the first of ledger_keys>, removed when this process exits.
 static std::wstring g_ledger;
 static void arm_self(const std::wstring& dir, const std::wstring& exe) {
     WIN32_FILE_ATTRIBUTE_DATA self;
@@ -3453,14 +3546,9 @@ static void arm_self(const std::wstring& dir, const std::wstring& exe) {
     WritePrivateProfileStringW(L"scskiller", L"nonce", nonce, armed.c_str());
     WritePrivateProfileStringW(L"scskiller", L"exe_size", std::to_wstring((uint64_t)self.nFileSizeHigh << 32 | self.nFileSizeLow).c_str(), armed.c_str());
     WritePrivateProfileStringW(L"scskiller", L"exe_time", std::to_wstring((uint64_t)self.ftLastWriteTime.dwHighDateTime << 32 | self.ftLastWriteTime.dwLowDateTime).c_str(), armed.c_str());
-    const std::wstring key = ledger_keys(exe).front();   // the one the proxy reads
-    PWSTR local = nullptr;
-    if (key.empty() || FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local)))
-        return CoTaskMemFree(local);
-    std::wstring ledger = std::wstring(local) + L"\\SCSKiller";
-    CoTaskMemFree(local);
-    CreateDirectoryW(ledger.c_str(), nullptr);
-    CreateDirectoryW((ledger += L"\\armed").c_str(), nullptr);
+    const std::wstring key = ledger_keys(exe).front(), ledger = ledger_dir();   // the one the proxy reads
+    if (key.empty() || ledger.empty()) return;
+    CreateDirectoryW(ledger.substr(0, ledger.find_last_of(L'\\')).c_str(), nullptr), CreateDirectoryW(ledger.c_str(), nullptr);
     g_ledger = ledger + L"\\" + key;
     WritePrivateProfileStringW(L"scskiller", L"nonce", nonce, g_ledger.c_str());
     atexit([] { DeleteFileW(g_ledger.c_str()); });
@@ -3470,9 +3558,11 @@ int wmain(int argc, wchar_t** argv) {
     wchar_t p[MAX_PATH];
     GetModuleFileNameW(nullptr, p, MAX_PATH);
     std::wstring a = p, dir = a.substr(0, a.find_last_of(L'\\') + 1);
+    if (argc > 1 && !wcscmp(argv[1], L"sysdxgi")) return sys_dxgi_rows();  // no proxy: never armed
     // The proxy records only under the app's attestation (ScsKiller.ArmedFile); here the selftest is the app. Kept when
     // there already, none with SCSKILLER_SELFTEST_UNARMED set.
     if (!GetEnvironmentVariableW(L"SCSKILLER_SELFTEST_UNARMED", nullptr, 0)) arm_self(dir, a);
+    if (argc > 2 && !wcscmp(argv[1], L"frameswrap")) return frames_wrap_rows(dir, _wtoi(argv[2]));
     if (argc > 1 && !wcscmp(argv[1], L"layoutrules")) return layout_rules();
     if (argc > 2 && !wcscmp(argv[1], L"so")) return so_rows(dir, (unsigned)_wtoi(argv[2]));
     if (argc > 2 && !wcscmp(argv[1], L"frames")) return frames_rows(dir, _wtoi(argv[2]));

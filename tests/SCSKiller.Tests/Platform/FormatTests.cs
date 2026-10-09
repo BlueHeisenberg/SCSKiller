@@ -49,16 +49,15 @@ public class FormatTests
             null, null, null, null, "610.88", null, null, false, null);
 
     /// <summary>"Not supported yet · An app update is needed for support": an unsupported game's page and Library tooltip
-    /// add no notes to its reason, not a shader mod's nor a nearly full cache file's; other statuses keep them.</summary>
+    /// add no notes to its reason, not a shader mod's; other statuses keep them.</summary>
     [Fact]
     public void An_unsupported_game_shows_its_reason_alone()
     {
-        var unsupported = S(GameStatus.Unsupported, "An app update is needed for support") with { ShaderMod = "RenoDX", CacheFileFull = true };
-        Assert.Equal(("", ""), (Format.ModNote(unsupported), Format.CacheFileNote(unsupported)));
+        var unsupported = S(GameStatus.Unsupported, "An app update is needed for support") with { ShaderMod = "RenoDX" };
+        Assert.Equal("", Format.ModNote(unsupported));
 
         var warmed = unsupported with { Status = GameStatus.Warmed };
         Assert.StartsWith("; RenoDX ", Format.ModNote(warmed));
-        Assert.Equal(". " + char.ToUpperInvariant(ScsKiller.CacheFileFullNote[0]) + ScsKiller.CacheFileFullNote[1..], Format.CacheFileNote(warmed));
     }
 
     /// <summary>A Library row's note is a few words for each reason the core gives (the whole one stays the tooltip's).</summary>
@@ -99,6 +98,7 @@ public class FormatTests
             (S(GameStatus.Stale, "driver changed: 596.36 -> 610.88"), "Driver 610.88 cleared its cache"),
             (S(GameStatus.Stale, ScsKiller.TrimmedPartReason), "The driver trimmed its cache"),
             (S(GameStatus.Stale, ScsKiller.MissesGameReason), "The compile missed the game's cache"),
+            (S(GameStatus.Unsupported, ScsKiller.CantReachReason), "The compile can't reach this game"),
             (S(GameStatus.Stale, "game updated since the warm (build 1 -> 2)"), "Game updated"),
             (S(GameStatus.Stale, "game shaders changed since the warm"), "Game shaders changed"),
             (S(GameStatus.Stale, "SCSKiller can now compile 120 more pipelines for this game"), "SCSKiller can compile more"),

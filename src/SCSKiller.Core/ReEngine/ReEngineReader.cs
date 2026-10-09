@@ -139,7 +139,7 @@ public sealed class ReEngineReader(string dataDir, Func<string, string?>? downlo
         long bytes = 0, containers = 0, bad = 0;
         // ponytail: one decompressed material file per worker in memory (PRAGMATA: 5 MB average); cap the parallelism if a
         // title ships material files in the hundreds of MB
-        Parallel.ForEach(files, new ParallelOptions { CancellationToken = ct }, f =>
+        Parallel.ForEach(files, new ParallelOptions { TaskScheduler = TaskScheduler.Current, CancellationToken = ct }, f =>
         {
             byte[] data;
             try { data = f.Pak.Read(f.Pak.Entries[f.Index]); }

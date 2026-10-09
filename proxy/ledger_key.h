@@ -4,9 +4,25 @@
 // it can be read. The proxy reads the first; the app writes them all.
 #pragma once
 #include <windows.h>
+#include <shlobj.h>
 #include <bcrypt.h>
 #include <string>
 #include <vector>
+
+// The app's ledger folder, %LOCALAPPDATA%\SCSKiller\armed ("" when it can't be had). SCSKILLER_TEST_LEDGER_DIR replaces it
+// only in a process exporting SCSKiller_WarmHost (selftest, scskiller_warm), never in a game: an environment a launcher or
+// another program passes down can't move where a game's admission reads. Set there but unusable: "", never the real one.
+inline std::wstring ledger_dir() {
+    if (GetProcAddress(GetModuleHandleW(nullptr), "SCSKiller_WarmHost")) {
+        wchar_t v[MAX_PATH];
+        if (DWORD n = GetEnvironmentVariableW(L"SCSKILLER_TEST_LEDGER_DIR", v, MAX_PATH)) return n < MAX_PATH ? v : L"";
+    }
+    PWSTR local = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local))) return CoTaskMemFree(local), L"";
+    std::wstring dir = local;
+    CoTaskMemFree(local);
+    return dir + L"\\SCSKiller\\armed";
+}
 
 inline std::wstring ledger_hex(const void* p, size_t n) {
     UCHAR h[20];

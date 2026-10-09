@@ -289,58 +289,6 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Nvidia_in_use_bytes_come_from_the_header_else_from_where_the_zero_tail_starts()
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "scsk-nv-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        string Nvph(string name, int length, ReadOnlySpan<byte> magic, long used)
-        {
-            var b = new byte[length];
-            magic.CopyTo(b);
-            if (length >= 16) BitConverter.TryWriteBytes(b.AsSpan(8), used);
-            var path = Path.Combine(dir, name);
-            File.WriteAllBytes(path, b);
-            return path;
-        }
-        long? Used(string path) => NvidiaAppCache.UsedBytes(new FileInfo(path), 64);
-        try
-        {
-            var valid = Nvph("0002a91d11111111.nvph", 4096, "nvph"u8, 1000);
-            Assert.Equal(1000, Used(valid));
-            Assert.Equal(4096, Used(Nvph("32e6a91d11111111.nvph", 4096, "nvph"u8, 4096)));      // full
-            // not a plausible header: the data ends in the first 64-byte block, the rest is the zero tail
-            Assert.Equal(64, Used(Nvph("7e55a91d22222222.nvph", 4096, "nvph"u8, 1L << 50)));   // past the end
-            Assert.Equal(64, Used(Nvph("7e55a91d33333333.nvph", 4096, "nvph"u8, -5)));
-            Assert.Equal(64, Used(Nvph("0002a91d44444444.nvph", 4096, "xxxx"u8, 1000)));        // not the magic
-            Assert.Equal(64, Used(Nvph("0002a91d55555555.nvph", 4096, "nvph"u8, 0)));
-            Assert.Equal(10, Used(Nvph("0002a91d66666666.nvph", 10, "nvph"u8, 0)));             // truncated
-            Assert.Equal(0, Used(Nvph("0002a91d77777777.nvph", 0, [], 0)));
-            Assert.Equal(0, Used(Nvph("0002a91d99999999.nvph", 4096, [], 0)));                 // all zero
-
-            // the driver's own handle (any sharing that lets a reader in) doesn't stop the read, and the read doesn't
-            // stop the driver writing or deleting meanwhile
-            using (var driver = new FileStream(valid, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
-                Assert.Equal(1000, Used(valid));
-            using (var driver = new FileStream(valid, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete))
-            using (var reader = new FileStream(valid, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-            {
-                driver.Write(new byte[16]);   // our sharing lets the writer go on
-                driver.Flush();
-                Assert.Equal(0, Used(valid));   // its header now reads as zero, and so does the rest
-            }
-            // locked exclusively by another handle: not known, no exception; the sum counts it whole
-            var locked = Nvph("0002a91d88888888.nvph", 8192, "nvph"u8, 3000);
-            var cache = new NvidiaAppCache(dir);
-            using (new FileStream(locked, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-                Assert.Equal((null, 8192L), (Used(locked), cache.UsedOf(["88888888"])));
-            Assert.Equal(3000, Used(locked));
-            Assert.Equal((8192L, 3000L), (cache.SizeOf(["88888888"]), cache.UsedOf(["88888888"])));
-            Assert.Equal((8192L, 4096L), (cache.SizeOf(["11111111"]), cache.UsedOf(["11111111"])));   // an empty file and a full one
-        }
-        finally { Directory.Delete(dir, recursive: true); }
-    }
-
-    [Fact]
     public void Amd_cache_file_names_map_to_app_keys()
     {
         // FNV-1a-32 of the UTF-16LE exe name, case-sensitive: keys observed in DxcCache on AMD
@@ -958,6 +906,10 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
             Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(Install("clean", @"Game\Plugins\NCGuardSDKTools\readme.txt", "notes.xem.txt")));
             Assert.Equal(AntiCheat.BattlEye, GameFiles.DetectAntiCheat(Install("beclient", @"Game\Binaries\Win64\BEClient_x64.dll")));
             Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(Install("warframe", "Warframe.x64.exe")));
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(Install("aniimo", @"Game\Binaries\Win64\NEP2.dll")));
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(Install("aniimo-cleaner", "NEPCleaner.exe")));
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(Install("halo", "arbiter.dll")));
+            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(Install("not-arbiter", "arbiter.dll.bak", @"Game\myarbiter.dll", "nep2.txt")));
         }
         finally { Directory.Delete(root, true); }
     }

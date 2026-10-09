@@ -842,6 +842,7 @@ public sealed partial class ScsKiller : IScsKiller
             _ when GameVerdicts.Current.Unsupported(g, engine) is { } why => (GameStatus.Unsupported, why.Text),
             _ when reshade is { Blocks: true } => (GameStatus.Unsupported, ShaderModReason(reshade)),
             Readiness.Unsupported => (GameStatus.Unsupported, check.Reason),
+            _ when CantReach(g, rec, gpuNow) => (GameStatus.Unsupported, CantReachReason),
             // no plan source at all: the game files, this PC's recording and the community's were each checked
             Readiness.NeedsRecording when OfflineEac.Of(g, antiCheat, engine) != null && !File.Exists(RecordingPath(g.Id)) && CommunityInUse(g.Id) == null
                 => (GameStatus.NeedsRecording, OfflineSessionNote),   // a recording without draws keeps the arm below
@@ -877,8 +878,8 @@ public sealed partial class ScsKiller : IScsKiller
                 LastFrames = frames, ShaderMod = shaderMod?.Mod, ShaderModBlocks = reshade?.Blocks == true, ShaderModLayer = reshade?.Layered == true,
                 ShaderModAsD3D12 = reshade is { Layered: true, AsD3D12: true }, RtUnseen = rtUnseen, RtToPlan = rtToPlan, RecordedEnough = rec.RecordedLong, RootUnconfirmed = unconfirmed,
                 StreamlineFirst = slFirst && engine != null && check.Readiness != Readiness.Unsupported,
-                NoStutter = NoStutterOf(g, engine, StutterList.Current.Find(g)), CacheInUse = CacheInUse(rec.CacheKeys),
-                CompileUnreached = unreached && status != GameStatus.Unsupported, CacheFileFull = nvidia && AppCache is NvidiaAppCache nv && nv.NearlyFull(rec.CacheKeys),
+                NoStutter = NoStutterOf(g, engine, StutterList.Current.Find(g)),
+                CompileUnreached = unreached && status != GameStatus.Unsupported,
                 NotPlanned = GameVerdicts.Current.Unsupported(g, engine) is { } verdict ? verdict.Kind == GameVerdicts.UnsupportedVerdict
                     : status == GameStatus.Unsupported && reshade is not { Blocks: true } && antiCheat != AntiCheat.None   // a recording its anti-cheat blocks
                       && (check.Readiness == Readiness.NeedsRecording || RootSig.PlannedOnlyFromARecording(engine?.Fork)) },
@@ -1646,6 +1647,14 @@ public sealed partial class ScsKiller : IScsKiller
     public static bool WarmMissesGame(GameRecord r) =>
         r.GameKeys.Count > 0 && (r.WarmedKeys ?? r.CacheKeys.Except(r.GameKeys).ToHashSet()) is { Count: > 0 } warmed && !warmed.Overlaps(r.GameKeys);
 
+    /// <summary>The last complete warm missed the game (<see cref="WarmMissesGame"/>) and the next would run the same way: same
+    /// driver (kept through Clear cache), exe name and AGS registration. A packaged game is left out: its warm's package
+    /// activation can fail one time and not the next.</summary>
+    bool CantReach(Game g, GameRecord r, GpuSnapshot gpu) =>
+        WarmMissesGame(r) && !(Vendor.Caps.PackageKeyed && g.Store == Core.Store.Xbox)
+        && (r.WarmedDriverId == null && r.WarmedDriverVersion == null || CurrentDriver(gpu, r.WarmedDriverId, r.WarmedDriverVersion)) && AgsFor(g, r)?.App == r.WarmedAgsApp
+        && WarmExeName(g, r) == (r.WarmedExeName ?? Path.GetFileName(g.ExePath));
+
     /// <summary>A warm under an AGS app name whose game's own keys aren't known, and the game's first launch after it still
     /// compiled most of its pipelines (<see cref="IsPartlyWarmed(LaunchCheck?)"/>): taken as a miss, so the next warm is plain.</summary>
     public static bool AgsLaunchMissed(GameRecord r) =>
@@ -1657,9 +1666,9 @@ public sealed partial class ScsKiller : IScsKiller
         + "): the next compile runs without it";
 
     public const string MissesGameReason = "the compile didn't reach this game's cache: the game uses another driver-cache key";
+    public const string CantReachReason = "the compile can't reach this game: it reads its shaders from a different driver cache than the one SCSKiller fills. Clear its cache to free the space";
     public const string UnreachedReason = "the compile didn't help this game on NVIDIA, it needs a custom loader";
     public const string ClearForGameNote = "its compiled cache isn't used, clear it to free the space";
-    public const string CacheFileFullNote = "its NVIDIA cache file is nearly full: clear its cache to give the game room";
 
     /// <summary>Hits stay under it: a cache hit under a 70-thread precompile took 5 ms at the median (graphics 0.6 ms). A
     /// warm the game's lookups miss: 42-140 ms.</summary>
@@ -1851,7 +1860,8 @@ public sealed partial class ScsKiller : IScsKiller
         if (!driver) return true;
         // the keys stay: they are this exe name's, so the cache the game builds by itself still counts in CacheOnDisk
         if (!IsUnreached(rec)) rec.UnreachedWarm = null;   // a verdict on an older warm: with WarmedAt gone it would apply again
-        (rec.WarmedAt, rec.WarmedDriverVersion, rec.WarmedDriverId, rec.LastWarmTime, rec.LastCacheGrowthBytes, rec.ResumeAt) = (null, null, null, null, null, 0);
+        (rec.WarmedAt, rec.LastWarmTime, rec.LastCacheGrowthBytes, rec.ResumeAt) = (null, null, null, 0);
+        if (!WarmMissesGame(rec)) (rec.WarmedDriverVersion, rec.WarmedDriverId) = (null, null);   // CantReach compares the driver the warm missed on
         (rec.LastWarmFailed, rec.LastWarmSkipped, rec.LastWarmNeedsRecording, rec.LastWarmCrashed) = (null, null, null, null);
         (rec.WarmedCareful, rec.FirstLaunch, rec.WarmedFiles) = (false, null, null);
         Store.SaveGame(gameId, rec);
@@ -2715,6 +2725,49 @@ public sealed partial class ScsKiller : IScsKiller
     public Task RecorderIndexing { get; private set; } = Task.CompletedTask;
     readonly ConcurrentDictionary<string, CancellationTokenSource> _recorderIndexes = new();
 
+    /// <summary>Another SCSKiller process runs a queue item (<see cref="Busy"/>, which this one holds too).</summary>
+    internal Func<bool> OtherCompile { get; set; } = () => Busy.IsHeld();
+
+    /// <summary>A background index waits while it's true: an item runs or the started queue has more.</summary>
+    bool CompileRunning() => Compiling || QueueRunning || OtherCompile();
+
+    readonly ConcurrentDictionary<string, byte> _parkedIndexes = new();   // stopped for a compile: queued again to wait for the queue
+    int _readingIndexes;   // past the wait: a compile in this process starts only once it is 0
+
+    void ParkIndex(string id, CancellationTokenSource cts)
+    {
+        _parkedIndexes[id] = 0;
+        cts.Cancel();
+    }
+
+    /// <summary>Below-normal threads, as the warm's. The engine readers' Parallel loops run on the caller's scheduler
+    /// (<see cref="TaskScheduler.Current"/>), so their workers do too. Measured: an index on normal-priority threads took
+    /// about 18% off a compile's rate.</summary>
+    sealed class BelowNormalScheduler : TaskScheduler
+    {
+        public static readonly BelowNormalScheduler Instance = new(Environment.ProcessorCount);
+        [ThreadStatic] static bool ours;
+        readonly BlockingCollection<Task> tasks = [];
+        readonly int threads;
+
+        BelowNormalScheduler(int threads)
+        {
+            this.threads = threads;
+            for (int i = 0; i < threads; i++)
+                new Thread(() =>
+                {
+                    SetThreadPriority(GetCurrentThread(), 0x00010000);   // THREAD_MODE_BACKGROUND_BEGIN: low I/O and memory priority
+                    (ours, Thread.CurrentThread.Priority) = (true, ThreadPriority.BelowNormal);
+                    foreach (var t in tasks.GetConsumingEnumerable()) TryExecuteTask(t);
+                }) { IsBackground = true, Name = "SCSKiller background index" }.Start();
+        }
+
+        public override int MaximumConcurrencyLevel => threads;
+        protected override void QueueTask(Task task) => tasks.Add(task);
+        protected override bool TryExecuteTaskInline(Task task, bool queued) => ours && TryExecuteTask(task);   // a queued one runs once: a worker's later try is a no-op
+        protected override IEnumerable<Task> GetScheduledTasks() => tasks.ToArray();
+    }
+
     /// <summary>The exe too: a store's build id is only the listed one until the next scan, and the watcher re-arms an
     /// update before that.</summary>
     static bool Indexed(Game g, GameRecord rec) => rec.IndexContentHash != null && IndexIsInstalled(g, rec) && rec.IndexExeStamp == ExeStamp(g);
@@ -2730,19 +2783,25 @@ public sealed partial class ScsKiller : IScsKiller
         var cts = new CancellationTokenSource();
         if (!_recorderIndexes.TryAdd(g.Id, cts)) return;
         lock (_recorderIndexes)
-            RecorderIndexing = RecorderIndexing.ContinueWith(_ => RunRecorderIndex(g.Id, cts.Token), CancellationToken.None,
-                TaskContinuationOptions.LongRunning, TaskScheduler.Default);
+            RecorderIndexing = RecorderIndexing.ContinueWith(_ => RunRecorderIndex(g.Id, cts), CancellationToken.None,
+                TaskContinuationOptions.None, BelowNormalScheduler.Instance);
     }
 
-    void RunRecorderIndex(string id, CancellationToken ct)
+    void RunRecorderIndex(string id, CancellationTokenSource cts)
     {
+        var ct = cts.Token;
         string name = id;
         Game? again = null;
+        bool parked = false, reading = false;
         try
         {
-            Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;   // its own thread (LongRunning), as the warm's default priority
-            while (Settings.PauseWhileGaming && _playing.Count > 0 && !ct.IsCancellationRequested) Thread.Sleep(Poll);   // the watcher's: no process list per wait
-            if (ct.IsCancellationRequested || Games.FirstOrDefault(s => s.Game.Id == id) is not { Engine: { Unsupported: null, Encrypted: false } engine, Game: var g }) return;
+            while ((Settings.PauseWhileGaming && _playing.Count > 0 || CompileRunning()) && !ct.IsCancellationRequested) Thread.Sleep(Poll);   // the watcher's: no process list per wait
+            Interlocked.Increment(ref _readingIndexes);
+            reading = true;
+            if (CompileRunning()) ParkIndex(id, cts);   // after the count: a compile starting meanwhile either sees it or is seen here
+            ct.ThrowIfCancellationRequested();
+            using var watch = new Timer(_ => { if (CompileRunning()) ParkIndex(id, cts); }, null, Poll, Poll);   // a compile starting in another process stops it
+            if (Games.FirstOrDefault(s => s.Game.Id == id) is not { Engine: { Unsupported: null, Encrypted: false } engine, Game: var g }) return;
             name = g.Name;
             if (GameRunning(g)) return;
             using var own = CompileLock(id);
@@ -2757,10 +2816,13 @@ public sealed partial class ScsKiller : IScsKiller
         catch (Exception e) { Log?.Report($"{name}: couldn't read the game's shaders before recording: {e.Message}"); }
         finally
         {
+            if (reading) Interlocked.Decrement(ref _readingIndexes);
+            parked = _parkedIndexes.TryRemove(id, out _) && again == null;
             _recorderIndexes.TryRemove(id, out _);
             RequestCollect();
         }
         if (again != null) IndexForRecorder(again);
+        else if (parked && Games.FirstOrDefault(s => s.Game.Id == id) is { } state) IndexForRecorder(state.Game);
     }
 
     /// <summary>After indexing a build the recording wasn't checked against: shader bytes the index now has are dropped, and
@@ -2890,7 +2952,7 @@ public sealed partial class ScsKiller : IScsKiller
         : s.ShaderModBlocks ? SkipShaderMod
         : s.RootUnconfirmed ? SkipManual
         : s.StreamlineFirst ? SkipStreamline   // its status is Unsupported for this reason, not "not supported yet"
-        : s.Engine == null || s.Status == GameStatus.Unsupported ? SkipUnsupported
+        : s.Engine == null || s.Status == GameStatus.Unsupported && s.StatusReason != CantReachReason ? SkipUnsupported   // its recorder learns the launched exe name's case, which may let a compile reach it
         : !s.Engine.GraphicsApi.Contains("D3D12") ? SkipNotDx12   // the proxy is d3d12.dll; "D3D11 or D3D12" may run on it
         : modSkip != null ? modSkip   // ReShade, OptiScaler, another wrapper: never replaced, chained only when the user asks
         : s.Game.ExePath.Contains(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase) ? SkipNeedsAdmin
@@ -3954,7 +4016,8 @@ public sealed partial class ScsKiller : IScsKiller
 
     void Add(string gameId, bool whenIdle, bool planCheck = false, bool prompt = false)
     {
-        if (!planCheck && Games.FirstOrDefault(s => s.Game.Id == gameId) is { } listed && GameVerdicts.Current.Unsupported(listed.Game, listed.Engine) != null) return;
+        if (!planCheck && Games.FirstOrDefault(s => s.Game.Id == gameId) is { } listed
+            && (GameVerdicts.Current.Unsupported(listed.Game, listed.Engine) != null || listed.StatusReason == CantReachReason)) return;
         QueueItem item;
         lock (_lock)
         {
@@ -4162,7 +4225,8 @@ public sealed partial class ScsKiller : IScsKiller
             if (stopped != null) QueueChanged?.Invoke(stopped);   // QueueRunning changed
             if (exit) break;
             if (id == null) { await Task.Delay(Poll); continue; }   // only "when idle" items left and the user is here
-            if (_recorderIndexes.TryGetValue(id, out var indexing)) indexing.Cancel();   // its compile indexes it
+            foreach (var (other, indexing) in _recorderIndexes) ParkIndex(other, indexing);   // its compile indexes it, the others wait for the queue
+            while (Volatile.Read(ref _readingIndexes) > 0 && !ct.IsCancellationRequested) await Task.Delay(50);   // a read in progress stops at its next check
             try
             {
                 // no update applies under a running item, and no item starts while one is handed over (Busy.TryHold)
@@ -4261,8 +4325,6 @@ public sealed partial class ScsKiller : IScsKiller
         }
         var engine = now!.Engine!;
         var game = installed!;
-        bool background;
-        lock (_lock) background = Background || _whenIdle.Contains(id);
         var rec = Store.LoadGame(id);
         var work = Path.Combine(Store.GameDir(id), "work");
         var started = DateTime.UtcNow;
@@ -4416,6 +4478,8 @@ public sealed partial class ScsKiller : IScsKiller
                     (rec.ResumeAt, rec.ResumeItems, rec.ResumeSeconds, rec.ResumeFailed) = (0, 0, 0, 0);
                     Store.SaveGame(id, rec);
                 }
+                bool background;
+                lock (_lock) background = Background || _whenIdle.Contains(id);   // read at the warm: a Compile click before it made the item the user's
                 var threads = ThreadsOverride ?? (background ? Settings.BackgroundThreads : Settings.Threads);
                 var options = new WarmOptions(threads, background ? WarmPriority.Idle : Settings.Priority, rec.ResumeAt, CompileMemoryGB(Settings) * 1024,
                     rec.CrashKeys.Count > 0 ? [.. rec.CrashKeys] : null, cap is { } most ? Math.Min(threads, most) : 0);
@@ -4427,7 +4491,7 @@ public sealed partial class ScsKiller : IScsKiller
                 var attribution = Attribution(run, exe);
                 if (ct.IsCancellationRequested) run.Stop();   // stopped while it was starting
                 if (!_go.IsSet) run.Pause();
-                var (result, yielded) = await Watch(run, id, background, exe, game.Name);
+                var (result, yielded) = await Watch(run, id, exe, game.Name);
                 await attribution;   // a sample may be running: its keys count (cacheKeys is read below)
                 result = result with { Failed = rec.ResumeFailed + result.Failed, Skipped = skipped };   // a resumed warm counts only its own
                 progress = new WarmProgress(result.Done, result.Total, result.Failed, progress?.PerSecond ?? 0, result.CacheGrowthBytes, result.Skipped);
@@ -4589,7 +4653,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// itself, or another discovered game of that exe name, even while the run is paused. Keeps it suspended while the
     /// queue is paused, while another discovered game runs (background runs with PauseWhileGaming) or, for a "when idle"
     /// item, while the user is at the PC. Checked every 0.5 s, so input pauses it within a second.</summary>
-    async Task<(WarmResult Result, bool Yielded)> Watch(IWarmRun run, string id, bool background, string exe, string name)
+    async Task<(WarmResult Result, bool Yielded)> Watch(IWarmRun run, string id, string exe, string name)
     {
         string? applied = "";   // "" = nothing applied yet; null = running
         bool yielded = false;
@@ -4605,6 +4669,8 @@ public sealed partial class ScsKiller : IScsKiller
                 run.Stop();   // graceful (resumes a suspended run first): the driver writes and releases the game's files
                 continue;
             }
+            bool background;
+            lock (_lock) background = Background || _whenIdle.Contains(id);   // a Compile click during the warm: no longer paused for games
             var playing = background && Settings.PauseWhileGaming ? GameNameIn(running) : null;
             _pauseWhy = playing != null ? $"paused while {playing} is running" : WaitsForIdle(id) ? "paused until the PC is idle" : null;
             var want = _go.IsSet ? _pauseWhy : _pauseWhy ?? "paused";
@@ -5445,17 +5511,14 @@ public sealed partial class ScsKiller : IScsKiller
 
     public void RefreshGame(string gameId) => Refresh(Find(gameId).Game);
 
-    /// <summary>NVIDIA: how much of the game's driver-cache files is filled (<see cref="NvidiaAppCache.UsedBytes"/>); null elsewhere.</summary>
-    long? CacheInUse(IReadOnlyCollection<string> keys) => AppCache is NvidiaAppCache nv && keys.Count > 0 ? nv.UsedOf(keys) : null;
-
     public void RefreshCacheSizes()
     {
         if (AppCache is not { } cache) return;
         foreach (var s in Games)
         {
             var keys = Store.LoadGame(s.Game.Id).CacheKeys;
-            if (keys.Count == 0 || (cache.SizeOf(keys), CacheInUse(keys)) is var (size, used) && size == s.CacheOnDisk && used == s.CacheInUse) continue;
-            var now = s with { CacheOnDisk = size, CacheInUse = used };
+            if (keys.Count == 0 || cache.SizeOf(keys) is var size && size == s.CacheOnDisk) continue;
+            var now = s with { CacheOnDisk = size };
             lock (_lock)
             {
                 var i = _games.FindIndex(x => x.Game.Id == s.Game.Id);

@@ -36,15 +36,12 @@ public partial class AppTests : IDisposable
         _proxy = Path.Combine(_root, "tools", "d3d12.dll");
         Directory.CreateDirectory(Path.GetDirectoryName(_proxy)!);
         File.WriteAllBytes(_proxy, [.. "MZ fake proxy SCSKiller_StartWarm "u8, .. Guid.NewGuid().ToByteArray()]);
-        ScsKiller.LedgerDir = Path.Combine(_root, "LocalAppData", "SCSKiller", "armed");   // never the user's live ledger, unless UseLiveLedger
+        ScsKiller.LedgerDir = Path.Combine(_root, "LocalAppData", "SCSKiller", "armed");   // this test's own, unless UseProxyLedger
     }
 
-    /// <summary>The ledger the built proxy reads (FOLDERID_LocalAppData's, which a test can't redirect): the user's live one.</summary>
-    static readonly string LiveLedger = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SCSKiller", "armed");
-
-    /// <summary>For a test that runs the built proxy: the app's ledger is the one the proxy reads. Only this test's entries are
-    /// written there, and <see cref="Dispose"/> takes them out.</summary>
-    static void UseLiveLedger() => ScsKiller.LedgerDir = LiveLedger;
+    /// <summary>For a test that runs the built proxy: the app's ledger is the one the proxy reads, the run's
+    /// <see cref="TestEnv.Ledger"/>. Only this test's entries are written there, and <see cref="Dispose"/> takes them out.</summary>
+    static void UseProxyLedger() => ScsKiller.LedgerDir = TestEnv.Ledger;
 
     readonly List<ScsKiller> _killers = [];   // every one Killer made: their queues end before the folder goes
 
@@ -53,18 +50,19 @@ public partial class AppTests : IDisposable
         // a queue still compiling holds games\<id>\compile.lock: stopped and awaited, or the folder can't be deleted
         foreach (var k in _killers)
         {
-            k.RecorderIndexing.Wait(HangGuard);   // it holds compile.lock too
             k.StopQueue();
             k.WhenQueueIdle().Wait(HangGuard);
+            k.RecorderIndexing.Wait(HangGuard);   // it holds compile.lock too, and waits for the queue
         }
-        // a test that used the live ledger: only its entries go, by the exes it made, unread
-        ScsKiller.LedgerDir = LiveLedger;
-        foreach (var exe in Directory.EnumerateFiles(_root, "*.exe", SearchOption.AllDirectories))
-            foreach (var f in ScsKiller.LedgerFiles(exe).SelectMany(l => new[] { l, l + ".revoked", l + ".refused" }))
-                try { File.Delete(f); }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        // the run's proxy ledger: only this test's entries go, by the exes it made, unread
+        ScsKiller.LedgerDir = TestEnv.Ledger;
+        var keys = Directory.EnumerateFiles(_root, "*.exe", SearchOption.AllDirectories).SelectMany(ScsKiller.LedgerFiles).ToList();
+        foreach (var f in keys.SelectMany(l => new[] { l, l + ".revoked", l + ".refused" }))
+            try { File.Delete(f); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         Directory.Delete(_root, true);
         TestD3DSCache.Clean(_root, _started);   // selftest's and the staged exes' D3DSCache folders
+        TestEnv.AssertLiveLedgerUntouched(keys.Select(Path.GetFileName).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase));
     }
 
     ScsKiller Killer(IEngineReader? reader = null, IPlanner? planner = null, IWarmer? warmer = null, string driver = "100.01", Game? game = null,
@@ -78,6 +76,7 @@ public partial class AppTests : IDisposable
             Adapters = () => [Listed(v.Gpu)],   // DXGI lists the vendor's adapter, its version as the user-mode one
             Processes = Ours, ProcessNames = OurNames,
         };
+        k.OtherCompile = () => false;   // another test's queue isn't another process
         lock (_killers) _killers.Add(k);
         return k;
     }
@@ -830,7 +829,7 @@ public partial class AppTests : IDisposable
     [InlineData(false, 2)]
     public void The_proxy_reads_the_armed_file_again_before_it_admits(bool disarm, int computes)
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warm) return;
         var bin = Path.GetDirectoryName(warm)!;
         var exeDir = Directory.CreateDirectory(Path.Combine(_root, "reread")).FullName;
@@ -862,7 +861,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public void A_rejected_run_hooks_no_device_factory()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() == null) return;
         var r = Selftest(Path.Combine(_root, "rejected"), "factoryrejected", armed: null)!.Value;
         Assert.DoesNotContain("hooked 1", r.Output);
@@ -1022,7 +1021,7 @@ public partial class AppTests : IDisposable
     [InlineData(FileShare.None)]
     public async Task A_held_attestation_is_revoked_through_the_ledger_and_the_launch_records_nothing(FileShare share)
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warm) return;
         var bin = Path.GetDirectoryName(warm)!;
         File.Copy(Path.Combine(bin, "selftest.exe"), _game.ExePath, true);   // the game's exe: the process the proxy is loaded in
@@ -1095,7 +1094,7 @@ public partial class AppTests : IDisposable
     [InlineData(true)]
     public void The_proxy_needs_the_ledger_entry(bool otherNonce)
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() == null) return;
         var exeDir = Path.Combine(_root, "ledger");
         var r = Selftest(exeDir, "anticheat -", armed: Armed, ledger: ledger =>
@@ -1112,7 +1111,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public async Task A_revocation_mark_beside_a_held_ledger_entry_refuses_the_launch()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warm) return;
         var bin = Path.GetDirectoryName(warm)!;
         File.Copy(Path.Combine(bin, "selftest.exe"), _game.ExePath, true);   // the game's exe: the process the proxy is loaded in
@@ -3053,7 +3052,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public void The_proxy_chains_to_the_renamed_mod_and_records_through_it()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root != null && !File.Exists(Path.Combine(root.FullName, "SCSKiller.slnx"))) root = root.Parent;
         var bin = root == null ? null : Path.Combine(root.FullName, "proxy", "build", "Release");
@@ -3111,7 +3110,7 @@ public partial class AppTests : IDisposable
     [InlineData("old")]
     public void The_proxy_records_under_a_layer_what_the_driver_gets(string mode)
     {
-        UseLiveLedger();
+        UseProxyLedger();
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root != null && !File.Exists(Path.Combine(root.FullName, "SCSKiller.slnx"))) root = root.Parent;
         var bin = root == null ? null : Path.Combine(root.FullName, "proxy", "build", "Release");
@@ -3154,7 +3153,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public void The_proxy_counts_each_present_once()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warmExe) return;
         var bin = Path.GetDirectoryName(warmExe)!;
         var dir = Path.Combine(_root, "frames");
@@ -3199,7 +3198,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public void The_proxy_never_hooks_present_under_frame_generation()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warmExe) return;
         var bin = Path.GetDirectoryName(warmExe)!;
         (string Out, string Log) Run(string name, string arg, string? opti = null, string extra = "")
@@ -3249,12 +3248,50 @@ public partial class AppTests : IDisposable
         }
     }
 
+    /// <summary>The proxy's check that a vtable is System32 dxgi.dll's (`selftest sysdxgi`, no proxy): a factory's is; a copy
+    /// of that dxgi.dll mapped from another folder, as a game folder's dxgi.dll is, isn't, nor this exe or the heap.</summary>
+    [Fact]
+    public void Only_system32_dxgi_counts_as_the_system_dxgi()
+    {
+        if (OwnWarmExe() is not { } warmExe) return;
+        using var p = Process.Start(new ProcessStartInfo(Path.Combine(Path.GetDirectoryName(warmExe)!, "selftest.exe"), "sysdxgi")
+            { RedirectStandardOutput = true, Environment = { ["SCSKILLER_SELFTEST_UNARMED"] = "1" } })!;
+        var o = p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+        Assert.Equal(0, p.ExitCode);
+        Assert.Equal(["factory 1", "copy 0", "exe 0", "heap 0"], o.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
+    /// <summary>A mod's swap chain wrapper made through the hooked DXGI factory (`selftest frameswrap`, OptiScaler as
+    /// dxgi.dll): its vtable isn't System32 dxgi.dll's, so its Present is never the proxy's; the real swap chain it presents
+    /// through is hooked, and each present is one frame.</summary>
+    [Fact]
+    public void The_proxy_never_hooks_a_wrappers_swap_chain()
+    {
+        UseProxyLedger();
+        if (OwnWarmExe() is not { } warmExe) return;
+        var bin = Path.GetDirectoryName(warmExe)!;
+        var dir = Path.Combine(_root, "frameswrap");
+        Directory.CreateDirectory(dir);
+        File.Copy(Path.Combine(bin, "selftest.exe"), Path.Combine(dir, "selftest.exe"));
+        File.Copy(Path.Combine(bin, "d3d12.dll"), Path.Combine(dir, "d3d12.dll"));
+        File.WriteAllText(Path.Combine(dir, "scskiller.ini"), "[scskiller]\r\nmode=record\r\n");
+        using var p = Process.Start(new ProcessStartInfo(Path.Combine(dir, "selftest.exe"), "frameswrap 5") { RedirectStandardOutput = true })!;
+        var o = p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+        Assert.Equal(0, p.ExitCode);
+        Assert.Contains("wrapper ours 0", o);
+        Assert.Contains("real ours 1", o);
+        Assert.Contains("frames 10", o);
+        Assert.Contains("selftest.exe, not System32's dxgi.dll: not hooked", File.ReadAllText(Path.Combine(dir, "scskiller.log")));
+    }
+
     /// <summary>The proxy's frame file held open by another handle at first (`selftest framesheld`): the frames presented
     /// meanwhile are lost, and the first one written after keeps its own time.</summary>
     [Fact]
     public void The_proxy_loses_frames_not_time_when_its_frame_file_is_held()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warmExe) return;
         var bin = Path.GetDirectoryName(warmExe)!;
         var dir = Path.Combine(_root, "framesheld");
@@ -3275,7 +3312,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public void The_proxy_records_a_device_from_a_device_factory()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warmExe) return;
         var bin = Path.GetDirectoryName(warmExe)!;
         var dir = Path.Combine(_root, "factory");
@@ -3340,7 +3377,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public void The_proxy_hooks_no_factory_device_once_an_anti_cheat_client_is_loaded()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() == null) return;
         var r = Selftest(Path.Combine(_root, "factory-ac"), $"factory \"{AntiCheatClient()}\"")!.Value;
         if (r.Output.Contains("no factory")) return;
@@ -3368,7 +3405,7 @@ public partial class AppTests : IDisposable
     [InlineData(Armed, "", "VALORANT-Win64-Shipping.exe", 0)]               // a Riot Games title's exe
     public void The_proxy_records_only_when_armed_and_clean(string? armed, string ini, string? beside, int computes)
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() == null) return;
         var exeDir = Path.Combine(_root, "admit");
         if (beside != null) File.WriteAllBytes(Path.Combine(Directory.CreateDirectory(exeDir).FullName, beside), [0]);
@@ -3384,7 +3421,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public void The_proxy_is_admitted_when_the_game_runs_through_a_link_to_its_folder()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() == null) return;
         var exeDir = Directory.CreateDirectory(Path.Combine(_root, "Content")).FullName;
         var link = Junction(Path.Combine(_root, "WindowsApps-link"), exeDir);
@@ -3460,7 +3497,7 @@ public partial class AppTests : IDisposable
     [InlineData(@"Riot Games\VALORANT\live\ShooterGame\Binaries\Win64", "selftest.exe", "Riot Games install")]
     public void The_proxy_refuses_riot_games(string folder, string name, string why)
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() == null) return;
         var exeDir = Path.Combine(_root, folder);
         var r = Selftest(exeDir, "anticheat -", name: name)!.Value;
@@ -3470,13 +3507,45 @@ public partial class AppTests : IDisposable
         Assert.Equal(why, ScsKiller.Refused(Path.Combine(exeDir, name)));
     }
 
+    /// <summary>A selftest that arms itself is admitted (its entry is where the proxy reads) and an unarmed one's refusal is
+    /// read back, both in the run's <see cref="TestEnv.Ledger"/>; neither exe has anything in the user's live ledger.</summary>
+    [Fact]
+    public void The_selftest_and_the_proxy_use_the_test_ledger_never_the_live_one()
+    {
+        UseProxyLedger();
+        if (OwnWarmExe() is not { } warm) return;
+        var selfArmed = Directory.CreateDirectory(Path.Combine(_root, "self-armed")).FullName;
+        var exe = Path.Combine(selfArmed, "selftest.exe");
+        File.Copy(Path.Combine(Path.GetDirectoryName(warm)!, "selftest.exe"), exe);
+        File.Copy(Path.Combine(Path.GetDirectoryName(warm)!, "d3d12.dll"), Path.Combine(selfArmed, "d3d12.dll"));
+        File.WriteAllText(Path.Combine(selfArmed, "scskiller.ini"), "[scskiller]\r\nmode=record\r\nframes=0\r\n");
+        var start = new ProcessStartInfo(exe, "anticheat -") { RedirectStandardOutput = true };
+        start.Environment.Remove("SCSKILLER_SELFTEST_UNARMED");
+        using (var p = Process.Start(start)!)
+        {
+            Assert.Contains("created 0x00000000 0x00000000", p.StandardOutput.ReadToEnd());
+            p.WaitForExit();
+            Assert.Equal(0, p.ExitCode);
+        }
+        Assert.Equal(2, PsoDb.Read(Path.Combine(selfArmed, "scskiller.db")).Count(r => r.Tag == 'C'));
+
+        var unarmed = Path.Combine(_root, "unarmed");
+        Assert.Equal(0, Selftest(unarmed, "anticheat -", armed: null)!.Value.Computes);
+        Assert.Equal("not armed", ScsKiller.Refused(Path.Combine(unarmed, "selftest.exe")));
+
+        ScsKiller.LedgerDir = TestEnv.LiveLedger;   // names only: nothing there is written
+        var live = ScsKiller.LedgerFiles(exe).Concat(ScsKiller.LedgerFiles(Path.Combine(unarmed, "selftest.exe"))).ToList();
+        UseProxyLedger();
+        Assert.All(live, l => Assert.False(File.Exists(l) || File.Exists(l + ".refused") || File.Exists(l + ".revoked")));
+    }
+
     /// <summary>REFramework rewrites the loader's path of every dll in the exe's folder to a copy under _storage_: the proxy
     /// still reads its attestation beside the exe and records there. A copy really loaded from _storage_ records nothing,
     /// though an identical file is beside the exe.</summary>
     [Fact]
     public void The_proxy_records_when_a_mod_rewrites_its_loaded_path()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() == null) return;
         var dir = Path.Combine(_root, "spoofed");
         var r = Selftest(dir, "anticheat - spoof")!.Value;
@@ -3498,7 +3567,7 @@ public partial class AppTests : IDisposable
     [InlineData(true)]
     public async Task An_exe_changed_while_the_app_was_closed_is_not_armed(bool replaced)
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warm) return;
         var bin = Path.GetDirectoryName(warm)!;
         File.Copy(Path.Combine(bin, "selftest.exe"), _game.ExePath, true);   // the game's exe: the process the proxy is loaded in
@@ -3685,7 +3754,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public async Task The_proxy_leaves_why_it_passed_a_launch_through()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         var k = Killer(new FakeReader(Unreal));
         k.ProcessNames = () => new HashSet<string>();
         await k.ScanAsync(default);
@@ -3719,7 +3788,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public async Task A_change_in_the_install_disarms_the_recorder_before_any_check()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         var armed = Path.Combine(_exeDir, ScsKiller.ArmedFile);
         var k = Killer(new FakeReader(Unreal));
         k.ProcessNames = () => new HashSet<string>();
@@ -3753,7 +3822,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public void The_proxy_stays_loaded_once_it_hooked_the_runtime()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warmExe) return;
         var bin = Path.GetDirectoryName(warmExe)!;
         var dir = Path.Combine(_root, "unload");
@@ -3774,7 +3843,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public void The_proxy_stops_recording_at_the_limit_and_keeps_the_timings()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warmExe) return;
         var bin = Path.GetDirectoryName(warmExe)!;
         var dir = Path.Combine(_root, "limit");
@@ -3841,12 +3910,112 @@ public partial class AppTests : IDisposable
     [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
     static extern bool TerminateProcess(nint process, uint exitCode);
 
+    /// <summary>The real warm on WARP with a community recording's ray tracing tail: 400 collections, a pipeline linking 300
+    /// of them and 70 AddToStateObject records chained on it, each naming 100-400 collections, then compute PSOs. Creates are
+    /// faked at 2 ms per state object named (SCSKILLER_WARM_SO_MS), the hang limit is 5 s. The chain is serial, so waiting on
+    /// a link another worker builds is no hang: one process does it all, no ray tracing poison, no retry. Needs this
+    /// checkout's proxy built.</summary>
+    [Fact]
+    public async Task A_deep_state_object_chain_completes_in_one_process_without_a_ray_tracing_retry()
+    {
+        if (await SoChainWarm(null) is not var (output, log, code)) return;
+        Assert.DoesNotContain("\"event\":\"retry\"", output);
+        Assert.DoesNotContain("can't be trusted for ray tracing", log);
+        Assert.DoesNotContain("stuck for", log);
+        var done = WarmEvent.Parse(output.Split('\n').Last(l => l.Contains("\"event\":\"done\"")))!;
+        Assert.Equal((671L, 671L, 0L), (done.Done, done.Total, done.Failed));
+        Assert.Equal(0, code);
+    }
+
+    /// <summary>The same warm with collection 10's create hanging in the driver (SCSKILLER_WARM_FAULT): past its limit the
+    /// process is poisoned, the pipeline and additions waiting on it are left too, and the run ends with a ray tracing retry
+    /// from that collection.</summary>
+    [Fact]
+    public async Task A_state_object_create_hung_past_its_limit_still_poisons_and_retries()
+    {
+        if (await SoChainWarm("10:hang") is not var (output, log, code)) return;
+        Assert.Contains("item 10 (a state object) stuck for", log);
+        Assert.Contains("can't be trusted for ray tracing", log);
+        var retry = WarmEvent.Parse(output.Split('\n').Single(l => l.Contains("\"event\":\"retry\"")))!;
+        Assert.Equal(10L, retry.From);
+        Assert.Equal(3, code);
+    }
+
+    async Task<(string Output, string Log, int Code)?> SoChainWarm(string? fault)
+    {
+        if (OwnWarmExe() is not { } warmExe) return null;
+        var luid = Process.Start(new ProcessStartInfo(Path.Combine(Path.GetDirectoryName(warmExe)!, "selftest.exe"), "warpluid") { RedirectStandardOutput = true })!
+            .StandardOutput.ReadToEnd().Trim();
+        var work = Directory.CreateDirectory(Path.Combine(_root, $"warm-so-chain-{fault?.Replace(':', '-')}")).FullName;
+        static byte[] U32(params uint[] v) => [.. v.SelectMany(BitConverter.GetBytes)];
+        static byte[] Coll(PsoDb.Rec c) => [.. U32(6), .. Convert.FromHexString(c.Key), .. U32(0)];   // existing collection, no exports
+        var colls = Enumerable.Range(0, 400).Select(i => new PsoDb.Rec('R', U32(1, 1, 3, (uint)i + 1))).ToList();   // a collection: a node mask
+        var chain = new List<PsoDb.Rec> { new('R', [.. U32(3, 300), .. colls.Take(300).SelectMany(Coll)]) };
+        for (var k = 0; k < 70; k++)
+        {
+            var named = colls.Skip(k % 7 * 10).Take(100 + k * 300 / 69).ToList();
+            chain.Add(new PsoDb.Rec('A', [.. Convert.FromHexString(chain[^1].Key), .. U32(3, (uint)named.Count), .. named.SelectMany(Coll)]));
+        }
+        var (psos, _) = ComputeDb(200);
+        using (var f = File.Create(Path.Combine(work, "scskiller.db")))
+        {
+            foreach (var r in colls.Concat(chain)) PsoDb.Write(f, r.Tag, r.Payload);
+            f.Write(psos);
+        }
+        var exe = $"scsk-so-{Guid.NewGuid():N}"[..16] + ".exe";
+        var psi = new ProcessStartInfo(warmExe, [work, exe, "--adapter-luid", luid, "--threads", "16"]) { RedirectStandardOutput = true, RedirectStandardError = true };
+        psi.Environment["SCSKILLER_WARM_SO_MS"] = "2";
+        psi.Environment["SCSKILLER_WARM_STUCK_S"] = "5";
+        if (fault != null) psi.Environment["SCSKILLER_WARM_FAULT"] = fault;
+        psi.Environment["SCSKILLER_WARM_EXIT_S"] = "30";   // a poisoned process's hung thread may hold its exit
+        using var p = Process.Start(psi)!;
+        var err = p.StandardError.ReadToEndAsync();
+        var output = await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromMinutes(5));
+        await p.WaitForExitAsync();
+        await err;
+        return (output, File.ReadAllText(Directory.GetFiles(work, "scskiller.log", SearchOption.AllDirectories).Single()), p.ExitCode);
+    }
+
+    /// <summary>The real warm on WARP whose last state object's Release never returns at the end (SCSKILLER_WARM_RELEASE_HANG):
+    /// past the hang limit without progress it is left to the process exit, and the warm still ends with its done event. No
+    /// items: the 2 s limit also abandons a PSO that WARP compiles that slowly on a busy machine, and a warm that abandoned a
+    /// worker leaves its state objects to the exit unwatched. Needs this checkout's proxy built.</summary>
+    [Fact]
+    public async Task A_state_object_release_hanging_at_the_end_still_ends_the_warm()
+    {
+        if (OwnWarmExe() is not { } warmExe) return;
+        var luid = Process.Start(new ProcessStartInfo(Path.Combine(Path.GetDirectoryName(warmExe)!, "selftest.exe"), "warpluid") { RedirectStandardOutput = true })!
+            .StandardOutput.ReadToEnd().Trim();
+        var work = Directory.CreateDirectory(Path.Combine(_root, "warm-release-hang")).FullName;
+        File.WriteAllBytes(Path.Combine(work, "scskiller.db"), []);
+        var exe = $"scsk-rh-{Guid.NewGuid():N}"[..16] + ".exe";
+        var psi = new ProcessStartInfo(warmExe, [work, exe, "--adapter-luid", luid, "--threads", "2"]) { RedirectStandardOutput = true, RedirectStandardError = true };
+        psi.Environment["SCSKILLER_WARM_RELEASE_HANG"] = "1";
+        psi.Environment["SCSKILLER_WARM_STUCK_S"] = "2";
+        using var p = Process.Start(psi)!;
+        try
+        {
+            var err = p.StandardError.ReadToEndAsync();
+            var output = await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromMinutes(1));
+            await p.WaitForExitAsync();
+            await err;
+            var done = WarmEvent.Parse(output.Split('\n').Single(l => l.Contains("\"event\":\"done\"")))!;
+            Assert.Equal((0L, 0L, 0L), (done.Done, done.Total, done.Failed));
+            Assert.Equal(0, p.ExitCode);
+            Assert.Contains("made no progress for 2 s", File.ReadAllText(Directory.GetFiles(work, "scskiller.log", SearchOption.AllDirectories).Single()));
+        }
+        finally
+        {
+            if (!p.HasExited) p.Kill(entireProcessTree: true);
+        }
+    }
+
     /// <summary>A zero-filled tail of scskiller.db (the power lost while the file grew) is a torn tail, not records of tag 0:
     /// the proxy on WARP cuts it and records after the last whole record. Needs this checkout's proxy built.</summary>
     [Fact]
     public void The_proxy_cuts_a_zero_filled_tail_of_its_db()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warmExe) return;
         var bin = Path.GetDirectoryName(warmExe)!;
         var dir = Path.Combine(_root, "zeros");
@@ -3879,7 +4048,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public void The_proxy_leaves_a_db_another_process_writes_alone()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warmExe) return;
         var bin = Path.GetDirectoryName(warmExe)!;
         var dir = Path.Combine(_root, "shared");
@@ -3914,7 +4083,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public void The_proxy_records_only_what_the_keys_file_does_not_name()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warmExe) return;
         var bin = Path.GetDirectoryName(warmExe)!;
         var dir = Path.Combine(_root, "keys");
@@ -4217,6 +4386,49 @@ public partial class AppTests : IDisposable
         Assert.Equal(0, reader.Indexes);
         Assert.False(File.Exists(Path.Combine(_exeDir, Recordings.KeysFile)));
         Assert.Null(k.Store.LoadGame(_game.Id).IndexContentHash);
+    }
+
+    /// <summary>A background index for the recorder waits while a compile runs. A compile starting stops a running one, which
+    /// is queued again and reads once the compile ends. Every reader thread runs below normal priority, as the warm's.</summary>
+    [Fact]
+    public async Task The_index_for_the_recorder_waits_for_compiles_and_runs_below_normal()
+    {
+        var reader = new BlobReader(Unreal, new() { [new string('1', 40)] = [1] }, indexed: true, new string('a', 40));
+        var priorities = new System.Collections.Concurrent.ConcurrentBag<ThreadPriority>();
+        var reading = new ManualResetEventSlim();
+        reader.Indexing = ct =>
+        {
+            // as the engine readers' loops: on the caller's scheduler
+            Parallel.For(0, 64, new ParallelOptions { TaskScheduler = TaskScheduler.Current }, _ => priorities.Add(Thread.CurrentThread.Priority));
+            if (reader.Indexes > 1) return;
+            reading.Set();
+            ct.WaitHandle.WaitOne(HangGuard);   // until a compile stops it
+            ct.ThrowIfCancellationRequested();
+        };
+        var k = Killer(reader);
+        var compiling = new ManualResetEventSlim(true);   // another process's compile
+        k.OtherCompile = () => compiling.IsSet;
+        k.ProcessNames = () => new HashSet<string>();
+        k.ManageRecorders = true;
+        try
+        {
+            await k.ScanAsync(default);   // armed: its index is queued
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            Assert.Equal((0, false), (reader.Indexes, k.RecorderIndexing.IsCompleted));
+
+            compiling.Reset();
+            Assert.True(reading.Wait(HangGuard));
+            compiling.Set();
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            Assert.Equal((1, false, (string?)null), (reader.Indexes, k.RecorderIndexing.IsCompleted, k.Store.LoadGame(_game.Id).IndexContentHash));   // stopped, waiting again
+
+            compiling.Reset();
+            await k.RecorderIndexing.WaitAsync(HangGuard);
+            Assert.Equal(2, reader.Indexes);
+            Assert.Equal(new string('a', 40), k.Store.LoadGame(_game.Id).IndexContentHash);
+            Assert.Equal([ThreadPriority.BelowNormal], priorities.Distinct());
+        }
+        finally { compiling.Reset(); }   // a parked index would wait on the shared scheduler forever
     }
 
     /// <summary>The game starting while its build is indexed for the recorder stops the index: nothing is saved, and the
@@ -7173,6 +7385,48 @@ public partial class AppTests : IDisposable
     }
 
     /// <summary>The watcher sees <paramref name="exe"/> running (null: nothing, after enough polls for an exit).</summary>
+    /// <summary>A Compile click on a game whose plan check runs or waits makes the item the user's: its warm runs at the
+    /// settings' priority and threads, also while another game is played. A compile the app queues for when idle stays
+    /// background.</summary>
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task A_compile_asked_for_during_a_plan_check_runs_in_the_foreground(bool checkRunning, bool user)
+    {
+        var otherDir = Directory.CreateDirectory(Path.Combine(_root, "Other Game")).FullName;
+        List<PsoDb.Rec> records = [new('B', [.. new byte[20], 9]), new('P', [1]), new('P', [2]), new('C', [3])];
+        var (building, release) = (new ManualResetEventSlim(), new ManualResetEventSlim(true));
+        var warmer = new FakeWarmer();
+        var k = Killer(new FakeReader(Unreal), new FakePlanner(records: records, onBuild: () => { building.Set(); release.Wait(HangGuard); }), warmer,
+            games: [_game, new Game("test:other", "Other Game", Store.Other, otherDir, Path.Combine(otherDir, "Other.exe"))]);
+        k.Settings = k.Settings with { Threads = 3, Priority = WarmPriority.BelowNormal, BackgroundThreads = 2 };
+        k.IdleTime = () => TimeSpan.FromHours(1);
+        await k.ScanAsync(default);
+        await Compile(k);
+        records.Add(new('P', [4]));
+        OlderPlanner(k);
+        building.Reset();
+        if (checkRunning) release.Reset();
+        else Plays(k, "Other.exe");   // the check waits while a game is played
+        k.CheckPlans = true;
+        await k.ScanAsync(default);
+        if (checkRunning)
+        {
+            Assert.True(building.Wait(HangGuard));
+            Plays(k, "Other.exe");
+        }
+        Assert.True(k.Queue.Single(q => q.GameId == _game.Id).PlanCheck);
+
+        if (user) { k.Enqueue(_game.Id); k.StartQueue(); }
+        else { k.EnqueueWhenIdle(_game.Id); Plays(k, null); }   // a driver update's re-warm: background, paused while a game is played
+        release.Set();
+        await Until(() => warmer.Started.Count == 2);
+        await k.WhenQueueIdle().WaitAsync(HangGuard);
+        Assert.Equal(user ? (3, WarmPriority.BelowNormal) : (2, WarmPriority.Idle), (warmer.Options!.Threads, warmer.Options.Priority));
+        Plays(k, null);
+    }
+
     static void Plays(ScsKiller k, string? exe)
     {
         k.RunningGameExes = () => exe == null ? new HashSet<string>() : new HashSet<string> { exe };
@@ -7561,6 +7815,67 @@ public partial class AppTests : IDisposable
 
         foreach (var name in new[] { "dxgi.dll", "renodx-ff7rebirth.addon64" }) File.Move(In(name), Path.Combine(_game.InstallDir, name));
         Assert.Equal((LayerBlock.NotBesideExe, "ReShade must be next to the game's exe to compile through RenoDX"), Why());
+    }
+
+    /// <summary>Special K as dxgi.dll holds the name of ReShade's add-on export, to look it up, and loads ReShade as a plug-in
+    /// with the add-ons beside the exe: it is never taken for ReShade, and a RenoDX add-on that changes every pipeline
+    /// beside it blocks the game, with ReShade64.dll there or ReShade in Special K's own folders.</summary>
+    [Fact]
+    public async Task Special_K_loading_ReShade_blocks_a_mod_that_changes_every_pipeline()
+    {
+        string In(string name) => Path.Combine(_exeDir, name);
+        File.WriteAllBytes(In("dxgi.dll"), Planning.MiddlewarePackTests.Pe("SpecialK64.dll", "ReShadeRegisterAddon"u8.ToArray()));
+        Assert.Null(Core.Games.ReShade.Detect(_game));
+
+        File.WriteAllBytes(In("renodx-ff7rebirth.addon64"), RenoDxAddon);
+        var r = Core.Games.ReShade.Detect(_game)!;
+        Assert.Equal((In("dxgi.dll"), LayerBlock.SpecialK, true, false, null), (r.Dll, r.Block, r.Blocks, r.Layered, r.Fingerprint));
+        Assert.Equal("Rename ReShade to dxgi.dll next to the exe to compile through RenoDX", ScsKiller.ShaderModReason("RenoDX", r.Block));
+
+        File.WriteAllBytes(In("ReShade64.dll"), ReShadeDll);
+        r = Core.Games.ReShade.Detect(_game)!;
+        Assert.Equal((In("ReShade64.dll"), LayerBlock.SpecialK, true), (r.Dll, r.Block, r.Blocks));
+
+        var k = Killer(new FakeReader(Unreal));
+        k.ProcessNames = () => new HashSet<string>();
+        await k.ScanAsync(default);
+        var s = k.Games.Single();
+        Assert.Equal((GameStatus.Unsupported, true, ScsKiller.ShaderModReason("RenoDX", LayerBlock.SpecialK), ScsKiller.SkipShaderMod),
+            (s.Status, s.ShaderModBlocks, s.StatusReason, s.RecorderSkip));
+        Assert.Null(k.LayerFor(_game, Path.Combine(_root, "layer-work")));
+
+        File.Delete(In("ReShade64.dll"));
+        File.WriteAllText(In("ReShade.ini"), "[ADDON]\nAddonPath=addons\n");   // Special K still loads the ones beside the exe
+        Directory.CreateDirectory(In("addons"));
+        Assert.Equal((LayerBlock.SpecialK, true), (Core.Games.ReShade.Detect(_game)!.Block, Core.Games.ReShade.Detect(_game)!.Blocks));
+        File.Delete(In("ReShade.ini"));
+
+        var xbox = _game with { Store = Store.Xbox };   // in the package root, it still loads the add-ons beside the exe
+        File.Move(In("dxgi.dll"), Path.Combine(xbox.InstallDir, "dxgi.dll"));
+        Assert.Equal((Path.Combine(xbox.InstallDir, "dxgi.dll"), LayerBlock.SpecialK, true), (Core.Games.ReShade.Detect(xbox)!.Dll, Core.Games.ReShade.Detect(xbox)!.Block, Core.Games.ReShade.Detect(xbox)!.Blocks));
+        File.Move(Path.Combine(xbox.InstallDir, "dxgi.dll"), In("dxgi.dll"));
+
+        File.Move(In("dxgi.dll"), In("d3d9.dll"));   // a name the exe doesn't import: never loaded
+        File.WriteAllBytes(In("dxgi.dll"), ReShadeDll);
+        Assert.Equal((LayerBlock.None, true), (Core.Games.ReShade.Detect(_game)!.Block, Core.Games.ReShade.Detect(_game)!.Layered));
+        File.Delete(In("d3d9.dll"));
+
+        File.Move(In("dxgi.dll"), In("ReShade64.dll"));   // ReShade loaded by something else: as before
+        Assert.Equal(LayerBlock.UnloadedName, Core.Games.ReShade.Detect(_game)!.Block);
+    }
+
+    /// <summary>A DLL under one of ReShade's names, without its version resource or description, is ReShade when it exports
+    /// ReShadeRegisterAddon.</summary>
+    [Fact]
+    public void ReShade_without_a_version_resource_is_known_by_its_addon_export()
+    {
+        var dll = Planning.MiddlewarePackTests.Pe("ReShade64.dll");
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(dll.AsSpan(0x200 + 24), 1);              // NumberOfNames
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(dll.AsSpan(0x200 + 32), 0x1000 + 0x80);  // AddressOfNames
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(dll.AsSpan(0x200 + 0x80), 0x1000 + 0x90);
+        "ReShadeRegisterAddon\0"u8.CopyTo(dll.AsSpan(0x200 + 0x90));
+        File.WriteAllBytes(Path.Combine(_exeDir, "dxgi.dll"), dll);
+        Assert.Equal(Path.Combine(_exeDir, "dxgi.dll"), Core.Games.ReShade.Detect(_game)?.Dll);
     }
 
     /// <summary>The whole chain's copy takes OptiDllPath only inside the exe's folder, and libraries only as PE files within
@@ -8242,17 +8557,33 @@ public partial class AppTests : IDisposable
         Assert.True(File.Exists(Path.Combine(_root, "DXCache", "0002a91d11111111.nvph")));
     }
 
-    /// <summary>An Xbox game on NVIDIA: a warm outside its package identity filled another key than the one the game opens.</summary>
-    [Fact]
-    public async Task A_game_played_on_other_keys_than_its_warm_filled_is_not_warmed_until_a_warm_fills_its_own()
+    /// <summary>A warm filled another key than the one the game opens. An Xbox game, whose warm runs with its package identity
+    /// (which may fail one time and not the next), is Stale until a warm fills its own key. Any other game is Not compatible,
+    /// out of the queue, until a launch shows the game holding the warm's key.</summary>
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task A_game_played_on_other_keys_than_its_warm_filled_is_not_warmed_until_a_warm_fills_its_own(bool xbox, bool clear)
     {
         var warmKey = "ad873243";
         var warmer = new FakeWarmer(() => new FileStream(CacheFile($"0002a91d{warmKey}.nvph", 65536), FileMode.Open, FileAccess.ReadWrite, FileShare.Read));
         // the game is named like this test process, which holds the files the way the driver does
-        var game = NamedAs(Process.GetCurrentProcess().ProcessName + ".exe");
-        var k = Killer(new FakeReader(Unreal), warmer: warmer, game: game);
+        var game = NamedAs(Process.GetCurrentProcess().ProcessName + ".exe") with { Store = xbox ? Store.Xbox : Store.Steam };
+        var k = Killer(new FakeReader(Unreal), warmer: warmer, game: game, vendor: new FakeVendor(Gpu with { DriverVersion = "100.01" }, packageKeyed: true));
         var running = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         (k.AppCache, k.RunningGameExes) = (new NvidiaAppCache(Path.Combine(_root, "DXCache")), () => { lock (running) return running.ToHashSet(StringComparer.OrdinalIgnoreCase); });
+        async Task Launch(string key)
+        {
+            using (new FileStream(CacheFile($"0002a91d{key}.nvph", 4096), FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
+            {
+                lock (running) running.Add(Path.GetFileName(game.ExePath));
+                k.PollGames();
+                await Until(() => k.Store.LoadGame(game.Id).GameKeys.Contains(key));
+                lock (running) running.Clear();
+            }
+            for (int i = 0; i < ScsKiller.ExitPolls; i++) k.PollGames();
+        }
         await k.ScanAsync(default);
         async Task Warm()
         {
@@ -8263,22 +8594,39 @@ public partial class AppTests : IDisposable
         await Warm();
         Assert.Equal((GameStatus.Warmed, "ad873243"), (k.Games.Single().Status, string.Join(",", k.Store.LoadGame(game.Id).WarmedKeys!)));
 
-        using (new FileStream(CacheFile("0002a91d7f303a45.nvph", 4096), FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
-        {
-            lock (running) running.Add(Path.GetFileName(game.ExePath));
-            k.PollGames();
-            await Until(() => k.Store.LoadGame(game.Id).GameKeys.Count > 0);
-            lock (running) running.Clear();
-        }
-        for (int i = 0; i < ScsKiller.ExitPolls; i++) k.PollGames();
+        await Launch("7f303a45");
         var rec = k.Store.LoadGame(game.Id);
         Assert.Equal(["7f303a45"], rec.GameKeys);
         Assert.Equal(["7f303a45", "ad873243"], rec.CacheKeys.Order());   // Clear cache deletes both
-        Assert.Equal((GameStatus.Stale, ScsKiller.MissesGameReason), (k.Games.Single().Status, k.Games.Single().StatusReason));
+        if (xbox)
+        {
+            Assert.Equal((GameStatus.Stale, ScsKiller.MissesGameReason), (k.Games.Single().Status, k.Games.Single().StatusReason));
+            warmKey = "7f303a45";   // a warm with the game's package identity
+            await Warm();
+            Assert.Equal((GameStatus.Warmed, "7f303a45"), (k.Games.Single().Status, string.Join(",", k.Store.LoadGame(game.Id).WarmedKeys!)));
+            return;
+        }
+        Assert.Equal((GameStatus.Unsupported, ScsKiller.CantReachReason), (k.Games.Single().Status, k.Games.Single().StatusReason));
+        k.Enqueue(game.Id);   // the command line's compile queues through it too
+        Assert.Equal(QueueStage.Done, Assert.Single(k.Queue).Stage);   // the first compile's, not queued again
+        var newer = Killer(new FakeReader(Unreal), game: game, driver: "100.02");
+        newer.AppCache = k.AppCache;
+        await newer.ScanAsync(default);
+        Assert.Equal(GameStatus.Stale, newer.Games.Single().Status);   // another driver may key it otherwise: a compile is offered again
+        if (clear)
+        {
+            k.ProcessNames = () => new HashSet<string>();   // the game is named like this test process
+            Assert.True(k.ClearGameCache(game.Id));
+            Assert.Equal((GameStatus.Unsupported, ScsKiller.CantReachReason), (k.Games.Single().Status, k.Games.Single().StatusReason));
+            await newer.ScanAsync(default);
+            Assert.NotEqual(GameStatus.Unsupported, newer.Games.Single().Status);   // the miss's driver outlives Clear cache
+            return;
+        }
 
-        warmKey = "7f303a45";   // a warm with the game's package identity
-        await Warm();
-        Assert.Equal((GameStatus.Warmed, "7f303a45"), (k.Games.Single().Status, string.Join(",", k.Store.LoadGame(game.Id).WarmedKeys!)));
+        await Launch("ad873243");   // after a driver or game update the game holds the warm's key
+        Assert.Equal(GameStatus.Warmed, k.Games.Single().Status);
+        k.Enqueue(game.Id);
+        Assert.Equal(QueueStage.Waiting, Assert.Single(k.Queue).Stage);
     }
 
     [Fact]
@@ -8474,27 +8822,6 @@ public partial class AppTests : IDisposable
         Assert.True(ScsKiller.Unreached(((int)ScsKiller.MinJudgedCreates, ScsKiller.UnreachedMedianMs)));
         Assert.False(ScsKiller.Unreached(((int)ScsKiller.MinJudgedCreates - 1, 500)));
         Assert.False(ScsKiller.Unreached((5000, ScsKiller.UnreachedMedianMs - 0.1)));
-    }
-
-    /// <summary>Without a plausible header the data end is found by a binary search over blocks, read only, while another
-    /// handle writes the file. With one, the header says how full it is.</summary>
-    [Fact]
-    public void A_cache_files_fill_is_where_its_zero_tail_starts()
-    {
-        var path = Path.Combine(_root, "0002a91d11111111.nvph");
-        using (var f = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite))
-        {
-            f.SetLength(16 * 64);
-            f.Write(Enumerable.Repeat((byte)7, 12 * 64 + 5).ToArray());   // written from the front
-            f.Flush();
-            Assert.Equal(13 * 64, NvidiaAppCache.UsedBytes(new FileInfo(path), 64));   // no "nvph" header: the zero tail
-        }
-        Assert.Equal(13 / 16.0, NvidiaAppCache.Fill(new FileInfo(path), 64));
-        File.WriteAllBytes(path, new byte[1000]);
-        Assert.Equal(0, NvidiaAppCache.Fill(new FileInfo(path), 64));
-        Assert.False(new NvidiaAppCache(_root).NearlyFull(["11111111"]));   // under 4 GiB
-        File.WriteAllBytes(path, [.. "nvph"u8, 0, 0, 0, 0, .. BitConverter.GetBytes(900L), .. new byte[984]]);
-        Assert.Equal(0.9, NvidiaAppCache.Fill(new FileInfo(path), 64));   // the header, not the data end (64)
     }
 
     /// <summary>The four AMD games whose keys were handle-verified (ARCHITECTURE.md): a warm registers an AGS app name only
@@ -9010,15 +9337,17 @@ public partial class AppTests : IDisposable
         Assert.Equal(0, changes());                                  // unchanged: nothing raised
         var file = CacheFile("0002a91d55555555.nvph", 4096);
         k.RefreshCacheSizes();
-        Assert.Equal((1, 4096L, 0L), (changes(), k.Games.Single().CacheOnDisk, k.Games.Single().CacheInUse));   // all zero: nothing in it yet
+        Assert.Equal((1, 4096L), (changes(), k.Games.Single().CacheOnDisk));
         Assert.Equal(GameStatus.Warmed, k.Games.Single().Status);
         using (var f = new FileStream(file, FileMode.Open, FileAccess.Write)) f.Write([.. "nvph"u8, 0, 0, 0, 0, .. BitConverter.GetBytes(1024L)]);
-        k.RefreshCacheSizes();   // the driver filled more of a file of the same size
-        Assert.Equal((2, 4096L, 1024L), (changes(), k.Games.Single().CacheOnDisk, k.Games.Single().CacheInUse));
+        k.RefreshCacheSizes();   // the driver filled more of a file of the same size: its contents are never read
+        Assert.Equal(1, changes());
 
-        k.RefreshGame(_game.Id);
-        Assert.Equal(3, changes());
-        Assert.Equal(1024L, k.Games.Single().CacheInUse);   // a full evaluation reads it too
+        using (new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))   // a driver handle that shares nothing
+        {
+            k.RefreshGame(_game.Id);
+            Assert.Equal((2, 4096L), (changes(), k.Games.Single().CacheOnDisk));
+        }
         Assert.Throws<ArgumentException>(() => k.RefreshGame("test:unknown"));
     }
 
@@ -9638,7 +9967,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public async Task Real_amd_a_fresh_name_warms_under_its_name_hash_and_clearing_removes_its_files()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (GpuBackends.Detect() is not AmdBackend amd || OwnWarmExe() is not { } warmExe) return;   // not this machine, or this checkout's proxy isn't built
         var gpuLock = TestEnv.GpuLockPath;
         if (File.Exists(gpuLock) && DateTime.Now - File.GetLastWriteTime(gpuLock) < TimeSpan.FromMinutes(30)) return;   // someone's GPU run
@@ -9693,7 +10022,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public async Task Real_machine_a_small_warm_attributes_a_new_cache_key_and_clearing_removes_its_files()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (GpuBackends.Detect() is not NvidiaBackend nv || OwnWarmExe() is not { } warmExe) return;   // not this machine, or this checkout's proxy isn't built
         var gpuLock = TestEnv.GpuLockPath;
         if (File.Exists(gpuLock) && DateTime.Now - File.GetLastWriteTime(gpuLock) < TimeSpan.FromMinutes(30)) return;   // someone's GPU run
@@ -9728,7 +10057,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public async Task A_pipeline_that_removes_the_device_is_skipped_kept_and_never_created_again()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warmExe) return;
         var luid = Process.Start(new ProcessStartInfo(Path.Combine(Path.GetDirectoryName(warmExe)!, "selftest.exe"), "warpluid") { RedirectStandardOutput = true })!
             .StandardOutput.ReadToEnd().Trim();
@@ -9773,7 +10102,7 @@ public partial class AppTests : IDisposable
     [Fact]
     public async Task A_careful_pass_recovers_from_a_removed_device_and_skips_the_blamed_item_in_later_compiles()
     {
-        UseLiveLedger();
+        UseProxyLedger();
         if (OwnWarmExe() is not { } warmExe) return;
         var luid = Process.Start(new ProcessStartInfo(Path.Combine(Path.GetDirectoryName(warmExe)!, "selftest.exe"), "warpluid") { RedirectStandardOutput = true })!
             .StandardOutput.ReadToEnd().Trim();
@@ -11537,7 +11866,7 @@ public partial class AppTests : IDisposable
         public IReadOnlyList<Game> Discover() => Games;
     }
 
-    sealed class FakeVendor(GpuInfo gpu, bool perStage = false, string profile = "fake-1") : IGpuVendorBackend, IRefreshableGpu
+    sealed class FakeVendor(GpuInfo gpu, bool perStage = false, string profile = "fake-1", bool packageKeyed = false) : IGpuVendorBackend, IRefreshableGpu
     {
         public GpuVendor Vendor => Gpu.Vendor;
         public GpuInfo Gpu { get; private set; } = gpu;
@@ -11551,7 +11880,7 @@ public partial class AppTests : IDisposable
             return !Incomplete;
         }
         public string FallbackVersion(string umd) => $"fallback {umd}";
-        public VendorCaps Caps => new(profile, true, true, false, perStage);
+        public VendorCaps Caps => new(profile, true, true, false, perStage, PackageKeyed: packageKeyed);
         public CacheUsage GetCacheUsage() => new("", 0, true);
         public CacheLimit? GetCacheLimit() => null;
         public void SetCacheLimit(CacheLimit limit) => throw new NotSupportedException();

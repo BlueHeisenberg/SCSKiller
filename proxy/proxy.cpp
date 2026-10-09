@@ -58,6 +58,7 @@
 #include <unordered_set>
 #include <vector>
 #include "ledger_key.h"
+#include "sys_dxgi.h"
 
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "dxguid.lib")  // CLSID_D3D12DeviceFactory, CLSID_D3D12SDKConfiguration
@@ -217,8 +218,9 @@ static const wchar_t* const kAntiCheatMarkers[] = {  // GameFiles.Markers; "*x":
     L"LeagueClientUxRender.exe", L"LoR.exe", L"Lion-Win64-Shipping.exe", L"RiotClientServices.exe", L"RiotClientUx.exe",
     L"RiotClientUxRender.exe",
     L"NeacClient.exe", L"NeacSafe64.sys", L"NeacSafe64_ex.sys",
+    L"NEP2.dll", L"NEPCleaner.exe",
     L"BlackCall.aes", L"BlackCall64.aes", L"BlackCat64.sys", L"HShield", L"PunkBuster", L"PnkBstrA.exe", L"pbsvc.exe", L"pbsv.dll",
-    L"equ8_conf.json", L".build.info", L".product.db", L"Warframe.x64.exe", L"gameguard.des", L"DenuvoAC", L"denuvo-anti-cheat.sys", L"denuvo-anti-cheat-runtime.dll",
+    L"equ8_conf.json", L".build.info", L".product.db", L"Warframe.x64.exe", L"arbiter.dll", L"gameguard.des", L"DenuvoAC", L"denuvo-anti-cheat.sys", L"denuvo-anti-cheat-runtime.dll",
     L"denuvo-anti-cheat-update-service.exe", L"Denuvo Anti-Cheat Installer.exe", L"*.xem", L"*_BE.exe"};
 static const size_t kEasyAntiCheatMarkers = 5;  // the list's first entries
 static std::atomic<int> g_admission;  // 0 undecided, 1 records, -1 pass-through
@@ -284,20 +286,16 @@ static std::string small_file(const std::wstring& path) {
     s.resize(n);
     return s;
 }
-// The app's ledger entry for this process's exe: %LOCALAPPDATA%\SCSKiller\armed\<the first of ledger_keys>. The app writes
-// it with the nonce it puts in scskiller.armed and deletes it first when it disarms: its own folder, which nothing in the
-// game holds open. "" when the folder or the exe path can't be had.
+// The app's ledger entry for this process's exe: <ledger_dir>\<the first of ledger_keys>. The app writes it with the nonce
+// it puts in scskiller.armed and deletes it first when it disarms: its own folder, which nothing in the game holds open.
+// "" when the folder or the exe path can't be had.
 static std::wstring ledger_path() {
     std::wstring exe(32768, L'\0');
     DWORD n = GetModuleFileNameW(nullptr, exe.data(), (DWORD)exe.size());
     if (!n || n >= exe.size()) return L"";
     exe.resize(n);
-    const std::wstring key = ledger_keys(exe).front();
-    PWSTR local = nullptr;
-    if (key.empty() || FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local))) return CoTaskMemFree(local), L"";
-    std::wstring dir = local;
-    CoTaskMemFree(local);
-    return dir + L"\\SCSKiller\\armed\\" + key;
+    const std::wstring key = ledger_keys(exe).front(), dir = ledger_dir();
+    return key.empty() || dir.empty() ? L"" : dir + L"\\" + key;
 }
 // Both attestations as they are now: scskiller.armed and the ledger entry.
 static std::string armed_text() {
@@ -1387,8 +1385,39 @@ struct SoSlot {
     HRESULT hr = E_FAIL;
     std::string why;  // decode / dependency failure; empty = the driver's hr
     ID3D12StateObject* obj = nullptr;
+    std::atomic<bool> building{false}, done{false};  // done is set before building clears, both under g_defer_mx
 };
 static std::vector<std::unique_ptr<SoSlot>> g_so;  // by g_recs index, 'R' / 'A' only
+static std::vector<std::vector<size_t>> g_so_deps;  // by g_recs index: the state objects an 'R' / 'A' builds on
+
+// A chain of additions (each 'A' builds on the one before) can only be created one link at a time. A worker whose item
+// builds on a state object another worker is creating doesn't wait for it: the item waits here, the worker takes another
+// one, and the item goes back to the workers once that state object is done.
+static std::mutex g_defer_mx;
+static std::unordered_map<size_t, std::vector<size_t>> g_waiting;  // a state object being created -> the items deferred on it
+static std::deque<size_t> g_ready;                                  // deferred items whose state object is done
+static std::atomic<size_t> g_deferred;                              // deferred and not taken again
+
+// A worker's own work creating a state object (decoding, root signatures, the driver call): when it began and how long it
+// may take, since 0 = none. Paused while it waits on a state object another worker creates or for a ray tracing thread: a
+// wait is no hang. One atomic pair, so the supervisor never reads one segment's start with another's limit.
+struct SoClock {
+    struct Seg {
+        double since, limit;
+    };
+    std::atomic<Seg> seg{Seg{0, 0}};
+};
+static thread_local SoClock* t_so_clock;
+static double g_stuck_ms = 60000;
+static void so_time(double limit) {
+    if (t_so_clock) t_so_clock->seg = {live_ms(), limit};
+}
+static void so_untime() {
+    if (t_so_clock) t_so_clock->seg = {0, 0};
+}
+// A create links every state object it builds on. NVIDIA compiled Jedi Survivor's recorded collections in 42.7 ms each,
+// so 250 ms per one named (about 6x) on top of the hang limit: a 400-collection addition gets 100 s more.
+static constexpr double kSoLinkMs = 250;
 static std::vector<char> g_so_keep;
 
 // After a fault or a hang in a state object call this process's driver can't be trusted (the NVIDIA case at g_parked). The
@@ -1432,9 +1461,20 @@ static bool removed() {
 static SIZE_T g_fault_item = SIZE_MAX;  // SCSKILLER_WARM_FAULT=<item>:<av|hang> (development): a fault / hang in that state object
 static int g_fault_kind;                // 1 access violation after the create, 2 a create that never returns
 
-static __declspec(noinline) HRESULT so_call(const Rec& rec, const D3D12_STATE_OBJECT_DESC* d, ID3D12StateObject* base, ID3D12StateObject** out, size_t j) {
+// SCSKILLER_WARM_SO_MS=<ms> (development): no driver call for state objects; each create takes ms per state object it
+// builds on (plus one) and succeeds, so chains of any depth run on WARP
+static int g_so_fake_ms = -1;
+struct FakeSo : IUnknown {  // only Release is called on a created state object here
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID, void** pp) override { return *pp = nullptr, E_NOINTERFACE; }
+    ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
+    ULONG STDMETHODCALLTYPE Release() override { return 1; }
+};
+static FakeSo g_fake_so;
+
+static __declspec(noinline) HRESULT so_call(const Rec& rec, const D3D12_STATE_OBJECT_DESC* d, ID3D12StateObject* base, ID3D12StateObject** out, size_t j, int linked) {
     __try {  // a fault in the driver must not leave the once_flag half done (waiters would hang)
         if (j == g_fault_item && g_fault_kind == 2) Sleep(INFINITE);
+        if (g_so_fake_ms >= 0) return Sleep(DWORD(g_so_fake_ms) * (linked + 1)), *out = (ID3D12StateObject*)(IUnknown*)&g_fake_so, S_OK;
         HRESULT hr = rec.tag == 'A' ? o_addso && g_warm_dev7 ? o_addso(g_warm_dev7, d, base, IID_PPV_ARGS(out)) : E_NOINTERFACE
                                     : o_cso && g_warm_dev5 ? o_cso(g_warm_dev5, d, IID_PPV_ARGS(out)) : E_NOINTERFACE;
         if (j == g_fault_item && g_fault_kind == 1) *(volatile int*)nullptr = 0;
@@ -1476,6 +1516,14 @@ static double private_mb() {
     return K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&m, sizeof m) ? m.PrivateUsage / 1048576.0 : 0;
 }
 
+// SCSKILLER_WARM_RELEASE_HANG=1 (development): one more state object at the end of the warm, whose Release never returns
+struct HangSo : IUnknown {
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID, void** pp) override { return *pp = nullptr, E_NOINTERFACE; }
+    ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
+    ULONG STDMETHODCALLTYPE Release() override { return Sleep(INFINITE), 0; }
+};
+static HangSo g_hang_so;
+
 static void release_parked(const char* why) {
     if (g_rt_off) return;  // a poisoned driver may hang on it: the process exit frees them
     std::unique_lock gate(g_rt_gate);  // no create runs while the driver tears objects down
@@ -1486,8 +1534,8 @@ static void release_parked(const char* why) {
     }
     if (v.empty()) return;
     double before = private_mb(), t = now_ms();
-    for (auto* o : v) so_release(o);
-    g_released += v.size(), ++g_release_batches;
+    for (auto* o : v) so_release(o), ++g_released;
+    ++g_release_batches;
     logf("warm: released %zu parked state objects (%s): private memory %.0f -> %.0f MB in %.1f s", v.size(), why, before, private_mb(), (now_ms() - t) / 1000);
 }
 
@@ -1508,32 +1556,38 @@ static void so_create(size_t j, SoSlot& s) {
     const Rec& rec = g_recs[j];
     Reader r{rec.payload};
     std::string dep_why;
+    int linked = 0;  // the state objects it builds on
+    so_time(g_stuck_ms);
     auto dep = [&](const Hash& k) -> ID3D12StateObject* {
         auto it = g_rec_idx.find(k);
         if (it == g_rec_idx.end() || !g_so[it->second]) { r.fail("the state object it builds on is not in the db"); return nullptr; }
         if (g_rt_off) { dep_why = "ray tracing replay stopped", r.fail("dependency"); return nullptr; }  // never wait on a poisoned driver
+        so_untime();  // created here (timed on its own) or by another worker
         SoSlot& d = so_make(it->second);
+        so_time(g_stuck_ms);
         if (!d.obj) { dep_why = "the state object it builds on failed", r.fail("dependency"); return nullptr; }
-        return d.obj;
+        return ++linked, d.obj;
     };
     ID3D12StateObject* base = rec.tag == 'A' ? dep(r.hash()) : nullptr;
     SoDesc d;
     if (r.ok) read_so(r, d, dep);
-    if (!r.ok) { s.hr = E_INVALIDARG, s.why = dep_why.empty() ? r.why : dep_why; return; }
+    if (!r.ok) { s.hr = E_INVALIDARG, s.why = dep_why.empty() ? r.why : dep_why, so_untime(); return; }
     D3D12_STATE_OBJECT_DESC desc = {d.type, (UINT)d.subs.size(), d.subs.data()};
     ID3D12StateObject* obj = nullptr;
+    if (g_rt_sem) so_untime(), WaitForSingleObject(g_rt_sem, INFINITE);
+    so_time(g_stuck_ms + kSoLinkMs * linked);
     {
         std::shared_lock gate(g_rt_gate);  // taken out here: so_call catches any fault, so this always unlocks
-        if (g_rt_sem) WaitForSingleObject(g_rt_sem, INFINITE);
         NvScope nv(nvext_of(rec.tag, rec.payload));
-        if (!nv.why) s.hr = so_call(rec, &desc, base, &obj, j);
+        if (!nv.why) s.hr = so_call(rec, &desc, base, &obj, j, linked);
         else s.hr = E_INVALIDARG, s.why = nv.why;
-        if (g_rt_sem) ReleaseSemaphore(g_rt_sem, 1, nullptr);
     }
+    if (g_rt_sem) ReleaseSemaphore(g_rt_sem, 1, nullptr);
     if (SUCCEEDED(s.hr) && obj) {
         if (g_so_keep[j]) s.obj = obj;
-        else park(obj);
+        else park(obj);  // may release a batch into the driver: still timed
     }
+    so_untime();
 }
 
 // A fault anywhere in the create (decoding, root signatures, the driver) completes the once_flag with a failure instead of
@@ -1543,14 +1597,44 @@ static __declspec(noinline) void so_create_guarded(size_t j, SoSlot& s) {
         so_create(j, s);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         s.hr = E_UNEXPECTED;
+        so_untime();
         rt_stop("an exception creating a state object", j);
     }
 }
 
 static SoSlot& so_make(size_t j) {
     SoSlot& s = *g_so[j];
-    std::call_once(s.once, [&] { so_create_guarded(j, s); });
+    std::call_once(s.once, [&] {
+        s.building = true;
+        so_create_guarded(j, s);
+        std::lock_guard l(g_defer_mx);
+        s.done = true, s.building = false;
+        if (auto it = g_waiting.find(j); it != g_waiting.end()) g_ready.insert(g_ready.end(), it->second.begin(), it->second.end()), g_waiting.erase(it);
+    });
     return s;
+}
+
+// A state object item j builds on, directly or through one not created yet (this worker would create that itself), that
+// another worker is creating now; SIZE_MAX: none. Each state object is looked at once: collections are shared widely.
+static thread_local std::vector<uint32_t> t_seen;
+static thread_local uint32_t t_seen_gen;
+static size_t so_blocker(size_t j) {
+    if (t_seen.size() != g_so.size()) t_seen.assign(g_so.size(), 0), t_seen_gen = 0;
+    const uint32_t gen = ++t_seen_gen;
+    std::vector<size_t> todo{j};
+    while (!todo.empty()) {
+        size_t k = todo.back();
+        todo.pop_back();
+        for (size_t d : g_so_deps[k]) {
+            if (t_seen[d] == gen) continue;
+            t_seen[d] = gen;
+            SoSlot& s = *g_so[d];
+            if (s.done) continue;
+            if (s.building) return d;
+            todo.push_back(d);
+        }
+    }
+    return SIZE_MAX;
 }
 
 // nv: a plan item's NVAPI state (an 'N' on its 'P'); a record's own is looked up here.
@@ -1772,14 +1856,15 @@ static void warm11_main(size_t first) {
 static void warm_main() {
     size_t nrec = g_recs.size(), n12 = nrec + g_plan.size(), n = n12 + g_items11.size(), first = std::min<size_t>(g_start, n);
     std::atomic<size_t> next{first};
-    g_so.resize(nrec), g_so_keep.assign(nrec, 0);
+    g_so.resize(nrec), g_so_keep.assign(nrec, 0), g_so_deps.resize(nrec);
     size_t nso = 0;
     for (size_t j = 0; j < nrec; ++j)
         if (g_recs[j].tag == 'R' || g_recs[j].tag == 'A') {
             g_so[j] = std::make_unique<SoSlot>(), ++nso;
             for (auto& k : so_deps(g_recs[j].payload, g_recs[j].tag))
-                if (auto it = g_rec_idx.find(k); it != g_rec_idx.end()) g_so_keep[it->second] = 1;
+                if (auto it = g_rec_idx.find(k); it != g_rec_idx.end()) g_so_keep[it->second] = 1, g_so_deps[j].push_back(it->second);
         }
+    for (auto& deps : g_so_deps) std::erase_if(deps, [](size_t d) { return !g_so[d]; });
     nv_warm_init();
     if (nso) logf("warm: %zu of the recorded items are ray tracing state objects%s", nso,
                   !g_warm_dev5 ? " (this device has no ID3D12Device5: they fail)" : !g_warm_dev7 ? " (no ID3D12Device7: additions fail)" : "");
@@ -1807,7 +1892,7 @@ static void warm_main() {
     }
     if (g_threads == 1) g_rt_threads = 1;  // one thread: a fault is its item's alone
     for (size_t k : g_skip)
-        if (k < nrec && g_so[k]) std::call_once(g_so[k]->once, [&] { g_so[k]->hr = E_FAIL, g_so[k]->why = "it faulted or hung in the driver alone in an earlier run"; });
+        if (k < nrec && g_so[k]) std::call_once(g_so[k]->once, [&] { g_so[k]->hr = E_FAIL, g_so[k]->why = "it faulted or hung in the driver alone in an earlier run", g_so[k]->done = true; });
     g_item_state.assign(n12, 0);
     auto key = [&](size_t j) { return j < nrec ? key_of(g_recs[j].tag, g_recs[j].payload) : key_of('P', g_plan[j - nrec]); };
     HashSet crash_found;
@@ -1815,11 +1900,12 @@ static void warm_main() {
         for (size_t j = 0; j < n12; ++j)
             if (Hash k = key(j); g_crash_keys.count(k)) g_crash.insert(j), crash_found.insert(k);
         for (size_t k : g_crash)  // what builds on one fails instead of creating it
-            if (k < nrec && g_so[k]) std::call_once(g_so[k]->once, [&] { g_so[k]->hr = E_FAIL, g_so[k]->why = "it removed the device in an earlier run"; });
+            if (k < nrec && g_so[k]) std::call_once(g_so[k]->once, [&] { g_so[k]->hr = E_FAIL, g_so[k]->why = "it removed the device in an earlier run", g_so[k]->done = true; });
         logf("warm: %zu items skipped: they removed the device in an earlier run", g_crash.size());
     }
     wchar_t fault[32] = {};  // SCSKILLER_WARM_FAULT=<item>:<av|hang> (development): see so_call
     if (env(L"SCSKILLER_WARM_FAULT", fault)) g_fault_item = _wtoi64(fault), g_fault_kind = wcsstr(fault, L"hang") ? 2 : 1;
+    if (env(L"SCSKILLER_WARM_SO_MS", fault)) g_so_fake_ms = _wtoi(fault);
     if (env(L"SCSKILLER_WARM_REMOVE", fault)) g_remove_item = _wtoi64(fault);
     // In flight when an earlier process's device was removed: each alone, before the workers, so a removal names its item.
     // ponytail: no supervisor over these few; a create that hangs here stalls the run like a hung driver does anywhere
@@ -1837,31 +1923,65 @@ static void warm_main() {
     if (blamed_alone != SIZE_MAX) logf("warm: item %zu removed the device alone: later runs skip it", blamed_alone);
     wchar_t stuck_env[16] = {};  // SCSKILLER_WARM_STUCK_S (development): the per-item limit, default 60 s
     double stuck_ms = env(L"SCSKILLER_WARM_STUCK_S", stuck_env) ? 1000.0 * _wtoi(stuck_env) : 60000, stuck_stop_ms = 2000;
+    g_stuck_ms = stuck_ms;
 
-    // Workers take items in file order. A supervisor (this thread) abandons a worker stuck in one item for over stuck_ms (2 s
-    // once stopping), as warm11 does: the item counts as failed, a stuck state object stops the ray tracing phase (rt_stop),
-    // a new worker carries on (at most 8 times, then the run ends with an error). The stuck thread is left alone.
+    // Workers take items in file order, deferred state objects first once ready. A supervisor (this thread) abandons a worker
+    // stuck in one item for over stuck_ms (2 s once stopping), as warm11 does: the item counts as failed, a stuck state
+    // object stops the ray tracing phase (rt_stop), a new worker carries on (at most 8 times, then the run ends with an
+    // error). The stuck thread is left alone. A state object is stuck when its own work passes its deadline (SoClock), and
+    // waiting on another worker's only once nothing will finish that (poisoned, or stopping).
     struct Worker12 {
         std::thread t;
         std::atomic<double> since{0};       // when its current item started; 0 = between items
         std::atomic<size_t> j{0};
         std::atomic<bool> claimed{false};  // the current item's outcome is taken: by the worker (counted) or the supervisor (abandoned)
         std::atomic<bool> finished{false};
+        SoClock so;
     };
     std::mutex tmx;
     std::vector<Worker12*> ws;
+    auto take = [&](size_t& j) {
+        if (g_deferred) {
+            std::lock_guard l(g_defer_mx);
+            if (g_rt_off) {  // poisoned: what they wait on may never finish; replay leaves them for the retry at once
+                for (auto& [_, v] : g_waiting) g_ready.insert(g_ready.end(), v.begin(), v.end());
+                g_waiting.clear();
+            }
+            if (!g_ready.empty()) return j = g_ready.front(), g_ready.pop_front(), --g_deferred, true;
+        }
+        return (j = next++) < n12;
+    };
+    auto defer = [&](size_t j) {
+        if (!is_so(j, nrec) || g_rt_off || g_item_state[j] || g_crash.count(j) || g_skip.count(j)) return false;
+        for (;;) {
+            size_t b = so_blocker(j);
+            if (b == SIZE_MAX) return false;
+            std::lock_guard l(g_defer_mx);
+            if (g_rt_off) return false;
+            if (g_so[b]->done) continue;  // done meanwhile: look again
+            g_waiting[b].push_back(j), ++g_deferred;
+            return true;
+        }
+    };
     auto spawn = [&] {
         auto* w = new Worker12;
         w->t = std::thread([&, w] {
             SetThreadPriority(GetCurrentThread(), g_prio);
             t_replay = true;
+            t_so_clock = &w->so;
             for (size_t j; g_warm_faults < 3;) {
                 while (g_state == PAUSE) Sleep(50);
                 for (int a = g_active; g_state != STOP && !g_removed && (a >= g_allowed || !g_active.compare_exchange_weak(a, a + 1)); a = g_active)
                     if (a >= g_allowed) Sleep(20);  // over the memory budget: fewer workers run
                 if (g_state == STOP || g_removed) break;
-                if ((j = next++) >= n12) { --g_active; break; }
+                if (!take(j)) {
+                    --g_active;
+                    if (!g_deferred) break;
+                    Sleep(20);  // deferred items wait on state objects other workers are creating
+                    continue;
+                }
                 if (other_pass(j)) { --g_active, g_item_state[j] = 1, ++g_warm_other; continue; }
+                if (defer(j)) { --g_active; continue; }
                 w->claimed = false, w->j = j;
                 double t = live_ms();
                 w->since = t;
@@ -1882,6 +2002,16 @@ static void warm_main() {
     for (int i = 0; i < g_threads && blamed_alone == SIZE_MAX; ++i) spawn();
     int replaced = 0;
     double pass = now_ms();
+    auto stuck = [&](Worker12* w, double since, double now) {
+        size_t j = w->j;
+        if (w->since != since) return false;  // another item meanwhile: its j and since may not match
+        if (!is_so(j, nrec)) return now - since > (g_state == STOP ? stuck_stop_ms : stuck_ms);
+        auto g = w->so.seg.load();
+        if (g.since > now && w->so.seg.compare_exchange_strong(g, {now, g.limit})) g.since = now;  // as started() does
+        if (g_state == STOP) return now - (g.since ? g.since : since) > stuck_stop_ms;
+        if (g.since) return now - g.since > g.limit;
+        return g_rt_off && now - since > stuck_stop_ms;
+    };
     auto supervise = [&] {
         double now = live_pass(pass);
         for (size_t i = 0; i < ws.size();) {
@@ -1891,13 +2021,15 @@ static void warm_main() {
                 w->t.join();
                 delete w;
                 ws.erase(ws.begin() + i);
-            } else if (since && now - since > (g_state == STOP ? stuck_stop_ms : stuck_ms) && !w->claimed.exchange(true)) {
+            } else if (since && stuck(w, since, now) && !w->claimed.exchange(true)) {
                 size_t j = w->j;
-                bool so = is_so(j, nrec);
-                if (so) rt_stop("a state object create hung", j);
+                // short of a poison or a stop only a driver call makes a state object stuck, also one that has just returned
+                bool so = is_so(j, nrec), call = so && (w->so.seg.load().since || !(g_rt_off || g_state == STOP));
+                if (call) rt_stop("a state object create hung", j);
                 // a PSO stuck behind a poisoned driver or a removed device is its victim: retried too; otherwise it's the PSO's own hang
                 bool fatal = so ? g_rt_fatal == j : !g_rt_off && !removed();
-                logf("warm: item %zu (%s) stuck for %.0f s: its worker is abandoned, the item %s", j, so ? "a state object" : "a PSO", (now - since) / 1000,
+                logf("warm: item %zu (%s) stuck for %.0f s: its worker is abandoned, the item %s", j,
+                     !so ? "a PSO" : call ? "a state object" : "a state object waiting on one it builds on", (now - since) / 1000,
                      fatal ? "counts as failed" : "is left for a new process");
                 if (fatal) note_fail(j, so ? "state object create stuck alone (abandoned)" : "PSO create stuck (abandoned)"), g_warm_fail++;
                 g_item_state[j] = fatal ? 2 : g_removed ? 4 : 3;
@@ -1906,7 +2038,7 @@ static void warm_main() {
                 w->t.detach();  // w is leaked on purpose: the thread may still return into it
                 ws.erase(ws.begin() + i);
                 if (g_rt_off || g_removed) {}  // poisoned: no new workers into the driver; the others finish, the retry does the rest
-                else if (g_state != STOP && next < n12 && ++replaced <= 8) spawn();
+                else if (g_state != STOP && (next < n12 || g_deferred) && ++replaced <= 8) spawn();
                 else if (replaced > 8) g_warm_faults = 3;  // the driver keeps hanging: give up, the run ends with an error
             } else ++i;
         }
@@ -1914,7 +2046,9 @@ static void warm_main() {
     std::atomic<bool> d12done{false};
     std::thread t11([&] {  // D3D11 items after the PSOs: done stays "every item below it was compiled"
         while (!d12done) Sleep(20);
-        if (g_rt_off || g_removed) {  // the retry (or a stopped run's resume) takes over from the first item not done (D3D11 items after it)
+        // the retry (or a stopped run's resume) takes over from the first item not done (D3D11 items after it): a stop may
+        // leave deferred or abandoned items below others done
+        if (g_rt_off || g_removed || g_state == STOP) {
             size_t from = first;
             while (from < n12 && (g_item_state[from] == 1 || g_item_state[from] == 2)) ++from;
             if (from < n12) {
@@ -1930,7 +2064,7 @@ static void warm_main() {
                     if (g_alone_next.size() == 1) g_blamed.swap(g_alone_next);
                 }
                 logf("warm: retry from item %zu%s: %llu of %zu D3D12 items left; %zu blamed, %zu to create alone first", from,
-                     g_removed ? " after the device was removed" : (" with " + std::to_string(std::max(1, (g_rt_threads ? g_rt_threads : g_threads) / 4)) + " ray tracing thread(s)").c_str(),
+                     g_removed ? " after the device was removed" : !g_rt_off ? " (stopped)" : (" with " + std::to_string(std::max(1, (g_rt_threads ? g_rt_threads : g_threads) / 4)) + " ray tracing thread(s)").c_str(),
                      (unsigned long long)(n12 - from - std::count(g_item_state.begin() + from, g_item_state.end(), 1) - std::count(g_item_state.begin() + from, g_item_state.end(), 2)),
                      n12 - first, g_blamed.size(), g_alone_next.size());
                 for (size_t j : g_blamed) crash_found.insert(key(j));
@@ -2017,7 +2151,19 @@ static void warm_main() {
                 logf("warm: %zu state objects alive at the end (%zu parked, %zu built on), private memory %.0f MB; %llu released in %llu batches before",
                      g_parked.size(), g_parked.size() - kept, kept, private_mb(), g_released.load(), g_release_batches.load());
         }
-        release_parked("end of the warm");
+        if (wchar_t hang[4]; env(L"SCSKILLER_WARM_RELEASE_HANG", hang)) {
+            std::lock_guard l(g_parkmx);
+            g_parked.push_back((ID3D12StateObject*)(IUnknown*)&g_hang_so);
+        }
+        // a Release that hangs in the driver (or a batch behind one) must not keep the warm from ending: watched by its
+        // progress in 100 ms turns, as a pause suspends this process; what's left goes with the process exit
+        std::thread rel([] { release_parked("end of the warm"); });
+        uint64_t seen = g_released;
+        for (int idle = 0; WaitForSingleObject(rel.native_handle(), 100) == WAIT_TIMEOUT;)
+            if (g_released != seen) seen = g_released, idle = 0;
+            else if (++idle * 100.0 > (g_state == STOP ? stuck_stop_ms : stuck_ms)) break;
+        if (WaitForSingleObject(rel.native_handle(), 0) == WAIT_OBJECT_0) rel.join();
+        else logf("warm: releasing the state objects left made no progress for %.0f s: the rest go with the process exit", (g_state == STOP ? stuck_stop_ms : stuck_ms) / 1000), rel.detach();
     }
     drain_debug("end of warm");
     if (g_roundtrip) logf("warm: round trip: %llu same, %llu differ", g_roundtrip_ok.load(), g_roundtrip_bad.load());
@@ -2564,8 +2710,20 @@ static HRESULT STDMETHODCALLTYPE hk_present1(IDXGISwapChain1* sc, UINT sync, UIN
     return timed_present(sc, flags, [&] { return o(sc, sync, flags, p); });
 }
 
+// Only System32's dxgi.dll's vtables: a wrapper's (OptiScaler's, Streamline's) Present expects its own object, and sc_orig
+// may hand a vtable's original an object of another vtable.
+static HMODULE g_sysdxgi;
+static bool sys_vtable(void** vt, const char* what, int slot) {
+    HMODULE m = module_of(vt);
+    if (m && m == g_sysdxgi) return true;
+    wchar_t path[MAX_PATH] = L"no module";
+    if (m) GetModuleFileNameW(m, path, MAX_PATH);
+    logf("frames: %s vtable %p slot %d is in %ls, not System32's dxgi.dll: not hooked", what, (void*)vt, slot, path);
+    return false;
+}
+
 static void sc_patch(void** vt, int slot, void* hook, std::atomic<void*> ScVt::*orig) {
-    if (vt[slot] == hook) return;
+    if (vt[slot] == hook || !sys_vtable(vt, "swap chain", slot)) return;
     int n = g_nscvt, i = 0;
     while (i < n && g_scvt[i].vt != vt) ++i;
     // an overlay hooked the slot after us and calls our hook: taking it as the original would make Present call itself
@@ -2749,6 +2907,8 @@ static void frame_hooks() {
     auto create = m ? (decltype(&CreateDXGIFactory1))GetProcAddress(m, "CreateDXGIFactory1") : nullptr;
     IDXGIFactory* f = nullptr;
     if (!create || FAILED(create(IID_PPV_ARGS(&f)))) return logf("frames: no DXGI factory, frame times not measured");
+    g_sysdxgi = system_dxgi();
+    if (!sys_vtable(*(void***)f, "DXGI factory", SLOT_CREATESC)) return (void)f->Release();
     LARGE_INTEGER q, fq;
     QueryPerformanceFrequency(&fq);
     QueryPerformanceCounter(&q);
@@ -2762,14 +2922,16 @@ static void frame_hooks() {
         IDXGIFactory2* f2;
         if (SUCCEEDED(f->QueryInterface(IID_PPV_ARGS(&f2)))) {
             void** vt2 = *(void***)f2;
-            patch(vt2, SLOT_CREATESC_HWND, (void*)hk_createsc_hwnd, o_createsc_hwnd);
-            patch(vt2, SLOT_CREATESC_CW, (void*)hk_createsc_cw, o_createsc_cw);
-            patch(vt2, SLOT_CREATESC_COMP, (void*)hk_createsc_comp, o_createsc_comp);
+            if (vt2 == vt || sys_vtable(vt2, "DXGI factory", SLOT_CREATESC_HWND)) {
+                patch(vt2, SLOT_CREATESC_HWND, (void*)hk_createsc_hwnd, o_createsc_hwnd);
+                patch(vt2, SLOT_CREATESC_CW, (void*)hk_createsc_cw, o_createsc_cw);
+                patch(vt2, SLOT_CREATESC_COMP, (void*)hk_createsc_comp, o_createsc_comp);
+            }
             f2->Release();
         }
-        wchar_t path[MAX_PATH];
-        GetModuleFileNameW(m, path, MAX_PATH);
-        logf("frames: DXGI factory vtable %p hooked (%ls)", (void*)vt, path);
+        wchar_t path[MAX_PATH], from[MAX_PATH];
+        GetModuleFileNameW(g_sysdxgi, path, MAX_PATH), GetModuleFileNameW(m, from, MAX_PATH);
+        logf("frames: DXGI factory vtable %p hooked (%ls; the factory of %ls)", (void*)vt, path, from);
     }
     f->Release();
     std::thread(frame_writer).detach();

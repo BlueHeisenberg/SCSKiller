@@ -202,11 +202,9 @@
                                     <TextBlock Text="{x:Bind Vm.TimeLabel, Mode=OneWay}" Style="{StaticResource Secondary}" />
                                     <TextBlock Text="{x:Bind Vm.TimeValue, Mode=OneWay}" Style="{StaticResource StatValue}" />
                                 </StackPanel>
-                                <StackPanel Spacing="2" Visibility="{x:Bind Vm.HasDiskValue, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind Vm.DiskInUse, Mode=OneWay}">
+                                <StackPanel Spacing="2" Visibility="{x:Bind Vm.HasDiskValue, Mode=OneWay}">
                                     <TextBlock Text="{x:Bind Vm.DiskLabel, Mode=OneWay}" Style="{StaticResource Secondary}" />
                                     <TextBlock Text="{x:Bind Vm.DiskValue, Mode=OneWay}" Style="{StaticResource StatValue}" />
-                                    <!-- NVIDIA pre-sizes its files in powers of two: the filled part, under the size on disk -->
-                                    <TextBlock Text="{x:Bind Vm.DiskInUseShort, Mode=OneWay}" Style="{StaticResource Secondary}" Visibility="{x:Bind Vm.HasDiskInUse, Mode=OneWay}" />
                                 </StackPanel>
                                 <StackPanel Spacing="2" Visibility="{x:Bind Vm.HasSession, Mode=OneWay}">
                                     <TextBlock Text="{x:Bind Vm.StuttersLabel, Mode=OneWay}" Style="{StaticResource Secondary}" />
