@@ -4,6 +4,8 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+- **DirectX 11 shader warming** now links pixel shaders that use `SV_RenderTargetArrayIndex` or `SV_ViewportArrayIndex`.
+
 ## [1.2.4] - 2026-10-08
 
 ### New
