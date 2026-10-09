@@ -359,12 +359,14 @@ sealed class PlanBuilder
     /// <summary>Pre-emit guard: every shader's declared resources are in the root signature, visible to its stage (else the
     /// driver rejects the PSO: E_INVALIDARG). A rule that doesn't know a fork's extra ranges (Hogwarts Legacy's bindless SRVs
     /// in spaces 4-7: 159594 of 200804 planned PSOs) or a learned root signature picked by counts alone fails here, and the
-    /// stage set is counted as "rs_uncovered" instead of planned. A root signature the planner can't read (a carved shader's
-    /// own, served at materialize) is trusted.</summary>
+    /// stage set is counted as "rs_uncovered" instead of planned. An embedded root signature is checked when the index has its
+    /// blob (<see cref="ShaderIndex.RootSignatureBlobs"/>: The Last of Us Part II's rootless VSs take their PS's, 8,145 of
+    /// 166,328 PSOs rejected without the check); one the planner can't read (served at materialize) is trusted.</summary>
     bool Covers(string rs, SortedDictionary<int, string> stages)
     {
         if (!rsRanges.TryGetValue(rs, out var ranges))
-            rsRanges[rs] = ranges = rsBlobs.TryGetValue(rs, out var b) || recBlobs.TryGetValue(rs, out b) ? RootSig.Parse(b) : null;
+            rsRanges[rs] = ranges = rsBlobs.TryGetValue(rs, out var b) || recBlobs.TryGetValue(rs, out b)
+                || index.RootSignatureBlobs?.TryGetValue(rs, out b) == true ? RootSig.Parse(b!) : null;
         if (ranges == null) return true;
         foreach (var (st, sha) in stages)
         {
@@ -377,6 +379,13 @@ sealed class PlanBuilder
         }
         return true;
     }
+
+    /// <summary>What a stage set <see cref="Covers"/> rejects counts as. "rs_mismatch": a shader without a root signature of
+    /// its own paired by linkage with one whose embedded root signature doesn't cover it, a pairing the game can't create
+    /// (The Last of Us Part II: 37,736 VS x PS guesses): not a stage set of the game, so neither a gap (<see
+    /// cref="PlanStats.Uncovered"/>, which marks a plan partial) nor left out. Else "rs_uncovered".</summary>
+    string UncoveredKey(string rs, SortedDictionary<int, string> stages) =>
+        index.RootSignatureBlobs?.ContainsKey(rs) == true && stages.Values.Any(h => bc[h].RootSignature == null) ? "rs_mismatch" : "rs_uncovered";
 
     List<LayoutElem>? LayoutFor(SortedDictionary<int, string> stages, bool templateHasLayout) // the VS's own inputs, never the template's
     {
@@ -399,7 +408,7 @@ sealed class PlanBuilder
         var cands = gs != null ? gsTopo.Where(t => (topo == 0 || t.Key.Topology == topo) && t.Key.Shape == shape).Select(t => t.Value).ToList() is { Count: > 0 } l ? l : null
             : templates.GetValueOrDefault($"{shape}|{psOut}") ?? templates.GetValueOrDefault(shape);
         if (rs == null || (cands == null && (!synth || topo == 0))) { Count(rs == null ? NoRs : gs != null ? "no_gs_template" : "no_template"); return; }
-        if (!Covers(rs, stages)) { Count("rs_uncovered"); return; }
+        if (!Covers(rs, stages)) { Count(UncoveredKey(rs, stages)); return; }
         if (have.Contains(Tuple(rs, stages))) { Count("already_recorded"); return; }
         usedRs.Add(rs);
         Count("generated");
@@ -452,7 +461,7 @@ sealed class PlanBuilder
             if (!seen.Add(Tuple("", stages))) return; // shaders shared across maps
             var rs = RootSigOf(stages);
             if (rs == null) { Count(NoRs); return; }
-            if (!Covers(rs, stages)) { Count("rs_uncovered"); return; }
+            if (!Covers(rs, stages)) { Count(UncoveredKey(rs, stages)); return; }
             if (rsBlobs.TryGetValue(rs, out var blob)) facts.AddRootSignature(rs, blob); // VS units share PIXEL-only differences
             var l = stages.TryGetValue((int)Stage.Vertex, out var vs) ? layouts.TryGetValue(vs, out var r) ? r : layouts[vs] = facts.Layouts(bc[vs]) : none;
             var s = stages.TryGetValue((int)Stage.Pixel, out var ps) ? shapes.TryGetValue(ps, out var q) ? q : shapes[ps] = facts.Shapes(bc[ps]) : new([], Provenance.Exact);
@@ -1078,7 +1087,7 @@ sealed class PlanBuilder
             new PlanStats(pipelines + replayable.Count, items.Count + synthesized.Count + rtItems.Count + hitGroupItems.Count, synthesized.Count, usedRs.Count, dx12 && (verified || embeddedRs > 0),
                 unitsBy[(int)Provenance.Exact], unitsBy[(int)Provenance.Inferred], unitsBy[(int)Provenance.Guessed], layoutCoverage, n11, packNew,
                 stats.GetValueOrDefault("rs_uncovered"), rtLibs - rtUnbuilt, inlineOnly || engine.NoRtPipelines ? 0 : rtLibs - rtCovered - rtUnbuilt,
-                StageSets: seen.Count + unpaired - stats.GetValueOrDefault("rs_unserializable"), LeftOut: new[] { "no_rs", "no_template", "no_gs_template", "rs_uncovered", "stream_output" }.Sum(stats.GetValueOrDefault),
+                StageSets: seen.Count + unpaired - stats.GetValueOrDefault("rs_unserializable") - stats.GetValueOrDefault("rs_mismatch"), LeftOut: new[] { "no_rs", "no_template", "no_gs_template", "rs_uncovered", "stream_output" }.Sum(stats.GetValueOrDefault),
                 MiddlewareSharedItems: packShared, RtStateObjects: replayable.Count, RtInline: rtInline, Variants: synthCopies.Count + itemCopies.Count + replays.Count - pipelines),
             Path.Combine(outDir, "plan.bin"));
         PlanFile.Write(plan, body);

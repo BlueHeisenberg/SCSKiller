@@ -63,7 +63,10 @@ public sealed record ShaderIndex(
     string ContentHash,     // changes when the game's shader libraries change (game patch) -> plans built on it are stale
     IReadOnlyList<string> Platforms,                     // e.g. PCD3D_SM5, PCD3D_SM6
     IReadOnlyDictionary<string, ShaderInfo> Shaders,     // by Sha1
-    IReadOnlyList<ShaderMap> Maps);
+    IReadOnlyList<ShaderMap> Maps,
+    // the embedded root signatures' blobs (ShaderInfo.RootSignature), when the reader has them: the planner's pre-emit guard
+    // checks a stage set against them instead of trusting them (a VS that carries none takes its PS's, which may not cover it)
+    IReadOnlyDictionary<string, byte[]>? RootSignatureBlobs = null);
 
 /// <summary>One per engine family.</summary>
 public interface IEngineReader
