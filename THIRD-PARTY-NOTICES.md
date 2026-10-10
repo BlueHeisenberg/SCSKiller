@@ -10,7 +10,7 @@ SCSKiller's own licence: GPL-3.0-or-later (LICENSE), with an additional permissi
 |---|---|---|---|---|---|
 | .NET runtime (self-contained) | 10.0.12 | MIT | Copyright (c) .NET Foundation and Contributors | https://github.com/dotnet/runtime | [L1](#l1) |
 | Microsoft.Bcl.Memory | 10.0.12 | MIT | © Microsoft Corporation | https://github.com/dotnet/runtime | [L1](#l1) |
-| System.IO.Hashing | 10.0.8 | MIT | © Microsoft Corporation | https://github.com/dotnet/runtime | [L1](#l1) |
+| System.IO.Hashing | 10.0.12 | MIT | © Microsoft Corporation | https://github.com/dotnet/runtime | [L1](#l1) |
 | System.Numerics.Tensors | 10.0.10 | MIT | © Microsoft Corporation | https://github.com/dotnet/runtime | [L1](#l1) |
 | Windows App SDK (Runtime 2.5.1, WinUI 2.3.9, Foundation 2.3.12, Base 2.0.4, Interactive Experiences 2.1.9) | 2.5.1 | LicenseRef-Microsoft-WindowsAppSDK | © Microsoft Corporation | https://github.com/microsoft/windowsappsdk | [L2](#l2) |
 | Microsoft Edge WebView2 SDK | 1.0.3719.77 | BSD-3-Clause | Copyright (C) Microsoft Corporation | https://aka.ms/webview | [L3](#l3) |
@@ -47,6 +47,16 @@ SCSKiller's own licence: GPL-3.0-or-later (LICENSE), with an additional permissi
 | libsodium (libsodium.dll) | 1.0.22 | ISC | Copyright (c) 2013-2026 Frank Denis | https://libsodium.org | [L28](#l28) |
 | Vulkan-Headers (proxy/third_party/vulkan) | 1.4 (source tree) | Apache-2.0 | Copyright 2015-2026 The Khronos Group Inc. | https://github.com/KhronosGroup/Vulkan-Headers | [L4](#l4) |
 | AMD GPU Services (amd_ags_x64.dll) | 6.3.1 | MIT | Copyright (c) 2025 Advanced Micro Devices, Inc. | https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK | [L29](#l29) |
+| ValveResourceFormat | master 0220d87 | MIT | Copyright (c) 2015 ValveResourceFormat Contributors | https://github.com/ValveResourceFormat/ValveResourceFormat | [L30](#l30) |
+| ValvePak | 6.0.0.182 | MIT | Copyright (c) 2008 Rick (gibbed), (c) 2016 ValvePak Contributors | https://github.com/ValveResourceFormat/ValvePak | [L31](#l31) |
+| ValveKeyValue | 0.71.0.528 | MIT | Copyright (c) 2016 ValveKeyValue Contributors | https://github.com/ValveResourceFormat/ValveKeyValue | [L32](#l32) |
+| KeyValues2 | 2.0.0-rc2 | MIT | Copyright (c) 2013 Tom Edwards, (c) 2018-2026 ValveResourceFormat contributors | https://github.com/ValveResourceFormat/Datamodel.NET | [L33](#l33) |
+| SharpGLTF (Core, Runtime, Toolkit) | 1.0.7 | MIT | Copyright (c) 2019 Vicente Penades | https://github.com/vpenades/SharpGLTF | [L34](#l34) |
+| SkiaSharp (managed only, see Notes) | 4.153.1 | MIT | Copyright (c) 2015-2016 Xamarin, Inc., (c) 2017-2018 Microsoft Corporation | https://github.com/mono/SkiaSharp | [L35](#l35) |
+| TinyBCSharp | 0.1.2 | MIT | Copyright (c) 2025 Jan De Kock | https://github.com/jandk/TinyBCSharp | [L36](#l36) |
+| TinyEXR.NET | 1.2.0 | MIT | Copyright (c) 2023-2026 ksgfk | https://github.com/ksgfk/TinyEXR.NET | [L37](#l37) |
+| Vortice.SPIRV, Vortice.SpirvCross (managed only, see Notes) | 1.0.6, 1.6.0 | MIT | Copyright (c) Amer Koleci and Contributors | https://github.com/amerkoleci/Vortice.Vulkan | [L38](#l38) |
+| Microsoft.Extensions.Logging.Abstractions, Microsoft.Extensions.DependencyInjection.Abstractions | 10.0.12 | MIT | © Microsoft Corporation | https://github.com/dotnet/runtime | [L1](#l1) |
 
 ### Notes
 
@@ -62,6 +72,7 @@ SCSKiller's own licence: GPL-3.0-or-later (LICENSE), with an additional permissi
 - **Vulkan-Headers (proxy/third_party/vulkan)**: Source only, for the proxy self-test. Not in the shipped binaries.
 - **AMD GPU Services (amd_ags_x64.dll)**: AMD's signed release DLL, unmodified, in native\, downloaded by the proxy's CMake configure and pinned by SHA-256. scskiller_warm.exe loads it on AMD to create its device under a game's AGS app name.
 - **Game archive formats** (knowledge only, no code, keys or other data copied): the FromSoftware readers follow the layouts SoulsFormats (github.com/soulsmods/SoulsFormatsNEXT) and UXM Selective Unpack (github.com/Nordgaren/UXM-Selective-Unpack) document, and use the shader file names in UXM's archive dictionaries. The RE Engine package reader follows ree-pak-rs (github.com/eigeen/ree-pak-rs) and REE.PAK.Tool. No game key is embedded or shipped. Archive keys come from the user's install or the user, and stay on that PC. Where an install doesn't carry them in the clear (Dark Souls III's archive keys, PRAGMATA's table-key modulus), the app downloads them from those projects' public sources, pinned to a commit (UXM's `UXM/ArchiveKeys.cs`, ree-pak-rs's `ree-pak-core/src/pak/cipher/pak.rs`), and keeps only what opens the user's own archives.
+- **ValveResourceFormat**: reads Source 2 shader files (Counter-Strike 2, Deadlock). Built from source at commit 0220d87ab378420b569fe119fa03d3875ed14071 (`external/ValveResourceFormat`, a git submodule) until a release reads vcs version 72. Its packages that only render textures, models and Vulkan shaders come along as managed assemblies; their native libraries (libSkiaSharp.dll, spirv-cross.dll) are left out of SCSKiller by `Directory.Build.targets`, as reading shaders loads neither.
 - **Build-time only, not shipped**: MemoryPack.Generator (source generator, MIT), Microsoft.Windows.SDK.BuildTools and Microsoft.Windows.SDK.BuildTools.MSIX (Microsoft Windows SDK terms), NETStandard.Library / Microsoft.NETCore.Platforms (metapackages).
 - **Native tools** (`d3d12.dll`, `scskiller_warm.exe`): SCSKiller's own code, statically linked with the Microsoft C/C++ runtime (Visual Studio distributable code).
 - **known-stutter.json**: facts about games with the source of each (a link or a dated citation). No third-party text is copied.
@@ -70,7 +81,7 @@ SCSKiller's own licence: GPL-3.0-or-later (LICENSE), with an additional permissi
 
 ### L1
 
-Used by: .NET runtime (self-contained), Microsoft.Bcl.Memory, System.IO.Hashing, System.Numerics.Tensors
+Used by: .NET runtime (self-contained), Microsoft.Bcl.Memory, System.IO.Hashing, System.Numerics.Tensors, Microsoft.Extensions.Logging.Abstractions, Microsoft.Extensions.DependencyInjection.Abstractions
 
 ```text
 The MIT License (MIT)
@@ -1456,6 +1467,487 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```
+
+### L30
+
+Used by: ValveResourceFormat
+
+```text
+MIT License
+
+Copyright (c) 2015 ValveResourceFormat Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L31
+
+Used by: ValvePak
+
+```text
+MIT License
+
+Copyright (c) 2008 Rick (gibbed)
+Copyright (c) 2016 ValvePak Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L32
+
+Used by: ValveKeyValue
+
+```text
+MIT License
+
+Copyright (c) 2016 ValveKeyValue Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L33
+
+Used by: KeyValues2
+
+```text
+MIT License
+
+Copyright (c) 2013 Tom Edwards
+Copyright (c) 2018-2026 ValveResourceFormat contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L34
+
+Used by: SharpGLTF
+
+```text
+MIT License
+
+Copyright (c) 2019 Vicente Penades
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L35
+
+Used by: SkiaSharp
+
+```text
+MIT License
+
+Copyright (c) 2015-2016 Xamarin, Inc.
+Copyright (c) 2017-2018 Microsoft Corporation.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L36
+
+Used by: TinyBCSharp
+
+```text
+MIT License
+
+Copyright (c) 2025 Jan De Kock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L37
+
+Used by: TinyEXR.NET
+
+```text
+MIT License
+
+Copyright (c) 2023-2026 ksgfk
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L38
+
+Used by: Vortice.SPIRV, Vortice.SpirvCross
+
+```text
+MIT License
+
+Copyright (c) Amer Koleci and Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L39
+
+Used by: ValveResourceFormat (the material it carries, from its THIRD_PARTY_NOTICES.txt at 0220d87; only what reaches its library, not the entries marked GUI or CLI only, ships in SCSKiller)
+
+```text
+THIRD PARTY NOTICES
+===================
+
+ValveResourceFormat (Source 2 Viewer) is licensed under the MIT License (see LICENSE).
+It also ships third party material, listed below with its own copyright and license.
+Links to the license texts are at the end of this file.
+
+The list is maintained by hand and covers anything whose code or content reaches the
+binaries or NuGet packages, whether depended on, copied, ported, or bundled as an asset,
+including the native library that a managed package wraps. It leaves out whatever sits
+deeper than that, and whatever only runs at build time without leaving code of its own
+behind.
+
+Each entry covers a project rather than a package, and names a sub package only when its
+license differs. An entry marked (GUI only) or (CLI only) does not ship in the NuGet
+libraries.
+
+7-Zip LZMA SDK
+  License: Public domain
+  Igor Pavlov
+  https://www.7-zip.org/sdk.html
+
+Blake3
+  License: BSD-2-Clause
+  Copyright (c) 2020, Alexandre Mutel
+  https://github.com/xoofx/Blake3.NET
+
+ConsoleAppFramework (CLI only)
+  License: MIT
+  Copyright (c) 2020 Cysharp, Inc.
+  https://github.com/Cysharp/ConsoleAppFramework
+
+FastColoredTextBox (GUI only)
+  License: LGPL-3.0
+  Copyright (C) Pavel Torgashov, 2011-2016
+  https://github.com/PavelTorgashov/FastColoredTextBox
+
+Filament
+  License: Apache-2.0
+  Copyright 2023 The Android Open Source Project
+  https://github.com/google/filament
+
+GLFW (GUI only)
+  License: Zlib
+  Copyright (c) 2002-2006 Marcus Geelnard
+  Copyright (c) 2006-2019 Camilla Löwy
+  https://www.glfw.org/
+
+HarfBuzz (GUI only)
+  License: Old MIT
+  Copyright (c) 2010-2022 Google, Inc.
+  Copyright (c) 2004-2023 Red Hat, Inc.
+  Copyright (c) 2005-2023 Behdad Esfahbod, and others
+  https://github.com/harfbuzz/harfbuzz
+
+JetBrains Mono
+  License: OFL-1.1
+  Copyright 2020 The JetBrains Mono Project Authors
+  https://github.com/JetBrains/JetBrainsMono
+
+K4os.Compression.LZ4
+  License: MIT
+  Copyright (c) 2017 Milosz Krajewski
+  https://github.com/MiloszKrajewski/K4os.Compression.LZ4
+
+KeyValues2
+  License: MIT
+  Copyright (c) 2013 Tom Edwards
+  Copyright (c) 2018-2026 ValveResourceFormat contributors
+  https://github.com/ValveResourceFormat/Datamodel.NET
+
+meshoptimizer
+  License: MIT
+  Copyright (c) 2016-2026 Arseny Kapoulkine
+  https://github.com/zeux/meshoptimizer
+
+Microsoft.Windows.CsWin32 (GUI only)
+  License: MIT
+  Copyright (c) Microsoft Corporation
+  https://github.com/microsoft/CsWin32
+
+.NET Runtime and Libraries
+  License: MIT
+  Copyright (c) .NET Foundation and Contributors
+  https://github.com/dotnet/runtime
+
+NAudio (GUI only)
+  License: MIT
+  Copyright 2020 Mark Heath
+  https://github.com/naudio/NAudio
+
+NAudio.WaveFormRenderer (GUI only)
+  License: MIT
+  Copyright (c) 2021 NAudio
+  https://github.com/naudio/NAudio.WaveFormRenderer
+
+NLayer
+  License: MIT
+  Copyright (c) 2018 Mark Heath, Andrew Ward & Contributors
+  https://github.com/naudio/NLayer
+
+OpenTK
+  License: MIT
+  Copyright (c) 2006-2019 Stefanos Apostolopoulos for the Open Toolkit project
+  https://github.com/opentk/opentk
+
+OpenTK GLControl (GUI only)
+  License: MIT
+  Copyright (c) 2006-2019 Stefanos Apostolopoulos for the Open Toolkit project
+  https://github.com/opentk/GLControl
+
+Poly Haven "Industrial Sunset (Pure Sky)" HDRI (GUI only)
+  License: CC0-1.0
+  Sergej Majboroda, Jarod Guest
+  https://polyhaven.com/a/industrial_sunset_puresky
+
+Roboto
+  License: OFL-1.1
+  Copyright 2011 The Roboto Project Authors
+  https://github.com/googlefonts/roboto-classic
+
+s&box
+  License: MIT
+  Copyright (c) 2025 Facepunch Studios Ltd
+  https://github.com/Facepunch/sbox-public
+
+SharpGLTF
+  License: MIT
+  Copyright (c) 2019 Vicente Penades
+  https://github.com/vpenades/SharpGLTF
+
+Skia
+  License: BSD-3-Clause
+  Copyright (c) 2011 Google Inc.
+  https://skia.org/
+
+SkiaSharp
+  License: MIT
+  Copyright (c) 2015-2016 Xamarin, Inc.
+  Copyright (c) 2017-2018 Microsoft Corporation
+  https://github.com/mono/SkiaSharp
+
+SPIRV-Cross
+  License: Apache-2.0 OR MIT
+  Copyright 2015-2021 Arm Limited
+  Copyright 2019-2021 Hans-Kristian Arntzen
+  https://github.com/KhronosGroup/SPIRV-Cross
+
+Svg.Skia (GUI only)
+  License: MIT (Svg.Custom is MS-PL)
+  Copyright (c) 2020 Wiesław Šoltés
+  https://github.com/wieslawsoltes/Svg.Skia
+
+The Lab Renderer
+  License: BSD-3-Clause
+  Copyright (c) Valve Corporation
+  https://github.com/ValveSoftware/the_lab_renderer
+
+TinyBCSharp
+  License: MIT
+  Copyright (c) 2025 Jan De Kock
+  https://github.com/jandk/TinyBCSharp
+
+TinyEXR.NET
+  License: MIT
+  Copyright (c) 2023-2026 ksgfk
+  https://github.com/ksgfk/TinyEXR.NET
+
+uTinyRipper (Etc decoder)
+  License: MIT
+  Copyright (c) 2020 mafaca
+  Copyright (c) 2017 Ishotihadus (mikunyan)
+  https://github.com/mafaca/UtinyRipper
+  https://github.com/Ishotihadus/mikunyan
+
+ValveKeyValue
+  License: MIT
+  Copyright (c) 2016 ValveKeyValue Contributors
+  https://github.com/ValveResourceFormat/ValveKeyValue
+
+ValvePak
+  License: MIT
+  Copyright (c) 2008 Rick (gibbed)
+  Copyright (c) 2016 ValvePak Contributors
+  https://github.com/ValveResourceFormat/ValvePak
+
+Vortice.SpirvCross
+  License: MIT
+  Copyright (c) Amer Koleci and Contributors
+  https://github.com/amerkoleci/Vortice.Vulkan
+
+ZstdSharp.Port
+  License: MIT
+  Copyright (c) 2021 Oleg Stepanischev
+  https://github.com/oleg-st/ZstdSharp
+
+Licenses
+--------
+
+Apache License, Version 2.0
+  https://opensource.org/license/apache-2-0
+BSD 2-Clause License
+  https://opensource.org/license/bsd-2-clause
+BSD 3-Clause License
+  https://opensource.org/license/bsd-3-clause
+CC0 1.0 Universal
+  https://creativecommons.org/publicdomain/zero/1.0/
+GNU Lesser General Public License v3.0
+  https://opensource.org/license/lgpl-3-0
+Microsoft Public License
+  https://opensource.org/license/ms-pl
+MIT License
+  https://opensource.org/license/mit
+Old MIT License
+  https://github.com/harfbuzz/harfbuzz/blob/main/COPYING
+SIL Open Font License, Version 1.1
+  https://opensource.org/license/ofl-1-1
+Zlib License
+  https://opensource.org/license/zlib
 ```
 
 ## Trademarks

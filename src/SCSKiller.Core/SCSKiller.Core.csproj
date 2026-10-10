@@ -20,6 +20,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Source 2 shaders (Source2/Source2Reader.cs): vcs version 72 (Counter-Strike 2) is read by VRF master only, the newest
+         release (20.0.6980) stops at 71. A submodule pinned to that commit until a release reads it, then a PackageReference. -->
+    <ProjectReference Include="..\..\external\ValveResourceFormat\ValveResourceFormat\ValveResourceFormat.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="Games\known-stutter.json" LogicalName="SCSKiller.Core.Games.known-stutter.json" />
     <EmbeddedResource Include="Games\game-verdicts.json" LogicalName="SCSKiller.Core.Games.game-verdicts.json" />
     <EmbeddedResource Include="Games\shader-mods.json" LogicalName="SCSKiller.Core.Games.shader-mods.json" />
