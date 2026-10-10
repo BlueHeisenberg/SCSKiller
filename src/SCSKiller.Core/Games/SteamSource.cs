@@ -44,8 +44,32 @@ public sealed class SteamSource(string? steamRoot = null) : IGameSource
                 installed.Add((id, new Game($"steam:{id}", V("name") ?? dir, Store.Steam, install, exe, build)));
             }
         }
-        var types = TypesOf(Path.Combine(root, "appcache", "appinfo.vdf"), installed.Select(a => a.Id).ToHashSet());
+        var appinfo = Path.Combine(root, "appcache", "appinfo.vdf");
+        // Source 2 keeps its tools (resourcecompiler.exe, source1import.exe...) beside the game's exe, larger than it: Steam's
+        // launch entry names the one it starts
+        var source2 = installed.Where(a => GameFiles.Source2Exe(a.Game.InstallDir) != null).Select(a => a.Id).ToHashSet();
+        if (source2.Count > 0 && Apps(appinfo, source2) is { } launches)
+            for (var i = 0; i < installed.Count; i++)
+                if (source2.Contains(installed[i].Id) && LaunchExe(launches.GetValueOrDefault(installed[i].Id), installed[i].Game.InstallDir) is { } launched)
+                    installed[i] = (installed[i].Id, installed[i].Game with { ExePath = launched });
+        var types = TypesOf(appinfo, installed.Select(a => a.Id).ToHashSet());
         return installed.Where(a => types?.TryGetValue(a.Id, out var t) != true || IsGameType(t!)).Select(a => a.Game).ToList();
+    }
+
+    /// <summary>The exe Steam starts for the app on Windows: its config/launch entries without a beta branch or another OS
+    /// whose executable is in the install, the one of type "default" first. Null when none.</summary>
+    internal static string? LaunchExe(Dictionary<string, object>? app, string installDir)
+    {
+        if (app?.GetValueOrDefault("config") is not Dictionary<string, object> config || config.GetValueOrDefault("launch") is not Dictionary<string, object> launch) return null;
+        return launch.Values.OfType<Dictionary<string, object>>()
+            .Where(e => e.GetValueOrDefault("config") is not Dictionary<string, object> c
+                || !c.ContainsKey("BetaKey") && (c.GetValueOrDefault("oslist") is not string os || os.Contains("windows", StringComparison.OrdinalIgnoreCase)))
+            .OrderByDescending(e => "default".Equals(e.GetValueOrDefault("type") as string, StringComparison.OrdinalIgnoreCase))
+            .Select(e => e.GetValueOrDefault("executable") as string)
+            .OfType<string>()
+            .Where(x => x.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            .Select(x => Path.GetFullPath(Path.Combine(installDir, x.Replace('\\', '/').Replace('/', Path.DirectorySeparatorChar))))
+            .FirstOrDefault(File.Exists);
     }
 
     /// <summary>Steam's app types that are played: "Game" and "Demo" (not Tool, Application, Config, DLC, Music, Video...).</summary>

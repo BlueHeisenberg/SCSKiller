@@ -52,7 +52,7 @@ public static class GameFiles
 
     /// <summary>A Source 2 game's own exe (cs2.exe, deadlock.exe, dota2.exe): the one in game\bin\win64, beside engine2.dll,
     /// that isn't a tool (<see cref="NotTheGame"/>: source1import.exe and vconsole2.exe are larger than the game's launcher
-    /// exe). Of several, the smallest; null when it isn't Source 2.</summary>
+    /// exe). Of several, the smallest; null when it isn't Source 2. SteamSource prefers the exe Steam launches.</summary>
     internal static string? Source2Exe(string installDir, ISet<string>? excluded = null)
     {
         var bin = Path.Combine(installDir, "game", "bin", "win64");
@@ -342,7 +342,7 @@ public static class GameFiles
     /// <summary>An install folder compared across sources: full path, no trailing separator (a drive root keeps its own).</summary>
     public static string DirKey(string dir) => dir.Length == 0 ? dir : Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir));
 
-    static readonly string[] NotTheGame = ["redist", "directx", "crash", "unins", "setup", "vconsole", "source1import"];   // Source 2's developer console and asset importer
+    static readonly string[] NotTheGame = ["redist", "directx", "crash", "unins", "setup", "vconsole", "source1import", "resourcecompiler"];   // Source 2's developer console and asset tools
 
     // the Epic Online Services installer is 64-bit and can be the largest exe in an Unreal game's Binaries\Win64
     static readonly string[] Helpers = ["EpicOnlineServices", "EOSBootstrapper", "EpicWebHelper", "CrashReport", "UnrealCEFSubProcess",
