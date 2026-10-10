@@ -32,6 +32,7 @@ public static class GameFiles
             .OrderByDescending(f => IsShipping(f.FullName) && !NotTheGameBuild.Any(n => BuildName(f.FullName).Contains(n, StringComparison.OrdinalIgnoreCase)))
             .ThenByDescending(f => f.Length).ToList();
         if (unreal.Count > 0) return UnrealExe(installDir, unreal);
+        if (Source2Exe(installDir, excluded) is { } source2) return source2;
         if (BattlEyeTarget(installDir) is { } be) return be;
         if (launcherExe != null)
         {
@@ -47,6 +48,17 @@ public static class GameFiles
         var guess = exes.OrderBy(f => f.DirectoryName!.Length > installDir.TrimEnd('\\').Length ? 1 : 0)   // root folder first
             .ThenByDescending(f => f.Length).FirstOrDefault();
         return guess == null ? null : NotPlus(LaunchedExe(installDir, guess, exes), exes);
+    }
+
+    /// <summary>A Source 2 game's own exe (cs2.exe, deadlock.exe, dota2.exe): the one in game\bin\win64, beside engine2.dll,
+    /// that isn't a tool (<see cref="NotTheGame"/>: source1import.exe and vconsole2.exe are larger than the game's launcher
+    /// exe). Of several, the smallest; null when it isn't Source 2.</summary>
+    internal static string? Source2Exe(string installDir, ISet<string>? excluded = null)
+    {
+        var bin = Path.Combine(installDir, "game", "bin", "win64");
+        if (!File.Exists(Path.Combine(bin, "engine2.dll"))) return null;
+        return Directory.EnumerateFiles(bin, "*.exe", Flat).Where(f => !NotTheGameExe(installDir, f, excluded))
+            .Select(f => new FileInfo(f)).OrderBy(f => f.Length).FirstOrDefault()?.FullName;
     }
 
     /// <summary>&lt;Name&gt;.exe for &lt;Name&gt;_Plus.exe beside it, whatever their sizes: the Ubisoft+ build, which only
@@ -330,7 +342,7 @@ public static class GameFiles
     /// <summary>An install folder compared across sources: full path, no trailing separator (a drive root keeps its own).</summary>
     public static string DirKey(string dir) => dir.Length == 0 ? dir : Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir));
 
-    static readonly string[] NotTheGame = ["redist", "directx", "crash", "unins", "setup", "vconsole"];   // vconsole2.exe: Source 2's developer console
+    static readonly string[] NotTheGame = ["redist", "directx", "crash", "unins", "setup", "vconsole", "source1import"];   // Source 2's developer console and asset importer
 
     // the Epic Online Services installer is 64-bit and can be the largest exe in an Unreal game's Binaries\Win64
     static readonly string[] Helpers = ["EpicOnlineServices", "EOSBootstrapper", "EpicWebHelper", "CrashReport", "UnrealCEFSubProcess",
