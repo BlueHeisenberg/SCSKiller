@@ -130,12 +130,12 @@ public sealed partial class ScsKiller : IScsKiller
     public static string? SharedPackDir(string dataDir, GpuVendor v) => PackGpu(v) is { } gpu ? Path.Combine(dataDir, "community", "packs", gpu) : null;
 
     /// <summary>Unreal first, then the engines whose archives the carver can't see into (FromSoftware, Unity, RE Engine,
-    /// REDengine 3, Dagor) or whose pipelines and root signatures it doesn't know (Northlight), then the generic raw DXBC/DXIL carver.</summary>
+    /// REDengine 3, Dagor, Source 2) or whose pipelines and root signatures it doesn't know (Northlight), then the generic raw DXBC/DXIL carver.</summary>
     public static IEngineReader DefaultReaders() =>
         new EngineReaders(("Unreal", new UnrealReader(AppStore.DefaultDir)), (FromSoftReader.Family, new FromSoftReader(AppStore.DefaultDir)),
             (UnityReader.Family, new UnityReader()), (ReEngine.ReEngineReader.Family, new ReEngine.ReEngineReader(AppStore.DefaultDir)),
             (RedEngine.RedEngineReader.Family, new RedEngine.RedEngineReader()), (Dagor.DagorReader.Family, new Dagor.DagorReader()), (Northlight.NorthlightReader.Family, new Northlight.NorthlightReader()),
-            (CarvedReader.Family, new CarvedReader()));
+            (Source2.Source2Reader.Family, new Source2.Source2Reader()), (CarvedReader.Family, new CarvedReader()));
 
     public IGpuVendorBackend Vendor { get; }
     public AppStore Store { get; }

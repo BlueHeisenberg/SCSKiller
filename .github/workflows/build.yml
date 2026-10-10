@@ -54,6 +54,8 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          submodules: true   # external/ValveResourceFormat (Source 2 shaders)
 
       # the newest .NET 10 SDK: builds work with any SDK of global.json's floor or newer (publish.ps1 reads the shipped
       # runtime and package versions from the published output)

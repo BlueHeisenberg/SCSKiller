@@ -1,0 +1,3 @@
+[submodule "external/ValveResourceFormat"]
+	path = external/ValveResourceFormat
+	url = https://github.com/ValveResourceFormat/ValveResourceFormat

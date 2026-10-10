@@ -4,6 +4,13 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+### New games
+
+- **Counter-Strike 2 and Deadlock (Source 2) can be compiled** on NVIDIA when they run on DirectX 11. SCSKiller
+  reads the shaders in each game's shaders_pc_dir.vpk, so the effects, maps and heroes that stutter the first time
+  they are drawn are compiled before you play. A game set to Vulkan, with -vulkan in its Steam launch
+  options or in Deadlock's boot.vcfg, is shown as not supported.
+
 ## [1.2.5] - 2026-10-10
 
 ### Faster and steadier

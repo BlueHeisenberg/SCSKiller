@@ -1,0 +1,12 @@
+<Project>
+
+  <!-- ValveResourceFormat (Source 2 shaders) brings native SkiaSharp and SPIRV-Cross for its textures and Vulkan shaders.
+       Reading DXBC out of vcs files loads neither, so SCSKiller's exes don't ship them. -->
+  <Target Name="DropValveResourceFormatNatives" AfterTargets="ResolvePackageAssets" Condition="'$(MSBuildProjectName)' != 'ValveResourceFormat'">
+    <ItemGroup>
+      <NativeCopyLocalItems Remove="@(NativeCopyLocalItems)" Condition="$([System.String]::Copy('%(NativeCopyLocalItems.NuGetPackageId)').StartsWith('SkiaSharp.NativeAssets.')) Or '%(NativeCopyLocalItems.NuGetPackageId)' == 'Vortice.SpirvCross'" />
+      <RuntimeTargetsCopyLocalItems Remove="@(RuntimeTargetsCopyLocalItems)" Condition="$([System.String]::Copy('%(RuntimeTargetsCopyLocalItems.NuGetPackageId)').StartsWith('SkiaSharp.NativeAssets.')) Or '%(RuntimeTargetsCopyLocalItems.NuGetPackageId)' == 'Vortice.SpirvCross'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

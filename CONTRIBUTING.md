@@ -29,12 +29,13 @@ without it can't be merged. Contributions are licensed under GPL-3.0-or-later wi
 Visual Studio 2022 with the C++ desktop workload (MSVC x64, CMake), and the .NET 10 SDK:
 
 ```
+git submodule update --init
 cmake -S proxy -B proxy/build -A x64
 cmake --build proxy/build --config Release
 dotnet build SCSKiller.slnx -c Release
 ```
 
-The CMake configure downloads AMD's `amd_ags_x64.dll`, pinned by SHA-256. Without it, AMD warms of AGS games use a plain
+The submodule is ValveResourceFormat, which reads Source 2 shaders. The CMake configure downloads AMD's `amd_ags_x64.dll`, pinned by SHA-256. Without it, AMD warms of AGS games use a plain
 device.
 
 ## Tests
