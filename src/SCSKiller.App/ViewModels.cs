@@ -15,7 +15,6 @@ using Windows.UI;
 
 namespace SCSKiller.App;
 
-// View models are computed views over IScsKiller: Refresh() re-reads the facade and tells x:Bind to update everything.
 public abstract class Bindable : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -25,27 +24,26 @@ public abstract class Bindable : INotifyPropertyChanged
 static class Fmt
 {
     public static string N(long? n) => n?.ToString("N0") ?? Format.Dash;
-    /// <summary>"today at 20:14", "yesterday at 20:14", else "on 26/09/2026" (the culture's short date).</summary>
     public static string When(DateTimeOffset at)
     {
         var t = at.LocalDateTime;
-        return t.Date == DateTime.Today ? $"today at {t:t}" : t.Date == DateTime.Today.AddDays(-1) ? $"yesterday at {t:t}" : $"on {t:d}";
+        return t.Date == DateTime.Today ? I18n.T("FmtTodayAt", $"{t:t}")
+            : t.Date == DateTime.Today.AddDays(-1) ? I18n.T("FmtYesterdayAt", $"{t:t}")
+            : I18n.T("FmtOnDate", $"{t:d}");
     }
     public static string Vendor(GpuVendor v) => v switch
     {
         GpuVendor.Nvidia => "NVIDIA", GpuVendor.Amd => "AMD", GpuVendor.Intel => "Intel", _ => "GPU",
     };
-    public static string Engine(EngineInfo? e) => e is null ? "Unknown engine" : Format.Engine(e, e.Family == "Unreal" ? "UE" : null) + Guessed(e);
-    public static string Guessed(EngineInfo e) => e.VersionGuessed ? " (guessed)" : "";
+    public static string Engine(EngineInfo? e) => e is null ? I18n.T("FmtUnknownEngine") : Format.Engine(e, e.Family == "Unreal" ? "UE" : null) + Guessed(e);
+    public static string Guessed(EngineInfo e) => e.VersionGuessed ? I18n.T("FmtGuessed") : "";
     public static string AntiCheatName(AntiCheat a) => a switch
     {
         AntiCheat.EasyAntiCheat => "EasyAntiCheat", AntiCheat.BattlEye => "BattlEye", _ => "anti-cheat",
     };
     public static Style Style(string key) => (Style)Application.Current.Resources[key];
-    /// <summary>"Severe shader-compilation stutter: reason", then the source and when it was checked; null when not listed.</summary>
     public static string? StutterTip(GameState s) => s.KnownStutter is { } k
         ? $"{(k.Severity == StutterSeverity.Severe ? "Severe" : "Moderate")} shader-compilation stutter: {k.Reason}.\nSource: {k.Source} (checked {k.Date})" : null;
-    /// <summary>Library sections, in list order. GOG, Ubisoft, Battle.net, PURPLE, HoYoPlay and Gaijin games are Store.Other: told apart by their id prefix.</summary>
     public static readonly string[] Stores = ["Steam", "Epic Games", "Xbox / Game Pass", "EA app", "GOG", "Ubisoft Connect", "Battle.net", "PURPLE", "HoYoPlay", "Gaijin", "Other", AddedByYou];
     public const string AddedByYou = "Added by you";
     public static string StoreName(Game g) => g.Store switch
@@ -53,13 +51,9 @@ static class Fmt
         Store.Steam => "Steam", Store.Epic => "Epic Games", Store.Xbox => "Xbox / Game Pass", Store.EA => "EA app", Store.Manual => AddedByYou,
         _ => g.Id[..Math.Max(0, g.Id.IndexOf(':'))] switch { "gog" => "GOG", "ubisoft" => "Ubisoft Connect", "battlenet" => "Battle.net", "purple" => "PURPLE", "hoyoplay" => "HoYoPlay", "gaijin" => "Gaijin", _ => "Other" },
     };
-    /// <summary>Measured driver cache when known, else the estimate.</summary>
     public static string Cache(GameState s) => s.CacheOnDisk is { } c ? Format.Bytes(c) : s.EstimatedCacheBytes is { } b ? "≈ " + Format.Bytes(b) : Format.Dash;
-    /// <summary>The last compile's measured time, else the estimate: the estimate's rate is measured on a cold cache only.</summary>
     public static TimeSpan? CompileTime(GameState s) => s.LastWarmTime ?? s.EstimatedWarmTime;
-    /// <summary>Tooltip for an estimated (not measured) cache value; null when measured.</summary>
     public static string? CacheTip(GameState s) => s.CacheOnDisk == null && s.EstimatedCacheBytes != null ? "Estimated driver cache if compiled" : null;
-    /// <summary>One middleware tag: what it compiles and its DLLs.</summary>
     public static string TagTip(MiddlewareTag t) => Format.Middleware(t) + "\n    " + string.Join(", ", t.Dlls);
     public static bool Active(QueueItem q) => q.Stage is not (QueueStage.Done or QueueStage.Failed or QueueStage.Stopped);
     public static void PauseOrResume(QueueItem? running)
@@ -67,8 +61,6 @@ static class Fmt
         if (running?.Stage == QueueStage.Paused) App.Core.ResumeQueue(); else App.Core.PauseQueue();
     }
 
-    /// <summary>The game's compile runs (or is paused), or is the next the running queue starts: Play waits, since the warm
-    /// stages a process under the game's exe name. A stopped queue's items and "when idle" items don't block it.</summary>
     public static bool CompilingSoon(IEnumerable<QueueItem> queue, string gameId)
     {
         var compiles = queue.Where(q => !q.PlanCheck).ToList();
@@ -78,8 +70,6 @@ static class Fmt
 
     public const string CompilingTip = "Compiling: play when it finishes";
 
-
-    /// <summary>Starts the game through its store (<see cref="StoreLaunch"/>); the error to show, or null. The design data starts nothing.</summary>
     public static string? Play(Game g)
     {
         if (App.Core is Design.FakeScsKiller) return null;
@@ -95,12 +85,9 @@ static class Fmt
         }
     }
 
-    /// <summary>The Play button's tooltip when it can start the game.</summary>
     public static string PlayVia(Game g) => g.Store == Store.Manual ? $"Start {Path.GetFileName(g.ExePath)}" : $"Play through {StoreName(g)}";
 }
 
-/// <summary>Folds a burst of Core events into one run on the UI thread: a scan raises GameChanged once per game (62 at
-/// once on a real library), and a page refresh per event kept the UI thread busy for seconds. Request from any thread.</summary>
 public sealed class Coalesced(DispatcherQueue ui, Action run)
 {
     int pending;
@@ -108,14 +95,10 @@ public sealed class Coalesced(DispatcherQueue ui, Action run)
     public void Request()
     {
         if (Interlocked.Exchange(ref pending, 1) == 0 && !ui.TryEnqueue(() => { Volatile.Write(ref pending, 0); run(); }))
-            Volatile.Write(ref pending, 0);   // the window is closing
+            Volatile.Write(ref pending, 0);
     }
 }
 
-/// <summary>A read that must not run on the UI thread, such as the driver cache's usage and limit (NVIDIA's limit loads the
-/// driver's profile database: ~130 ms measured; the usage walks the cache folder). <paramref name="read"/> runs on a
-/// background thread, <paramref name="apply"/> on the UI thread. One read at a time: requests meanwhile fold into one more
-/// read, so results apply in order. Request on the UI thread.</summary>
 public sealed class BackgroundRead<T>(Func<T> read, Action<T> apply)
 {
     bool busy, again;
@@ -136,15 +119,11 @@ public sealed class BackgroundRead<T>(Func<T> read, Action<T> apply)
     }
 }
 
-/// <summary>Game icons: a packaged (Xbox / Game Pass) game's own logo, else the exe's shell thumbnail (its own icon); null
-/// when the exe isn't there or the icon failed to load after retries (the row shows its tile). UI thread only.</summary>
 static class Icons
 {
-    // The stream stays open as long as its image: XAML may decode again from it (another size: Library 32 px, detail 56 px).
     static readonly Dictionary<string, (BitmapImage Image, IDisposable? Source)> cache = [];
     static readonly HashSet<string> failed = [];
 
-    /// <summary>An icon failed after its row was built: Get now returns null for it, so rebuild the rows (UI thread).</summary>
     public static event Action? Failed;
 
     public static ImageSource? Get(string exePath)
@@ -153,7 +132,7 @@ static class Icons
         if (!cache.TryGetValue(exePath, out var entry))
         {
             var bmp = new BitmapImage();
-            bmp.ImageFailed += (_, _) => Fail(exePath);   // a decode failure
+            bmp.ImageFailed += (_, _) => Fail(exePath);
             cache[exePath] = entry = (bmp, null);
             _ = LoadAsync(exePath, bmp);
         }
@@ -178,17 +157,12 @@ static class Icons
             catch (Exception)
             {
                 stream?.Dispose();
-                // The shell often answers E_PENDING (0x8000000A) at first, while many icons are asked for at once (seen on
-                // Elden Ring's and SCSKiller's own exe): retry for ~8 s before the tile. An unreadable exe fails every time.
                 if (attempt == 5) { Fail(path); return; }
                 await Task.Delay(250 << attempt);
             }
         }
     }
 
-    /// <summary>The Square44x44Logo of the package the exe sits in (appxmanifest.xml in a parent folder): a GDK game's exe
-    /// often has no icon of its own (Atomic Heart), and the shell then shows the generic application icon. Null when not
-    /// packaged, unreadable (WindowsApps) or the logo is only there scale-qualified.</summary>
     static string? PackageLogo(string exePath)
     {
         try
@@ -213,7 +187,6 @@ static class Icons
     }
 }
 
-/// <summary>A small tag on a library row (a middleware label, or "+N").</summary>
 public sealed record TagChip(string Text, string Tip);
 
 public sealed class GameRow(GameState s, bool queued = false, bool compiling = false)
@@ -241,18 +214,14 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     }
     public string Sub => $"{Fmt.Engine(s.Engine)} · {StoreName}";
     public string StoreName { get; } = Fmt.StoreName(s.Game);
-    /// <summary>Search: the name, the store as players name it, or the engine ("UE 5", "Unreal"), case-insensitive.</summary>
     public bool Matches(string term) => Name.Contains(term, StringComparison.OrdinalIgnoreCase) || StoreName.Contains(term, StringComparison.OrdinalIgnoreCase)
         || Fmt.Engine(s.Engine).Contains(term, StringComparison.OrdinalIgnoreCase) || s.Engine?.Family.Contains(term, StringComparison.OrdinalIgnoreCase) == true;
     public bool HasTags => s.Middleware is { Count: > 0 };
     public bool HasTagLine => HasTags || IsKnownStutter || IsNoStutter;
     public bool IsKnownStutter => s.KnownStutter != null;
     public string? StutterTip => Fmt.StutterTip(s);
-    /// <summary>On game-verdicts.json as no-stutter: compiling stays possible, but the bulk adds leave it out.</summary>
     public bool IsNoStutter => s.NoStutter != null;
     public string? NoStutterTip => s.NoStutter;
-    // The first three, then "+N" with the rest in its tooltip. After the stutter chip only one more chip fits before the
-    // Shaders column: several become "N upscalers".
     const int MaxTags = 3;
     public List<TagChip> Tags => s.Middleware is not { Count: > 0 } m ? []
         : (IsKnownStutter || IsNoStutter) && m.Count > 1 ? [new TagChip($"{m.Count} upscalers", string.Join("\n", m.Select(Fmt.TagTip)))]
@@ -286,7 +255,6 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.Stale => I18n.T("Status_NeedsRebuilding"),
         _ => s.ShaderModBlocks ? I18n.T("Status_NotCompiled") : s.Engine?.Encrypted == true ? I18n.T("Status_EncryptedFiles") : s.NotPlanned ? I18n.T("Status_NotSupported") : I18n.T("Status_NotSupportedYet"),
     };
-    /// <summary>The whole reason: the row's tooltip and the game page's status text.</summary>
     public string FullNote => s.Status switch
     {
         _ when s.CompileUnreached || PartlyCompiled => s.StatusReason,
@@ -300,11 +268,10 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.NeedsRecording when s.RecorderInstalled && !ScsKiller.RecordedEnough(s) => Format.RecorderOnNote(s),
         _ => s.StatusReason,
     } + Format.ModNote(s);
-    /// <summary>The row's note under the status: a few words (<see cref="Format.ShortNote"/>); null when the status says it all.</summary>
     public string? Note => Format.ShortNote(s);
-    public string RowNote => Playing ? "Playing now" + (Note is { } n ? " · " + n : "") : Note ?? "";
+    public string RowNote => Playing ? I18n.T("Status_PlayingNow") + (Note is { } n ? " · " + n : "") : Note ?? "";
     public bool HasRowNote => RowNote.Length > 0;
-    public string RowTip => (Playing ? "Playing now · " : "") + FullNote;
+    public string RowTip => (Playing ? I18n.T("Status_PlayingNow") + " · " : "") + FullNote;
     public Style StatusStyle => Fmt.Style(s.Status switch
     {
         _ when s.CompileUnreached || PartlyCompiled => "StatusWarn",
@@ -315,10 +282,9 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         _ => "StatusWarn",
     });
 
-    // One action per status (Main.dc.html): Details / Add to queue / Record / disabled Why?
     public bool Queued => queued;
     public bool IsAdd => s.Status is GameStatus.Ready or GameStatus.Stale && !s.CompileUnreached;
-    public string AddText => queued ? "In queue" : "Add to queue";
+    public string AddText => queued ? I18n.T("Status_InQueue") : I18n.T("Status_AddToQueue");
     public bool CanAdd => !queued;
     public bool IsRecord => s.Status == GameStatus.NeedsRecording && !s.RecorderInstalled && s.NoStutter == null && !ScsKiller.NeedsOfflineSession(s);
     public bool CanRecord => s.AntiCheat == AntiCheat.None;
@@ -327,30 +293,27 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     public bool IsEncrypted => s.Engine?.Encrypted == true;
     public string Reason => s.StatusReason;
 
-    // Play goes through the store (a game the user added: its exe); never for an anti-cheat game (SCSKiller never launches them)
     public bool CanLaunch { get; } = s.AntiCheat == AntiCheat.None && StoreLaunch.Supported(s.Game);
     public bool Compiling => compiling;
     public bool CanPlay => !Playing && !compiling;
-    public string PlayText => Playing ? "Running" : "Play";
+    public string PlayText => Playing ? I18n.T("DetailRunning") : I18n.T("DetailPlay");
     public string PlayTip => Playing ? $"{Name} is running" : compiling ? Fmt.CompilingTip : Fmt.PlayVia(s.Game);
 
-    public override string ToString() => $"{Name}, {StatusText}, {RowTip}";   // list item name for screen readers
+    public override string ToString() => $"{Name}, {StatusText}, {RowTip}";
 }
 
-/// <summary>One store's section of the library list (the rows shown after the search filter).</summary>
 public sealed class StoreGroup(string store, IEnumerable<GameRow> rows) : ObservableCollection<GameRow>(rows)
 {
     public const string Recommended = "Recommended to compile";
-    public string Store => store;
-    public string CountText => $"{Count} game{(Count == 1 ? "" : "s")}" + (store == Recommended ? RecommendedNote() : "");
-    // a row replaced in place (compiled, cleared) changes the count of compiled ones
+    public string Store => store == Recommended ? I18n.T("Store_Recommended") : store;
+    public string CountText => I18n.T("Store_GamesCount", Count, Count == 1 ? "" : "s") + (store == Recommended ? RecommendedNote() : "");
     protected override void OnCollectionChanged(System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
         base.OnCollectionChanged(e);
         OnPropertyChanged(new System.ComponentModel.PropertyChangedEventArgs(nameof(CountText)));
     }
     string RecommendedNote() => this.Count(r => r.State.Status == GameStatus.Warmed) is var done and > 0
-        ? $" · known to stutter · {done} compiled" : " · known to stutter";
+        ? $" · {I18n.T("Store_StutterTag")} · " + I18n.T("Store_CompiledCount", done) : $" · {I18n.T("Store_StutterTag")}";
 }
 
 public sealed class LibraryVm : Bindable
@@ -360,19 +323,17 @@ public sealed class LibraryVm : Bindable
 
     public LibraryVm() => cache = new(() => (App.Core.Vendor.GetCacheUsage(), App.Core.Vendor.GetCacheLimit(), (App.Core.Vendor as AmdBackend)?.AppCache.DxcBytes()), ShowCache);
 
-    public ObservableCollection<GameRow> Games { get; } = [];   // every game, sorted; the list shows Groups
-    /// <summary>The list: rows matching <see cref="Filter"/> per store, empty stores left out. Filtering reuses the rows
-    /// (no icon reads, no IO).</summary>
+    public ObservableCollection<GameRow> Games { get; } = [];
     public ObservableCollection<StoreGroup> Groups { get; } = [];
     string filter = "";
     public string Filter { get => filter; set { if (value.Trim() != filter) { filter = value.Trim(); ApplyFilter(); Changed(); } } }
     int shown;
     public bool Filtering => filter.Length > 0;
-    public string ShownText => $"{shown} of {Games.Count} shown";
+    public string ShownText => I18n.T("Lib_ShownCount", shown, Games.Count);
     public bool NoMatch => Filtering && Games.Count > 0 && shown == 0;
-    public string NoMatchText => $"No games match “{filter}”";
+    public string NoMatchText => I18n.T("Lib_NoMatch", filter);
     public bool Scanning { get; private set; }
-    int refreshing;   // Rescan calls not finished: the scan, then a user refresh's server fetches
+    int refreshing;
     public bool Refreshing => refreshing > 0;
     public string? RefreshNote { get; private set; }
     public bool HasRefreshNote => RefreshNote != null;
@@ -387,15 +348,15 @@ public sealed class LibraryVm : Bindable
     }
 
     public string Summary { get; private set; } = "";
-    public int ReadyCount { get; private set; }     // ready, not queued yet and not a no-stutter game
+    public int ReadyCount { get; private set; }
     public int WaitingCount { get; private set; }
-    public string AddAllText => $"Add all ready ({ReadyCount})";
+    public string AddAllText => I18n.T("Lib_AddAllReady", ReadyCount);
     public bool CanAddAll => ReadyCount > 0 && !Scanning;
-    public int RecommendedCount { get; private set; }   // known to stutter, ready and not queued yet
-    public string AddRecommendedText => $"Add all recommended ({RecommendedCount})";
+    public int RecommendedCount { get; private set; }
+    public string AddRecommendedText => I18n.T("Lib_AddAllRecommended", RecommendedCount);
     public bool CanAddRecommended => RecommendedCount > 0 && !Scanning;
-    public bool CannotAddRecommended => !CanAddRecommended;   // the plain, disabled twin of the accent button (theme brushes stay in XAML)
-    public string CompileQueueText => $"Compile queue ({WaitingCount})";
+    public bool CannotAddRecommended => !CanAddRecommended;
+    public string CompileQueueText => I18n.T("Lib_CompileQueue", WaitingCount);
     public bool CanCompileQueue => WaitingCount > 0;
 
     public string CacheUsed { get; private set; } = "";
@@ -407,16 +368,16 @@ public sealed class LibraryVm : Bindable
 
     public string DriverMode => App.Core.Settings.OnDriverUpdate switch
     {
-        DriverUpdateMode.Ask => "Ask me first", DriverUpdateMode.WhenIdle => "When the PC is idle", _ => "Off",
+        DriverUpdateMode.Ask => I18n.T("Lib_DriverMode_Ask"), DriverUpdateMode.WhenIdle => I18n.T("Lib_DriverMode_Idle"), _ => I18n.T("Lib_DriverMode_Off"),
     };
     public string DriverModeNote => App.Core.Settings.OnDriverUpdate switch
     {
-        DriverUpdateMode.Ask => "A notification offers compile now, when idle, or skip",
-        DriverUpdateMode.WhenIdle => "Rebuilds on its own while you're away from the PC",
-        _ => "Rebuild games yourself from the Library",
+        DriverUpdateMode.Ask => I18n.T("SettingsAskMeSub"),
+        DriverUpdateMode.WhenIdle => I18n.T("SettingsAutoIdleSub"),
+        _ => I18n.T("SettingsModeOffSub"),
     };
     public string Threads => App.Core.Settings.Threads.ToString();
-    public string ThreadsOf => $"of {Environment.ProcessorCount} threads";
+    public string ThreadsOf => I18n.T("Lib_ThreadsOf", Environment.ProcessorCount);
     public string SpeedNote { get; private set; } = "";
 
     public void Load()
@@ -425,8 +386,6 @@ public sealed class LibraryVm : Bindable
         if (!scanned) Rescan(force: false);
     }
 
-
-    // The scan message waits 300 ms so a cached scan doesn't flicker it; the list fills when the scan ends.
     bool slowScan, forced;
     public bool ScanEmpty => slowScan && Games.Count == 0;
     public bool ScanBusy => slowScan && Games.Count > 0;
@@ -437,7 +396,7 @@ public sealed class LibraryVm : Bindable
 
     public async void Rescan(bool force = true, bool userRequested = false)
     {
-        Scanning = true; refreshing++; forced = force; Error = RefreshNote = null; Refresh();   // the summary says "Looking for games…" while nothing is listed
+        Scanning = true; refreshing++; forced = force; Error = RefreshNote = null; Refresh();
         var scan = force ? App.Core.RescanAsync(CancellationToken.None, userRequested) : App.Core.ScanAsync(CancellationToken.None, userRequested);
         if (await Task.WhenAny(scan, Task.Delay(300)) != scan) { slowScan = true; Changed(); }
         try { await scan; scanned = true; }
@@ -485,8 +444,8 @@ public sealed class LibraryVm : Bindable
         var stores = Fmt.Stores.Where(n => n != Fmt.AddedByYou && Games.Any(r => r.StoreName == n)).ToList();
         var storeText = stores.Count > 2 ? $"{stores.Count} stores" : string.Join(" and ", stores);
         bool allUnreal = list.Count > 0 && list.All(g => g.Engine?.Family == "Unreal");
-        Summary = Scanning && list.Count == 0 ? "Looking for games…"
-            : $"{list.Count} {(allUnreal ? "Unreal Engine " : "")}game{(list.Count == 1 ? "" : "s")} found{(storeText.Length > 0 ? " in " + storeText : "")} · {ready} ready to compile";
+        Summary = Scanning && list.Count == 0 ? I18n.T("Lib_LookingForGames")
+            : I18n.T("Lib_Summary", list.Count, allUnreal ? "Unreal Engine " : "", list.Count == 1 ? "" : "s", storeText.Length > 0 ? " in " + storeText : "", ready);
 
         cache.Request();
 
@@ -496,12 +455,9 @@ public sealed class LibraryVm : Bindable
         Changed();
     }
 
-    /// <summary>Games -> Groups: same order within a store (status, then name). The sections are rebuilt only when which
-    /// rows show changes; a row whose state changed is swapped in place.</summary>
     void ApplyFilter()
     {
         var visible = Games.Where(r => filter.Length == 0 || r.Matches(filter)).ToList();
-        // known-stutter games go on top (StutterList.Recommended), out of their store's section, compiled or not
         var byId = visible.ToDictionary(r => r.Id);
         var recommended = StutterList.Recommended(visible.Select(r => r.State)).Select(s => byId[s.Game.Id]).ToList();
         var groups = visible.Except(recommended).GroupBy(r => r.StoreName)
@@ -520,7 +476,6 @@ public sealed class LibraryVm : Bindable
         foreach (var (store, rows) in groups) Groups.Add(new StoreGroup(store, rows));
     }
 
-    // Capped: AMD's limit is of its DirectX 12 cache alone, which the usage counts with the DirectX 11 one
     void ShowCache((CacheUsage Usage, CacheLimit? Limit, long? Capped) c)
     {
         var (usage, limit, capped) = c;
@@ -532,7 +487,6 @@ public sealed class LibraryVm : Bindable
         Changed();
     }
 
-    /// <summary>The Recommended section's games that can be queued now (not the ones that need a recording), every row, not the filtered view.</summary>
     List<GameRow> RecommendedToAdd()
     {
         var byId = Games.ToDictionary(r => r.Id);
@@ -568,26 +522,21 @@ public sealed class DetailVm(string id) : Bindable
     public void Refresh()
     {
         var now = App.Core.Games.FirstOrDefault(g => g.Game.Id == id);
-        if (now != null && s.Playing && !now.Playing) ReadCaches();   // the game exited: its Windows and pipeline caches grew
-        if (now != null && (now != s || Row.Icon != Icons.Get(now.Game.ExePath))) { s = now; Row = new GameRow(now); }   // or its icon failed: the tile
+        if (now != null && s.Playing && !now.Playing) ReadCaches();
+        if (now != null && (now != s || Row.Icon != Icons.Get(now.Game.ExePath))) { s = now; Row = new GameRow(now); }
         Changed();
     }
 
     static string Sentence(string t) => t.Length > 0 ? char.ToUpperInvariant(t[0]) + t[1..] : t;
     bool Partial => ScsKiller.IsPartial(s.Plan);
-    /// <summary>Needs a recording for its ray tracing only: the rest compiles (a partial compile, offered but not the primary action).</summary>
     bool RtPartial => s.Status == GameStatus.NeedsRecording && ScsKiller.NeedsRtRecording(s);
-    /// <summary>Compiled, and a recording would add its ray tracing: the record tip, not the warning callout.</summary>
     bool RtAfter => ScsKiller.RtAfterRecording(s);
     public bool NoAntiCheat => s.AntiCheat == AntiCheat.None;
-    /// <summary>The recorder may go next to the game: no anti-cheat, not a game added by hand whose folder isn't confirmed, and
-    /// not one whose first d3d12.dll Streamline loads on NVIDIA.</summary>
     bool CanRecord => NoAntiCheat && !s.RootUnconfirmed && !s.StreamlineFirst;
 
     public string Name => s.Game.Name;
-    public string Sub => $"{Path.GetFileName(s.Game.ExePath)} · {Fmt.StoreName(s.Game)}";   // engine and API are tags
+    public string Sub => $"{Path.GetFileName(s.Game.ExePath)} · {Fmt.StoreName(s.Game)}";
 
-    // Status: the state in its colour and why; the actions sit beside it.
     public string StatusGlyph => s.Status switch
     {
         _ when s.CompileUnreached || ScsKiller.IsPartlyCompiled(s) => "",
@@ -601,19 +550,16 @@ public sealed class DetailVm(string id) : Bindable
         GameStatus.Warmed when ScsKiller.IsPartlyWarmed(s) => s.StatusReason,
         GameStatus.Warmed => $"compiled for {(ScsKiller.BothApis(s.Plan) ? "DirectX 11 and DirectX 12, for " : "")}driver {s.WarmedDriverVersion}" + (s.WarmedAt is { } t ? $" on {t.LocalDateTime:d}" : "")
             + (RtAfter ? ". " + Sentence(ScsKiller.RtAfterRecordingNote) : ""),
-        // a cache here: played since a clear or a stopped compile; then the planner's note when the row has one to say
         GameStatus.Ready => (s.CacheOnDisk > 0 ? $"not fully compiled yet: {Format.Bytes(s.CacheOnDisk)} of it is in the driver cache"
             : s.LastWarmTime == null ? "not compiled yet" : "its shader cache is empty: compile it again")
             + (Row.Note != null ? ". " + Sentence(s.StatusReason) : ""),
-        GameStatus.NeedsRecording => HasDbTeaser ? Row.FullNote.Replace("; " + ScsKiller.InDbNote, "") : Row.FullNote,   // the teaser says it
+        GameStatus.NeedsRecording => HasDbTeaser ? Row.FullNote.Replace("; " + ScsKiller.InDbNote, "") : Row.FullNote,
         _ => HasDbTeaser ? s.StatusReason.Replace("; " + ScsKiller.InDbNote, "") : s.StatusReason,
-    } + (s.Status == GameStatus.NeedsRecording ? "" : Format.ModNote(s)))   // FullNote has it
+    } + (s.Status == GameStatus.NeedsRecording ? "" : Format.ModNote(s)))
         + (IsPartlyCompiled || s.CompileUnreached ? "." : "");
     public bool IsPartlyCompiled => ScsKiller.IsPartlyCompiled(s);
     public const string PartlyCompiledWhy = "SCSKiller compiled this game, but the graphics driver refused a large part of it. This happens when the driver or Windows can't build pipelines the way the game does. The refused ones are built by the game the first time it needs them, which is when they can stutter. SCSKiller compiles them again after a driver update.";
 
-    // The manifest is public: a PC without "db" sees that the community database covers the game, and where to get it.
-    // Shown, it is the page's only mention of the database.
     public bool HasDbTeaser => s is { InCommunityDb: true, Community: null } && !App.Account.HasDb
         && (s.Status == GameStatus.NeedsRecording || RtAfter || s.Status == GameStatus.Unsupported && !NoAntiCheat && s.StatusReason.StartsWith("needs a recording, which", StringComparison.Ordinal));
     public string DbTeaser => $"In the community database: {s.CommunityDbPsos:N0} pipeline{(s.CommunityDbPsos == 1 ? "" : "s")} recorded by other players. Patreon supporters compile them without recording.";
@@ -621,14 +567,13 @@ public sealed class DetailVm(string id) : Bindable
     public bool CanCompile => s.Status is GameStatus.Ready or GameStatus.Warmed or GameStatus.Stale || RtPartial;
     public string? GuessNote => s.Engine is { } e && s.Status is GameStatus.Ready or GameStatus.Warmed or GameStatus.Stale ? ScsKiller.GuessNote(e) : null;
     public bool HasGuessNote => GuessNote != null;
-    // warmed: nothing urgent, unless only partly (the careful compile is offered); RT: Record comes first; no shader stutter: not needed
     public Style CompileStyle => Fmt.Style((OffersCareful || s.Status != GameStatus.Warmed && !RtPartial) && s.NoStutter == null ? "AccentButtonStyle" : "DefaultButtonStyle");
     bool Queued => App.Core.Queue.Any(q => q.GameId == id && Fmt.Active(q) && !q.PlanCheck);
     public bool CanAdd => !Queued;
     bool CompilingSoon => Fmt.CompilingSoon(App.Core.Queue, id);
     public bool ShowPlay => Row.CanLaunch;
     public bool CanPlay => !s.Playing && !CompilingSoon;
-    public string PlayText => s.Playing ? "Running" : "Play";
+    public string PlayText => s.Playing ? I18n.T("Detail_Running") : I18n.T("Detail_Play");
     public string PlayTip => s.Playing ? $"{s.Game.Name} is running" : CompilingSoon ? Fmt.CompilingTip : Fmt.PlayVia(s.Game);
     public bool IsManual => s.Game.Store == Store.Manual;
     public void Play()
@@ -636,11 +581,9 @@ public sealed class DetailVm(string id) : Bindable
         Error = Fmt.Play(s.Game);
         Changed();
     }
-    public string AddText => Queued ? "In queue" : OffersCareful ? "Compile carefully" : RtPartial ? "Compile without ray tracing (partial)" : "Compile";
-    /// <summary>Partly warmed by a fast compile: the compile button turns the careful compile on first.</summary>
+    public string AddText => Queued ? I18n.T("Status_InQueue") : I18n.T("Detail_Compile");
     public bool OffersCareful => ScsKiller.IsPartlyWarmed(s) && s.Careful is { On: false };
 
-    // AMD's careful compile: a switch in the compile card, off while the game is queued (a running compile keeps its schedule)
     public bool HasCareful => s.Careful != null && CanCompile;
     public bool? CarefulPending { get; set; }
     public bool CarefulOn => CarefulPending ?? s.Careful?.On == true;
@@ -649,27 +592,26 @@ public sealed class DetailVm(string id) : Bindable
         : $"Compiles the pipelines recorded in the game in passes on {ScsKiller.AmdCarefulThreads} threads, so the driver keeps more of them; the rest at full speed."
           + (s.Careful?.Estimate is { } est ? $" About {Format.Duration(est)}" + (s.Careful.On || Fmt.CompileTime(s) is not { } fast ? "." : $" instead of {Format.Duration(fast)}.") : ""))
         + (s.Careful?.LaunchCompiled is { } lc ? $" After the last compile, the game's first launch still compiled {lc * 100:0}% of its pipelines." : "");
-    // Windows' shader cache of the game, read off the UI thread: Clear cache clears it too, so it can be the only cache to clear.
+
     BackgroundRead<long>? otherCaches;
     long otherBytes;
     public void ReadCaches() => (otherCaches ??= new(OtherCacheBytes, b => { otherBytes = b; Changed(); })).Request();
     long OtherCacheBytes()
     {
         try { return App.Core.GameCaches(id).Where(p => p.Name != ScsKiller.DriverPart).Sum(p => p.Bytes); }
-        catch (Exception) { return 0; }   // e.g. the game is gone after a rescan
+        catch (Exception) { return 0; }
     }
     public bool HasCache => s.CacheOnDisk != null || otherBytes > 0 || s.Status is GameStatus.Warmed or GameStatus.Stale;
     public bool ShowClearCache => HasCache || CanCompile;
-    // the driver cache, as Disk space shows it; the dialog lists Windows' cache with its own size
-    public string ClearCacheText => s.CacheOnDisk != null ? $"Clear cache ({DiskValue})" : "Clear cache";
+    public string ClearCacheText => I18n.T("Detail_ClearCache");
     public string ClearCacheTip => HasCache ? "Deletes this game's shader caches (the driver's and Windows', and the game's own if you choose) so its next run starts cold"
         : "SCSKiller learns this game's driver cache files the first time it compiles it or sees it running";
 
     public bool IsKnownStutter => s.KnownStutter != null;
     public string StutterReason => s.KnownStutter?.Reason ?? "";
+    public string NoStutterSuffix => "No es necesario compilarlo.";
     public bool IsNoStutter => s.NoStutter != null;
     public string NoStutterReason => s.NoStutter ?? "";
-    /// <summary>The source as a link when it's a URL; otherwise <see cref="StutterCitation"/> shows it as text.</summary>
     public Uri? StutterUri => Uri.TryCreate(s.KnownStutter?.Source, UriKind.Absolute, out var u) && u.Scheme is "http" or "https" ? u : null;
     public string StutterLinkText => StutterUri != null ? $"Source ({s.KnownStutter!.Date})" : "";
     public string StutterCitation => s.KnownStutter is { } k && StutterUri == null ? $"Source: {k.Source} ({k.Date})" : "";
@@ -681,7 +623,6 @@ public sealed class DetailVm(string id) : Bindable
         : $"{Fmt.AntiCheatName(s.AntiCheat)} treats an extra d3d12.dll as tampering: this game is never recorded";
     public bool HasMiddleware => s.Middleware is { Count: > 0 };
     IReadOnlyList<MiddlewareTag> Mw => s.Middleware ?? [];
-    /// <summary>"Also compiles" only names tags with known pipelines (and DLSS, by the driver); else what was detected.</summary>
     public string MiddlewareChip => Mw.Where(t => t.Pipelines > 0).Select(t => t.Label)
             .Concat(Mw.Any(t => t.Label == "DLSS") ? ["DLSS (by the driver)"] : []).ToList() is { Count: > 0 } also
         ? "Also compiles: " + string.Join(" · ", also) : "Detected: " + string.Join(" · ", Mw.Select(t => t.Label));
@@ -690,28 +631,23 @@ public sealed class DetailVm(string id) : Bindable
         + (s.Plan is { MiddlewareItems: > 0 } p ? $" (this plan: {Fmt.N(p.MiddlewareItems)} of theirs)" : "") + ".\n\n"
         + string.Join("\n", Mw.Select(Fmt.TagTip));
 
-    // The one tip left: a game that can't compile before a recording, or not its ray tracing (a plan's other gaps are the
-    // coverage card's "what's left").
     public bool HasRecordTip => CanRecord && (s.Status == GameStatus.NeedsRecording || RtAfter) && !RecordOn && s.NoStutter == null;
     bool Enough => ScsKiller.RecordedEnough(s);
-    public string RecordTipTitle => Enough ? "Record more play" : "Record 5 minutes of play";
+    public string RecordTipTitle => Enough ? I18n.T("Detail_RecordMore") : I18n.T("Detail_Record5Min");
     public string RecordTip => RtPartial || RtAfter ? $"Turn on recording and play with ray tracing on{(Enough ? "" : " for about 5 minutes")}. " + ScsKiller.RtWhy(App.Core.Vendor.Caps, s.Engine)
             + (RtAfter ? " Everything else is compiled." : " Everything else compiles from the game files already.")
         : Enough ? Sentence(s.StatusReason) + "."
         : "Turn on recording and play as usual for about 5 minutes. SCSKiller learns this game's shader layout from it, then it can compile.";
     public bool ShowRecordAction => !RecordOn && CanToggleRecord;
 
-    // Shader coverage (PlanStats), in words: how much of what the planner found gets compiled, where it comes from, what's
-    // left and what helps; every count in Details. No plan yet on a game that can compile: the card says when it's measured.
     PlanStats? P => s.Plan;
-    int? StalePct => ScsKiller.CompiledOfPlanPercent(s);   // "Needs rebuilding" with a count: what the last compile covers of the plan now
+    int? StalePct => ScsKiller.CompiledOfPlanPercent(s);
     int? CompiledPct => ScsKiller.CompiledPercent(s) ?? StalePct;
-    // a compile that didn't help: the ring is greyed out, nothing of it counts for the game
     int? Pct => s.CompileUnreached ? null : CompiledPct ?? ScsKiller.CoveragePercent(P);
     public bool HasCoverageCard => HasPlan || CanCompile;
     public bool HasPlan => P != null;
     public bool HasMeter => Pct != null;
-    public bool LowCoverage => !s.CompileUnreached && (Pct is { } pct ? pct < 90 : Partial);   // more than 10% left out, like ScsKiller.IsPartial (the test for a plan without the count)
+    public bool LowCoverage => !s.CompileUnreached && (Pct is { } pct ? pct < 90 : Partial);
     public bool GoodCoverage => HasMeter && !LowCoverage;
     bool Dx11Only => P is { StageSets: 0, Generated: 0, D3D11Shaders: > 0 };
     public string CoverageHeadline => P == null ? "Known once its first compile starts"
@@ -727,8 +663,6 @@ public sealed class DetailVm(string id) : Bindable
     bool RtInline => ScsKiller.RtInlineCovers(P);
     bool Compiled => s.WarmedAt != null && s.Status != GameStatus.Stale;
 
-    /// <summary>Where the plan's pipelines come from, in a player's words; the recording's row carries the community note,
-    /// and without one the community database's status is its own row. Ray tracing: covered or what it needs.</summary>
     public IReadOnlyList<DetailRow> Sources => P is not { } p ? [] : new DetailRow?[]
     {
         p.Generated > 0 ? new(ScsKiller.BothApis(p) ? "DirectX 12, from the game files" : "Found in the game files", Fmt.N(p.Generated)) : null,
@@ -745,24 +679,19 @@ public sealed class DetailVm(string id) : Bindable
         p.RtLibraries > 0 ? new("Ray-traced effects", s.Engine?.NoRayTracing == true ? "off in this game" : s.Engine?.NoRtPipelines == true ? "inline, from the game files" : p.RtUncovered == 0 ? "covered" : s.RtToPlan ? "being checked" : RtUnseen ? "not seen while recording" : RtInline ? "inline ones covered" : !Rt ? "mostly covered" : CanRecord ? "need a recording" : "not compiled") : null,
     }.OfType<DetailRow>().ToList();
     public bool HasSources => Sources.Count > 0;
-    /// <summary>The community database's line under the recording row; null = nothing to say.</summary>
     string? CommunityLine => s.Community is { } c
         ? $"Community recording downloaded {c.DownloadedAt.LocalDateTime:d}" + (s.RecordingSharedAt is { } at ? $" · yours shared {at.LocalDateTime:d}" : "")
         : s.RecordingSharedAt is { } at2 ? $"Shared with the community database {at2.LocalDateTime:d}" : null;
 
-    // What's left and what helps. LeftOut is mostly Uncovered (root signature slots SCSKiller can't build) or, with a learned
-    // lookup, stage sets no recording showed yet (no root signature / template): a longer recording is what helps there.
-    // Ray tracing the plan can't compile comes first, in the status's words (ScsKiller.RtNote).
     enum Left { AntiCheat, EngineSlots, UnknownSlots, NotSeen, Recording, PlayedClean, PlayedCompiles, NothingKnown, PlayOnly }
-    long Missing => P is { } m ? Math.Max(m.LeftOut, m.Uncovered) : 0;   // a plan without LeftOut: Uncovered only
+    long Missing => P is { } m ? Math.Max(m.LeftOut, m.Uncovered) : 0;
     Left LeftCase => !CanRecord ? Left.AntiCheat
         : Missing > 0 ? P!.Uncovered * 2 >= Missing ? P.Recorded == 0 ? Left.EngineSlots : Left.UnknownSlots : Left.NotSeen
         : RecordOn ? Left.Recording
-        : L is { } l ? PlayCompiles(l) == 0 ? Left.PlayedClean : Left.PlayedCompiles   // what was measured beats what's likely
+        : L is { } l ? PlayCompiles(l) == 0 ? Left.PlayedClean : Left.PlayedCompiles
         : P is { Recorded: > 0 } ? Left.NothingKnown
         : Left.PlayOnly;
     public string LeftText => LeftSentences(tipAsks: false);
-    /// <summary>tipAsks: the record tip already gives the ray tracing note and the recording advice.</summary>
     string LeftSentences(bool tipAsks) => string.Join(" ", new string?[]
     {
         RtUnseen ? Sentence(ScsKiller.RtUnseenNote) + "." : RtInline ? Sentence(ScsKiller.RtInlineNote) + "." : !Rt || tipAsks ? null : CanRecord ? (HasDbTeaser ? ScsKiller.RtNeedsRecording : ScsKiller.RtNote(s.InCommunityDb)) + "."
@@ -777,23 +706,20 @@ public sealed class DetailVm(string id) : Bindable
             Left.NotSeen => "SCSKiller hasn't seen how the game sets the rest up yet." + (tipAsks ? "" : " Playing longer with recording on teaches it."),
             Left.Recording => "Recording is on: anything new you play is added the next time it compiles.",
             Left.PlayedCompiles => $"Last time you played, {PlayCompiles(L!):N0} still had to compile." + (tipAsks ? "" : " Recording picks them up."),
-            _ when Rt || RtUnseen || RtInline => null,   // ray tracing is what's left
+            _ when Rt || RtUnseen || RtInline => null,
             Left.PlayedClean => "Nothing was missing last time you played.",
             Left.NothingKnown => "Nothing SCSKiller knows of is missing.",
             _ => "A few effects are only put together while you play." + (tipAsks ? "" : " A short recording picks them up."),
         },
         !Guessed ? null : tipAsks ? "Some shader states are guesses." : "Some shader states are guesses; a longer recording makes them exact.",
     }.OfType<string>());
-    // per-stage plans (AMD): the planner warns that a wrong guess costs a compile in game
     bool Guessed => P is { } g && g.GuessedUnits > 0.1 * (g.ExactUnits + g.InferredUnits + g.GuessedUnits);
-    // not twice: a game that needs a recording has the button in its tip
     public bool ShowLeftRecord => ShowRecordAction && !HasRecordTip && s.NoStutter == null && (LeftCase is Left.EngineSlots or Left.NotSeen or Left.PlayedCompiles or Left.PlayOnly || Guessed || Rt || RtUnseen || RtInline);
-    public bool ShowLeftCallout => HasPlan && ShowLeftRecord;   // before the first compile there's nothing left yet
+    public bool ShowLeftCallout => HasPlan && ShowLeftRecord;
     public string LeftTitle => Rt || RtUnseen ? "Ray-traced effects aren't compiled yet" : "Some shaders still compile while you play";
 
     public string CoverageValue => Pct is { } pct ? $"{pct}%" : Dx11Only && !s.CompileUnreached ? "All" : Format.Dash;
     public string CoverageLabel => s.CompileUnreached ? "not used" : CompiledPct != null ? "compiled" : Pct != null || Dx11Only ? "covered" : "not yet";
-    // A geometry can't be shared between two Paths: each arc gets its own (120 px box, 12 px stroke).
     public Geometry? GoodArc => GoodCoverage ? Arc() : null;
     public Geometry? LowArc => LowCoverage ? Arc() : null;
     Geometry Arc()
@@ -808,22 +734,19 @@ public sealed class DetailVm(string id) : Bindable
     }
     public bool HasTimeValue => Fmt.CompileTime(s) != null;
     public string TimeLabel => s.LastWarmTime != null ? "Compile time" : "Compile time (estimate)";
-    public string TimeValue => s.LastWarmTime is { TotalMinutes: >= 1, TotalHours: < 1 } t ? $"{t.Minutes} min {t.Seconds} s"   // measured: to the second
+    public string TimeValue => s.LastWarmTime is { TotalMinutes: >= 1, TotalHours: < 1 } t ? $"{t.Minutes} min {t.Seconds} s"
         : Format.Duration(Fmt.CompileTime(s));
     public bool HasDiskValue => s.CacheOnDisk != null || s.EstimatedCacheBytes != null;
     public string DiskLabel => s.CacheOnDisk != null ? "Disk space" : "Disk space (estimate)";
     public string DiskValue => Format.Bytes(s.CacheOnDisk ?? s.EstimatedCacheBytes);
     public bool HasShaderCount => s.ShaderCount != null;
     public string ShaderCount => Fmt.N(s.ShaderCount);
-    // measured frames when the recorder timed them, else the compile count
     long? StutterCount => F != null ? ShaderHitches.Count : L is { } l ? PlayCompiles(l) : null;
     public string StuttersValue => StutterCount is not { } n ? "" : n == 0 ? "None" : Fmt.N(n);
     public bool HasStutters => StutterCount > 0;
     public bool NoStutters => StutterCount == 0;
-    // without frame times the count is of compiles, which may or may not have stuttered
     public string StuttersLabel => F != null ? "Stutters last time you played" : "Compiles while you played";
 
-    /// <summary>Every count, for power users.</summary>
     public IReadOnlyList<DetailRow> Details => new DetailRow?[]
     {
         P is { } p ? new("Pipelines in the plan", Fmt.N(p.Recorded + p.Generated + p.MiddlewareItems)) : null,
@@ -846,15 +769,12 @@ public sealed class DetailVm(string id) : Bindable
         s.CacheOnDisk != null || s.EstimatedCacheBytes != null ? new("Driver cache", Fmt.Cache(s) + (s.CacheOnDisk != null ? " measured" : " estimated")) : null,
     }.OfType<DetailRow>().ToList();
 
-
-    // "Shipped with the shaders" is the carver's case.
     string RootSigSource(PlanStats p) =>
         p.RootSigRuleVerified ? "tested on this engine version"
         : p.RootSignatures == 0 ? "not needed (DirectX 11)"
         : s.Engine?.Family == "Unreal" ? (p.Recorded > 0 ? "learned from recording" : "not tested on this engine version yet")
         : p.Recorded > 0 ? "learned from recording" : "shipped with the shaders";
 
-    // Last compile: when, how long, what failed or was skipped and what to do; never compiled: what the first one costs.
     public bool HasCompileCard => CanCompile || s.LastWarmTime != null;
     public string CompileTitle => s.LastWarmTime == null ? "First compile" : "Last compile";
     long Failed => s.LastWarmFailed ?? 0;
@@ -862,14 +782,14 @@ public sealed class DetailVm(string id) : Bindable
     long Crashed => s.LastWarmCrashed ?? 0;
     public string CompileText => s.WarmedAt is { } at
         ? $"Compiled {Fmt.When(at)}" + (s.LastWarmTime is { } t ? $" in {Format.Duration(t)}" : "") + $", for driver {s.WarmedDriverVersion}."
-          + (s.LastWarmFailed != null && Failed == 0 && Skipped == 0 && Crashed == 0 ? " Nothing failed." : "")   // null = not known (a warm from before these were kept): no claim
+          + (s.LastWarmFailed != null && Failed == 0 && Skipped == 0 && Crashed == 0 ? " Nothing failed." : "")
           + (Failed > 0 ? $" The driver skipped {Failed:N0} combination{(Failed == 1 ? "" : "s")}." : "")
           + (s.CacheOnDisk is { } c ? $" It uses {Format.Bytes(c)} of disk space." : "")
         : s.LastWarmTime is { } last ? $"Its shader cache was cleared. The last compile took {Format.Duration(last)}."
         : (s.EstimatedWarmTime is { } est ? $"It takes about {Format.Duration(est)} and runs in the background, so you can keep using the PC." : "It runs in the background, so you can keep using the PC.")
           + (s.EstimatedCacheBytes is { } b ? $" It adds about {Format.Bytes(b)} to the driver's shader cache." : "");
     public string SkippedTitle => $"{Skipped + Crashed:N0} skipped";
-    long NeedsRecording => Math.Min(Skipped, s.LastWarmNeedsRecording ?? 0);   // of Skipped: flagged by the community recording
+    long NeedsRecording => Math.Min(Skipped, s.LastWarmNeedsRecording ?? 0);
     long NotInGame => Skipped - NeedsRecording;
     public string? SkippedText => s.WarmedAt == null || Skipped + Crashed == 0 ? null
         : string.Join(" ", new[]
@@ -880,13 +800,10 @@ public sealed class DetailVm(string id) : Bindable
         }.OfType<string>());
     public bool HasSkipped => SkippedText != null;
 
-    // Last play session (SessionStats, no timestamp): one bar, three segments, under the Record switch. Ready = from the
-    // game's library or the driver cache; ray tracing state objects have their own line, so Requests isn't used.
     SessionStats? L => s.LastSession;
     public bool HasSession => L != null;
     public bool ShowSessionHint => L == null && CanRecord;
     public string SessionHeader => L is { } l ? $"Last time you played · {Format.Duration(F?.Duration ?? l.Duration)}" : "";
-    // ray tracing state objects included, so the headline agrees with the ray tracing line under it
     static long PlayCompiles(SessionStats l) => l.Compiles + l.StateObjectsCompiled;
     public string SessionVerdict
     {
@@ -896,7 +813,6 @@ public sealed class DetailVm(string id) : Bindable
             long play = PlayCompiles(l), started = l.StartupCompiles + l.StateObjectsStartupCompiled, ready = l.FromGameLibrary + l.CacheHits + l.StateObjectsReady;
             if (play + started == 0)
                 return ready > 0 ? $"Nothing had to compile while you played: all {ready:N0} shader combinations the game used were ready." : "Nothing had to compile while you played.";
-            // the longest compile call, of the PSOs only; whether a frame stuttered is the frame report's to say
             string worst = l.StateObjectsCompiled > 0 ? "" : play == 1 ? $" (it took {l.WorstCompileMs:0} ms)" : $" (the longest took {l.WorstCompileMs:0} ms)";
             return (play == 0 ? "Nothing had to compile while you played." : $"{play:N0} had to compile while you played{worst}.")
                 + (started > 0 ? $" {started:N0} compiled while the game started or loaded." : "")
@@ -910,7 +826,6 @@ public sealed class DetailVm(string id) : Bindable
     public string RayQueryLine => L is { RayQueryRecompiles: > 0 and var n }
         ? $"{n:N0} ray-traced pipeline{(n == 1 ? "" : "s")} the driver partly recompiles every launch." : "";
 
-    // The last launch's frame times (FrameLog): its shader stutters, other hitches and loading, the 1% low of play.
     public FrameReport? F => s.LastFrames;
     List<Hitch> ShaderHitches => F?.Hitches.Where(h => h.Cause == HitchCause.Shader).ToList() ?? [];
     public bool HasFrames => F != null;
@@ -919,7 +834,6 @@ public sealed class DetailVm(string id) : Bindable
     public string FramesSummary => F is not { } f ? ""
         : $"Startup (the game's own shader precompile and first load): {Format.Duration(f.Startup)}. In play: {InPlay(f).Count(h => h.Ms >= 50):N0} frames of 50 ms or more, "
           + $"{InPlay(f).Count(h => h.Ms >= 100):N0} of 100 ms or more. Frame times stay on this PC.";
-    // the same list while the report is the same: a new one makes the slow-frames list rebuild every row at each refresh
     public IReadOnlyList<DetailRow> HitchRows => hitchRows.Report == F ? hitchRows.Rows
         : (hitchRows = (F, F?.Hitches.Select(h => new DetailRow($"{Clock(h.At)}  {Cause(h.Cause)}", Ms(h.Ms))).ToList() ?? [])).Rows;
     (FrameReport? Report, IReadOnlyList<DetailRow> Rows) hitchRows = (null, []);
@@ -927,14 +841,11 @@ public sealed class DetailVm(string id) : Bindable
     static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
     public bool HasHitchRows => F?.Hitches.Count > 0;
 
-    // the frames of play, between startup and quitting, whatever slowed them (a load in play too)
     static IEnumerable<Hitch> InPlay(FrameReport f) => f.Hitches.Where(h => FrameLog.InPlay(h.At.TotalMilliseconds, h.Ms, f.Startup.TotalMilliseconds) && h.Cause != HitchCause.Quitting);
     static string Ms(double ms) => ms >= 1000 ? $"{ms / 1000:0.0} s" : $"{ms:0} ms";
     static string Cause(HitchCause c) => c switch { HitchCause.Shader => "shader compile", HitchCause.Other => "other hitch", HitchCause.Quitting => "quitting",
         HitchCause.LoadingShaders => "loading, compiling shaders", _ => "loading" };
 
-    /// <summary>"5 min: 3 stutters from shader compiles (worst 1.3 s), 2 other hitches, 1% low 35 fps. Loading: 4 slow
-    /// frames compiling shaders (worst 9.4 s), 12 others." (compiling shaders: startup only)</summary>
     public static string FramesText(FrameReport f, IReadOnlyList<Hitch> shader)
     {
         int other = f.Hitches.Count(h => h.Cause == HitchCause.Other), loading = f.Hitches.Count(h => h.Cause == HitchCause.Loading);
@@ -965,7 +876,7 @@ public sealed class DetailVm(string id) : Bindable
           + (l.StateObjectsStartupCompiled > 0 ? $", {l.StateObjectsStartupCompiled:N0} while the game started or loaded" : "")
         : "";
 
-    public bool? RecordPending { get; set; }   // the state a recorder change that is running (off the UI thread) asked for
+    public bool? RecordPending { get; set; }
     public bool RecordOn => ShowOffline ? OfflineOn : RecordPending ?? s.RecorderEffective;
     public bool CanToggleRecord => ShowOffline ? OfflinePending == null && !s.OfflineRunning
         : RecordPending == null && AlongsidePending == null && NoAntiCheat && s.RecorderSkip == null;
@@ -980,9 +891,8 @@ public sealed class DetailVm(string id) : Bindable
         : s.RecorderSkip is { } skip ? $"Not available: {skip}."
         : "Adds a small d3d12.dll next to the game to catch anything the plan missed and time each frame, so this page shows what stuttered. Remove any time. If a game has anti-cheat SCSKiller didn't detect, don't turn this on."
           + (s.RecorderNote is { } note ? $" ({Sentence(note)})" : "")
-          + (s.RecorderRefused is { } why && !(s.Status == GameStatus.NeedsRecording && ScsKiller.NeverRecorded(s)) ? " " + why : "");   // else the status says it
+          + (s.RecorderRefused is { } why && !(s.Status == GameStatus.NeedsRecording && ScsKiller.NeverRecorded(s)) ? " " + why : "");
 
-    // A mod's d3d12.dll where the recorder goes (ReShade, a wrapper): off = the game isn't recorded; on = the recorder chains to it
     public bool HasMod => s.RecorderMod != null && s.RecorderSkip is not (ScsKiller.SkipAntiCheat or ScsKiller.SkipShaderMod or ScsKiller.SkipManual or ScsKiller.SkipUnsupported or ScsKiller.SkipNotDx12 or ScsKiller.SkipStreamline);
     public string AlongsideTitle => $"Record alongside {s.RecorderMod}";
     public string AlongsideNote => $"{s.RecorderMod}'s d3d12.dll is renamed while the recorder is in, and restored exactly as it was when it's removed.";
@@ -990,7 +900,6 @@ public sealed class DetailVm(string id) : Bindable
     public bool AlongsideOn => AlongsidePending ?? s.RecordAlongsideMod;
     public bool CanToggleAlongside => AlongsidePending == null && RecordPending == null;
 
-    // An eligible EasyAntiCheat game (Games.OfflineEac): the card's switch allows offline sessions, each confirmed before it starts
     public bool ShowOffline => s.OfflineEligible;
     public bool? OfflinePending { get; set; }
     public bool OfflineOn => OfflinePending ?? s.OfflineRecord;
@@ -1026,14 +935,11 @@ public sealed class DetailVm(string id) : Bindable
     }
 }
 
-
-/// <summary>A label and its value (the detail page's sources and Details); Note: a line under the label.</summary>
 public sealed record DetailRow(string Label, string Value, string? Note = null)
 {
     public bool HasNote => Note != null;
 }
 
-/// <summary>A queue row: the running item (1), a waiting item (2..) or a finished one (Number 0).</summary>
 public sealed record QueueRow(string Id, int Number, string Name, string Exe, string Note, string Time, string Cache, QueueStage Stage,
     bool First = false, bool Last = false)
 {
@@ -1049,7 +955,6 @@ public sealed record QueueRow(string Id, int Number, string Name, string Exe, st
     public string DownLabel => $"Move {Name} down";
     public string RemoveLabel => $"Remove {Name} from the queue";
 
-    // Textos traducidos para la vista
     public string MoveToTopText => I18n.T("QueueMoveToTop");
     public string TipRemoveCurrent => I18n.T("QueueTipStopRemove");
     public string TipDrag => I18n.T("QueueTipDragReorder");
@@ -1075,7 +980,7 @@ public sealed class QueueVm : Bindable
 
     public ObservableCollection<QueueRow> Waiting { get; } = [];
     public ObservableCollection<QueueRow> Finished { get; } = [];
-    public bool Dragging { get; set; }   // don't rebuild Waiting under a drag in progress
+    public bool Dragging { get; set; }
 
     public QueueRow Current { get; private set; } = new("", 1, "", "", "", "", "", QueueStage.Waiting);
     public bool HasCurrent => cur != null;
@@ -1083,9 +988,9 @@ public sealed class QueueVm : Bindable
     public bool Empty => cur == null && Waiting.Count == 0;
     public bool HasFinished => Finished.Count > 0;
     public bool CanStart => !App.Core.QueueRunning && Waiting.Count > 0;
-    public bool CanRaiseLimit => App.Core.Vendor is not AmdBackend;   // AMD's limit is fixed (AmdAppCache.DxcCacheCap)
+    public bool CanRaiseLimit => App.Core.Vendor is not AmdBackend;
     public string Summary { get; private set; } = "";
-    public string? PlanChecks { get; private set; }   // ScsKiller.PlanCheckLine
+    public string? PlanChecks { get; private set; }
     public bool HasPlanChecks => PlanChecks != null;
 
     public string CurrentDetail
@@ -1094,13 +999,15 @@ public sealed class QueueVm : Bindable
         {
             string stage = cur?.Stage switch
             {
-                QueueStage.Indexing => "Reading shaders", QueueStage.Planning => "Building plan", QueueStage.Materializing => "Preparing files",
-                QueueStage.Paused => cur.Note is { } n ? "Paused: " + n : "Paused",
-                QueueStage.Warming when cur.Note is { } n => "Compiling: " + n,   // stalled (ScsKiller.StalledNote)
-                _ => "Compiling",
+                QueueStage.Indexing => I18n.T("Queue_ReadingShaders"),
+                QueueStage.Planning => I18n.T("Queue_BuildingPlan"),
+                QueueStage.Materializing => I18n.T("Queue_PreparingFiles"),
+                QueueStage.Paused => cur.Note is { } n ? $"{I18n.T("Queue_Paused")}: {n}" : I18n.T("Queue_Paused"),
+                QueueStage.Warming when cur.Note is { } n => $"{I18n.T("Queue_Compiling")}: {n}",
+                _ => I18n.T("Queue_Compiling"),
             };
             return cur?.Progress is { Total: > 0 } p
-                ? $"{stage} · {Percent:0.0}% · {p.Done:N0} of {p.Total:N0} pipelines" + (p.PerSecond > 0 && !ScsKiller.Stalled(cur) ? $" · {p.PerSecond:N0}/s" : "") + (p.Failed > 0 ? $" · {p.Failed:N0} failed" : "") + (p.Skipped > 0 ? $" · {p.Skipped:N0} skipped" : "")   // short (the Done note explains them); a count wraps whole
+                ? $"{stage} · {Percent:0.0}% · {p.Done:N0} of {p.Total:N0} pipelines" + (p.PerSecond > 0 && !ScsKiller.Stalled(cur) ? $" · {p.PerSecond:N0}/s" : "") + (p.Failed > 0 ? $" · {p.Failed:N0} failed" : "") + (p.Skipped > 0 ? $" · {p.Skipped:N0} skipped" : "")
                 : stage;
         }
     }
@@ -1124,7 +1031,7 @@ public sealed class QueueVm : Bindable
         PlanChecks = ScsKiller.PlanCheckLine(all);
         var games = core.Games.ToDictionary(g => g.Game.Id);
 
-        TimeSpan? Left(QueueItem q) => ScsKiller.Stalled(q) ? null   // no estimate for a warm that stopped moving
+        TimeSpan? Left(QueueItem q) => ScsKiller.Stalled(q) ? null
             : q.Progress is { PerSecond: > 0 } p ? TimeSpan.FromSeconds((p.Total - p.Done) / p.PerSecond)
             : games.GetValueOrDefault(q.GameId) is { } g ? g.EstimatedWarmTime ?? g.LastWarmTime : null;
         QueueRow Row(QueueItem q, int number, bool first = false, bool last = false)
@@ -1144,10 +1051,8 @@ public sealed class QueueVm : Bindable
         var pending = queue.Where(Fmt.Active).ToList();
         var total = TimeSpan.FromTicks(pending.Sum(q => Left(q)?.Ticks ?? 0));
         bool unknown = pending.Any(q => Left(q) is null && !ScsKiller.Stalled(q));
-        Summary = pending.Count == 0 ? "Nothing queued"
-            : $"{pending.Count} game{(pending.Count == 1 ? "" : "s")} · "
-              + (total > TimeSpan.Zero ? $"about {Format.Duration(total)} in total{(unknown ? ", plus plans to build" : "")}" : "time known once the plans are built")
-              + (cur == null && !core.QueueRunning ? " · not started" : "");
+        Summary = pending.Count == 0 ? I18n.T("Queue_NothingQueued")
+            : I18n.T("Queue_Summary", pending.Count, pending.Count == 1 ? "" : "s", Format.Duration(total), unknown ? ", plus plans to build" : "", cur == null && !core.QueueRunning ? " · not started" : "");
 
         planned = pending.Sum(q => games.GetValueOrDefault(q.GameId)?.EstimatedCacheBytes ?? 0);
         var queued = pending.Select(q => games.GetValueOrDefault(q.GameId)).OfType<GameState>().ToList();
@@ -1160,9 +1065,9 @@ public sealed class QueueVm : Bindable
 
     void ShowCache()
     {
-        if (driver is not { } d) return;   // not read yet
+        if (driver is not { } d) return;
         CacheWarnText = (d.Capped is { } used
-            ? ScsKiller.LargeCompileWarning(sizes, App.Core.Vendor.Vendor) ?? AmdAppCache.QueueWarning(used, growth)   // one game over the cap is always over what's free too
+            ? ScsKiller.LargeCompileWarning(sizes, App.Core.Vendor.Vendor) ?? AmdAppCache.QueueWarning(used, growth)
             : ScsKiller.QueueCacheWarning(sizes, d.Usage.BytesOnDisk, planned, d.Limit?.Bytes, App.Core.Vendor.Vendor)) ?? "";
         CacheWarn = CacheWarnText.Length > 0;
     }
@@ -1177,12 +1082,12 @@ public sealed class QueueVm : Bindable
 
     static string NoteOf(QueueItem q, GameState? g) => q.Stage switch
     {
-        QueueStage.Failed => "Failed: " + q.Error,
+        QueueStage.Failed => $"{I18n.T("Queue_Failed")}: {q.Error}",
         QueueStage.Stopped when q.Progress is { } p => $"Stopped at {p.Done:N0} of {p.Total:N0}: add it again to continue" + (q.Note is { } n ? " · " + n : ""),
-        QueueStage.Stopped => "Stopped",
-        QueueStage.Done => q.Note is { } n ? "Done · " + n : "Done",
+        QueueStage.Stopped => I18n.T("Queue_Stopped"),
+        QueueStage.Done => q.Note is { } n ? $"{I18n.T("Queue_Done")} · {n}" : I18n.T("Queue_Done"),
         _ when q.Note != null => q.Note,
-        _ => g?.Plan is { } plan ? $"{plan.Recorded + plan.Generated + plan.MiddlewareItems:N0} pipelines{(plan.D3D11Shaders > 0 ? $" + {plan.D3D11Shaders:N0} DirectX 11 shaders" : "")}" : "plan is built first",
+        _ => g?.Plan is { } plan ? $"{plan.Recorded + plan.Generated + plan.MiddlewareItems:N0} pipelines{(plan.D3D11Shaders > 0 ? $" + {plan.D3D11Shaders:N0} DirectX 11 shaders" : "")}" : I18n.T("Queue_PlanBuiltFirst"),
     };
 
     public void PauseOrResume() => Fmt.PauseOrResume(cur);
@@ -1199,7 +1104,6 @@ public sealed class SettingsVm : Bindable
 
     Settings S { get => App.Core.Settings; set { App.Core.Settings = value; Refresh(); } }
     IGpuVendorBackend V => App.Core.Vendor;
-    // The driver cache's limit and usage, the drive's free space and NVIDIA's Auto Shader Compilation, read off the UI thread; null until the first read.
     (CacheLimit? Limit, CacheUsage Usage, string Free, AutoShaderState? Auto)? read;
     readonly BackgroundRead<(CacheLimit?, CacheUsage, string, AutoShaderState?)> cache;
 
@@ -1213,9 +1117,7 @@ public sealed class SettingsVm : Bindable
             return (V.GetCacheLimit(), usage, free, V.GetAutoShaderCompilation());
         }, r =>
         {
-            // Preselect the current custom limit, else 100 GB (the mockup's suggestion over the 16 GB default).
             if (read == null) SizeIndex = Array.FindIndex(Sizes, s => !s.Limit.IsDriverDefault && s.Limit == r.Item1) is >= 0 and var i ? i : 2;
-            // The checkbox and level show the driver's state after every read (an apply's re-read included); Medium when off.
             AutoOn = r.Item4 is { Level: not AutoShaderCompilation.Off };
             AutoLevelIndex = r.Item4 is { Level: not AutoShaderCompilation.Off and var l } ? (int)l - 1 : 1;
             read = r;
@@ -1227,7 +1129,7 @@ public sealed class SettingsVm : Bindable
     public string CacheTitle => $"{Fmt.Vendor(V.Vendor)} shader cache size";
     public bool IsNvidia => V.Vendor == GpuVendor.Nvidia;
 
-    public static readonly string[] AutoLevels = ["Low", "Medium", "High"];   // AutoShaderCompilation.Low..High, as the NVIDIA App names them
+    public static readonly string[] AutoLevels = ["Low", "Medium", "High"];
     public bool? AutoOn { get; set; }
     public int AutoLevelIndex { get; set; } = 1;
     public AutoShaderCompilation AutoChoice => AutoOn == true ? (AutoShaderCompilation)(Math.Clamp(AutoLevelIndex, 0, 2) + 1) : AutoShaderCompilation.Off;
@@ -1280,7 +1182,7 @@ public sealed class SettingsVm : Bindable
         {
             if (value < 0 || value == DriverMode) return;
             S = S with { OnDriverUpdate = (DriverUpdateMode)value };
-            try { App.Core.ApplyDriverUpdateMode(); }  // user action: registers or removes the sign-in check
+            try { App.Core.ApplyDriverUpdateMode(); }
             catch (Exception e) { ApplyMessage = "Couldn't update the sign-in check: " + e.Message; ApplySeverity = Microsoft.UI.Xaml.Controls.InfoBarSeverity.Error; Changed(); }
         }
     }
@@ -1294,9 +1196,8 @@ public sealed class SettingsVm : Bindable
     public bool? MaximumPlans { get => S.MaximumPlans; set { if (value is { } v && v != S.MaximumPlans) S = S with { MaximumPlans = v }; } }
     public bool? ShareRecordings { get => S.ShareRecordings; set { if (value is { } v && v != S.ShareRecordings) S = S with { ShareRecordings = v }; } }
     public bool? ActiveCheck { get => S.ActiveCheck; set { if (value is { } v && v != S.ActiveCheck) S = S with { ActiveCheck = v }; } }
-    public void GamesChanged() => Changed();   // no driver-cache re-read (Refresh)
-    public bool RecordAllGames { get => S.RecordAllGames; set { if (value != S.RecordAllGames) S = S with { RecordAllGames = value }; } }   // the core reconciles off this thread
-    /// <summary>"Recording in 23 games · 5 skipped: anti-cheat"; not-DX12 and unsupported games aren't counted.</summary>
+    public void GamesChanged() => Changed();
+    public bool RecordAllGames { get => S.RecordAllGames; set { if (value != S.RecordAllGames) S = S with { RecordAllGames = value }; } }
     public string RecordingCount
     {
         get
@@ -1314,10 +1215,9 @@ public sealed class SettingsVm : Bindable
     public static readonly string[] RecordingLimitLabels = RecordingLimits.Select(ScsKiller.LimitText).ToArray();
     public int RecordingLimitIndex
     {
-        get => Array.IndexOf(RecordingLimits, S.RecordingLimitMB);   // -1: a value set elsewhere, shown blank
-        set { if (value >= 0 && RecordingLimits[value] != S.RecordingLimitMB) S = S with { RecordingLimitMB = RecordingLimits[value] }; }   // the core reconciles off this thread
+        get => Array.IndexOf(RecordingLimits, S.RecordingLimitMB);
+        set { if (value >= 0 && RecordingLimits[value] != S.RecordingLimitMB) S = S with { RecordingLimitMB = RecordingLimits[value] }; }
     }
-    /// <summary>Each game with a recording on disk, largest first: its size, and whether it reached the limit.</summary>
     public IReadOnlyList<DetailRow> Recordings => App.Core.Games.Where(g => g.RecordingBytes > 0).OrderByDescending(g => g.RecordingBytes)
         .Select(g => new DetailRow(g.Game.Name, Format.Bytes(g.RecordingBytes), g.RecordingPaused ? ScsKiller.PausedNote(S) : null)).ToList();
     public bool HasRecordings => App.Core.Games.Any(g => g.RecordingBytes > 0);
@@ -1330,31 +1230,27 @@ public sealed class SettingsVm : Bindable
         {
             if (value is not { } v || v == S.StartWithWindows) return;
             S = S with { StartWithWindows = v };
-            App.ApplyStartWithWindows();   // the sign-in entry: written or removed now (real data only)
+            App.ApplyStartWithWindows();
         }
     }
     public bool? NotifyNewShaders { get => S.NotifyNewShaders; set { if (value is { } v && v != S.NotifyNewShaders) S = S with { NotifyNewShaders = v }; } }
     public bool? ScanAtStart { get => S.ScanAtStart; set { if (value is { } v && v != S.ScanAtStart) S = S with { ScanAtStart = v }; } }
     public bool? CloseQuits { get => S.CloseQuits; set { if (value is { } v && v != S.CloseQuits) S = S with { CloseQuits = v }; } }
 
-
     public double Threads { get => S.Threads; set { if ((int)value != S.Threads) S = S with { Threads = (int)value }; } }
     public string ThreadsText => $"{S.Threads} of {Environment.ProcessorCount}";
-    /// <summary>0 = Auto; 1 means 2 (the smallest budget offered).</summary>
     public double MaxCompileMemory { get => S.MaxCompileMemoryGB; set { var v = (int)value == 1 ? 2 : (int)value; if (v != S.MaxCompileMemoryGB) S = S with { MaxCompileMemoryGB = v }; } }
     public string MaxCompileMemoryNote => $"Auto picks the best limit for this PC's memory ({ScsKiller.AutoCompileMemoryGB()} GB here, with {Math.Round(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / (double)(1L << 30))} GB of RAM). Set it lower to keep more memory free while compiling.";
     public string MaxCompileMemoryText => S.MaxCompileMemoryGB > 0 ? $"{S.MaxCompileMemoryGB} GB" : $"Auto ({ScsKiller.AutoCompileMemoryGB()} GB)";
     public string PriorityNote => (S.Priority == WarmPriority.BelowNormal ? "Below-normal priority." : "Idle priority.") + " Fewer threads = slower compile, quieter PC.";
 }
 
-/// <summary>Settings' Account card: a view over <see cref="App.Account"/>, which changes on worker threads.</summary>
 public sealed class AccountVm : Bindable
 {
     static Account A => App.Account;
     readonly Coalesced changed;
     public AccountVm() => changed = new(App.Main.DispatcherQueue, Changed);
 
-    /// <summary>While the page is shown. Signed in with nothing read yet this session: reads the status.</summary>
     public void Watch(bool on)
     {
         A.Changed -= changed.Request;
@@ -1374,12 +1270,9 @@ public sealed class AccountVm : Bindable
     public string? Problem => A.Problem;
     public bool HasProblem => A.Problem != null;
     public bool OffersSharing => A.OffersSharing(App.Core.Settings);
-    public void Refresh() => Changed();   // the settings changed (OffersSharing)
+    public void Refresh() => Changed();
 
-    // "Download shared shader hashes": enabled only with "db" (follows sign-in, sign-out, refresh and a lapse through
-    // Changed); the setting keeps its value. One quiet line under it: why it's off, or its last failure.
     public bool HasDb => A.HasDb;
-    // Unticked without "db" whatever the setting says; the binding writes that false back, which must not reach the setting.
     public bool? UseCommunityDb
     {
         get => A.HasDb && App.Core.Settings.UseCommunityDb;
@@ -1391,7 +1284,7 @@ public sealed class AccountVm : Bindable
         }
     }
     public string? DbNote => !A.SignedIn ? "The list of games it covers is checked for everyone; the shared hashes need a Patreon subscription."
-        : A.Status is not { } st ? null   // not read yet: the status line above says "Checking…"
+        : A.Status is not { } st ? null
         : !A.HasDb ? "Your Patreon membership doesn't include it right now. What was downloaded before keeps working."
         : (App.Core as ScsKiller)?.Community?.Problem;
     public bool HasDbNote => DbNote != null;
@@ -1399,11 +1292,10 @@ public sealed class AccountVm : Bindable
     public string Benefits => A.Status switch
     {
         null => A.Busy ? "Checking your supporter status…" : "Supporter status not checked yet.",
-        { Benefits: { } b } => b,   // the flag names live in Core (AccountStatus) so they're testable
+        { Benefits: { } b } => b,
         _ => "No supporter benefits right now. They start once your Patreon membership is active: then click Refresh status.",
     };
 
-    // Update channel: a picker only when the token grants more than stable.
     static readonly Dictionary<string, string> ChannelNames = new()
     {
         [UpdateChannels.Stable] = "Stable", [UpdateChannels.Beta] = "Beta (Patreon supporter)",
@@ -1412,22 +1304,21 @@ public sealed class AccountVm : Bindable
     IReadOnlyList<string> Offered => UpdateChannels.Offered(A.Status?.Ent);
     string Chosen => UpdateChannels.Effective(App.Core.Settings.UpdateChannel, AppVersion.Current.Channel, A.Status?.Ent);
     List<string> labels = [];
-    public List<string> ChannelLabels => labels.SequenceEqual(Offered.Select(c => ChannelNames[c])) ? labels : labels = Offered.Select(c => ChannelNames[c]).ToList();   // same list: the ComboBox keeps its selection
+    public List<string> ChannelLabels => labels.SequenceEqual(Offered.Select(c => ChannelNames[c])) ? labels : labels = Offered.Select(c => ChannelNames[c]).ToList();
     public bool ShowsChannels => A.SignedIn && Offered.Count > 1;
     public bool CanPickChannel => !Updater.Restarting;
-    public bool CanSignOut => Idle && !Updater.Restarting;   // signing out can change the channel a restart applies
+    public bool CanSignOut => Idle && !Updater.Restarting;
     public int ChannelIndex
     {
         get => Math.Max(0, Offered.ToList().IndexOf(Chosen));
         set
         {
-            if (value < 0 || value >= Offered.Count || Offered[value] == Chosen || Updater.Restarting) return;   // -1: the list was replaced
+            if (value < 0 || value >= Offered.Count || Offered[value] == Chosen || Updater.Restarting) return;
             App.Core.Settings = App.Core.Settings with { UpdateChannel = Offered[value] };
             _ = Updater.CheckAsync();
             Changed();
         }
     }
-    /// <summary>"Go back to stable now": on an installed pre-release build, whatever the account.</summary>
     public bool OffersBackToStable => Updater.Installed && AppVersion.Current.Channel != UpdateChannels.Stable;
     public bool ShowsUpdates => ShowsChannels || OffersBackToStable;
     public string ChannelNote => Updater.Checking ? "Checking for updates…"

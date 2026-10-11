@@ -142,7 +142,6 @@
   <data name="Status_EncryptedFiles" xml:space="preserve"><value>Encrypted game files</value></data>
   <data name="Status_NotSupported" xml:space="preserve"><value>Not supported</value></data>
   <data name="Status_NotSupportedYet" xml:space="preserve"><value>Not supported yet</value></data>
-  <data name="Status_PlayingNow" xml:space="preserve"><value>Playing now</value></data>
   <!-- QueuePage -->
   <data name="QueueTitle" xml:space="preserve"><value>Compile queue</value></data>
   <data name="QueueCompileQueueBtn" xml:space="preserve"><value>Compile queue</value></data>
@@ -227,4 +226,68 @@
   <data name="SettingsRecordLimit" xml:space="preserve"><value>Recording limit per game</value></data>
   <data name="SettingsRecordLimitDesc" xml:space="preserve"><value>Counts the recording in the game's folder and SCSKiller's copy of it. At the limit the game plays as usual: new pipelines just aren't recorded.</value></data>
   <data name="SettingsSpaceByGame" xml:space="preserve"><value>Space by game</value></data>
+  <!-- DetailPage & Dynamic ViewModels -->
+  <data name="DetailGameFolder" xml:space="preserve"><value>Game folder…</value></data>
+  <data name="DetailRemoveGame" xml:space="preserve"><value>Remove from library</value></data>
+  <data name="DetailPlay" xml:space="preserve"><value>Play</value></data>
+  <data name="DetailPlayingNow" xml:space="preserve"><value>● Playing now</value></data>
+  <data name="DetailRunning" xml:space="preserve"><value>Running</value></data>
+  <data name="DetailClearCache" xml:space="preserve"><value>Clear cache</value></data>
+  <data name="DetailCompile" xml:space="preserve"><value>Compile</value></data>
+  <data name="DetailTurnOnRecording" xml:space="preserve"><value>Turn on recording</value></data>
+  <data name="DetailShaderCoverage" xml:space="preserve"><value>Shader coverage</value></data>
+  <data name="DetailDetails" xml:space="preserve"><value>Details</value></data>
+  <data name="DetailFrameTimesTitle" xml:space="preserve"><value>Frame times last time you played</value></data>
+  <data name="DetailSlowFrames" xml:space="preserve"><value>Slow frames</value></data>
+  <data name="DetailCarefulCompile" xml:space="preserve"><value>Careful compile</value></data>
+  <data name="DetailRecordWhilePlay" xml:space="preserve"><value>Record while I play</value></data>
+  <data name="DetailClearRecording" xml:space="preserve"><value>Clear recording</value></data>
+  <data name="DetailReadyInGame" xml:space="preserve"><value>Ready in the game's own library</value></data>
+  <data name="DetailReadyInDriver" xml:space="preserve"><value>Ready in the driver cache</value></data>
+  <data name="DetailCompiledPlay" xml:space="preserve"><value>Compiled during play</value></data>
+  <data name="DetailShadersInGame" xml:space="preserve"><value>Shaders in the game</value></data>
+  <data name="DetailSourcesTitle" xml:space="preserve"><value>Where the shaders come from</value></data>
+  <data name="FmtTodayAt" xml:space="preserve"><value>today at {0}</value></data>
+  <data name="FmtYesterdayAt" xml:space="preserve"><value>yesterday at {0}</value></data>
+  <data name="FmtOnDate" xml:space="preserve"><value>on {0}</value></data>
+  <data name="FmtUnknownEngine" xml:space="preserve"><value>Unknown engine</value></data>
+  <data name="FmtGuessed" xml:space="preserve"><value> (guessed)</value></data>
+  <!-- Extra ViewModels & Dynamic Statuses -->
+  <data name="Status_InQueue" xml:space="preserve"><value>In queue</value></data>
+  <data name="Status_AddToQueue" xml:space="preserve"><value>Add to queue</value></data>
+  <data name="Status_PlayingNow" xml:space="preserve"><value>Playing now</value></data>
+  <data name="Store_Recommended" xml:space="preserve"><value>Recommended to compile</value></data>
+  <data name="Store_StutterTag" xml:space="preserve"><value>known to stutter</value></data>
+  <data name="Store_CompiledCount" xml:space="preserve"><value>{0} compiled</value></data>
+  <data name="Store_GamesCount" xml:space="preserve"><value>{0} game{1}</value></data>
+  <data name="Lib_AddAllReady" xml:space="preserve"><value>Add all ready ({0})</value></data>
+  <data name="Lib_AddAllRecommended" xml:space="preserve"><value>Add all recommended ({0})</value></data>
+  <data name="Lib_CompileQueue" xml:space="preserve"><value>Compile queue ({0})</value></data>
+  <data name="Lib_LookingForGames" xml:space="preserve"><value>Looking for games…</value></data>
+  <data name="Lib_NoMatch" xml:space="preserve"><value>No games match “{0}”</value></data>
+  <data name="Lib_ShownCount" xml:space="preserve"><value>{0} of {1} shown</value></data>
+  <data name="Lib_Summary" xml:space="preserve"><value>{0} {1}game{2} found{3} · {4} ready to compile</value></data>
+  <data name="Lib_ThreadsOf" xml:space="preserve"><value>of {0} threads</value></data>
+  <data name="Lib_DriverMode_Ask" xml:space="preserve"><value>Ask me first</value></data>
+  <data name="Lib_DriverMode_Idle" xml:space="preserve"><value>When the PC is idle</value></data>
+  <data name="Lib_DriverMode_Off" xml:space="preserve"><value>Off</value></data>
+  <data name="Detail_Playing" xml:space="preserve"><value>Playing now</value></data>
+  <data name="Detail_Play" xml:space="preserve"><value>Play</value></data>
+  <data name="Detail_Running" xml:space="preserve"><value>Running</value></data>
+  <data name="Detail_Compile" xml:space="preserve"><value>Compile</value></data>
+  <data name="Detail_ClearCache" xml:space="preserve"><value>Clear cache</value></data>
+  <data name="Detail_TurnOnRecording" xml:space="preserve"><value>Turn on recording</value></data>
+  <data name="Detail_Record5Min" xml:space="preserve"><value>Record 5 minutes of play</value></data>
+  <data name="Detail_RecordMore" xml:space="preserve"><value>Record more play</value></data>
+  <data name="Queue_NothingQueued" xml:space="preserve"><value>Nothing queued</value></data>
+  <data name="Queue_Summary" xml:space="preserve"><value>{0} game{1} · about {2} in total{3}{4}</value></data>
+  <data name="Queue_Compiling" xml:space="preserve"><value>Compiling</value></data>
+  <data name="Queue_Paused" xml:space="preserve"><value>Paused</value></data>
+  <data name="Queue_BuildingPlan" xml:space="preserve"><value>Building plan</value></data>
+  <data name="Queue_ReadingShaders" xml:space="preserve"><value>Reading shaders</value></data>
+  <data name="Queue_PreparingFiles" xml:space="preserve"><value>Preparing files</value></data>
+  <data name="Queue_Done" xml:space="preserve"><value>Done</value></data>
+  <data name="Queue_Stopped" xml:space="preserve"><value>Stopped</value></data>
+  <data name="Queue_Failed" xml:space="preserve"><value>Failed</value></data>
+  <data name="Queue_PlanBuiltFirst" xml:space="preserve"><value>plan is built first</value></data>
 </root>

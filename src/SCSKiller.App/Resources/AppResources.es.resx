@@ -141,7 +141,6 @@
   <data name="Status_EncryptedFiles" xml:space="preserve"><value>Archivos del juego cifrados</value></data>
   <data name="Status_NotSupported" xml:space="preserve"><value>No compatible</value></data>
   <data name="Status_NotSupportedYet" xml:space="preserve"><value>No compatible aún</value></data>
-  <data name="Status_PlayingNow" xml:space="preserve"><value>En ejecución</value></data>
   <!-- QueuePage -->
   <data name="QueueTitle" xml:space="preserve"><value>Cola de compilación</value></data>
   <data name="QueueCompileQueueBtn" xml:space="preserve"><value>Compilar cola</value></data>
@@ -226,4 +225,68 @@
   <data name="SettingsRecordLimit" xml:space="preserve"><value>Límite de grabación por juego</value></data>
   <data name="SettingsRecordLimitDesc" xml:space="preserve"><value>Suma la grabación en la carpeta del juego y la copia almacenada por SCSKiller. Al alcanzar el límite, el juego funciona con normalidad pero no se registran nuevos pipelines.</value></data>
   <data name="SettingsSpaceByGame" xml:space="preserve"><value>Espacio por juego</value></data>
+  <!-- DetailPage & Dynamic ViewModels -->
+  <data name="DetailGameFolder" xml:space="preserve"><value>Carpeta del juego…</value></data>
+  <data name="DetailRemoveGame" xml:space="preserve"><value>Quitar de la biblioteca</value></data>
+  <data name="DetailPlay" xml:space="preserve"><value>Jugar</value></data>
+  <data name="DetailPlayingNow" xml:space="preserve"><value>● En ejecución</value></data>
+  <data name="DetailRunning" xml:space="preserve"><value>En ejecución</value></data>
+  <data name="DetailClearCache" xml:space="preserve"><value>Limpiar caché</value></data>
+  <data name="DetailCompile" xml:space="preserve"><value>Compilar</value></data>
+  <data name="DetailTurnOnRecording" xml:space="preserve"><value>Activar grabación</value></data>
+  <data name="DetailShaderCoverage" xml:space="preserve"><value>Cobertura de shaders</value></data>
+  <data name="DetailDetails" xml:space="preserve"><value>Detalles</value></data>
+  <data name="DetailFrameTimesTitle" xml:space="preserve"><value>Tiempos de fotograma de la última sesión</value></data>
+  <data name="DetailSlowFrames" xml:space="preserve"><value>Fotogramas lentos</value></data>
+  <data name="DetailCarefulCompile" xml:space="preserve"><value>Compilación cautelosa</value></data>
+  <data name="DetailRecordWhilePlay" xml:space="preserve"><value>Grabar mientras juego</value></data>
+  <data name="DetailClearRecording" xml:space="preserve"><value>Borrar grabación</value></data>
+  <data name="DetailReadyInGame" xml:space="preserve"><value>Listo en la propia biblioteca del juego</value></data>
+  <data name="DetailReadyInDriver" xml:space="preserve"><value>Listo en la caché del controlador</value></data>
+  <data name="DetailCompiledPlay" xml:space="preserve"><value>Compilado durante la partida</value></data>
+  <data name="DetailShadersInGame" xml:space="preserve"><value>Shaders en el juego</value></data>
+  <data name="DetailSourcesTitle" xml:space="preserve"><value>Origen de los shaders</value></data>
+  <data name="FmtTodayAt" xml:space="preserve"><value>hoy a las {0}</value></data>
+  <data name="FmtYesterdayAt" xml:space="preserve"><value>ayer a las {0}</value></data>
+  <data name="FmtOnDate" xml:space="preserve"><value>el {0}</value></data>
+  <data name="FmtUnknownEngine" xml:space="preserve"><value>Motor desconocido</value></data>
+  <data name="FmtGuessed" xml:space="preserve"><value> (estimado)</value></data>
+  <!-- Extra ViewModels & Dynamic Statuses -->
+  <data name="Status_InQueue" xml:space="preserve"><value>En cola</value></data>
+  <data name="Status_AddToQueue" xml:space="preserve"><value>Añadir a la cola</value></data>
+  <data name="Status_PlayingNow" xml:space="preserve"><value>En ejecución</value></data>
+  <data name="Store_Recommended" xml:space="preserve"><value>Recomendado compilar</value></data>
+  <data name="Store_StutterTag" xml:space="preserve"><value>propenso a tirones</value></data>
+  <data name="Store_CompiledCount" xml:space="preserve"><value>{0} compilados</value></data>
+  <data name="Store_GamesCount" xml:space="preserve"><value>{0} juego{1}</value></data>
+  <data name="Lib_AddAllReady" xml:space="preserve"><value>Añadir listos ({0})</value></data>
+  <data name="Lib_AddAllRecommended" xml:space="preserve"><value>Añadir recomendados ({0})</value></data>
+  <data name="Lib_CompileQueue" xml:space="preserve"><value>Compilar cola ({0})</value></data>
+  <data name="Lib_LookingForGames" xml:space="preserve"><value>Buscando juegos…</value></data>
+  <data name="Lib_NoMatch" xml:space="preserve"><value>Ningún juego coincide con “{0}”</value></data>
+  <data name="Lib_ShownCount" xml:space="preserve"><value>{0} de {1} mostrados</value></data>
+  <data name="Lib_Summary" xml:space="preserve"><value>{0} {1}juego{2} encontrado{2}{3} · {4} listos para compilar</value></data>
+  <data name="Lib_ThreadsOf" xml:space="preserve"><value>de {0} hilos</value></data>
+  <data name="Lib_DriverMode_Ask" xml:space="preserve"><value>Preguntarme primero</value></data>
+  <data name="Lib_DriverMode_Idle" xml:space="preserve"><value>Con el PC inactivo</value></data>
+  <data name="Lib_DriverMode_Off" xml:space="preserve"><value>Desactivado</value></data>
+  <data name="Detail_Playing" xml:space="preserve"><value>En ejecución</value></data>
+  <data name="Detail_Play" xml:space="preserve"><value>Jugar</value></data>
+  <data name="Detail_Running" xml:space="preserve"><value>En ejecución</value></data>
+  <data name="Detail_Compile" xml:space="preserve"><value>Compilar</value></data>
+  <data name="Detail_ClearCache" xml:space="preserve"><value>Limpiar caché</value></data>
+  <data name="Detail_TurnOnRecording" xml:space="preserve"><value>Activar grabación</value></data>
+  <data name="Detail_Record5Min" xml:space="preserve"><value>Grabar 5 minutos de partida</value></data>
+  <data name="Detail_RecordMore" xml:space="preserve"><value>Grabar más partidas</value></data>
+  <data name="Queue_NothingQueued" xml:space="preserve"><value>Nada en cola</value></data>
+  <data name="Queue_Summary" xml:space="preserve"><value>{0} juego{1} · aprox. {2} en total{3}{4}</value></data>
+  <data name="Queue_Compiling" xml:space="preserve"><value>Compilando</value></data>
+  <data name="Queue_Paused" xml:space="preserve"><value>En pausa</value></data>
+  <data name="Queue_BuildingPlan" xml:space="preserve"><value>Creando plan</value></data>
+  <data name="Queue_ReadingShaders" xml:space="preserve"><value>Leyendo shaders</value></data>
+  <data name="Queue_PreparingFiles" xml:space="preserve"><value>Preparando archivos</value></data>
+  <data name="Queue_Done" xml:space="preserve"><value>Terminado</value></data>
+  <data name="Queue_Stopped" xml:space="preserve"><value>Detenido</value></data>
+  <data name="Queue_Failed" xml:space="preserve"><value>Error</value></data>
+  <data name="Queue_PlanBuiltFirst" xml:space="preserve"><value>el plan se crea primero</value></data>
 </root>

@@ -40,7 +40,7 @@ public sealed partial class DetailPage : Page
     {
         Vm = new DetailVm((string)e.Parameter);
         Vm.ReadCaches();
-        Crumbs.ItemsSource = new[] { "Library", Vm.Name };
+        Crumbs.ItemsSource = new[] { I18n.T("NavLibrary"), Vm.Name };
         Vm.PropertyChanged += (_, _) => DrawFrames();
         Bindings.Update();
         DrawFrames();
