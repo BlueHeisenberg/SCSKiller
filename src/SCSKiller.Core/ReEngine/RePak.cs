@@ -28,7 +28,7 @@ public sealed class RePak : IDisposable
         public bool Chunked => (Attr & 1UL << 24) != 0;
     }
 
-    public const ushort ExtraU32 = 0x10, ExtraData = 0x04, EncryptedTable = 0x08, ChunkTable = 0x20;
+    public const ushort ExtraU32 = 0x10, ExtraData = 0x04, EncryptedTable = 0x08, ChunkTable = 0x20, RemapEntries = 0x40;
 
     public string Path { get; }
     public int Major { get; }
@@ -52,12 +52,18 @@ public sealed class RePak : IDisposable
             (Major, Minor, Features) = (hd[4], hd[5], BinaryPrimitives.ReadUInt16LittleEndian(hd.AsSpan(6)));
             var count = BinaryPrimitives.ReadInt32LittleEndian(hd.AsSpan(8));
             if (Major is not (2 or 4) || Minor > 2) throw new InvalidDataException($"package version {Major}.{Minor} is not supported");
-            if ((Features & ~(ExtraU32 | ExtraData | EncryptedTable | ChunkTable)) != 0) throw new InvalidDataException($"unknown package features 0x{Features:x}");
+            if ((Features & ~(ExtraU32 | ExtraData | EncryptedTable | ChunkTable | RemapEntries)) != 0) throw new InvalidDataException($"unknown package features 0x{Features:x}");
             var size = Major == 2 && Minor == 0 ? 24 : 48;
             if (count < 0 || 16L + (long)count * size > len) throw new InvalidDataException("entry table past the end of the file");
             var stored = Bytes(16, count * size);
             var table = stored;
             long at = 16 + stored.Length + ((Features & ExtraU32) != 0 ? 4 : 0) + ((Features & ExtraData) != 0 ? 9 : 0);
+            if ((Features & RemapEntries) != 0)
+            {
+                var records = BinaryPrimitives.ReadUInt64LittleEndian(Bytes(at, 8));
+                if (records > (ulong)((len - at - 8) / 16)) throw new InvalidDataException("bad remap table");
+                at += 8 + (long)records * 16;
+            }
             if ((Features & EncryptedTable) != 0)
             {
                 var raw = Bytes(at, 128);
