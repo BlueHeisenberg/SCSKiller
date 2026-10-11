@@ -12,6 +12,23 @@ public sealed partial class QueuePage : Page
     public QueuePage()
     {
         InitializeComponent();
+        PageTitle.Text = I18n.T("QueueTitle");
+        BtnStartQueueText.Text = I18n.T("QueueCompileQueueBtn");
+        BtnStop.Content = I18n.T("QueueStop");
+        ToolTipService.SetToolTip(BtnStop, I18n.T("QueueStopTip"));
+        LnkRaiseLimit.Content = I18n.T("QueueRaiseLimit");
+        ColGame.Text = I18n.T("QueueColGame");
+        ColTime.Text = I18n.T("QueueColTime");
+        ColCache.Text = I18n.T("QueueColCache");
+        EmptyTitle.Text = I18n.T("QueueEmptyTitle");
+        EmptySub.Text = I18n.T("QueueEmptySub");
+        LnkOpenLibrary.Content = I18n.T("QueueOpenLibrary");
+        TxtFinishedTitle.Text = I18n.T("QueueFinishedTitle");
+        LnkClearFinished.Content = I18n.T("QueueClearFinished");
+        TxtCompileThreads.Text = I18n.T("QueueCompileThreads");
+        RadioPriority.Header = I18n.T("QueuePriorityHeader");
+        RadioBelowNormal.Content = I18n.T("QueuePriorityBelowNormal");
+        RadioIdle.Content = I18n.T("QueuePriorityIdle");
         var refresh = new Coalesced(DispatcherQueue, Vm.Refresh);
         void OnChanged(QueueItem _) => refresh.Request();
         void OnGame(GameState _) => refresh.Request();   // estimates and names come from the games

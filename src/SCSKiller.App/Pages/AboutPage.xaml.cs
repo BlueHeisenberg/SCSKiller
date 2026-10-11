@@ -11,6 +11,23 @@ public sealed partial class AboutPage : Page
     public AboutPage()
     {
         InitializeComponent();
+    PageTitle.Text = I18n.T("AboutTitle");
+    AppSubtitleText.Text = I18n.T("AppSubtitle");
+    BtnCheckUpdates.Content = I18n.T("AboutCheckUpdates");
+    AutoUpdatesTitle.Text = I18n.T("AboutAutoUpdates");
+    AutoUpdatesNote.Text = I18n.T("AboutAutoUpdatesNote");
+    BtnDownloadSource.Content = I18n.T("AboutDownloadSource");
+    DescriptionText.Text = I18n.T("AboutDescription");
+    LicenseLabel.Text = I18n.T("AboutLicenseLabel");
+    LicenseText.Text = I18n.T("AboutLicenseText");
+    LnkWebsite.Content = I18n.T("AboutWebsite");
+    LnkSource.Content = I18n.T("AboutSourceCode");
+    LnkPatreon.Content = I18n.T("AboutPatreon");
+    RiskTitle.Text = I18n.T("AboutRiskTitle");
+    RiskText.Text = I18n.T("AboutRiskText");
+    TrademarksBox.Header = I18n.T("AboutTrademarks");
+    ThirdPartyTitle.Text = I18n.T("AboutThirdParty");
+    ThirdPartyNote.Text = I18n.T("AboutThirdPartyNote");
         Loaded += (_, _) => Vm.Watch(true);
         Unloaded += (_, _) => Vm.Watch(false);
     }

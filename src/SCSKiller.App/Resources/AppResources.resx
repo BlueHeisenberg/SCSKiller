@@ -1,0 +1,331 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="AppSubtitle" xml:space="preserve">
+    <value>Shader Compilation Stutter Killer</value>
+  </data>
+  <data name="UpdateRestart" xml:space="preserve">
+    <value>Restart to update</value>
+  </data>
+  <data name="NavLibrary" xml:space="preserve">
+    <value>Library</value>
+  </data>
+  <data name="NavQueue" xml:space="preserve">
+    <value>Compile queue</value>
+  </data>
+  <data name="NavSettings" xml:space="preserve">
+    <value>Settings</value>
+  </data>
+  <data name="NavAbout" xml:space="preserve">
+    <value>About</value>
+  </data>
+  <data name="TrayOpen" xml:space="preserve">
+    <value>Open SCSKiller</value>
+  </data>
+  <data name="TrayPause" xml:space="preserve">
+    <value>Pause compiling</value>
+  </data>
+  <data name="TrayResume" xml:space="preserve">
+    <value>Resume compiling</value>
+  </data>
+  <data name="TrayQuit" xml:space="preserve">
+    <value>Quit</value>
+  </data>
+  <!-- AboutPage -->
+  <data name="AboutTitle" xml:space="preserve"><value>About</value></data>
+  <data name="AboutCheckUpdates" xml:space="preserve"><value>Check for updates</value></data>
+  <data name="AboutAutoUpdates" xml:space="preserve"><value>Install updates automatically</value></data>
+  <data name="AboutAutoUpdatesNote" xml:space="preserve"><value>A downloaded update installs the next time SCSKiller starts or quits, never during a compile, an offline session or a game. Off: only Restart to update installs it.</value></data>
+  <data name="AboutDownloadSource" xml:space="preserve"><value>Download source code</value></data>
+  <data name="AboutDescription" xml:space="preserve"><value>Compiles your games' shaders into the graphics driver's cache ahead of time, so they don't stutter the first time you play them.</value></data>
+  <data name="AboutLicenseLabel" xml:space="preserve"><value>SCSKiller licence:</value></data>
+  <data name="AboutLicenseText" xml:space="preserve"><value> GPL-3.0-or-later, with an additional permission for Oodle, the Windows App SDK and graphics driver libraries (LICENSE-EXCEPTION.txt)</value></data>
+  <data name="AboutWebsite" xml:space="preserve"><value>Website</value></data>
+  <data name="AboutSourceCode" xml:space="preserve"><value>Source code</value></data>
+  <data name="AboutPatreon" xml:space="preserve"><value>Support on Patreon</value></data>
+  <data name="AboutRiskTitle" xml:space="preserve"><value>Use at your own risk</value></data>
+  <data name="AboutRiskText" xml:space="preserve"><value>SCSKiller is provided as is, without warranty. It checks each game for anti-cheat before adding its recorder, but that check can miss one. You use it at your own risk, and its authors are not responsible for bans, crashes or lost data.</value></data>
+  <data name="AboutTrademarks" xml:space="preserve"><value>Trademarks</value></data>
+  <data name="AboutThirdParty" xml:space="preserve"><value>Third-party components</value></data>
+  <data name="AboutThirdPartyNote" xml:space="preserve"><value>Open one to read its licence. The same list, with notes, is in THIRD-PARTY-NOTICES.md next to the app.</value></data>
+
+<!-- LibraryPage & ViewModels -->
+  <data name="LibTitle" xml:space="preserve"><value>Library</value></data>
+  <data name="LibRefresh" xml:space="preserve"><value>Refresh</value></data>
+  <data name="LibRefreshTip" xml:space="preserve"><value>Re-reads every game's cache size, recordings and status, and finds new games. Shift+click also re-checks every game's engine and anti-cheat (slower).</value></data>
+  <data name="LibAddGame" xml:space="preserve"><value>Add a game…</value></data>
+  <data name="LibAddGameTip" xml:space="preserve"><value>Add a game no store lists (another launcher, or a game in a folder of its own) by picking its .exe</value></data>
+  <data name="LibCardDriverCache" xml:space="preserve"><value>Driver shader cache</value></data>
+  <data name="LibCardAfterDriver" xml:space="preserve"><value>After a driver update</value></data>
+  <data name="LibCardCompileSpeed" xml:space="preserve"><value>Compile speed</value></data>
+  <data name="LibBtnChange" xml:space="preserve"><value>Change</value></data>
+  <data name="LibSearchPlaceholder" xml:space="preserve"><value>Search by name, store or engine</value></data>
+  <data name="LibColGame" xml:space="preserve"><value>Game</value></data>
+  <data name="LibColShaders" xml:space="preserve"><value>Shaders</value></data>
+  <data name="LibColPipelines" xml:space="preserve"><value>Pipelines</value></data>
+  <data name="LibColCache" xml:space="preserve"><value>Cache</value></data>
+  <data name="LibColTime" xml:space="preserve"><value>Time</value></data>
+  <data name="LibColStatus" xml:space="preserve"><value>Status</value></data>
+  <data name="LibSearchingGames" xml:space="preserve"><value>Looking for your games…</value></data>
+  <data name="LibTagKnownStutter" xml:space="preserve"><value>Known to stutter</value></data>
+  <data name="LibTagNoStutter" xml:space="preserve"><value>No shader stutter</value></data>
+  <data name="LibBtnDetails" xml:space="preserve"><value>Details</value></data>
+  <data name="LibBtnRecord" xml:space="preserve"><value>Record</value></data>
+  <data name="LibBtnWhy" xml:space="preserve"><value>Why?</value></data>
+  <data name="Status_CompileDidntHelp" xml:space="preserve"><value>The compile didn't help</value></data>
+  <data name="Status_PartlyCompiled" xml:space="preserve"><value>Partly compiled</value></data>
+  <data name="Status_PartlyWarmed" xml:space="preserve"><value>Partly warmed</value></data>
+  <data name="Status_Warmed" xml:space="preserve"><value>Warmed</value></data>
+  <data name="Status_Ready" xml:space="preserve"><value>Ready to compile</value></data>
+  <data name="Status_NeedsOfflineSession" xml:space="preserve"><value>Needs an offline session</value></data>
+  <data name="Status_NeedsRecording" xml:space="preserve"><value>Needs a recording</value></data>
+  <data name="Status_NeedsRecording5Min" xml:space="preserve"><value>Needs a 5-min recording</value></data>
+  <data name="Status_NeedsRebuilding" xml:space="preserve"><value>Needs rebuilding</value></data>
+  <data name="Status_NotCompiled" xml:space="preserve"><value>Not compiled</value></data>
+  <data name="Status_EncryptedFiles" xml:space="preserve"><value>Encrypted game files</value></data>
+  <data name="Status_NotSupported" xml:space="preserve"><value>Not supported</value></data>
+  <data name="Status_NotSupportedYet" xml:space="preserve"><value>Not supported yet</value></data>
+  <!-- QueuePage -->
+  <data name="QueueTitle" xml:space="preserve"><value>Compile queue</value></data>
+  <data name="QueueCompileQueueBtn" xml:space="preserve"><value>Compile queue</value></data>
+  <data name="QueueStop" xml:space="preserve"><value>Stop</value></data>
+  <data name="QueueStopTip" xml:space="preserve"><value>Finishes the compiles in flight, then stops. Add the game again to continue where it stopped.</value></data>
+  <data name="QueueRaiseLimit" xml:space="preserve"><value>Raise the limit</value></data>
+  <data name="QueueColGame" xml:space="preserve"><value>Game (in run order)</value></data>
+  <data name="QueueColTime" xml:space="preserve"><value>Time</value></data>
+  <data name="QueueColCache" xml:space="preserve"><value>Cache</value></data>
+  <data name="QueueEmptyTitle" xml:space="preserve"><value>Add games from the Library</value></data>
+  <data name="QueueEmptySub" xml:space="preserve"><value>Press Add to queue on a game, then Compile queue.</value></data>
+  <data name="QueueOpenLibrary" xml:space="preserve"><value>Open the Library</value></data>
+  <data name="QueueMoveToTop" xml:space="preserve"><value>Move to top</value></data>
+  <data name="QueueFinishedTitle" xml:space="preserve"><value>Finished</value></data>
+  <data name="QueueClearFinished" xml:space="preserve"><value>Clear finished</value></data>
+  <data name="QueueCompileThreads" xml:space="preserve"><value>Compile threads</value></data>
+  <data name="QueuePriorityHeader" xml:space="preserve"><value>Priority</value></data>
+  <data name="QueuePriorityBelowNormal" xml:space="preserve"><value>Below normal: fastest, the PC stays usable</value></data>
+  <data name="QueuePriorityIdle" xml:space="preserve"><value>Idle only: runs when nothing else needs the CPU</value></data>
+  <data name="QueueTipStopRemove" xml:space="preserve"><value>Stop and remove</value></data>
+  <data name="QueueTipDragReorder" xml:space="preserve"><value>Drag to reorder</value></data>
+  <data name="QueueTipMoveUp" xml:space="preserve"><value>Move up</value></data>
+  <data name="QueueTipMoveDown" xml:space="preserve"><value>Move down</value></data>
+  <data name="QueueTipRemove" xml:space="preserve"><value>Remove</value></data>
+  <!-- SettingsPage -->
+  <data name="SettingsTitle" xml:space="preserve"><value>Settings</value></data>
+  <data name="SettingsCurrentLimit" xml:space="preserve"><value>Current limit</value></data>
+  <data name="SettingsUsedNow" xml:space="preserve"><value>Used now</value></data>
+  <data name="SettingsNewLimit" xml:space="preserve"><value>New limit</value></data>
+  <data name="SettingsApplyAdmin" xml:space="preserve"><value>Apply (needs administrator)</value></data>
+  <data name="SettingsSwitchBackNote" xml:space="preserve"><value>You can switch back to the driver default here at any time.</value></data>
+  <data name="SettingsAfterDriverTitle" xml:space="preserve"><value>After a driver update</value></data>
+  <data name="SettingsAfterDriverDesc" xml:space="preserve"><value>A new driver throws away every compiled shader, so compiled games stutter again until they are rebuilt.</value></data>
+  <data name="SettingsAskMe" xml:space="preserve"><value>Ask me</value></data>
+  <data name="SettingsAskMeSub" xml:space="preserve"><value>A notification offers Compile now, When idle, or Skip. Nothing starts on its own.</value></data>
+  <data name="SettingsAutoIdle" xml:space="preserve"><value>Automatically, only while the PC is idle</value></data>
+  <data name="SettingsAutoIdleSub" xml:space="preserve"><value>Stops the moment you touch the mouse or keyboard and picks up where it left off.</value></data>
+  <data name="SettingsModeOff" xml:space="preserve"><value>Off</value></data>
+  <data name="SettingsModeOffSub" xml:space="preserve"><value>Rebuild games yourself from the Library.</value></data>
+  <data name="SettingsPauseWhileGaming" xml:space="preserve"><value>Pause background compiling while another game is running</value></data>
+  <data name="SettingsBackgroundThreads" xml:space="preserve"><value>Threads for background rebuilds</value></data>
+  <data name="SettingsNvidiaAutoTitle" xml:space="preserve"><value>Auto Shader Compilation (NVIDIA beta)</value></data>
+  <data name="SettingsNvidiaSysUtil" xml:space="preserve"><value>System utilization</value></data>
+  <data name="SettingsNvidiaRecTitle" xml:space="preserve"><value>We recommend enabling it</value></data>
+  <data name="SettingsNvidiaRecMsg" xml:space="preserve"><value>A beta feature of the NVIDIA App: after a driver update it re-compiles the games you have already played. SCSKiller adds everything else, so both together are best. The overlap costs little: shaders NVIDIA already rebuilt take about 1 ms each here.</value></data>
+  <data name="SettingsPatreonTitle" xml:space="preserve"><value>Patreon and community database</value></data>
+  <data name="SettingsPatreonDesc" xml:space="preserve"><value>Patreon supporters get the community shader hash database and beta and alpha builds. Sign in with the Patreon account you support SCSKiller with.</value></data>
+  <data name="SettingsPatreonSignIn" xml:space="preserve"><value>Sign in with Patreon</value></data>
+  <data name="SettingsCancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="SettingsBrowserPrompt" xml:space="preserve"><value>Finish signing in in your browser. Nothing else is needed here.</value></data>
+  <data name="SettingsSignedInTitle" xml:space="preserve"><value>Signed in with Patreon</value></data>
+  <data name="SettingsRefreshStatus" xml:space="preserve"><value>Refresh status</value></data>
+  <data name="SettingsSignOut" xml:space="preserve"><value>Sign out</value></data>
+  <data name="SettingsSharingTitle" xml:space="preserve"><value>You're in. Want to help improve the community shader hash database?</value></data>
+  <data name="SettingsSharingMsg" xml:space="preserve"><value>Your game shader hashes are shared anonymously, never linked to your Patreon account.</value></data>
+  <data name="SettingsShareAnon" xml:space="preserve"><value>Share anonymously</value></data>
+  <data name="SettingsNotNow" xml:space="preserve"><value>Not now</value></data>
+  <data name="SettingsUpdateChannel" xml:space="preserve"><value>Update channel</value></data>
+  <data name="SettingsBackToStable" xml:space="preserve"><value>Go back to stable now</value></data>
+  <data name="SettingsDownloadHashes" xml:space="preserve"><value>Download shared shader hashes</value></data>
+  <data name="SettingsDownloadHashesSub" xml:space="preserve"><value>Hashes other players recorded for your games, so they compile without you recording them first. No game files: your GPU compiles everything from your own install. Upscaler pipelines (FSR, XeSS) download for everyone, without it.</value></data>
+  <data name="SettingsShareHashes" xml:space="preserve"><value>Share anonymous shader hashes</value></data>
+  <data name="SettingsShareHashesSub" xml:space="preserve"><value>Helps everyone get better coverage. Your recordings' upscaler pipelines (FSR, XeSS) also reach everyone with the same upscaler version. Never linked to your Patreon account; nothing else about your games leaves your PC. Free for everyone.</value></data>
+  <data name="SettingsQueueSpeedTitle" xml:space="preserve"><value>Compile speed when you run the queue</value></data>
+  <data name="SettingsCompileThreads" xml:space="preserve"><value>Compile threads</value></data>
+  <data name="SettingsMaxMemory" xml:space="preserve"><value>Maximum memory for compiling</value></data>
+  <data name="SettingsMaximumMode" xml:space="preserve"><value>Maximum mode: also compile every shader pairing</value></data>
+  <data name="SettingsMaximumModeSub" xml:space="preserve"><value>Seems to help most on AMD. Compiles take longer and use more disk space.</value></data>
+  <data name="SettingsBackgroundTitle" xml:space="preserve"><value>In the background</value></data>
+  <data name="SettingsStartWindows" xml:space="preserve"><value>Start SCSKiller when Windows starts</value></data>
+  <data name="SettingsStartWindowsSub" xml:space="preserve"><value>It waits in the notification area, next to the clock, to offer a rebuild after a driver update.</value></data>
+  <data name="SettingsCloseQuits" xml:space="preserve"><value>Closing the window quits SCSKiller</value></data>
+  <data name="SettingsCloseQuitsSub" xml:space="preserve"><value>A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps SCSKiller there; right-click its icon to quit.</value></data>
+  <data name="SettingsScanAtStart" xml:space="preserve"><value>Scan games when SCSKiller starts</value></data>
+  <data name="SettingsScanAtStartSub" xml:space="preserve"><value>Reads again what changed in each game's folders. Off: the last list shows, and a game is read again when you refresh, when it exits, or when Steam or the Xbox app updates it.</value></data>
+  <data name="SettingsNotifyShaders" xml:space="preserve"><value>Notify me when games have new shaders to compile</value></data>
+  <data name="SettingsNotifyShadersSub" xml:space="preserve"><value>A compiled game gains pipelines from its recording, the shared shader hashes or an SCSKiller update. You're told once, never while you play.</value></data>
+  <data name="SettingsDailyCheck" xml:space="preserve"><value>Send an anonymous daily check</value></data>
+  <data name="SettingsDailyCheckSub" xml:space="preserve"><value>Counts active installs: once a day, the app's version and your GPU vendor, with no identifier. Nothing about your PC or games.</value></data>
+  <data name="SettingsRecordAllTitle" xml:space="preserve"><value>Record in all compatible games</value></data>
+  <data name="SettingsRecordAllDesc" xml:space="preserve"><value>Adds a small d3d12.dll to games without anti-cheat to catch shaders the plan missed and time each frame, so the game page shows what stuttered. Frame times stay on this PC. Never used in anti-cheat games. Switch off to remove it from every game you haven't turned it on for yourself.</value></data>
+  <data name="SettingsRecordLimit" xml:space="preserve"><value>Recording limit per game</value></data>
+  <data name="SettingsRecordLimitDesc" xml:space="preserve"><value>Counts the recording in the game's folder and SCSKiller's copy of it. At the limit the game plays as usual: new pipelines just aren't recorded.</value></data>
+  <data name="SettingsSpaceByGame" xml:space="preserve"><value>Space by game</value></data>
+  <!-- DetailPage & Dynamic ViewModels -->
+  <data name="DetailGameFolder" xml:space="preserve"><value>Game folder…</value></data>
+  <data name="DetailRemoveGame" xml:space="preserve"><value>Remove from library</value></data>
+  <data name="DetailPlay" xml:space="preserve"><value>Play</value></data>
+  <data name="DetailPlayingNow" xml:space="preserve"><value>● Playing now</value></data>
+  <data name="DetailRunning" xml:space="preserve"><value>Running</value></data>
+  <data name="DetailClearCache" xml:space="preserve"><value>Clear cache</value></data>
+  <data name="DetailCompile" xml:space="preserve"><value>Compile</value></data>
+  <data name="DetailTurnOnRecording" xml:space="preserve"><value>Turn on recording</value></data>
+  <data name="DetailShaderCoverage" xml:space="preserve"><value>Shader coverage</value></data>
+  <data name="DetailDetails" xml:space="preserve"><value>Details</value></data>
+  <data name="DetailFrameTimesTitle" xml:space="preserve"><value>Frame times last time you played</value></data>
+  <data name="DetailSlowFrames" xml:space="preserve"><value>Slow frames</value></data>
+  <data name="DetailCarefulCompile" xml:space="preserve"><value>Careful compile</value></data>
+  <data name="DetailRecordWhilePlay" xml:space="preserve"><value>Record while I play</value></data>
+  <data name="DetailClearRecording" xml:space="preserve"><value>Clear recording</value></data>
+  <data name="DetailReadyInGame" xml:space="preserve"><value>Ready in the game's own library</value></data>
+  <data name="DetailReadyInDriver" xml:space="preserve"><value>Ready in the driver cache</value></data>
+  <data name="DetailCompiledPlay" xml:space="preserve"><value>Compiled during play</value></data>
+  <data name="DetailShadersInGame" xml:space="preserve"><value>Shaders in the game</value></data>
+  <data name="DetailSourcesTitle" xml:space="preserve"><value>Where the shaders come from</value></data>
+  <data name="FmtTodayAt" xml:space="preserve"><value>today at {0}</value></data>
+  <data name="FmtYesterdayAt" xml:space="preserve"><value>yesterday at {0}</value></data>
+  <data name="FmtOnDate" xml:space="preserve"><value>on {0}</value></data>
+  <data name="FmtUnknownEngine" xml:space="preserve"><value>Unknown engine</value></data>
+  <data name="FmtGuessed" xml:space="preserve"><value> (guessed)</value></data>
+  <!-- Extra ViewModels & Dynamic Statuses -->
+  <data name="Status_InQueue" xml:space="preserve"><value>In queue</value></data>
+  <data name="Status_AddToQueue" xml:space="preserve"><value>Add to queue</value></data>
+  <data name="Status_PlayingNow" xml:space="preserve"><value>Playing now</value></data>
+  <data name="Store_Recommended" xml:space="preserve"><value>Recommended to compile</value></data>
+  <data name="Store_StutterTag" xml:space="preserve"><value>known to stutter</value></data>
+  <data name="Store_CompiledCount" xml:space="preserve"><value>{0} compiled</value></data>
+  <data name="Store_GamesCount" xml:space="preserve"><value>{0} game{1}</value></data>
+  <data name="Lib_AddAllReady" xml:space="preserve"><value>Add all ready ({0})</value></data>
+  <data name="Lib_AddAllRecommended" xml:space="preserve"><value>Add all recommended ({0})</value></data>
+  <data name="Lib_CompileQueue" xml:space="preserve"><value>Compile queue ({0})</value></data>
+  <data name="Lib_LookingForGames" xml:space="preserve"><value>Looking for games…</value></data>
+  <data name="Lib_NoMatch" xml:space="preserve"><value>No games match “{0}”</value></data>
+  <data name="Lib_ShownCount" xml:space="preserve"><value>{0} of {1} shown</value></data>
+  <data name="Lib_Summary" xml:space="preserve"><value>{0} {1}game{2} found{3} · {4} ready to compile</value></data>
+  <data name="Lib_ThreadsOf" xml:space="preserve"><value>of {0} threads</value></data>
+  <data name="Lib_DriverMode_Ask" xml:space="preserve"><value>Ask me first</value></data>
+  <data name="Lib_DriverMode_Idle" xml:space="preserve"><value>When the PC is idle</value></data>
+  <data name="Lib_DriverMode_Off" xml:space="preserve"><value>Off</value></data>
+  <data name="Detail_Playing" xml:space="preserve"><value>Playing now</value></data>
+  <data name="Detail_Play" xml:space="preserve"><value>Play</value></data>
+  <data name="Detail_Running" xml:space="preserve"><value>Running</value></data>
+  <data name="Detail_Compile" xml:space="preserve"><value>Compile</value></data>
+  <data name="Detail_ClearCache" xml:space="preserve"><value>Clear cache</value></data>
+  <data name="Detail_TurnOnRecording" xml:space="preserve"><value>Turn on recording</value></data>
+  <data name="Detail_Record5Min" xml:space="preserve"><value>Record 5 minutes of play</value></data>
+  <data name="Detail_RecordMore" xml:space="preserve"><value>Record more play</value></data>
+  <data name="Queue_NothingQueued" xml:space="preserve"><value>Nothing queued</value></data>
+  <data name="Queue_Summary" xml:space="preserve"><value>{0} game{1} · about {2} in total{3}{4}</value></data>
+  <data name="Queue_Compiling" xml:space="preserve"><value>Compiling</value></data>
+  <data name="Queue_Paused" xml:space="preserve"><value>Paused</value></data>
+  <data name="Queue_BuildingPlan" xml:space="preserve"><value>Building plan</value></data>
+  <data name="Queue_ReadingShaders" xml:space="preserve"><value>Reading shaders</value></data>
+  <data name="Queue_PreparingFiles" xml:space="preserve"><value>Preparing files</value></data>
+  <data name="Queue_Done" xml:space="preserve"><value>Done</value></data>
+  <data name="Queue_Stopped" xml:space="preserve"><value>Stopped</value></data>
+  <data name="Queue_Failed" xml:space="preserve"><value>Failed</value></data>
+  <data name="Queue_PlanBuiltFirst" xml:space="preserve"><value>plan is built first</value></data>
+  <!-- DetailPage UI & Coverage Translations -->
+  <data name="Chip_AlsoCompiles" xml:space="preserve"><value>Also compiles: {0}</value></data>
+  <data name="Chip_Detected" xml:space="preserve"><value>Detected: {0}</value></data>
+  <data name="Chip_DlssDriver" xml:space="preserve"><value>DLSS (by the driver)</value></data>
+  <data name="Chip_NoAntiCheat" xml:space="preserve"><value>No anti-cheat</value></data>
+  <data name="Detail_LblCompiled" xml:space="preserve"><value>compiled</value></data>
+  <data name="Detail_LblCovered" xml:space="preserve"><value>covered</value></data>
+  <data name="Detail_LblNotYet" xml:space="preserve"><value>not yet</value></data>
+  <data name="Detail_LblNotUsed" xml:space="preserve"><value>not used</value></data>
+  <data name="Detail_TimeLabel" xml:space="preserve"><value>Compile time</value></data>
+  <data name="Detail_TimeEstLabel" xml:space="preserve"><value>Compile time (estimate)</value></data>
+  <data name="Detail_DiskLabel" xml:space="preserve"><value>Disk space</value></data>
+  <data name="Detail_DiskEstLabel" xml:space="preserve"><value>Disk space (estimate)</value></data>
+  <data name="Detail_StuttersLabel" xml:space="preserve"><value>Stutters last time you played</value></data>
+  <data name="Detail_CompilesLabel" xml:space="preserve"><value>Compiles while you played</value></data>
+  <data name="Detail_SourceGameFiles" xml:space="preserve"><value>Found in the game files</value></data>
+  <data name="Detail_SourceRecordings" xml:space="preserve"><value>Your play recordings</value></data>
+  <data name="Detail_SourceBothRecordings" xml:space="preserve"><value>Your recording and the community database</value></data>
+  <data name="Detail_SourceCommunityDb" xml:space="preserve"><value>The community database</value></data>
+  <data name="Detail_SourceUpscalersRecordings" xml:space="preserve"><value>Its upscalers, learned from recordings</value></data>
+  <data name="Detail_SourceUpscalersShared" xml:space="preserve"><value>Its upscalers, from shared packs</value></data>
+  <data name="Detail_SourceUpscalersBoth" xml:space="preserve"><value>Its upscalers, from recordings and shared packs</value></data>
+  <data name="Detail_SourceRtEffects" xml:space="preserve"><value>Ray-traced effects</value></data>
+  <data name="Detail_RtCovered" xml:space="preserve"><value>covered</value></data>
+  <data name="Detail_InDbRecording" xml:space="preserve"><value>has a recording for this version</value></data>
+  <data name="Detail_NotInDbYet" xml:space="preserve"><value>not in it yet</value></data>
+  <data name="Detail_LastCompileTitle" xml:space="preserve"><value>Last compile</value></data>
+  <data name="Detail_FirstCompileTitle" xml:space="preserve"><value>First compile</value></data>
+  <data name="Detail_CompiledAt" xml:space="preserve"><value>Compiled {0}{1}, for driver {2}.</value></data>
+  <data name="Detail_NothingFailed" xml:space="preserve"><value> Nothing failed.</value></data>
+  <data name="Detail_DriverSkipped" xml:space="preserve"><value> The driver skipped {0} combination{1}.</value></data>
+  <data name="Detail_UsesDiskSpace" xml:space="preserve"><value> It uses {0} of disk space.</value></data>
+  <data name="Detail_RecordingUses" xml:space="preserve"><value>The recording uses {0} (in the game folder and SCSKiller's copy)</value></data>
+  <data name="Detail_LastTimePlayed" xml:space="preserve"><value>Last time you played · {0}</value></data>
+  <data name="Legend_ShaderCompile" xml:space="preserve"><value>shader compile</value></data>
+  <data name="Legend_OtherHitch" xml:space="preserve"><value>other hitch</value></data>
+  <data name="Legend_LoadingQuitting" xml:space="preserve"><value>loading, quitting</value></data>
+  <data name="Legend_LoadingShaders" xml:space="preserve"><value>loading, compiling shaders</value></data>
+</root>

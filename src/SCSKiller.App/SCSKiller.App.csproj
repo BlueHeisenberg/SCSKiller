@@ -36,7 +36,7 @@
     <!-- the About page reads it from the assembly: it doesn't depend on the file sitting next to the exe -->
     <EmbeddedResource Include="..\..\THIRD-PARTY-NOTICES.md" LogicalName="THIRD-PARTY-NOTICES.md" />
   </ItemGroup>
-
+ 
   <ItemGroup>
     <ProjectReference Include="..\SCSKiller.Core\SCSKiller.Core.csproj" />
   </ItemGroup>

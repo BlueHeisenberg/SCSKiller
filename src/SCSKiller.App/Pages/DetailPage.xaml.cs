@@ -11,15 +11,100 @@ public sealed partial class DetailPage : Page
 {
     public DetailVm Vm { get; private set; } = null!;
 
-    public DetailPage()
+   public DetailPage()
     {
         InitializeComponent();
         var refresh = new Coalesced(DispatcherQueue, () => Vm.Refresh());
-        void OnChanged(GameState s) { if (s.Game.Id == Vm?.Row.Id) refresh.Request(); }   // a scan raises one per game
-        void OnQueue(QueueItem q) { if (q.Stage != QueueStage.Warming) refresh.Request(); }   // "In queue"
-        // Refresh too: a change raised while the page wasn't loaded (e.g. the game exited) would show only at the next one
-        Loaded += (_, _) => { App.Core.GameChanged += OnChanged; App.Core.QueueChanged += OnQueue; Icons.Failed += refresh.Request; App.Account.Changed += refresh.Request; Vm.Refresh(); };
-        Unloaded += (_, _) => { App.Core.GameChanged -= OnChanged; App.Core.QueueChanged -= OnQueue; Icons.Failed -= refresh.Request; App.Account.Changed -= refresh.Request; };
+        void OnChanged(GameState s) { if (s.Game.Id == Vm?.Row.Id) refresh.Request(); }
+        void OnQueue(QueueItem q) { if (q.Stage != QueueStage.Warming) refresh.Request(); }
+
+        Loaded += (_, _) => 
+        { 
+            App.Core.GameChanged += OnChanged; 
+            App.Core.QueueChanged += OnQueue; 
+            Icons.Failed += refresh.Request; 
+            App.Account.Changed += refresh.Request; 
+            Vm.Refresh(); 
+            TraducirTextosFijos();
+        };
+
+        Unloaded += (_, _) => 
+        { 
+            App.Core.GameChanged -= OnChanged; 
+            App.Core.QueueChanged -= OnQueue; 
+            Icons.Failed -= refresh.Request; 
+            App.Account.Changed -= refresh.Request; 
+        };
+
+        void TraducirTextosFijos()
+    {
+        // Recorre todos los TextBlock hijos dentro de la página para traducir los que quedaron fijos en XAML
+        foreach (var tb in FindChildren<Microsoft.UI.Xaml.Controls.TextBlock>(this))
+        {
+            switch (tb.Text)
+            {
+                case "shader compile":
+                    tb.Text = "compilación de shaders";
+                    break;
+                case "other hitch":
+                    tb.Text = "otro tirón";
+                    break;
+                case "loading, quitting":
+                    tb.Text = "cargando, saliendo";
+                    break;
+                case "loading, compiling shaders":
+                    tb.Text = "cargando, compilando shaders";
+                    break;
+                case "Shader coverage":
+                    tb.Text = "Cobertura de shaders";
+                    break;
+                case "Where the shaders come from":
+                    tb.Text = "Origen de los shaders";
+                    break;
+                case "Shaders in the game":
+                    tb.Text = "Shaders en el juego";
+                    break;
+                case "Frame times last time you played":
+                    tb.Text = "Tiempos de fotograma de la última sesión";
+                    break;
+                case "Slow frames":
+                    tb.Text = "Fotogramas lentos";
+                    break;
+                case "Details":
+                    tb.Text = "Detalles";
+                    break;
+                case "Record while I play":
+                    tb.Text = "Grabar mientras juego";
+                    break;
+                case "Ready in the game's own library":
+                    tb.Text = "Listo en la propia biblioteca del juego";
+                    break;
+                case "Ready in the driver cache":
+                    tb.Text = "Listo en la caché del controlador";
+                    break;
+                case "Compiled during play":
+                    tb.Text = "Compilado durante la partida";
+                    break;
+                case "Careful compile":
+                    tb.Text = "Compilación cautelosa";
+                    break;
+            }
+        }
+    }
+
+    static System.Collections.Generic.IEnumerable<T> FindChildren<T>(Microsoft.UI.Xaml.DependencyObject parent) where T : Microsoft.UI.Xaml.DependencyObject
+    {
+        int count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(parent);
+        for (int i = 0; i < count; i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(parent, i);
+            if (child is T typedChild)
+                yield return typedChild;
+
+            foreach (var descendant in FindChildren<T>(child))
+                yield return descendant;
+        }
+    }
     }
 
     public ContentDialog PartlyWhyDialog() => new()
@@ -40,7 +125,7 @@ public sealed partial class DetailPage : Page
     {
         Vm = new DetailVm((string)e.Parameter);
         Vm.ReadCaches();
-        Crumbs.ItemsSource = new[] { "Library", Vm.Name };
+        Crumbs.ItemsSource = new[] { I18n.T("NavLibrary"), Vm.Name };
         Vm.PropertyChanged += (_, _) => DrawFrames();
         Bindings.Update();
         DrawFrames();

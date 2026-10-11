@@ -12,6 +12,25 @@ public sealed partial class LibraryPage : Page
     public LibraryPage()
     {
         InitializeComponent();
+        PageTitle.Text = I18n.T("LibTitle");
+        BtnRefreshText.Text = I18n.T("LibRefresh");
+        ToolTipService.SetToolTip(BtnRefresh, I18n.T("LibRefreshTip"));
+        BtnAddGameText.Text = I18n.T("LibAddGame");
+        ToolTipService.SetToolTip(BtnAddGame, I18n.T("LibAddGameTip"));
+        CardDriverCacheTitle.Text = I18n.T("LibCardDriverCache");
+        CardAfterDriverTitle.Text = I18n.T("LibCardAfterDriver");
+        CardCompileSpeedTitle.Text = I18n.T("LibCardCompileSpeed");
+        BtnChangeCache.Content = I18n.T("LibBtnChange");
+        BtnChangeDriver.Content = I18n.T("LibBtnChange");
+        BtnChangeSpeed.Content = I18n.T("LibBtnChange");
+        Search.PlaceholderText = I18n.T("LibSearchPlaceholder");
+        ColGame.Text = I18n.T("LibColGame");
+        ColShaders.Text = I18n.T("LibColShaders");
+        ColPipelines.Text = I18n.T("LibColPipelines");
+        ColCache.Text = I18n.T("LibColCache");
+        ColTime.Text = I18n.T("LibColTime");
+        ColStatus.Text = I18n.T("LibColStatus");
+        TxtScanEmpty.Text = I18n.T("LibSearchingGames");
         ((CollectionViewSource)Resources["GroupedGames"]).Source = Vm.Groups;
         var refresh = new Coalesced(DispatcherQueue, Vm.Refresh);
         void OnChanged(GameState _) => refresh.Request();
