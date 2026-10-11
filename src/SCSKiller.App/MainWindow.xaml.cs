@@ -28,6 +28,12 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        AppTitleBar.Subtitle = I18n.T("AppSubtitle");
+        UpdateText.Text = I18n.T("UpdateRestart");
+        LibraryItem.Content = I18n.T("NavLibrary");
+        QueueItem.Content = I18n.T("NavQueue");
+        SettingsItem.Content = I18n.T("NavSettings");
+        AboutItem.Content = I18n.T("NavAbout");
         pages = [(QueueItem, typeof(QueuePage)), (SettingsItem, typeof(SettingsPage)), (AboutItem, typeof(AboutPage))];
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);

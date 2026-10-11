@@ -267,19 +267,24 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
 
     bool Partly => ScsKiller.IsPartlyWarmed(s);
     bool PartlyCompiled => ScsKiller.IsPartlyCompiled(s);
+    public string StutterTagText => I18n.T("LibTagKnownStutter");   
+    public string NoStutterTagText => I18n.T("LibTagNoStutter");
+    public string DetailsText => I18n.T("LibBtnDetails");
+    public string RecordText => I18n.T("LibBtnRecord");
+    public string WhyText => I18n.T("LibBtnWhy");
+
     public string StatusText => s.Status switch
     {
-        _ when s.CompileUnreached => "The compile didn't help",
-        _ when PartlyCompiled => "Partly compiled",
-        GameStatus.Warmed when Partly => "Partly warmed",
-        GameStatus.Warmed => "Warmed",
-        GameStatus.Ready => "Ready to compile",
-        _ when ScsKiller.NeedsOfflineSession(s) => "Needs an offline session",
+        _ when s.CompileUnreached => I18n.T("Status_CompileDidntHelp"),
+        _ when PartlyCompiled => I18n.T("Status_PartlyCompiled"),
+        GameStatus.Warmed when Partly => I18n.T("Status_PartlyWarmed"),
+        GameStatus.Warmed => I18n.T("Status_Warmed"),
+        GameStatus.Ready => I18n.T("Status_Ready"),
+        _ when ScsKiller.NeedsOfflineSession(s) => I18n.T("Status_NeedsOfflineSession"),
         GameStatus.NeedsRecording when ScsKiller.NeverRecorded(s) => ScsKiller.NothingRecordedTitle,
-        GameStatus.NeedsRecording => ScsKiller.RecordedEnough(s) ? "Needs a recording" : "Needs a 5-min recording",
-        GameStatus.Stale => "Needs rebuilding",
-        _ when s.StatusReason == ScsKiller.CantReachReason => "Not compatible",
-        _ => s.ShaderModBlocks ? "Not compiled" : s.Engine?.Encrypted == true ? "Encrypted game files" : s.NotPlanned ? "Not supported" : "Not supported yet",
+        GameStatus.NeedsRecording => ScsKiller.RecordedEnough(s) ? I18n.T("Status_NeedsRecording") : I18n.T("Status_NeedsRecording5Min"),
+        GameStatus.Stale => I18n.T("Status_NeedsRebuilding"),
+        _ => s.ShaderModBlocks ? I18n.T("Status_NotCompiled") : s.Engine?.Encrypted == true ? I18n.T("Status_EncryptedFiles") : s.NotPlanned ? I18n.T("Status_NotSupported") : I18n.T("Status_NotSupportedYet"),
     };
     /// <summary>The whole reason: the row's tooltip and the game page's status text.</summary>
     public string FullNote => s.Status switch
@@ -1032,18 +1037,27 @@ public sealed record DetailRow(string Label, string Value, string? Note = null)
 public sealed record QueueRow(string Id, int Number, string Name, string Exe, string Note, string Time, string Cache, QueueStage Stage,
     bool First = false, bool Last = false)
 {
-    public ImageSource? Icon { get; } = Icons.Get(Exe);   // a field: an icon that failed makes the row unequal, so Sync replaces it
+    public ImageSource? Icon { get; } = Icons.Get(Exe);
     public bool NoIcon => Icon is null;
     public Brush Tile => GameRow.TileOf(Name);
     public string Initials => Name.Length > 0 ? GameRow.InitialsOf(Name) : "";
     public bool CanUp => !First;
     public bool CanDown => !Last;
-    public string Glyph => Stage switch { QueueStage.Done => "\uE73E", QueueStage.Failed => "\uE7BA", _ => "\uE71A" };   // check, warning, stop
+    public string Glyph => Stage switch { QueueStage.Done => "\uE73E", QueueStage.Failed => "\uE7BA", _ => "\uE71A" };
     public string TopLabel => $"Move {Name} to the top";
     public string UpLabel => $"Move {Name} up";
     public string DownLabel => $"Move {Name} down";
     public string RemoveLabel => $"Remove {Name} from the queue";
-    public override string ToString() => Number > 0 ? $"{Number}. {Name}, {Note}, {Time}, {Cache}" : $"{Name}, {Note}";   // screen readers
+
+    // Textos traducidos para la vista
+    public string MoveToTopText => I18n.T("QueueMoveToTop");
+    public string TipRemoveCurrent => I18n.T("QueueTipStopRemove");
+    public string TipDrag => I18n.T("QueueTipDragReorder");
+    public string TipMoveUp => I18n.T("QueueTipMoveUp");
+    public string TipMoveDown => I18n.T("QueueTipMoveDown");
+    public string TipRemove => I18n.T("QueueTipRemove");
+
+    public override string ToString() => Number > 0 ? $"{Number}. {Name}, {Note}, {Time}, {Cache}" : $"{Name}, {Note}";
 }
 
 public sealed class QueueVm : Bindable

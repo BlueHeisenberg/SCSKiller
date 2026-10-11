@@ -68,23 +68,23 @@ sealed class Tray : IDisposable
 
     void ShowMenu()
     {
-        var menu = CreatePopupMenu();
-        AppendMenuW(menu, 0 /* MF_STRING */, IdOpen, "Open SCSKiller");
-        var pause = PauseLabel();
-        AppendMenuW(menu, pause == null ? 0x1u /* MF_GRAYED */ : 0, IdPause, pause ?? "Pause compiling");
-        AppendMenuW(menu, 0x800 /* MF_SEPARATOR */, 0, null);
-        AppendMenuW(menu, 0, IdQuit, QuitLabel());
-        GetCursorPos(out var pt);
-        SetForegroundWindow(_hwnd);   // else the menu doesn't close when the user clicks elsewhere
-        var id = TrackPopupMenu(menu, 0x100 | 0x2 | 0x80 /* TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY */, pt.X, pt.Y, 0, _hwnd, 0);
-        PostMessageW(_hwnd, 0, 0, 0);
-        DestroyMenu(menu);
-        switch ((uint)id)
-        {
-            case IdOpen: Open(); break;
-            case IdPause: PauseOrResume(); break;
-            case IdQuit: Quit(); break;
-        }
+    var menu = CreatePopupMenu();
+    AppendMenuW(menu, 0 /* MF_STRING */, IdOpen, I18n.T("TrayOpen"));
+    var pause = PauseLabel();
+    AppendMenuW(menu, pause == null ? 0x1u /* MF_GRAYED */ : 0, IdPause, pause ?? I18n.T("TrayPause"));
+    AppendMenuW(menu, 0x800 /* MF_SEPARATOR */, 0, null);
+    AppendMenuW(menu, 0, IdQuit, QuitLabel());
+    GetCursorPos(out var pt);
+    SetForegroundWindow(_hwnd);   // else the menu doesn't close when the user clicks elsewhere
+    var id = TrackPopupMenu(menu, 0x100 | 0x2 | 0x80 /* TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY */, pt.X, pt.Y, 0, _hwnd, 0);
+    PostMessageW(_hwnd, 0, 0, 0);
+    DestroyMenu(menu);
+    switch ((uint)id)
+    {
+        case IdOpen: Open(); break;
+        case IdPause: PauseOrResume(); break;
+        case IdQuit: Quit(); break;
+    }
     }
 
     static nint Dispatch(nint hwnd, uint msg, nint w, nint l)
