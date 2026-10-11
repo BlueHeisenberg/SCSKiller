@@ -15,6 +15,7 @@ using Windows.UI;
 
 namespace SCSKiller.App;
 
+// View models are computed views over IScsKiller: Refresh() re-reads the facade and tells x:Bind to update everything.
 public abstract class Bindable : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -24,6 +25,7 @@ public abstract class Bindable : INotifyPropertyChanged
 static class Fmt
 {
     public static string N(long? n) => n?.ToString("N0") ?? Format.Dash;
+    /// <summary>"today at 20:14", "yesterday at 20:14", else "on 26/09/2026" (the culture's short date).</summary>
     public static string When(DateTimeOffset at)
     {
         var t = at.LocalDateTime;
@@ -42,8 +44,10 @@ static class Fmt
         AntiCheat.EasyAntiCheat => "EasyAntiCheat", AntiCheat.BattlEye => "BattlEye", _ => "anti-cheat",
     };
     public static Style Style(string key) => (Style)Application.Current.Resources[key];
+    /// <summary>"Severe shader-compilation stutter: reason", then the source and when it was checked; null when not listed.</summary>
     public static string? StutterTip(GameState s) => s.KnownStutter is { } k
         ? $"{(k.Severity == StutterSeverity.Severe ? "Severe" : "Moderate")} shader-compilation stutter: {k.Reason}.\nSource: {k.Source} (checked {k.Date})" : null;
+    /// <summary>Library sections, in list order. GOG, Ubisoft, Battle.net, PURPLE, HoYoPlay and Gaijin games are Store.Other: told apart by their id prefix.</summary>
     public static readonly string[] Stores = ["Steam", "Epic Games", "Xbox / Game Pass", "EA app", "GOG", "Ubisoft Connect", "Battle.net", "PURPLE", "HoYoPlay", "Gaijin", "Other", AddedByYou];
     public const string AddedByYou = "Added by you";
     public static string StoreName(Game g) => g.Store switch
@@ -51,9 +55,13 @@ static class Fmt
         Store.Steam => "Steam", Store.Epic => "Epic Games", Store.Xbox => "Xbox / Game Pass", Store.EA => "EA app", Store.Manual => AddedByYou,
         _ => g.Id[..Math.Max(0, g.Id.IndexOf(':'))] switch { "gog" => "GOG", "ubisoft" => "Ubisoft Connect", "battlenet" => "Battle.net", "purple" => "PURPLE", "hoyoplay" => "HoYoPlay", "gaijin" => "Gaijin", _ => "Other" },
     };
+    /// <summary>Measured driver cache when known, else the estimate.</summary>
     public static string Cache(GameState s) => s.CacheOnDisk is { } c ? Format.Bytes(c) : s.EstimatedCacheBytes is { } b ? "≈ " + Format.Bytes(b) : Format.Dash;
+    /// <summary>The last compile's measured time, else the estimate: the estimate's rate is measured on a cold cache only.</summary>
     public static TimeSpan? CompileTime(GameState s) => s.LastWarmTime ?? s.EstimatedWarmTime;
+    /// <summary>Tooltip for an estimated (not measured) cache value; null when measured.</summary>
     public static string? CacheTip(GameState s) => s.CacheOnDisk == null && s.EstimatedCacheBytes != null ? "Estimated driver cache if compiled" : null;
+    /// <summary>One middleware tag: what it compiles and its DLLs.</summary>
     public static string TagTip(MiddlewareTag t) => Format.Middleware(t) + "\n    " + string.Join(", ", t.Dlls);
     public static bool Active(QueueItem q) => q.Stage is not (QueueStage.Done or QueueStage.Failed or QueueStage.Stopped);
     public static void PauseOrResume(QueueItem? running)
@@ -296,7 +304,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     public bool CanLaunch { get; } = s.AntiCheat == AntiCheat.None && StoreLaunch.Supported(s.Game);
     public bool Compiling => compiling;
     public bool CanPlay => !Playing && !compiling;
-    public string PlayText => Playing ? I18n.T("DetailRunning") : I18n.T("DetailPlay");
+    public string PlayText => Playing ? I18n.T("Detail_Running") : I18n.T("Detail_Play");
     public string PlayTip => Playing ? $"{Name} is running" : compiling ? Fmt.CompilingTip : Fmt.PlayVia(s.Game);
 
     public override string ToString() => $"{Name}, {StatusText}, {RowTip}";
@@ -618,14 +626,14 @@ public sealed class DetailVm(string id) : Bindable
     public string EngineChip => s.Engine is { } e ? Format.Engine(e, e.Family == "Unreal" ? "Unreal Engine" : null) + Fmt.Guessed(e) + (e.Fork != null ? " · custom fork" : "") : "Unknown engine";
     public string ApiChip => s.Engine?.GraphicsApi.Replace("D3D", "DirectX ") ?? "";
     public bool HasApi => ApiChip.Length > 0;
-    public string AntiCheatChip => NoAntiCheat ? "No anti-cheat" : Fmt.AntiCheatName(s.AntiCheat);
+    public string AntiCheatChip => NoAntiCheat ? I18n.T("Chip_NoAntiCheat") : Fmt.AntiCheatName(s.AntiCheat);
     public string AntiCheatTip => NoAntiCheat ? "No anti-cheat found: this game can be recorded"
         : $"{Fmt.AntiCheatName(s.AntiCheat)} treats an extra d3d12.dll as tampering: this game is never recorded";
     public bool HasMiddleware => s.Middleware is { Count: > 0 };
     IReadOnlyList<MiddlewareTag> Mw => s.Middleware ?? [];
     public string MiddlewareChip => Mw.Where(t => t.Pipelines > 0).Select(t => t.Label)
-            .Concat(Mw.Any(t => t.Label == "DLSS") ? ["DLSS (by the driver)"] : []).ToList() is { Count: > 0 } also
-        ? "Also compiles: " + string.Join(" · ", also) : "Detected: " + string.Join(" · ", Mw.Select(t => t.Label));
+            .Concat(Mw.Any(t => t.Label == "DLSS") ? [I18n.T("Chip_DlssDriver")] : []).ToList() is { Count: > 0 } also
+        ? I18n.T("Chip_AlsoCompiles", string.Join(" · ", also)) : I18n.T("Chip_Detected", string.Join(" · ", Mw.Select(t => t.Label)));
     public string MiddlewareTip => "Upscaler DLLs next to the game. Their pipelines are compiled with it once a recording of any game has seen that DLL version"
         + ": on this PC, or for FSR and XeSS on any PC that shares them"
         + (s.Plan is { MiddlewareItems: > 0 } p ? $" (this plan: {Fmt.N(p.MiddlewareItems)} of theirs)" : "") + ".\n\n"
@@ -665,18 +673,18 @@ public sealed class DetailVm(string id) : Bindable
 
     public IReadOnlyList<DetailRow> Sources => P is not { } p ? [] : new DetailRow?[]
     {
-        p.Generated > 0 ? new(ScsKiller.BothApis(p) ? "DirectX 12, from the game files" : "Found in the game files", Fmt.N(p.Generated)) : null,
+        p.Generated > 0 ? new(ScsKiller.BothApis(p) ? "DirectX 12, " + I18n.T("Detail_SourceGameFiles") : I18n.T("Detail_SourceGameFiles"), Fmt.N(p.Generated)) : null,
         p.Recorded > 0 ? new(s.Community switch
         {
-            null => "Your play recordings",
-            { WithLocalRecording: true } => "Your recording and the community database",
-            _ => "The community database",
+            null => I18n.T("Detail_SourceRecordings"),
+            { WithLocalRecording: true } => I18n.T("Detail_SourceBothRecordings"),
+            _ => I18n.T("Detail_SourceCommunityDb"),
         }, Fmt.N(p.Recorded), CommunityLine) : null,
-        s.Community == null && s.InCommunityDb is { } inDb && !HasDbTeaser ? new("The community database", inDb ? "has a recording for this version" : "not in it yet") : null,
-        p.MiddlewareItems > 0 ? new(p.MiddlewareSharedItems == 0 ? "Its upscalers, learned from recordings"
-            : p.MiddlewareSharedItems == p.MiddlewareItems ? "Its upscalers, from shared packs" : "Its upscalers, from recordings and shared packs", Fmt.N(p.MiddlewareItems)) : null,
-        p.D3D11Shaders > 0 ? new(ScsKiller.BothApis(p) ? "DirectX 11, from the game files" : "DirectX 11 shaders", Fmt.N(p.D3D11Shaders)) : null,
-        p.RtLibraries > 0 ? new("Ray-traced effects", s.Engine?.NoRayTracing == true ? "off in this game" : s.Engine?.NoRtPipelines == true ? "inline, from the game files" : p.RtUncovered == 0 ? "covered" : s.RtToPlan ? "being checked" : RtUnseen ? "not seen while recording" : RtInline ? "inline ones covered" : !Rt ? "mostly covered" : CanRecord ? "need a recording" : "not compiled") : null,
+        s.Community == null && s.InCommunityDb is { } inDb && !HasDbTeaser ? new(I18n.T("Detail_SourceCommunityDb"), inDb ? I18n.T("Detail_InDbRecording") : I18n.T("Detail_NotInDbYet")) : null,
+        p.MiddlewareItems > 0 ? new(p.MiddlewareSharedItems == 0 ? I18n.T("Detail_SourceUpscalersRecordings")
+            : p.MiddlewareSharedItems == p.MiddlewareItems ? I18n.T("Detail_SourceUpscalersShared") : I18n.T("Detail_SourceUpscalersBoth"), Fmt.N(p.MiddlewareItems)) : null,
+        p.D3D11Shaders > 0 ? new(ScsKiller.BothApis(p) ? "DirectX 11, " + I18n.T("Detail_SourceGameFiles") : "DirectX 11 shaders", Fmt.N(p.D3D11Shaders)) : null,
+        p.RtLibraries > 0 ? new(I18n.T("Detail_SourceRtEffects"), s.Engine?.NoRayTracing == true ? "off" : s.Engine?.NoRtPipelines == true ? "inline" : p.RtUncovered == 0 ? I18n.T("Detail_RtCovered") : s.RtToPlan ? "..." : RtUnseen ? "..." : RtInline ? I18n.T("Detail_RtCovered") : !Rt ? I18n.T("Detail_RtCovered") : CanRecord ? "..." : "...") : null,
     }.OfType<DetailRow>().ToList();
     public bool HasSources => Sources.Count > 0;
     string? CommunityLine => s.Community is { } c
@@ -719,7 +727,7 @@ public sealed class DetailVm(string id) : Bindable
     public string LeftTitle => Rt || RtUnseen ? "Ray-traced effects aren't compiled yet" : "Some shaders still compile while you play";
 
     public string CoverageValue => Pct is { } pct ? $"{pct}%" : Dx11Only && !s.CompileUnreached ? "All" : Format.Dash;
-    public string CoverageLabel => s.CompileUnreached ? "not used" : CompiledPct != null ? "compiled" : Pct != null || Dx11Only ? "covered" : "not yet";
+    public string CoverageLabel => s.CompileUnreached ? I18n.T("Detail_LblNotUsed") : CompiledPct != null ? I18n.T("Detail_LblCompiled") : Pct != null || Dx11Only ? I18n.T("Detail_LblCovered") : I18n.T("Detail_LblNotYet");
     public Geometry? GoodArc => GoodCoverage ? Arc() : null;
     public Geometry? LowArc => LowCoverage ? Arc() : null;
     Geometry Arc()
@@ -733,11 +741,11 @@ public sealed class DetailVm(string id) : Bindable
         return g;
     }
     public bool HasTimeValue => Fmt.CompileTime(s) != null;
-    public string TimeLabel => s.LastWarmTime != null ? "Compile time" : "Compile time (estimate)";
+    public string TimeLabel => s.LastWarmTime != null ? I18n.T("Detail_TimeLabel") : I18n.T("Detail_TimeEstLabel");
     public string TimeValue => s.LastWarmTime is { TotalMinutes: >= 1, TotalHours: < 1 } t ? $"{t.Minutes} min {t.Seconds} s"
         : Format.Duration(Fmt.CompileTime(s));
     public bool HasDiskValue => s.CacheOnDisk != null || s.EstimatedCacheBytes != null;
-    public string DiskLabel => s.CacheOnDisk != null ? "Disk space" : "Disk space (estimate)";
+    public string DiskLabel => s.CacheOnDisk != null ? I18n.T("Detail_DiskLabel") : I18n.T("Detail_DiskEstLabel");
     public string DiskValue => Format.Bytes(s.CacheOnDisk ?? s.EstimatedCacheBytes);
     public bool HasShaderCount => s.ShaderCount != null;
     public string ShaderCount => Fmt.N(s.ShaderCount);
@@ -745,7 +753,7 @@ public sealed class DetailVm(string id) : Bindable
     public string StuttersValue => StutterCount is not { } n ? "" : n == 0 ? "None" : Fmt.N(n);
     public bool HasStutters => StutterCount > 0;
     public bool NoStutters => StutterCount == 0;
-    public string StuttersLabel => F != null ? "Stutters last time you played" : "Compiles while you played";
+    public string StuttersLabel => F != null ? I18n.T("Detail_StuttersLabel") : I18n.T("Detail_CompilesLabel");
 
     public IReadOnlyList<DetailRow> Details => new DetailRow?[]
     {
@@ -776,15 +784,15 @@ public sealed class DetailVm(string id) : Bindable
         : p.Recorded > 0 ? "learned from recording" : "shipped with the shaders";
 
     public bool HasCompileCard => CanCompile || s.LastWarmTime != null;
-    public string CompileTitle => s.LastWarmTime == null ? "First compile" : "Last compile";
+    public string CompileTitle => s.LastWarmTime == null ? I18n.T("Detail_FirstCompileTitle") : I18n.T("Detail_LastCompileTitle");
     long Failed => s.LastWarmFailed ?? 0;
     long Skipped => s.LastWarmSkipped ?? 0;
     long Crashed => s.LastWarmCrashed ?? 0;
     public string CompileText => s.WarmedAt is { } at
-        ? $"Compiled {Fmt.When(at)}" + (s.LastWarmTime is { } t ? $" in {Format.Duration(t)}" : "") + $", for driver {s.WarmedDriverVersion}."
-          + (s.LastWarmFailed != null && Failed == 0 && Skipped == 0 && Crashed == 0 ? " Nothing failed." : "")
-          + (Failed > 0 ? $" The driver skipped {Failed:N0} combination{(Failed == 1 ? "" : "s")}." : "")
-          + (s.CacheOnDisk is { } c ? $" It uses {Format.Bytes(c)} of disk space." : "")
+        ? I18n.T("Detail_CompiledAt", Fmt.When(at), s.LastWarmTime is { } t ? $" in {Format.Duration(t)}" : "", s.WarmedDriverVersion ?? "")
+          + (s.LastWarmFailed != null && Failed == 0 && Skipped == 0 && Crashed == 0 ? I18n.T("Detail_NothingFailed") : "")
+          + (Failed > 0 ? I18n.T("Detail_DriverSkipped", Failed, Failed == 1 ? "" : "s") : "")
+          + (s.CacheOnDisk is { } c ? I18n.T("Detail_UsesDiskSpace", Format.Bytes(c)) : "")
         : s.LastWarmTime is { } last ? $"Its shader cache was cleared. The last compile took {Format.Duration(last)}."
         : (s.EstimatedWarmTime is { } est ? $"It takes about {Format.Duration(est)} and runs in the background, so you can keep using the PC." : "It runs in the background, so you can keep using the PC.")
           + (s.EstimatedCacheBytes is { } b ? $" It adds about {Format.Bytes(b)} to the driver's shader cache." : "");
@@ -803,7 +811,7 @@ public sealed class DetailVm(string id) : Bindable
     SessionStats? L => s.LastSession;
     public bool HasSession => L != null;
     public bool ShowSessionHint => L == null && CanRecord;
-    public string SessionHeader => L is { } l ? $"Last time you played · {Format.Duration(F?.Duration ?? l.Duration)}" : "";
+    public string SessionHeader => L is { } l ? I18n.T("Detail_LastTimePlayed", Format.Duration(F?.Duration ?? l.Duration)) : "";
     static long PlayCompiles(SessionStats l) => l.Compiles + l.StateObjectsCompiled;
     public string SessionVerdict
     {
@@ -850,14 +858,14 @@ public sealed class DetailVm(string id) : Bindable
     {
         int other = f.Hitches.Count(h => h.Cause == HitchCause.Other), loading = f.Hitches.Count(h => h.Cause == HitchCause.Loading);
         var compiling = f.Hitches.Where(h => h.Cause == HitchCause.LoadingShaders).ToList();
-        return $"{Format.Duration(f.Duration)}: " + (shader.Count == 0 ? "no stutters from shader compiles"
-                : $"{shader.Count:N0} stutter{(shader.Count == 1 ? "" : "s")} from shader compiles (worst {Ms(shader.Max(h => h.Ms))})")
-            + (other == 0 ? ", no other hitches" : $", {other:N0} other hitch{(other == 1 ? "" : "es")}")
-            + $", 1% low {f.Low1PctFps:0} fps."
-            + (compiling.Count + loading == 0 ? "" : " Loading: " + string.Join(", ", new[]
+        return $"{Format.Duration(f.Duration)}: " + (shader.Count == 0 ? "sin tirones por compilación de shaders"
+                : $"{shader.Count:N0} tirón{(shader.Count == 1 ? "" : "es")} por compilación de shaders (peor {Ms(shader.Max(h => h.Ms))})")
+            + (other == 0 ? ", sin otros tirones" : $", {other:N0} otro{(other == 1 ? "" : "s")} tirón{(other == 1 ? "" : "es")}")
+            + $", 1% bajo {f.Low1PctFps:0} fps."
+            + (compiling.Count + loading == 0 ? "" : " Carga: " + string.Join(", ", new[]
             {
-                compiling.Count == 0 ? null : $"{compiling.Count:N0} slow frame{(compiling.Count == 1 ? "" : "s")} compiling shaders (worst {Ms(compiling.Max(h => h.Ms))})",
-                loading == 0 ? null : compiling.Count == 0 ? $"{loading:N0} slow frame{(loading == 1 ? "" : "s")}" : $"{loading:N0} other{(loading == 1 ? "" : "s")}",
+                compiling.Count == 0 ? null : $"{compiling.Count:N0} fotograma{(compiling.Count == 1 ? "" : "s")} lento{(compiling.Count == 1 ? "" : "s")} compilando shaders (peor {Ms(compiling.Max(h => h.Ms))})",
+                loading == 0 ? null : compiling.Count == 0 ? $"{loading:N0} fotograma{(loading == 1 ? "" : "s")} lento{(loading == 1 ? "" : "s")}" : $"{loading:N0} otro{(loading == 1 ? "" : "s")}",
             }.OfType<string>()) + ".");
     }
 
@@ -912,7 +920,7 @@ public sealed class DetailVm(string id) : Bindable
         + "at the next logon). If any are left when you play online, you could be banned. Steam must be running; don't uninstall SCSKiller mid-session.";
 
     public bool HasRecording => s.RecordingBytes > 0;
-    public string RecordingSize => $"The recording uses {Format.Bytes(s.RecordingBytes)} (in the game folder and SCSKiller's copy)";
+    public string RecordingSize => I18n.T("Detail_RecordingUses", Format.Bytes(s.RecordingBytes));
     public bool RecordingPaused => s.RecordingPaused;
     public string RecordingPausedText => ScsKiller.PausedNote(App.Core.Settings) + ". Raise the limit in Settings, or clear the recording.";
     public bool ClearingRecording { get; set; }
@@ -1021,7 +1029,7 @@ public sealed class QueueVm : Bindable
     public string ThreadsText => $"{S.Threads} of {Environment.ProcessorCount}";
     public double MaxThreads => Environment.ProcessorCount;
     public int Priority { get => (int)S.Priority; set { if (value >= 0 && value != (int)S.Priority) S = S with { Priority = (WarmPriority)value }; } }
-    public string CpuSummary => $"CPU use: {S.Threads} of {Environment.ProcessorCount} threads, {(S.Priority == WarmPriority.BelowNormal ? "below-normal" : "idle")} priority";
+    public string CpuSummary => $"CPU use: {S.Threads} of {Environment.ProcessorCount}";
 
     public void Refresh()
     {

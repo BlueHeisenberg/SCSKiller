@@ -290,4 +290,42 @@
   <data name="Queue_Stopped" xml:space="preserve"><value>Stopped</value></data>
   <data name="Queue_Failed" xml:space="preserve"><value>Failed</value></data>
   <data name="Queue_PlanBuiltFirst" xml:space="preserve"><value>plan is built first</value></data>
+  <!-- DetailPage UI & Coverage Translations -->
+  <data name="Chip_AlsoCompiles" xml:space="preserve"><value>Also compiles: {0}</value></data>
+  <data name="Chip_Detected" xml:space="preserve"><value>Detected: {0}</value></data>
+  <data name="Chip_DlssDriver" xml:space="preserve"><value>DLSS (by the driver)</value></data>
+  <data name="Chip_NoAntiCheat" xml:space="preserve"><value>No anti-cheat</value></data>
+  <data name="Detail_LblCompiled" xml:space="preserve"><value>compiled</value></data>
+  <data name="Detail_LblCovered" xml:space="preserve"><value>covered</value></data>
+  <data name="Detail_LblNotYet" xml:space="preserve"><value>not yet</value></data>
+  <data name="Detail_LblNotUsed" xml:space="preserve"><value>not used</value></data>
+  <data name="Detail_TimeLabel" xml:space="preserve"><value>Compile time</value></data>
+  <data name="Detail_TimeEstLabel" xml:space="preserve"><value>Compile time (estimate)</value></data>
+  <data name="Detail_DiskLabel" xml:space="preserve"><value>Disk space</value></data>
+  <data name="Detail_DiskEstLabel" xml:space="preserve"><value>Disk space (estimate)</value></data>
+  <data name="Detail_StuttersLabel" xml:space="preserve"><value>Stutters last time you played</value></data>
+  <data name="Detail_CompilesLabel" xml:space="preserve"><value>Compiles while you played</value></data>
+  <data name="Detail_SourceGameFiles" xml:space="preserve"><value>Found in the game files</value></data>
+  <data name="Detail_SourceRecordings" xml:space="preserve"><value>Your play recordings</value></data>
+  <data name="Detail_SourceBothRecordings" xml:space="preserve"><value>Your recording and the community database</value></data>
+  <data name="Detail_SourceCommunityDb" xml:space="preserve"><value>The community database</value></data>
+  <data name="Detail_SourceUpscalersRecordings" xml:space="preserve"><value>Its upscalers, learned from recordings</value></data>
+  <data name="Detail_SourceUpscalersShared" xml:space="preserve"><value>Its upscalers, from shared packs</value></data>
+  <data name="Detail_SourceUpscalersBoth" xml:space="preserve"><value>Its upscalers, from recordings and shared packs</value></data>
+  <data name="Detail_SourceRtEffects" xml:space="preserve"><value>Ray-traced effects</value></data>
+  <data name="Detail_RtCovered" xml:space="preserve"><value>covered</value></data>
+  <data name="Detail_InDbRecording" xml:space="preserve"><value>has a recording for this version</value></data>
+  <data name="Detail_NotInDbYet" xml:space="preserve"><value>not in it yet</value></data>
+  <data name="Detail_LastCompileTitle" xml:space="preserve"><value>Last compile</value></data>
+  <data name="Detail_FirstCompileTitle" xml:space="preserve"><value>First compile</value></data>
+  <data name="Detail_CompiledAt" xml:space="preserve"><value>Compiled {0}{1}, for driver {2}.</value></data>
+  <data name="Detail_NothingFailed" xml:space="preserve"><value> Nothing failed.</value></data>
+  <data name="Detail_DriverSkipped" xml:space="preserve"><value> The driver skipped {0} combination{1}.</value></data>
+  <data name="Detail_UsesDiskSpace" xml:space="preserve"><value> It uses {0} of disk space.</value></data>
+  <data name="Detail_RecordingUses" xml:space="preserve"><value>The recording uses {0} (in the game folder and SCSKiller's copy)</value></data>
+  <data name="Detail_LastTimePlayed" xml:space="preserve"><value>Last time you played · {0}</value></data>
+  <data name="Legend_ShaderCompile" xml:space="preserve"><value>shader compile</value></data>
+  <data name="Legend_OtherHitch" xml:space="preserve"><value>other hitch</value></data>
+  <data name="Legend_LoadingQuitting" xml:space="preserve"><value>loading, quitting</value></data>
+  <data name="Legend_LoadingShaders" xml:space="preserve"><value>loading, compiling shaders</value></data>
 </root>

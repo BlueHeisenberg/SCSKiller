@@ -289,4 +289,42 @@
   <data name="Queue_Stopped" xml:space="preserve"><value>Detenido</value></data>
   <data name="Queue_Failed" xml:space="preserve"><value>Error</value></data>
   <data name="Queue_PlanBuiltFirst" xml:space="preserve"><value>el plan se crea primero</value></data>
+  <!-- DetailPage UI & Coverage Translations -->
+  <data name="Chip_AlsoCompiles" xml:space="preserve"><value>Compila además: {0}</value></data>
+  <data name="Chip_Detected" xml:space="preserve"><value>Detectado: {0}</value></data>
+  <data name="Chip_DlssDriver" xml:space="preserve"><value>DLSS (por el controlador)</value></data>
+  <data name="Chip_NoAntiCheat" xml:space="preserve"><value>Sin antitrampas</value></data>
+  <data name="Detail_LblCompiled" xml:space="preserve"><value>compilado</value></data>
+  <data name="Detail_LblCovered" xml:space="preserve"><value>cubierto</value></data>
+  <data name="Detail_LblNotYet" xml:space="preserve"><value>aún no</value></data>
+  <data name="Detail_LblNotUsed" xml:space="preserve"><value>no utilizado</value></data>
+  <data name="Detail_TimeLabel" xml:space="preserve"><value>Tiempo de compilación</value></data>
+  <data name="Detail_TimeEstLabel" xml:space="preserve"><value>Tiempo de compilación (estimado)</value></data>
+  <data name="Detail_DiskLabel" xml:space="preserve"><value>Espacio en disco</value></data>
+  <data name="Detail_DiskEstLabel" xml:space="preserve"><value>Espacio en disco (estimado)</value></data>
+  <data name="Detail_StuttersLabel" xml:space="preserve"><value>Tirones en la última partida</value></data>
+  <data name="Detail_CompilesLabel" xml:space="preserve"><value>Compilaciones durante la partida</value></data>
+  <data name="Detail_SourceGameFiles" xml:space="preserve"><value>En los archivos del juego</value></data>
+  <data name="Detail_SourceRecordings" xml:space="preserve"><value>Tus grabaciones de juego</value></data>
+  <data name="Detail_SourceBothRecordings" xml:space="preserve"><value>Tu grabación y la base de datos comunitaria</value></data>
+  <data name="Detail_SourceCommunityDb" xml:space="preserve"><value>Base de datos comunitaria</value></data>
+  <data name="Detail_SourceUpscalersRecordings" xml:space="preserve"><value>Escaladores aprendidos de grabaciones</value></data>
+  <data name="Detail_SourceUpscalersShared" xml:space="preserve"><value>Escaladores de paquetes compartidos</value></data>
+  <data name="Detail_SourceUpscalersBoth" xml:space="preserve"><value>Escaladores de grabaciones y compartidos</value></data>
+  <data name="Detail_SourceRtEffects" xml:space="preserve"><value>Efectos de ray tracing</value></data>
+  <data name="Detail_RtCovered" xml:space="preserve"><value>cubierto</value></data>
+  <data name="Detail_InDbRecording" xml:space="preserve"><value>tiene grabación para esta versión</value></data>
+  <data name="Detail_NotInDbYet" xml:space="preserve"><value>aún no disponible</value></data>
+  <data name="Detail_LastCompileTitle" xml:space="preserve"><value>Última compilación</value></data>
+  <data name="Detail_FirstCompileTitle" xml:space="preserve"><value>Primera compilación</value></data>
+  <data name="Detail_CompiledAt" xml:space="preserve"><value>Compilado {0}{1}, para el controlador {2}.</value></data>
+  <data name="Detail_NothingFailed" xml:space="preserve"><value> Sin errores.</value></data>
+  <data name="Detail_DriverSkipped" xml:space="preserve"><value> El controlador omitió {0} combinación{1}.</value></data>
+  <data name="Detail_UsesDiskSpace" xml:space="preserve"><value> Utiliza {0} de espacio en disco.</value></data>
+  <data name="Detail_RecordingUses" xml:space="preserve"><value>La grabación ocupa {0} (en la carpeta del juego y copia de SCSKiller)</value></data>
+  <data name="Detail_LastTimePlayed" xml:space="preserve"><value>Última partida jugada · {0}</value></data>
+  <data name="Legend_ShaderCompile" xml:space="preserve"><value>compilación de shaders</value></data>
+  <data name="Legend_OtherHitch" xml:space="preserve"><value>otro tirón</value></data>
+  <data name="Legend_LoadingQuitting" xml:space="preserve"><value>cargando, saliendo</value></data>
+  <data name="Legend_LoadingShaders" xml:space="preserve"><value>cargando, compilando shaders</value></data>
 </root>
