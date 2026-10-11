@@ -16,6 +16,12 @@
 </p>
 
 <p align="center">
+  <a href="./README.md">English</a>
+  ·
+  <a href="./docs/README_zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   <a href="https://scskiller.com">Website</a>
   ·
   <a href="https://github.com/BlueHeisenberg/SCSKiller/releases/latest">Download</a>
