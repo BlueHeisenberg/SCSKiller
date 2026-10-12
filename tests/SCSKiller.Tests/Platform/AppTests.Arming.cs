@@ -510,14 +510,14 @@ public partial class AppTests
     }
 
     /// <summary>A Streamline game (sl.interposer.dll beside the exe) whose exe pulls in no d3d12.dll through its static imports:
-    /// on NVIDIA its first d3d12.dll comes with Streamline's plugins, so it gets no recorder (an installed one goes) and asks
+    /// on any GPU its first d3d12.dll comes with Streamline, so it gets no recorder (an installed one goes) and asks
     /// for no recording. <paramref name="chain"/>: the exe imports a DLL of its folder that imports d3d12.dll (The Witcher 3's
     /// GFSDK_SSAO_D3D12), which loads the recorder first.</summary>
     [Theory]
     [InlineData(GpuVendor.Nvidia, false, true)]
-    [InlineData(GpuVendor.Amd, false, false)]
+    [InlineData(GpuVendor.Amd, false, true)]    // measured: Cyberpunk 2077 on an RDNA4 card loads System32's d3d12.dll
     [InlineData(GpuVendor.Nvidia, true, false)]
-    public async Task A_streamline_only_game_on_nvidia_is_not_recorded(GpuVendor vendor, bool chain, bool skipped)
+    public async Task A_streamline_only_game_is_not_recorded_on_any_gpu(GpuVendor vendor, bool chain, bool skipped)
     {
         const string ssao = "GFSDK_SSAO_D3D12.win64.dll";
         File.WriteAllBytes(_game.ExePath, DiscoveryAndVendorTests.Exe(chain ? ssao : "sl.interposer.dll"));

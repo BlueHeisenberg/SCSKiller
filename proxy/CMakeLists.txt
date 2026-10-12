@@ -20,6 +20,42 @@ set_target_properties(scskiller PROPERTIES OUTPUT_NAME d3d12)
 target_link_options(scskiller PRIVATE /MAP /DELAYLOAD:d3d11.dll /DELAYLOAD:d3dcompiler_47.dll /DELAYLOAD:dxgi.dll /DELAYLOAD:shell32.dll /DELAYLOAD:ole32.dll)
 target_link_libraries(scskiller delayimp)
 
+# amd_ags_x64.dll: this recorder in front of AMD's AGS, for a game that has AGS create its device (Cyberpunk 2077 on Radeon:
+# agsDriverExtensionsDX12_CreateDevice calls the system d3d12.dll itself, so no d3d12.dll beside the exe ever sees the device).
+# The game's own AGS is renamed amd_ags_real.dll: Wrap_AgsCreateDevice (proxy.cpp) is ours, the other exports in ags_exports.txt
+# jump to the real one through an import library made from the same list.
+file(STRINGS ags_exports.txt AGS_NAMES)
+set(AGS_DEF ${CMAKE_CURRENT_BINARY_DIR}/ags_wrap.def)
+set(AGS_REAL_DEF ${CMAKE_CURRENT_BINARY_DIR}/amd_ags_real.def)
+set(AGS_REAL_LIB ${CMAKE_CURRENT_BINARY_DIR}/amd_ags_real.lib)
+set(AGS_DEF_TEXT "EXPORTS
+    agsDriverExtensionsDX12_CreateDevice = Wrap_AgsCreateDevice
+    SCSKiller_StartWarm
+")
+set(AGS_REAL_DEF_TEXT "LIBRARY amd_ags_real.dll
+EXPORTS
+")
+foreach(n ${AGS_NAMES})
+  string(APPEND AGS_REAL_DEF_TEXT "    ${n}
+")
+  if(NOT n STREQUAL "agsDriverExtensionsDX12_CreateDevice")
+    string(APPEND AGS_DEF_TEXT "    ${n}
+")
+  endif()
+endforeach()
+file(WRITE ${AGS_DEF} "${AGS_DEF_TEXT}")
+file(WRITE ${AGS_REAL_DEF} "${AGS_REAL_DEF_TEXT}")
+add_custom_command(OUTPUT ${AGS_REAL_LIB} COMMAND ${CMAKE_AR} /nologo /DEF:${AGS_REAL_DEF} /MACHINE:X64 /OUT:${AGS_REAL_LIB}
+                   DEPENDS ${AGS_REAL_DEF} ags_exports.txt VERBATIM)
+add_custom_target(amd_ags_real_lib DEPENDS ${AGS_REAL_LIB})
+add_library(scskiller_ags SHARED proxy.cpp warm11.cpp vtslots.cpp stubs.asm ${AGS_DEF} version.rc)
+add_dependencies(scskiller_ags amd_ags_real_lib)
+set_target_properties(scskiller_ags PROPERTIES OUTPUT_NAME scskiller_ags)
+target_compile_definitions(scskiller_ags PRIVATE SCSK_AGS_WRAP)
+target_include_directories(scskiller_ags PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_link_options(scskiller_ags PRIVATE /MAP /DELAYLOAD:d3d11.dll /DELAYLOAD:d3dcompiler_47.dll /DELAYLOAD:dxgi.dll /DELAYLOAD:shell32.dll /DELAYLOAD:ole32.dll)
+target_link_libraries(scskiller_ags ${AGS_REAL_LIB} delayimp)
+
 add_executable(selftest selftest.cpp)
 target_link_libraries(selftest d3dcompiler)
 target_include_directories(selftest PRIVATE third_party/vulkan)  # headers only; vulkan-1.dll is loaded at run time

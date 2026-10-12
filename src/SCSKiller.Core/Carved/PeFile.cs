@@ -44,6 +44,23 @@ public static class PeFile
                 yield return Str(pe, rva);   // an RVA inside the export directory is a forwarder string
     }
 
+    /// <summary>The functions imported by name from <paramref name="dll"/> (its static import table; an import by ordinal has no name).</summary>
+    public static IEnumerable<string> ImportedFunctions(PEReader pe, string dll)
+    {
+        var h = pe.PEHeaders.PEHeader;
+        if (h == null || h.Magic != PEMagic.PE32Plus) yield break;
+        var table = Data(pe, h.ImportTableDirectory.RelativeVirtualAddress);
+        while (table.RemainingBytes >= 20)
+        {
+            var (original, _, _, name, first) = (table.ReadInt32(), table.ReadInt32(), table.ReadInt32(), table.ReadInt32(), table.ReadInt32());
+            if (name == 0) yield break;
+            if (!Str(pe, name).Equals(dll, StringComparison.OrdinalIgnoreCase)) continue;
+            var thunks = Data(pe, original != 0 ? original : first);
+            for (ulong t; thunks.RemainingBytes >= 8 && (t = thunks.ReadUInt64()) != 0;)
+                if ((t >> 63) == 0) yield return Str(pe, (int)t + 2);   // past the 2-byte hint
+        }
+    }
+
     /// <summary>The data an exported variable's RVA points at (e.g. the Agility SDK's D3D12SDKVersion); null if not exported.</summary>
     public static BlobReader? ExportData(PEReader pe, string name)
     {

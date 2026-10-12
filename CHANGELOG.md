@@ -4,6 +4,12 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+### Games
+- **Cyberpunk 2077 on Radeon is recorded**: AMD's AGS creates its DirectX 12 device, so SCSKiller puts a wrapper in front of the game's `amd_ags_x64.dll` (renamed `amd_ags_real.dll`) and puts it back when the recorder is removed. Only the AGS build the wrapper was made for (5.4.0) is wrapped.
+- **Other games with NVIDIA Streamline** no longer get a recorder on any GPU: Streamline
+  loads Windows' own DirectX 12 on AMD too, not only on NVIDIA, so a recording never came. They still compile from their files
+  and the community database.
+
 ## [1.2.5] - 2026-10-10
 
 ### Faster and steadier

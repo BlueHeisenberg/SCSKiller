@@ -3050,6 +3050,20 @@ extern "C" HRESULT WINAPI Proxy_D3D12CreateDevice(IUnknown* adapter, D3D_FEATURE
     return device_created(real_CreateDevice(adapter, fl, riid, pp), adapter, fl, pp);
 }
 
+#ifdef SCSK_AGS_WRAP
+// AMD AGS 5.x (agsDriverExtensionsDX12_CreateDevice) makes the device itself, through the system d3d12.dll: a game that ships
+// it never passes D3D12CreateDevice here. This dll is that game's amd_ags_x64.dll, the game's own renamed amd_ags_real.dll
+// serving every other export; returned->pDevice is the first field of AGSDX12ReturnedParams (5.x).
+extern "C" int Wrap_AgsCreateDevice(void* context, void* creation, void* extensions, void** returned) {
+    using PFN_AgsCreateDevice = int (*)(void*, void*, void*, void**);
+    static const auto real = (PFN_AgsCreateDevice)GetProcAddress(GetModuleHandleW(L"amd_ags_real.dll"), "agsDriverExtensionsDX12_CreateDevice");
+    if (!real) return 1;  // AGS_FAILURE
+    const int r = real(context, creation, extensions, returned);
+    if (r == 0 && returned && *returned) device_created(S_OK, nullptr, D3D_FEATURE_LEVEL_11_0, returned);  // adapter and level matter only to next=
+    return r;
+}
+#endif
+
 // A device from ID3D12DeviceFactory::CreateDevice (D3D12GetInterface: CLSID_D3D12DeviceFactory, or
 // ID3D12SDKConfiguration1::CreateDeviceFactory) never passes D3D12CreateDevice: its factory's vtable is hooked instead.
 // Each SDK's D3D12Core.dll has its own factory vtable and original: one entry per vtable. A device of a second D3D12Core

@@ -269,7 +269,7 @@ public sealed record GameState(
     bool ShaderModLayer = false,       // ...compiles through a copy of the layer (ScsKiller.LayerFor)
     bool ShaderModAsD3D12 = false,     // ...with ReShade installed as d3d12.dll: the recorder records under it only when chained
     bool RootUnconfirmed = false,      // a game the user added whose folder they haven't confirmed: never recorded (ScsKiller.SkipManual)
-    bool StreamlineFirst = false,      // on NVIDIA, Streamline loads the first d3d12.dll (GameFiles.StreamlineFirst): never recorded (ScsKiller.SkipStreamline)
+    bool StreamlineFirst = false,      // Streamline loads the first d3d12.dll, on any GPU (GameFiles.StreamlineFirst): never recorded (ScsKiller.SkipStreamline)
     bool RtUnseen = false,             // recorded long enough without ray tracing (GameRecord.RtUnseen) and planned since: its uncovered ray tracing isn't asked for
     bool RtToPlan = false,             // its plan asks for a ray tracing recording and a newer recording waits for the plan check (ScsKiller.RtPlanCheck)
     bool RecordedEnough = false,       // GameRecord.RecordedLong: asking for "5 minutes" again says nothing
@@ -279,7 +279,8 @@ public sealed record GameState(
     string? NoStutter = null,          // why it has no shader stutter (Games.GameVerdicts); null = not listed, or KnownStutter is
     bool CompileUnreached = false,     // NVIDIA: the warm's pipelines didn't serve the game (ScsKiller.IsUnreached): never queued but by hand
     bool NotPlanned = false,           // Unsupported by an "unsupported" verdict, or for a recording its anti-cheat blocks: not planned, unlike "unsupported-yet"
-    bool NewOnly = false);             // Stale only for pipelines its last warm didn't compile (ScsKiller.StaleReason past WarmChanged): the rest still serve
+    bool NewOnly = false,            // Stale only for pipelines its last warm didn't compile (ScsKiller.StaleReason past WarmChanged): the rest still serve
+    bool AgsHost = false);             // Streamline loads the first d3d12.dll, but AMD's AGS makes the device (GameFiles.AgsMakesTheDevice): the recorder goes in front of AGS
 
 /// <summary>A launch's frame times from the recorder (<see cref="App.FrameLog"/>): its length, the startup stretch before
 /// play (the game's own precompile and first load), the 1% low of play, every frame of 50 ms or more, and for a graph

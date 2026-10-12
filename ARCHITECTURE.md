@@ -627,10 +627,11 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
 - **Where it's installed** (`ReconcileRecorders`, app only): in every compatible game when "Record in all compatible
   games" is on, unless the game's own switch says otherwise. Compatible means D3D12, supported, no anti-cheat of any
   kind, no foreign `d3d12.dll` (unless chained, below), none in an Xbox app game's package root (Windows loads that one
-  before the exe's folder, so the recorder never would), not a Streamline game on NVIDIA whose first d3d12.dll comes
+  before the exe's folder, so the recorder never would), not a Streamline game whose first d3d12.dll comes
   with Streamline (`GameFiles.StreamlineFirst`: `sl.interposer.dll` beside the exe and no static import of the exe, or of
-  the DLLs of its folder it imports, names d3d12.dll; NVIDIA's downloaded Streamline plugins then load System32's, which
-  every later by-name load gets), and a folder writable without elevation. A running game's
+  the DLLs of its folder it imports, names d3d12.dll; Streamline then loads System32's, which every later by-name load
+  gets, on AMD too: measured with Cyberpunk 2077) unless AMD's AGS makes the device (below), and a folder writable
+  without elevation. A running game's
   folder is left alone until it exits: every write there (the proxy, the ini, the keys file, the inbox's rotation, a
   removal) checks first that the game isn't running (`GameFolderWrite`, the watcher and the uninstall hook the same
   way): no process named like an exe of its install root or exe folder, so also one a launcher started under another
@@ -678,6 +679,13 @@ image (the kernel's name for it) is the same file, by volume and file id, as `<e
   also a process named like any exe in the install's whole tree (its names read once per game, the anti-cheat scan's
   entry cap; a tree it can't read whole, or by the hook's deadline, counts as running), since the record's folders may
   be another exe's than the game's. The running processes are asked again before each folder's writes.
+- **AGS games on Radeon** (`GameFiles.AgsMakesTheDevice`): the exe imports `agsDriverExtensionsDX12_CreateDevice` by name
+  from `amd_ags_x64.dll`, and AGS creates the device through System32's `d3d12.dll` itself, so a `d3d12.dll` beside the exe
+  never sees it. The recorder is then `scskiller_ags.dll` (`proxy/`, `SCSK_AGS_WRAP`), installed as `amd_ags_x64.dll` with
+  the game's own AGS renamed `amd_ags_real.dll` through the chain code below (same tracking, same removal that puts it back
+  byte for byte). Its 40 other exports (`proxy/ags_exports.txt`) jump to the real AGS; the create's returned device goes to
+  the recorder. The wrapper links the real AGS by name, so only an AGS with exactly those exports is wrapped
+  (`GameFiles.WrappableAgs`, SHA-256: AGS 5.4.0). Admission and arming are those of `d3d12.dll`.
 - **Recording alongside a mod**: the recorder records under any layer that wraps the game's device: a foreign
   `d3d12.dll` it chains, or ReShade as `dxgi.dll`. A foreign `d3d12.dll` (ReShade or another wrapper) is chained only
   when the user turns that on for the game: the mod is renamed to `d3d12.scskiller-next.dll` (bytes untouched, its
