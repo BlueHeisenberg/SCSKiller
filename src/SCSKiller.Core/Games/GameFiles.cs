@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.Json;
 using SCSKiller.Core.Carved;
 
@@ -238,7 +239,7 @@ public static class GameFiles
     }
 
     /// <summary>Streamline's interposer is beside the exe and nothing the exe imports statically, itself or through the DLLs of
-    /// its folder, imports d3d12.dll: the first d3d12.dll comes with Streamline's plugins. NVIDIA's downloaded plugins load
+    /// its folder, imports d3d12.dll: the first d3d12.dll comes with Streamline, on any GPU (measured on AMD: Cyberpunk 2077). It loads
     /// System32's, so the recorder never loads. An import found in neither the exe's folder nor System32 (API sets aside) is
     /// resolved somewhere this can't follow: null, as for a module that can't be read. A DLL of the exe's folder that forwards
     /// an export to d3d12 counts as importing it. <paramref name="files"/> gets the exe folder's files the answer depends on:
@@ -274,6 +275,26 @@ public static class GameFiles
     }
 
     internal static string SystemDir { get; set; } = Environment.SystemDirectory;   // replaceable for tests
+
+    /// <summary>SHA-256 of each AMD AGS build the recorder's wrapper (proxy/ags_exports.txt) has every export of: the game links
+    /// AGS by name, so a build with other exports can't be stood in for. AGS 5.4.0 is Cyberpunk 2077's.</summary>
+    internal static HashSet<string> WrappableAgs { get; set; } = new(["C1F0BD493B470FA369D681C370BBD46E019A7196DBE03D91272EA0BE214B3384"], StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The game has AGS make its DirectX 12 device (agsDriverExtensionsDX12_CreateDevice, which calls the system
+    /// d3d12.dll itself, so no d3d12.dll beside the exe sees it), with an AGS the wrapper fits: the one beside the exe, or its
+    /// original once the wrapper stands in (amd_ags_real.dll).</summary>
+    internal static bool AgsMakesTheDevice(string exe)
+    {
+        var dir = Path.GetDirectoryName(exe)!;
+        var ags = Path.Combine(dir, "amd_ags_real.dll") is var real && File.Exists(real) ? real : Path.Combine(dir, "amd_ags_x64.dll");
+        try
+        {
+            if (!File.Exists(ags) || !WrappableAgs.Contains(Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(ags))))) return false;
+            using var pe = PeFile.Open(exe);
+            return PeFile.ImportedFunctions(pe, "amd_ags_x64.dll").Contains("agsDriverExtensionsDX12_CreateDevice");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException) { return false; }
+    }
 
     /// <summary>Each file's size and write time ("-" when missing), to tell when a cached answer about them is stale.</summary>
     internal static string Stamp(IEnumerable<string> files) =>

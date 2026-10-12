@@ -68,6 +68,8 @@ public sealed partial class ScsKiller : IScsKiller
     readonly IPlanner _planner;
     readonly IWarmer _warmer;
     readonly string? _proxyDll;
+    /// <summary>The recorder built as an AGS wrapper (proxy/CMakeLists.txt scskiller_ags): installed as the game's amd_ags_x64.dll.</summary>
+    internal string? AgsDll { get; set; }
     readonly object _lock = new(), _scanLock = new();
     readonly List<QueueItem> _queue = [];
     readonly HashSet<string> _whenIdle = [];         // queued with EnqueueWhenIdle
@@ -118,7 +120,7 @@ public sealed partial class ScsKiller : IScsKiller
         var k = new ScsKiller([new SteamSource(), new EpicSource(), new XboxSource(), new GogSource(), new UbisoftSource(), new BattleNetSource(), new PurpleSource(), new HoYoPlaySource(), new EaSource(), new GaijinSource(),
                 new ManualSource(new AppStore(AppStore.DefaultDir))],
             vendor, DefaultReaders(), new Planner(Path.Combine(AppStore.DefaultDir, "packs"), SharedPackDir(AppStore.DefaultDir, vendor.Vendor)), new Warmer(vendor),
-            AppStore.DefaultDir, NativeTools.Find("d3d12.dll")) { Adapters = GpuBackends.Adapters };
+            AppStore.DefaultDir, NativeTools.Find("d3d12.dll")) { Adapters = GpuBackends.Adapters, AgsDll = NativeTools.Find("scskiller_ags.dll") };
         k.RedetectGpu();   // DriverId from DXGI before anything compares it
         return k;
     }
@@ -799,7 +801,9 @@ public sealed partial class ScsKiller : IScsKiller
         TimeSpan? fast = psos is { } n ? TimeSpan.FromSeconds(n / (rec.PsoPerSecond ?? WarmRate)) : null;
         TimeSpan? careful = cap != null && psos is { } np && recorded is { } nr ? TimeSpan.FromSeconds(nr / DefaultCarefulPsoPerSecond + (np - nr) / (rec.PsoPerSecond ?? WarmRate)) : null;
         var (_, engine, antiCheat, check, _, streamlineFirst, _, _) = Evaluated(g, rec, force, out fresh);
-        var slFirst = streamlineFirst && Vendor.Vendor == GpuVendor.Nvidia;
+        // AMD's AGS makes the device there, and the recorder goes in front of AGS instead (Install): Streamline blocks nothing
+        var agsHost = streamlineFirst && Vendor.Vendor == GpuVendor.Amd && GameFiles.AgsMakesTheDevice(g.ExePath);
+        streamlineFirst &= !agsHost;
         driverStale = rec.WarmedAt != null && !CurrentDriver(gpuNow, rec.WarmedDriverId, rec.WarmedDriverVersion);
         var counted = rec.Pending;
         var pending = PendingOf(g, rec);   // after the import and the scan's engine: derived from what they and any download left
@@ -824,15 +828,14 @@ public sealed partial class ScsKiller : IScsKiller
             TakeOutNow(g, ShaderModReason(reshade));   // the command line doesn't reconcile
             rec = Store.LoadGame(g.Id);   // what the removal left
         }
-        var dll = Path.Combine(exeDir, "d3d12.dll");
         bool ours;
-        try { ours = IsOurProxy(dll); }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { ours = rec.RecorderFiles.ContainsKey("d3d12.dll"); }   // held by the game
+        try { ours = ProxyIn(exeDir); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { ours = rec.RecorderFiles.ContainsKey("d3d12.dll") || rec.RecorderFiles.ContainsKey(AgsName); }   // held by the game
         // the recorder is never installed next to anti-cheat, nor in a game the user added before they confirm its folder
         var unconfirmed = Unconfirmed(g);
         var noRecording = antiCheat != AntiCheat.None ? $"which {(antiCheat == AntiCheat.Other ? "its anti-cheat" : antiCheat)} blocks"
               + (OfflineEac.Of(g, antiCheat, engine) != null ? " unless you record an offline session (game page)" : "")
-            : unconfirmed ? ManualNoRecording : slFirst ? StreamlineNoRecording : null;
+            : unconfirmed ? ManualNoRecording : streamlineFirst ? StreamlineNoRecording : null;
         var rejected = Rejected(rec.LastWarmFailed, rec.LastWarmCrashed);
         var partlyCompiled = IsPartlyCompiled(rejected, psos);
         // its rejects explain a first launch that still compiles: not a cache that ignores the warm
@@ -877,7 +880,8 @@ public sealed partial class ScsKiller : IScsKiller
                 RecordedSinceWarm = pending.Recorded, NewOnly = status == GameStatus.Stale && !pending.Unknown && WarmChanged(g, rec, gpuNow) == null, CommunityDbPsos = entry?.Psos ?? 0, PsoPerSecond = rec.PsoPerSecond,
                 LastFrames = frames, ShaderMod = shaderMod?.Mod, ShaderModBlocks = reshade?.Blocks == true, ShaderModLayer = reshade?.Layered == true,
                 ShaderModAsD3D12 = reshade is { Layered: true, AsD3D12: true }, RtUnseen = rtUnseen, RtToPlan = rtToPlan, RecordedEnough = rec.RecordedLong, RootUnconfirmed = unconfirmed,
-                StreamlineFirst = slFirst && engine != null && check.Readiness != Readiness.Unsupported,
+                StreamlineFirst = streamlineFirst && engine != null && check.Readiness != Readiness.Unsupported,
+                AgsHost = agsHost && engine != null && check.Readiness != Readiness.Unsupported,
                 NoStutter = NoStutterOf(g, engine, StutterList.Current.Find(g)),
                 CompileUnreached = unreached && status != GameStatus.Unsupported,
                 NotPlanned = GameVerdicts.Current.Unsupported(g, engine) is { } verdict ? verdict.Kind == GameVerdicts.UnsupportedVerdict
@@ -1061,7 +1065,7 @@ public sealed partial class ScsKiller : IScsKiller
     } is { } what ? what + " guessed, so the compile could be wrong." : null;
 
     /// <summary>Why a game the user added has no recorder yet, after "needs a recording, ".</summary>
-    public const string ManualNoRecording = "once you confirm its game folder", StreamlineNoRecording = "which DLSS on NVIDIA blocks";
+    public const string ManualNoRecording = "once you confirm its game folder", StreamlineNoRecording = "which NVIDIA Streamline blocks";
     /// <summary>An EasyAntiCheat game that an offline session can record (<see cref="OfflineEac"/>), with no recording yet:
     /// NeedsRecording with this reason, "Needs an offline session".</summary>
     public const string OfflineSessionNote = "EasyAntiCheat blocks the recorder, but you can record at your own risk with an offline session.";
@@ -1461,7 +1465,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// <summary>Our proxy next to the exe; a d3d12.dll that can't be read counts as ours.</summary>
     static bool ProxyOnDisk(Game g)
     {
-        try { return IsOurProxy(Path.Combine(Path.GetDirectoryName(g.ExePath)!, "d3d12.dll")); }
+        try { return ProxyIn(Path.GetDirectoryName(g.ExePath)!); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return true; }
     }
 
@@ -2658,8 +2662,7 @@ public sealed partial class ScsKiller : IScsKiller
         if (!GameFolderWrite(g)) return KeysLater(rec);   // the game may have started during the wait
         try
         {
-            var dll = Path.Combine(dir, "d3d12.dll");
-            if (IsOurProxy(dll))
+            if (ProxyIn(dir))
             {
                 var shipped = rec.IndexContentHash is { } h ? Sharing.Shipped(Store.GameDir(g.Id), h) : null;
                 var installed = shipped != null && IndexIsInstalled(g, rec);
@@ -2667,7 +2670,7 @@ public sealed partial class ScsKiller : IScsKiller
                 var left = Recordings.WriteKeys(RecordingPath(g.Id), shipped, keys, installed,
                     () =>
                     {
-                        if (GameFolderWrite(g)) return IsOurProxy(dll);
+                        if (GameFolderWrite(g)) return ProxyIn(dir);
                         later = true;
                         return false;
                     });
@@ -2908,7 +2911,7 @@ public sealed partial class ScsKiller : IScsKiller
         SkipVulkanMod = "vkd3d-proton runs the game on Vulkan, whose pipelines a D3D12 warm doesn't compile",
         SkipNeedsAdmin = "the game folder needs administrator", SkipNotDx12 = "not DirectX 12", SkipUnsupported = "not supported yet",
         SkipPackageD3D12 = "a d3d12.dll in the game's package folder loads instead of the recorder",
-        SkipShaderMod = "an HDR mod changes every pipeline", SkipStreamline = "DLSS on NVIDIA loads DirectX 12 before the recorder can",
+        SkipShaderMod = "an HDR mod changes every pipeline", SkipStreamline = "NVIDIA Streamline loads DirectX 12 before the recorder can",
         SkipManual = "game folder not confirmed";
 
     /// <summary>Why a game whose ReShade add-on adds to every root signature, in a layer a copy can't reproduce
@@ -2962,6 +2965,16 @@ public sealed partial class ScsKiller : IScsKiller
     /// d3d12 prefix for a wrapper that reads its role from its own name by prefix (ReShade's d3d*).</summary>
     public const string ChainName = "d3d12.scskiller-next.dll";
 
+    /// <summary>Where the recorder rides in front of AMD's AGS (<see cref="GameState.AgsHost"/>): the wrapper takes the game's
+    /// amd_ags_x64.dll, and the game's own AGS keeps the name the wrapper links it by.</summary>
+    public const string AgsName = "amd_ags_x64.dll", AgsRealName = "amd_ags_real.dll";
+
+    /// <summary>Our proxy next to the exe: its d3d12.dll, or the AGS wrapper; null = neither.</summary>
+    static string? ProxyFile(string dir) =>
+        Path.Combine(dir, "d3d12.dll") is var d3d12 && IsOurProxy(d3d12) ? d3d12 : Path.Combine(dir, AgsName) is var ags && IsOurProxy(ags) ? ags : null;
+
+    static bool ProxyIn(string dir) => ProxyFile(dir) != null;
+
     /// <summary>A mod's d3d12.dll in the recorder's place (or chained to it): null = none, or the user chose to record alongside
     /// it (<see cref="GameRecord.RecordAlongsideMod"/>) and it can be chained; else the skip reason. Turning the choice off
     /// while chained gives a skip, so Reconcile removes the recorder and puts the mod back. Any d3d12.dll in an Xbox app
@@ -2971,7 +2984,7 @@ public sealed partial class ScsKiller : IScsKiller
         if (ReShade.PackageRoot(g) is { } root && !root.Equals(GameFiles.DirKey(dir), StringComparison.OrdinalIgnoreCase)
             && File.Exists(Path.Combine(root, "d3d12.dll"))) return SkipPackageD3D12;
         var dll = Path.Combine(dir, "d3d12.dll");
-        var mod = rec.RecorderChained is { } c ? Path.Combine(dir, c.Name) : !ours && File.Exists(dll) ? dll : null;
+        var mod = rec.RecorderChained is { Name: not AgsRealName } c ? Path.Combine(dir, c.Name) : !ours && File.Exists(dll) ? dll : null;
         return mod == null ? null : !rec.RecordAlongsideMod ? SkipForeignDll
             : ChainBlocker(mod) switch { null => null, SkipVulkanMod => SkipVulkanMod, _ => SkipModNotChainable };
     }
@@ -3013,8 +3026,9 @@ public sealed partial class ScsKiller : IScsKiller
 
     static string? ModName(string dir, GameRecord rec, bool ours)
     {
-        var dll = Path.Combine(dir, rec.RecorderChained?.Name ?? "d3d12.dll");
-        if (!File.Exists(dll) || rec.RecorderChained == null && ours) return null;
+        var chained = rec.RecorderChained is { Name: not AgsRealName } c ? c : null;
+        var dll = Path.Combine(dir, chained?.Name ?? "d3d12.dll");
+        if (!File.Exists(dll) || chained == null && ours) return null;
         try
         {
             var v = FileVersionInfo.GetVersionInfo(dll);
@@ -3177,7 +3191,7 @@ public sealed partial class ScsKiller : IScsKiller
             var rec = Store.LoadGame(gameId);
             var dirs = new[] { rec.RecorderExe ?? rec.RecorderMoveFrom, g.ExePath }.OfType<string>().Select(Path.GetDirectoryName).OfType<string>()
                 .Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists).ToList();
-            bool Left(string dir) => IsOurProxy(Path.Combine(dir, "d3d12.dll")) || RecorderDataFiles.Concat(Recordings.AppFiles).Any(f => File.Exists(Path.Combine(dir, f)));
+            bool Left(string dir) => ProxyIn(dir) || RecorderDataFiles.Concat(Recordings.AppFiles).Any(f => File.Exists(Path.Combine(dir, f)));
             if (rec.RecorderFiles.Count > 0 || rec.RecorderChained != null || dirs.Any(Left))
             {
                 if (GameRunning(g)) throw new InvalidOperationException($"{g.Name} is running: close the game first");
@@ -3236,8 +3250,10 @@ public sealed partial class ScsKiller : IScsKiller
         var (g, id) = (s.Game, s.Game.Id);
         if (OfflineLive(id) || _unread.ContainsKey(id)) return false;   // its own end takes it out; a failed evaluation changes nothing
         var dir = Path.GetDirectoryName(g.ExePath)!;
-        var dll = Path.Combine(dir, "d3d12.dll");
         var rec = Store.LoadGame(id);
+        // in front of AGS where AMD's AGS makes the device (GameState.AgsHost), or where it already is; else d3d12.dll
+        bool ags = s.AgsHost || rec.RecorderChained is { Name: AgsRealName } || rec.RecorderFiles.ContainsKey(AgsName);
+        var dll = Path.Combine(dir, ags ? AgsName : "d3d12.dll");
         bool ours = IsOurProxy(dll), changed = false;
         // a recorder next to another exe than the game's (its launcher) is never loaded: it moves. Both folders are
         // recorded first, before anything waits for the game (a removal pending too), so the uninstall hook guards both;
@@ -3245,7 +3261,7 @@ public sealed partial class ScsKiller : IScsKiller
         var was = rec.RecorderMoveFrom ?? rec.RecorderExe;
         var wasDir = was == null ? null : Path.GetDirectoryName(was);
         bool move = wasDir != null && !wasDir.Equals(dir, StringComparison.OrdinalIgnoreCase) && Directory.Exists(wasDir)
-            && (rec.RecorderMoveFrom != null || rec.RecorderFiles.Count > 0 || rec.RecorderChained != null || IsOurProxy(Path.Combine(wasDir, "d3d12.dll")));
+            && (rec.RecorderMoveFrom != null || rec.RecorderFiles.Count > 0 || rec.RecorderChained != null || ProxyIn(wasDir));
         if (move && (rec.RecorderMoveFrom == null || rec.RecorderMoveTo != g.ExePath))
         {
             (rec.RecorderMoveFrom, rec.RecorderMoveTo) = (was, g.ExePath);
@@ -3332,11 +3348,11 @@ public sealed partial class ScsKiller : IScsKiller
             }
             clean = true;
         }
-        bool want = RecorderEffective(rec.Recorder.Value, Settings.RecordAllGames && s.NoStutter == null, RecorderSkip(s, ModSkip(g, dir, rec, ours)));
+        bool want = RecorderEffective(rec.Recorder.Value, Settings.RecordAllGames && s.NoStutter == null, RecorderSkip(s, ModSkip(g, dir, rec, ags ? IsOurProxy(Path.Combine(dir, "d3d12.dll")) : ours)));
         // another SCSKiller build's proxy, never a newer one's (a release's under a dev build, all 0.0.0.0)
-        bool update = want && ours && ProxySha() is { } sha && Sha256(dll) != sha && FileVersion(dll) <= FileVersion(_proxyDll!);
+        bool update = want && ours && ProxySha(ags) is { } sha && Sha256(dll) != sha && FileVersion(dll) <= FileVersion((ags ? AgsDll : _proxyDll)!);
         string? note = null;
-        bool reinstall = want && moved && (!ours || ProxySha() != null && FileVersion(dll) <= FileVersion(_proxyDll!));   // as update: never over a newer build's
+        bool reinstall = want && moved && (!ours || ProxySha(ags) != null && FileVersion(dll) <= FileVersion((ags ? AgsDll : _proxyDll)!));   // as update: never over a newer build's
         if (want != ours || update || reinstall || (!want && (rec.RecorderFiles.Count > 0 || rec.RecorderChained != null)))
         {
             if (GameRunning(g))
@@ -3348,7 +3364,7 @@ public sealed partial class ScsKiller : IScsKiller
                     {
                         WatchOrDisarm(g);
                         gen = InstallGen(g);
-                        Install(g, rec);
+                        Install(g, rec, ags);
                         Arm(g, gen);   // Install's full checks were clean
                     }
                     else Uninstall(g, rec);
@@ -3479,8 +3495,8 @@ public sealed partial class ScsKiller : IScsKiller
     internal static string LogMutexName(string path) =>
         @"Global\SCSKiller.Log." + Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(path.ToUpperInvariant())))[..32];
 
-    string? _proxySha;
-    string? ProxySha() => _proxyDll == null || !File.Exists(_proxyDll) ? null : _proxySha ??= Sha256(_proxyDll);
+    string? _proxySha, _agsSha;
+    string? ProxySha(bool ags = false) => (ags ? AgsDll : _proxyDll) is not { } src || !File.Exists(src) ? null : ags ? _agsSha ??= Sha256(src) : _proxySha ??= Sha256(src);
 
     static Version FileVersion(string path) =>
         FileVersionInfo.GetVersionInfo(path) is var v ? new(v.FileMajorPart, v.FileMinorPart, v.FileBuildPart, v.FilePrivatePart) : new();
@@ -3489,18 +3505,36 @@ public sealed partial class ScsKiller : IScsKiller
     static IReadOnlySet<string> RunningProcessNames() =>
         ProcessTree.Snapshot().Select(p => Path.GetFileNameWithoutExtension(p.Exe)).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    void Install(Game g, GameRecord rec)
+    /// <param name="ags">In front of AMD's AGS (<see cref="AgsName"/>, the game's own renamed to <see cref="AgsRealName"/>) instead of d3d12.dll.</param>
+    void Install(Game g, GameRecord rec, bool ags = false)
     {
         RefuseAntiCheat(g, rec);   // fresh, not the cached scan: a patch may have added one
         if (!GameFolderWrite(g)) throw new InvalidOperationException($"{g.Name} is running");
-        var src = _proxyDll ?? throw new FileNotFoundException("the proxy d3d12.dll was not found next to the app");
+        var src = (ags ? AgsDll : _proxyDll) ?? throw new FileNotFoundException($"the proxy {(ags ? AgsName : "d3d12.dll")} was not found next to the app");
         var dir = Path.GetDirectoryName(g.ExePath)!;
-        var dll = Path.Combine(dir, "d3d12.dll");
+        var (host, chainName) = ags ? (AgsName, AgsRealName) : ("d3d12.dll", ChainName);
+        var dll = Path.Combine(dir, host);
         var ini = Path.Combine(dir, "scskiller.ini");
         bool iniOurs = !File.Exists(ini) || (rec.RecorderFiles.TryGetValue("scskiller.ini", out var h) && h == Sha256(ini));
         bool chain = File.Exists(dll) && !IsOurProxy(dll);
         (rec.RecorderExe, rec.RecorderInstallDir) = (g.ExePath, g.InstallDir);
-        if (chain)
+        if (chain && ags)
+        {
+            // only the exact AGS the wrapper links against (same exports): anything else is not renamed
+            if (!GameFiles.WrappableAgs.Contains(Sha256(dll))) throw new InvalidOperationException($"{dll} is not an AGS build the recorder fits. Not renaming it.");
+            if (File.Exists(Path.Combine(dir, chainName))) throw new InvalidOperationException($"{Path.Combine(dir, chainName)} already exists. Not renaming {dll} over it.");
+            rec.RecorderChained = new ChainedDll(chainName, Sha256(dll));
+            InstallStep?.Invoke("chain");
+            Store.SaveGame(g.Id, rec);   // before the rename: no renamed file is ever missing from the manifest
+            if (!GameFolderWrite(g))
+            {
+                rec.RecorderChained = null;
+                Store.SaveGame(g.Id, rec);
+                throw new InvalidOperationException($"{g.Name} is running");
+            }
+            File.Move(dll, Path.Combine(dir, chainName));
+        }
+        else if (chain)
         {
             if (!rec.RecordAlongsideMod)
                 throw new InvalidOperationException($"{dll} already exists and is not SCSKiller's (another mod or wrapper). Not replacing it.");
@@ -3532,7 +3566,7 @@ public sealed partial class ScsKiller : IScsKiller
         try { Place(dll, temp => File.Copy(src, temp, overwrite: true), replace: true); }
         catch when (chain)
         {
-            File.Move(Path.Combine(dir, ChainName), dll);
+            File.Move(Path.Combine(dir, chainName), dll);
             rec.RecorderChained = null;
             Store.SaveGame(g.Id, rec);
             throw;
@@ -3542,7 +3576,7 @@ public sealed partial class ScsKiller : IScsKiller
         Exception? failed = null;
         try
         {
-            rec.RecorderFiles["d3d12.dll"] = Sha256(dll);
+            rec.RecorderFiles[host] = Sha256(dll);
             InstallStep?.Invoke("copied");
             antiCheat = GameFiles.DetectAntiCheat(g, quick: true);   // an update may have added one since the check, likely next to the exe
             if (antiCheat == AntiCheat.None && !GameFolderWrite(g)) throw new InvalidOperationException($"{g.Name} started while the recorder was installed");
@@ -3749,7 +3783,7 @@ public sealed partial class ScsKiller : IScsKiller
             var rec = installing ?? Store.LoadGame(g.Id);
             try
             {
-                if (!IsOurProxy(Path.Combine(Path.GetDirectoryName(g.ExePath)!, "d3d12.dll")) && !IsOurProxy(Path.Combine(Path.GetDirectoryName(RecordedAt(g, rec).ExePath)!, "d3d12.dll"))
+                if (!ProxyIn(Path.GetDirectoryName(g.ExePath)!) && !ProxyIn(Path.GetDirectoryName(RecordedAt(g, rec).ExePath)!)
                     && rec.RecorderFiles.Count == 0 && rec.RecorderChained == null) return;
                 TakeOut(g, rec, why);
             }
@@ -3791,7 +3825,7 @@ public sealed partial class ScsKiller : IScsKiller
     string IniText(Game g, GameRecord rec)
     {
         var dir = Path.GetDirectoryName(g.ExePath)!;
-        var next = rec.RecorderChained is { } c && File.Exists(Path.Combine(dir, c.Name)) ? c.Name : null;
+        var next = rec.RecorderChained is { Name: not AgsRealName } c && File.Exists(Path.Combine(dir, c.Name)) ? c.Name : null;
         return RecorderIni
             + (DbCap(g) is { } cap
                 ? $"; the recording limit per game (Settings): no new records once scskiller.db has this many bytes\r\nmax_db_bytes={cap}\r\n" : "")
@@ -3809,7 +3843,7 @@ public sealed partial class ScsKiller : IScsKiller
             var dir = Path.GetDirectoryName(g.ExePath)!;
             var ini = Path.Combine(dir, "scskiller.ini");
             // missing next to our proxy: an install cut off before it wrote it (Install takes a missing ini for its own)
-            if (File.Exists(ini) ? !rec.RecorderFiles.TryGetValue("scskiller.ini", out var h) || h != Sha256(ini) : !IsOurProxy(Path.Combine(dir, "d3d12.dll"))) return;
+            if (File.Exists(ini) ? !rec.RecorderFiles.TryGetValue("scskiller.ini", out var h) || h != Sha256(ini) : !ProxyIn(dir)) return;
             var text = IniText(g, rec);
             if (File.Exists(ini) && File.ReadAllText(ini) == text) return;
             Place(ini, temp => File.WriteAllText(temp, text), replace: true);
@@ -3847,12 +3881,16 @@ public sealed partial class ScsKiller : IScsKiller
             try { if (File.Exists(file)) File.Delete(file); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { log($"{name}: couldn't delete {file}: {e.Message}"); }
         // the proxy by our export, whatever the manifest says: also one installed before SCSKiller tracked its files, or by hand
-        var dll = Path.Combine(dir, "d3d12.dll");
-        if (IsOurProxy(dll)) File.Delete(dll);
-        else if (File.Exists(dll) && rec.RecorderFiles.ContainsKey("d3d12.dll")) log($"{name}: left {dll}: not SCSKiller's");
-        rec.RecorderFiles.Remove("d3d12.dll");
+        foreach (var host in new[] { "d3d12.dll", AgsName })
+        {
+            var path = Path.Combine(dir, host);
+            if (IsOurProxy(path)) File.Delete(path);
+            else if (File.Exists(path) && rec.RecorderFiles.ContainsKey(host)) log($"{name}: left {path}: not SCSKiller's");
+            rec.RecorderFiles.Remove(host);
+        }
         if (rec.RecorderChained is { } c)
         {
+            var dll = Path.Combine(dir, c.Name == AgsRealName ? AgsName : "d3d12.dll");   // the file it was renamed from
             var from = Path.Combine(dir, c.Name);
             if (!File.Exists(from)) log($"{name}: {from} (the mod's d3d12.dll SCSKiller renamed) is gone");
             else if (File.Exists(dll)) log($"{name}: left {from}: another d3d12.dll is in its place");
@@ -4982,8 +5020,8 @@ public sealed partial class ScsKiller : IScsKiller
     }
 
     /// <summary>The files the app and the proxy write next to the exe: none is an anti-cheat marker.</summary>
-    static readonly HashSet<string> RecorderOwnFiles = new([.. RecorderDataFiles, .. Recordings.AppFiles, "d3d12.dll", "scskiller.ini", ChainName, ArmedFile,
-        "d3d12.dll" + TempSuffix, "scskiller.ini" + TempSuffix], StringComparer.OrdinalIgnoreCase);
+    static readonly HashSet<string> RecorderOwnFiles = new([.. RecorderDataFiles, .. Recordings.AppFiles, "d3d12.dll", "scskiller.ini", ChainName, ArmedFile, AgsName, AgsRealName,
+        "d3d12.dll" + TempSuffix, AgsName + TempSuffix, "scskiller.ini" + TempSuffix], StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The file types a game or a mod writes as it runs that anti-cheat never ships as: logs, settings and presets,
     /// pages, images, saves, dumps, shader caches. Every other type counts, an unknown one included.</summary>
@@ -5254,7 +5292,7 @@ public sealed partial class ScsKiller : IScsKiller
             if (g.Store == Core.Store.Manual && Manual?.ConfirmedNow(g) != true) return;   // the folder checked is still the one confirmed
             try
             {
-                if (!IsOurProxy(Path.Combine(Path.GetDirectoryName(g.ExePath)!, "d3d12.dll")) || BlockingMod(g) != null) return;   // a blocking HDR mod: never recorded
+                if (!ProxyIn(Path.GetDirectoryName(g.ExePath)!) || BlockingMod(g) != null) return;   // a blocking HDR mod: never recorded
                 var was = Armed(g) && ExeAsArmed(g);
                 DeleteRevocationMark(g.ExePath);   // first; one that can't go keeps it unarmed
                 WriteAttestation(g.ExePath);
@@ -5289,7 +5327,7 @@ public sealed partial class ScsKiller : IScsKiller
         if (run is not { } p) return false;
         var from = p.From.UtcDateTime;
         static DateTime? Written(string f) => File.Exists(f) ? File.GetLastWriteTimeUtc(f) : null;
-        var dll = Path.Combine(exeDir, "d3d12.dll");
+        var dll = ProxyFile(exeDir) ?? Path.Combine(exeDir, "d3d12.dll");
         // the creation time: a copy keeps the build's write time
         return File.Exists(dll) && File.GetCreationTimeUtc(dll) < from
             && !(Written(Path.Combine(exeDir, "scskiller.log")) >= from) && !(Written(LedgerFile(exe) + ".refused") >= from);
@@ -5340,7 +5378,7 @@ public sealed partial class ScsKiller : IScsKiller
         var (at, tries) = _unarmedRetry.GetValueOrDefault(g.Id);
         if (tries >= UnarmedRetries || at != null && at.Elapsed < UnarmedRetryInterval) return false;
         _unarmedRetry[g.Id] = (Stopwatch.StartNew(), tries + 1);
-        try { return !Unconfirmed(g) && IsOurProxy(Path.Combine(Path.GetDirectoryName(g.ExePath)!, "d3d12.dll")) && BlockingMod(g) == null; }
+        try { return !Unconfirmed(g) && ProxyIn(Path.GetDirectoryName(g.ExePath)!) && BlockingMod(g) == null; }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
     }
 

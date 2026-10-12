@@ -766,7 +766,7 @@ public sealed class DetailVm(string id) : Bindable
         {
             Left.AntiCheat => !NoAntiCheat ? $"Anything else compiles while you play: {Fmt.AntiCheatName(s.AntiCheat)} blocks the recording that would find it."
                 : s.RootUnconfirmed ? "Anything else compiles while you play: confirm the game's folder (Game folder… above) to record what's missing."
-                : "Anything else compiles while you play: DLSS on NVIDIA blocks the recording that would find it.",
+                : "Anything else compiles while you play: NVIDIA Streamline blocks the recording that would find it.",
             Left.EngineSlots => "The rest use shader slots this game's engine adds." + (tipAsks ? "" : " A 5-minute recording lets SCSKiller rebuild them."),
             Left.UnknownSlots => "The rest use shader slots SCSKiller can't rebuild yet, so they still compile while you play.",
             Left.NotSeen => "SCSKiller hasn't seen how the game sets the rest up yet." + (tipAsks ? "" : " Playing longer with recording on teaches it."),

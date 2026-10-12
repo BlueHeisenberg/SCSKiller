@@ -401,6 +401,25 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         return pe;
     }
 
+    /// <summary>An exe importing sl.interposer.dll and <c>agsDriverExtensionsDX12_CreateDevice</c> from amd_ags_x64.dll by name
+    /// (Cyberpunk 2077's).</summary>
+    internal static byte[] ExeWithAgs()
+    {
+        var pe = Planning.MiddlewarePackTests.Pe(null);
+        void U32(int at, uint v) => System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(pe.AsSpan(at), v);
+        U32(0x58 + 120, 0x1100);
+        U32(0x58 + 124, 60);
+        U32(0x300 + 12, 0x1140);                                    // 1st: sl.interposer.dll, no functions
+        U32(0x300 + 20 + 12, 0x1160);                               // 2nd: amd_ags_x64.dll
+        U32(0x300 + 20, 0x1180);                                    //   its thunks
+        U32(0x300 + 20 + 16, 0x1180);
+        U32(0x380, 0x1190);                                         // one thunk: the hint/name entry's RVA
+        System.Text.Encoding.ASCII.GetBytes("sl.interposer.dll").CopyTo(pe, 0x340);
+        System.Text.Encoding.ASCII.GetBytes("amd_ags_x64.dll").CopyTo(pe, 0x360);
+        System.Text.Encoding.ASCII.GetBytes("agsDriverExtensionsDX12_CreateDevice").CopyTo(pe, 0x392);   // past the 2-byte hint
+        return pe;
+    }
+
     /// <summary>launcher-configuration.json as CD PROJEKT RED's launcher ships it with The Witcher 3 (Steam).</summary>
     internal static string RedConfig(string fallback = "DirectX 12", params (string Description, string Dir)[] entries) =>
         $$"""

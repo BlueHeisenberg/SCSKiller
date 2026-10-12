@@ -2870,6 +2870,48 @@ public partial class AppTests : IDisposable
         Assert.False(File.Exists(Path.Combine(g.InstallDir, "scskiller.ini")));
     }
 
+    [Fact]
+    public async Task A_game_whose_amd_ags_makes_the_device_is_recorded_through_a_wrapper_and_removal_puts_ags_back()
+    {
+        var real = Planning.MiddlewarePackTests.Pe("amd_ags_x64.dll", Guid.NewGuid().ToByteArray());
+        var ags = Path.Combine(_exeDir, "amd_ags_x64.dll");
+        var chained = Path.Combine(_exeDir, ScsKiller.AgsRealName);
+        File.WriteAllBytes(_game.ExePath, DiscoveryAndVendorTests.ExeWithAgs());
+        File.WriteAllBytes(Path.Combine(_exeDir, "sl.interposer.dll"), Planning.MiddlewarePackTests.Pe(null));
+        File.WriteAllBytes(ags, real);
+        var wrapper = Path.Combine(Path.GetDirectoryName(_proxy)!, "scskiller_ags.dll");
+        File.WriteAllBytes(wrapper, Planning.MiddlewarePackTests.Pe("amd_ags_x64.dll", "SCSKiller_StartWarm"u8.ToArray()));
+        var sha = Sha256Of(ags);
+        var was = GameFiles.WrappableAgs;
+        GameFiles.WrappableAgs = new([sha], StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var k = Killer(new FakeReader(Unreal), new NeedsRecordingPlanner(), vendor: new FakeVendor(Gpu with { Vendor = GpuVendor.Amd }));
+            k.AgsDll = wrapper;
+            k.ProcessNames = () => new HashSet<string>();
+            await k.ScanAsync(default);
+            Assert.True(k.Games.Single().AgsHost);
+            Assert.Null(k.Games.Single().RecorderSkip);   // not the Streamline skip: the wrapper sits before AGS
+
+            k.InstallRecorder(_game.Id);
+            Assert.True(ScsKiller.IsOurProxy(ags));
+            Assert.Equal(real, File.ReadAllBytes(chained));
+            Assert.False(File.Exists(Path.Combine(_exeDir, "d3d12.dll")));
+            Assert.DoesNotContain("next=", File.ReadAllText(Path.Combine(_exeDir, "scskiller.ini")));
+            Assert.Equal(new ChainedDll(ScsKiller.AgsRealName, sha), k.Store.LoadGame(_game.Id).RecorderChained);
+            Assert.True(k.Games.Single().RecorderInstalled);
+            Assert.Null(k.RecorderMod(_game.Id));   // AMD's own file is not a mod
+
+            k.UninstallRecorder(_game.Id);
+            Assert.Equal(sha, Sha256Of(ags));
+            Assert.False(File.Exists(chained));
+            Assert.False(File.Exists(Path.Combine(_exeDir, "scskiller.ini")));
+            Assert.Null(k.Store.LoadGame(_game.Id).RecorderChained);
+            k.StopWatchingInstalls();
+        }
+        finally { GameFiles.WrappableAgs = was; }
+    }
+
     static string Sha256Of(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
 
     [Fact]
