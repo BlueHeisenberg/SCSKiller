@@ -499,6 +499,32 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         finally { Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public void Exe_discovery_takes_the_game_cyberpunk_s_launcher_configuration_names()
+    {
+        var tmp = Directory.CreateTempSubdirectory("scskiller-launcher-test-").FullName;
+        var root = Path.Combine(tmp, "Cyberpunk 2077");
+        try
+        {
+            void Put(string rel, byte[] bytes) { Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(root, rel))!); File.WriteAllBytes(Path.Combine(root, rel), bytes); }
+            Put(@"..\Other\Cyberpunk2077.exe", Exe("d3d12.dll", 100));
+            Put("REDprelauncher.exe", Exe("Qt5Core.dll", 100));
+            Put(@"bin\x64\Cyberpunk2077.exe", Exe("sl.interposer.dll", 5000));
+            Put(@"bin\x64\Benchmark.exe", Exe("d3d11.dll", 3000));   // a second graphics exe (not a helper): no guess picks the game
+            var config = Path.Combine(root, "launcher-configuration.json");
+            string Cfg(string path) => $$"""{ "platform": "steam", "executablePath": "{{path}}", "gameId": "cyberpunk2077" }""";
+
+            File.WriteAllText(config, Cfg(@"bin\\x64\\Cyberpunk2077.exe"));
+            Assert.Equal(Path.Combine(root, @"bin\x64\Cyberpunk2077.exe"), GameFiles.FindExe(root));
+            foreach (var bad in new[] { Cfg(@"bin\\x64\\gone.exe"), Cfg(@"..\\Other\\Cyberpunk2077.exe"), Cfg(@"C:\\Windows\\notepad.exe"), Cfg("") })
+            {
+                File.WriteAllText(config, bad);
+                Assert.Equal(Path.Combine(root, "REDprelauncher.exe"), GameFiles.FindExe(root));   // missing or outside the install: the launcher stays
+            }
+        }
+        finally { Directory.Delete(tmp, true); }
+    }
+
     /// <summary>A Ubisoft+ build beside the game's exe (Valhalla's, at their real sizes): the plain exe, though smaller.</summary>
     [Fact]
     public void Exe_discovery_takes_the_exe_beside_a_ubisoft_plus_build_whatever_the_sizes()

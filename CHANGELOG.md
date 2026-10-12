@@ -4,6 +4,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+### Games
+- **Cyberpunk 2077 on Steam** gets its recorder next to `bin\x64\Cyberpunk2077.exe`, not next to CD PROJEKT RED's
+  launcher in the game's root folder, where the game never loaded it. SCSKiller reads the game's launcher settings in
+  Cyberpunk's form too.
+
 ## [1.2.5] - 2026-10-10
 
 ### Faster and steadier
