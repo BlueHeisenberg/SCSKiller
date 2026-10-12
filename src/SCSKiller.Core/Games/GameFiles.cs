@@ -198,7 +198,7 @@ public static class GameFiles
     }
 
     /// <summary>launcher-configuration.json's executables[]: the entry whose description is its "fallback", else the first;
-    /// null unless that exe exists inside the install.</summary>
+    /// or its executablePath (Cyberpunk 2077's form); null unless that exe exists inside the install.</summary>
     static string? RedLauncherTarget(string installDir, string exe)
     {
         var config = Path.Combine(Path.GetDirectoryName(exe)!, "launcher-configuration.json");
@@ -207,7 +207,10 @@ public static class GameFiles
         {
             using var doc = JsonDocument.Parse(File.ReadAllText(config));
             var r = doc.RootElement;
-            if (r.ValueKind != JsonValueKind.Object || !r.TryGetProperty("executables", out var list) || list.ValueKind != JsonValueKind.Array) return null;
+            if (r.ValueKind != JsonValueKind.Object) return null;
+            if (r.TryGetProperty("executablePath", out var single) && single.ValueKind == JsonValueKind.String && single.GetString() is { Length: > 0 } rel)
+                return Path.GetFullPath(Path.Combine(Path.GetDirectoryName(config)!, rel)) is var one && InsideNoLinks(installDir, one) ? one : null;
+            if (!r.TryGetProperty("executables", out var list) || list.ValueKind != JsonValueKind.Array) return null;
             var fallback = r.TryGetProperty("fallback", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null;
             var entries = list.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object).ToList();
             if (entries.Count == 0) return null;
