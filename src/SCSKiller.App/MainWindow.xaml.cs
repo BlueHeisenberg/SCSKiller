@@ -20,6 +20,8 @@ public sealed partial class MainWindow : Window
     // Narrower, a page clips: Settings' two columns, the Library's chips and status column.
     const int MinWidth = 1072, MinHeight = 640;
 
+    public ThemeSettings ThemePrefs { get; } = ThemeSettings.Instance;
+
     bool syncingNav;
     AppStore? placement;   // where window.json goes (RestorePlacement); none: the screenshots' window is never saved
     bool maximizeOnShow;

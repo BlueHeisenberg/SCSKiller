@@ -3,6 +3,7 @@
 All notable changes to the SCSKiller app and command line. Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+- **App theme can be chosen in Settings.**
 
 ## [1.2.5] - 2026-10-10
 

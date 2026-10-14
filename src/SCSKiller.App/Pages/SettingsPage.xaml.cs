@@ -10,6 +10,7 @@ public sealed partial class SettingsPage : Page
 {
     public SettingsVm Vm { get; } = new();
     public AccountVm Patreon { get; } = new();
+    public SCSKiller.App.ThemeSettings ThemePrefs { get; } = SCSKiller.App.ThemeSettings.Instance;
 
     public SettingsPage()
     {

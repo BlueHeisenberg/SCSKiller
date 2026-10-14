@@ -7,7 +7,7 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Grid x:Name="Root">
+    <Grid x:Name="Root" RequestedTheme="{x:Bind ThemePrefs.RequestedTheme, Mode=OneWay}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition />

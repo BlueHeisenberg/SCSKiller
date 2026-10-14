@@ -229,46 +229,59 @@
                     </Border>
                 </Grid>
 
-                <Border Grid.Row="1" Style="{StaticResource Card}" Padding="20">
-                    <StackPanel Spacing="12">
-                        <TextBlock Text="In the background" Style="{StaticResource Section}" />
-                        <CheckBox IsChecked="{x:Bind Vm.StartWithWindows, Mode=TwoWay}" AutomationProperties.Name="Start SCSKiller when Windows starts">
-                            <StackPanel Spacing="2">
-                                <TextBlock Text="Start SCSKiller when Windows starts" TextWrapping="Wrap" />
-                                <TextBlock Text="It waits in the notification area, next to the clock, to offer a rebuild after a driver update."
-                                           Style="{StaticResource Caption}" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </CheckBox>
-                        <CheckBox IsChecked="{x:Bind Vm.CloseQuits, Mode=TwoWay}" AutomationProperties.Name="Closing the window quits SCSKiller">
-                            <StackPanel Spacing="2">
-                                <TextBlock Text="Closing the window quits SCSKiller" TextWrapping="Wrap" />
-                                <TextBlock Text="A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps SCSKiller there; right-click its icon to quit."
-                                           Style="{StaticResource Caption}" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </CheckBox>
-                        <CheckBox IsChecked="{x:Bind Vm.ScanAtStart, Mode=TwoWay}" AutomationProperties.Name="Scan games when SCSKiller starts">
-                            <StackPanel Spacing="2">
-                                <TextBlock Text="Scan games when SCSKiller starts" TextWrapping="Wrap" />
-                                <TextBlock Text="Reads again what changed in each game's folders. Off: the last list shows, and a game is read again when you refresh, when it exits, or when Steam or the Xbox app updates it."
-                                           Style="{StaticResource Caption}" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </CheckBox>
-                        <CheckBox IsChecked="{x:Bind Vm.NotifyNewShaders, Mode=TwoWay}" AutomationProperties.Name="Notify me when games have new shaders to compile">
-                            <StackPanel Spacing="2">
-                                <TextBlock Text="Notify me when games have new shaders to compile" TextWrapping="Wrap" />
-                                <TextBlock Text="A compiled game gains pipelines from its recording, the shared shader hashes or an SCSKiller update. You're told once, never while you play."
-                                           Style="{StaticResource Caption}" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </CheckBox>
-                        <CheckBox IsChecked="{x:Bind Vm.ActiveCheck, Mode=TwoWay}" AutomationProperties.Name="Send an anonymous daily check">
-                            <StackPanel Spacing="2">
-                                <TextBlock Text="Send an anonymous daily check" TextWrapping="Wrap" />
-                                <TextBlock Text="Counts active installs: once a day, the app's version and your GPU vendor, with no identifier. Nothing about your PC or games."
-                                           Style="{StaticResource Caption}" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </CheckBox>
-                    </StackPanel>
-                </Border>
+                <StackPanel Grid.Row="1" Spacing="12">
+                    <Border Style="{StaticResource Card}" Padding="20">
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="In the background" Style="{StaticResource Section}" />
+                            <CheckBox IsChecked="{x:Bind Vm.StartWithWindows, Mode=TwoWay}" AutomationProperties.Name="Start SCSKiller when Windows starts">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Start SCSKiller when Windows starts" TextWrapping="Wrap" />
+                                    <TextBlock Text="It waits in the notification area, next to the clock, to offer a rebuild after a driver update."
+                                               Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </CheckBox>
+                            <CheckBox IsChecked="{x:Bind Vm.CloseQuits, Mode=TwoWay}" AutomationProperties.Name="Closing the window quits SCSKiller">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Closing the window quits SCSKiller" TextWrapping="Wrap" />
+                                    <TextBlock Text="A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps SCSKiller there; right-click its icon to quit."
+                                               Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </CheckBox>
+                            <CheckBox IsChecked="{x:Bind Vm.ScanAtStart, Mode=TwoWay}" AutomationProperties.Name="Scan games when SCSKiller starts">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Scan games when SCSKiller starts" TextWrapping="Wrap" />
+                                    <TextBlock Text="Reads again what changed in each game's folders. Off: the last list shows, and a game is read again when you refresh, when it exits, or when Steam or the Xbox app updates it."
+                                               Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </CheckBox>
+                            <CheckBox IsChecked="{x:Bind Vm.NotifyNewShaders, Mode=TwoWay}" AutomationProperties.Name="Notify me when games have new shaders to compile">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Notify me when games have new shaders to compile" TextWrapping="Wrap" />
+                                    <TextBlock Text="A compiled game gains pipelines from its recording, the shared shader hashes or an SCSKiller update. You're told once, never while you play."
+                                               Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </CheckBox>
+                            <CheckBox IsChecked="{x:Bind Vm.ActiveCheck, Mode=TwoWay}" AutomationProperties.Name="Send an anonymous daily check">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Send an anonymous daily check" TextWrapping="Wrap" />
+                                    <TextBlock Text="Counts active installs: once a day, the app's version and your GPU vendor, with no identifier. Nothing about your PC or games."
+                                               Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </CheckBox>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Padding="20">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Appearance" Style="{StaticResource Section}" />
+                            <TextBlock Text="Choose a color theme for SCSKiller. Use Windows setting follows Windows' app mode."
+                                       Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                            <ComboBox Header="Theme" ItemsSource="{x:Bind local:ThemeSettings.Labels}"
+                                      SelectedIndex="{x:Bind ThemePrefs.SelectedIndex, Mode=TwoWay}"
+                                      MinWidth="220" HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
 
                 <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource Card}" Padding="20">
                     <StackPanel Spacing="8">
