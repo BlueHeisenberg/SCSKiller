@@ -44,7 +44,7 @@ public static class GameFiles
             .Select(f => new FileInfo(f))
             .ToList();
         if (exes.FirstOrDefault(f => Directory.Exists(Path.ChangeExtension(f.FullName, null) + "_Data")) is { } unity) return unity.FullName;   // Unity: Game.exe + Game_Data
-        var guess = exes.OrderBy(f => f.DirectoryName!.Length > installDir.TrimEnd('\\').Length ? 1 : 0)   // root folder first
+        var guess = exes.OrderBy(f => f.DirectoryName!.Length > installDir.TrimEnd('\\', '/').Length ? 1 : 0)   // root folder first
             .ThenByDescending(f => f.Length).FirstOrDefault();
         return guess == null ? null : NotPlus(LaunchedExe(installDir, guess, exes), exes);
     }
@@ -411,7 +411,7 @@ public static class GameFiles
         if (RiotGames(game.InstallDir) || RiotGames(game.ExePath)) return AntiCheat.Other;
         var install = Path.TrimEndingDirectorySeparator(Path.GetFullPath(game.InstallDir));
         var exeDir = Path.GetDirectoryName(Path.GetFullPath(game.ExePath))!;
-        bool Inside(string d) => d.Equals(install, StringComparison.OrdinalIgnoreCase) || d.StartsWith(install + '\\', StringComparison.OrdinalIgnoreCase);
+        bool Inside(string d) => d.Equals(install, StringComparison.OrdinalIgnoreCase) || d.StartsWith(install + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var seen = 0;
         var clock = Stopwatch.StartNew();
