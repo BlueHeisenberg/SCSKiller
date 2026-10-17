@@ -85,6 +85,7 @@ Everything vendor- or engine-specific sits behind one interface: a new GPU vendo
 | `src/SCSKiller.Core/RedEngine/` | `IEngineReader` for REDengine 3 (The Witcher 3, DX12) |
 | `src/SCSKiller.Core/Northlight/` | `IEngineReader` for Remedy's Northlight (Control, DX12) |
 | `src/SCSKiller.Core/Dagor/` | `IEngineReader` for Gaijin's Dagor Engine (War Thunder) |
+| `src/SCSKiller.Core/BlackSpace/` | `IEngineReader` for Pearl Abyss's BlackSpace Engine (Crimson Desert, DX12) |
 | `src/SCSKiller.Core/Carved/` | `IEngineReader` for any game that ships raw DXBC/DXIL containers in its files |
 | `src/SCSKiller.Core/Planning/` | The planner, root-signature rules, the plan and recording formats, materialization |
 | `src/SCSKiller.Core/Vendors/` | NVIDIA and AMD backends and their per-application cache (`IAppCache`) |
@@ -352,6 +353,18 @@ open game files read-only and never launch or attach to the game.
   set in `pc_dx11` (SM 5.0, the same layout) is indexed apart, one map per file on its own platform: D3D11 items only,
   never a D3D12 pipeline. The game runs on either API and its files don't say which, so it is "D3D11 or D3D12"
   (Control: 1,435 DX11 shaders).
+- **BlackSpace** (`BlackSpace/`): Crimson Desert's files are archive groups, numbered folders of `.paz` archives each
+  with a `0.pamt` index, listed by `meta\0.papgt`. An index holds the group's archives (crc, size), a folder name trie and
+  a file name trie (each node its parent's offset, a length and the text), 16-byte folder records and 20-byte file records
+  (name node, archive offset, stored size, size, archive, flags: 0 stored, 2 one raw LZ4 block). Detect reads each index
+  only up to its folder names, for `shadercache__/d3d12/windows`. Its `.padxil` files are a 36-byte `PASC` header, then
+  the DXBC container: DXIL SM6 with signatures and PSV0, no RTS0. A file name is seven hex fields: the third is the stage,
+  the first the effect a VS and its PS share, one map each (the others leave more pixel shaders without a vertex shader
+  in their map; `BlackSpaceGameTests.MapKeySurvey`). Crimson Desert (October 2026): 77,247 `.padxil` files, 2.4 GB, group
+  `0017`, 97% LZ4-compressed, holding 30,510 distinct containers (8,618 VS, 15,867 PS, 5,806 CS, 81 libraries),
+  indexed in 14 s. The 241 `.pars` files beside them (one per render pass, flags 0x30, high entropy) aren't read. The few
+  `.padxil` files stored uncompressed are raw containers the carver finds (3 graphics shaders: "needs an engine reader"),
+  so this reader is tried before it.
 - **Dagor** (`Dagor/`): War Thunder's shader dumps, `compiledShaders\game.ps50.shdump.bin` (DirectX 11) and
   `gameDX12.ps50.shdump.bin` (`game.compatibility*` in the game's compatibility mode), dump version 11.3 only. The body
   is zstd, each entry a zstd frame of the dump's own dictionary; a vertex entry also holds the HS, DS and GS it is drawn
@@ -401,6 +414,11 @@ it confirms get one (`RootSig.Red3Validated`); any other is left out.
 Northlight builds its root signatures in code (version 1.0, read from Control's renderer DLL), one for graphics and one
 for compute (`RootSig.Rule.Northlight`). Both end in a bounded table of 244,000 SRVs in space 1 that the shaders declare
 unbounded; the runtime accepts an unbounded shader range in a bounded one that holds its first register.
+
+BlackSpace's shaders carry no root signature and no game file the reader opens holds one: the engine creates them in
+code. A plan needs a recording, and takes its root signatures from the learned lookup (by the recorded shaders' resource
+counts). The name's fifth field takes three values on every stage (1, 2, 3); whether it names a root signature is
+unconfirmed until a recording shows which root signature each value's PSOs are created with.
 
 Dagor builds each pipeline's root signature from its stages' `dxil::ShaderHeader`s (`RootSig.Rule.Dagor`,
 `DagorRootSig`, ported from DagorEngine's `decode_graphics_root_signature` / `decode_compute_root_signature`): version
