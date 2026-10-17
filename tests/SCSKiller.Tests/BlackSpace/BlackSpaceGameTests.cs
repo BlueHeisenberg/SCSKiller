@@ -48,6 +48,33 @@ public class BlackSpaceGameTests(ITestOutputHelper output)
         output.WriteLine($"the carver alone, {sw.Elapsed.TotalSeconds:F1}s: {carved?.ToString() ?? "not detected"}; {notes}");
     }
 
+    sealed class Log(Action<string> a) : IProgress<string> { public void Report(string v) => a(v); }   // in order, unlike Progress
+
+    static readonly VendorCaps Nvidia = Ff7.Nvidia with { PerStageCache = true };   // as NvidiaBackend's
+
+    /// <summary>The NVIDIA plan with this PC's recording (SCSKILLER_BLACKSPACE_RECORDING, else the app's
+    /// games\steam_3321460\recording.db; skipped without one), planned from a copy: what the learned root signature lookup
+    /// covers and what it leaves out. Output, and a plan that compiles something.</summary>
+    [Fact]
+    public void PlansCrimsonDesertWithARecording()
+    {
+        var db = Environment.GetEnvironmentVariable("SCSKILLER_BLACKSPACE_RECORDING")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SCSKiller", "games", "steam_3321460", "recording.db");
+        if (CrimsonDesert() is not { } game || !File.Exists(db)) return;
+        var dir = Ff7.TempDir("blackspace-plan");
+        var copy = Path.Combine(dir, "recording.db");
+        File.Copy(db, copy, true);
+        var reader = new BlackSpaceReader();
+        var engine = reader.Detect(game)!;
+        var index = reader.Index(game, engine, null, CancellationToken.None);
+        var check = new Planner().Check(game, engine, new Recording(copy), Nvidia);
+        output.WriteLine($"check with the recording: {check}");
+        var sw = Stopwatch.StartNew();
+        var plan = new Planner().Build(game, engine, index, new Recording(copy), Nvidia, Path.Combine(dir, "plan"), new Log(output.WriteLine), CancellationToken.None);
+        output.WriteLine($"plan {sw.Elapsed.TotalSeconds:F1}s, {new FileInfo(plan.FilePath).Length >> 10} KiB: {plan.Stats}");
+        Assert.True(plan.Stats.Recorded + plan.Stats.Generated > 0);
+    }
+
     /// <summary>Per map key: the VS->PS pairs whose signatures link inside a map (what StageSets enumerates before a
     /// recording narrows it to recorded resource counts), and the PS no VS of its map feeds (never warmed). Output only.</summary>
     [Fact]
