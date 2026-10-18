@@ -28,32 +28,6 @@ public static class RtCollections
     /// <summary>A collection's flags when it has no state object config subobject (UE 4.25 creates them without one).</summary>
     public const uint NoConfig = uint.MaxValue;
 
-    /// <summary>UE 4.26's global ray tracing root signature as Jedi: Survivor's recording has it (the stock rule is read
-    /// from it, unverified on other 4.26/4.27 games): NVAPI's extension UAV u0 space 404, then in space 1 (the RHI's
-    /// global ray tracing space) an SRV table of 64, a sampler table of 16, a UAV table of 16 and root CBVs b0-b15, all
-    /// visible to every shader; UE's six static samplers.</summary>
-    public static readonly RootSig.Desc Ue426Global = new(0, [
-        [0, 0, 1, 1, 0, 404, 3],
-        [0, 0, 0, 64, 0, 1, 5], [0, 0, 3, 16, 0, 1, 1], [0, 0, 1, 16, 0, 1, 3],
-        .. Enumerable.Range(0, 16).Select(b => new uint[] { 2, 0, (uint)b, 1, 8 })]);
-
-    /// <summary>UE 4.25's (Returnal's recording): 4.26's without the NVAPI slot, with 4.25's static samplers
-    /// (<see cref="RootSig.StaticSamplers"/>).</summary>
-    public static readonly RootSig.Desc Ue425Global = new(0, [.. Ue426Global.Rows.Skip(1)]);
-
-    /// <summary>UE 5.1's (Oblivion Remastered's recording): 4.26's without the NVAPI slot, plus the diagnostic root UAV u0 space 999.</summary>
-    public static readonly RootSig.Desc Ue51Global = new(0, [
-        [0, 0, 0, 64, 0, 1, 5], [0, 0, 3, 16, 0, 1, 1], [0, 0, 1, 16, 0, 1, 3],
-        .. Enumerable.Range(0, 16).Select(b => new uint[] { 2, 0, (uint)b, 1, 8 }),
-        [4, 0, 0, 999, 2]]);
-
-    /// <summary>UE 5.4's, unverified: 5.1's with a sampler table of 32.</summary>
-    // 5.1's tables are D3D12RHI's MAX_SRVS/MAX_SAMPLERS/MAX_UAVS/MAX_CBS, and 5.4 raised MAX_SAMPLERS to 32 (RootSig.Rule.Ue54)
-    public static readonly RootSig.Desc Ue54Global = new(0, [
-        [0, 0, 0, 64, 0, 1, 5], [0, 0, 3, 32, 0, 1, 1], [0, 0, 1, 16, 0, 1, 3],
-        .. Enumerable.Range(0, 16).Select(b => new uint[] { 2, 0, (uint)b, 1, 8 }),
-        [4, 0, 0, 999, 2]]);
-
     /// <summary>Why a game's DXIL libraries don't have stock UE 5.0-5.4's binding shape, which the 5.1 rule is built for
     /// (Oblivion Remastered's and Darwin's Paradox's libraries have it); null when they do. The shape: uniform buffers as
     /// CBVs in space 1 (ray generation), the hit groups' index and vertex buffers t0/t1 in space 2, no bindless descriptor
@@ -69,26 +43,48 @@ public static class RtCollections
         return null;
     }
 
-    /// <summary>Northlight's local root signature (version 1.1), as Control's renderer builds it: the hit geometry's index and
-    /// vertex buffer SRVs t0/t1 and 10 root constants b0, all in space 3. Its global one is <see cref="RootSig.NorthlightCompute"/>.</summary>
-    public static readonly RootSig.Desc NorthlightLocal = new(0x80, [[3, 0, 0, 3, 0], [3, 0, 1, 3, 0], [1, 0, 0, 3, 10]]);
-
-    /// <summary>The global root signature of the libraries' engine: UE 4.26's (<see cref="Ue426Global"/>), or Avalanche's 4.27
+    /// <summary>The global root signature of the libraries' engine: the rule's (<paramref name="stock"/>), or Avalanche's 4.27
     /// fork's when the libraries carry its bindless marker (unbounded SRVs t0 in spaces 4-9, <see cref="RootSig.MaxSrvsFor"/>;
     /// Hogwarts Legacy's recording: all 691 collections have it): in space 1 an SRV table of 128, one unbounded SRV table per
     /// space from 5 up to the highest bindless space a library declares (space 4 is in each local one), a sampler table of 16,
     /// a UAV table of 16, root CBVs b0-b15, then a table of one UAV u0 in space 1001 (offset 0, no flags); no NVAPI slot; UE's
     /// six static samplers.</summary>
-    public static RootSig.Desc GlobalFor(IEnumerable<ShaderInfo> libs)
+    public static RootSig.Desc GlobalFor(IEnumerable<ShaderInfo> libs, RootSig.Desc stock)
     {
         var top = libs.SelectMany(l => l.Bindings).Where(IsSpaceBindless).Select(b => (uint)b.Space).DefaultIfEmpty(0u).Max();
-        if (top == 0) return Ue426Global;
+        if (top == 0) return stock;
         return new(0, [
             [0, 0, 0, 128, 0, 1, 5],
             .. Enumerable.Range(5, Math.Max(0, (int)top - 4)).Select(k => new uint[] { 0, 0, 0, uint.MaxValue, 0, (uint)k, 5 }),
             [0, 0, 3, 16, 0, 1, 1], [0, 0, 1, 16, 0, 1, 3],
             .. Enumerable.Range(0, 16).Select(b => new uint[] { 2, 0, (uint)b, 1, 8 }),
             [0, 0, 1, 1, 0, 1001, 0, 0]]);
+    }
+
+    /// <summary>A collection rule for libraries without recorded collections: the global root signature and its samplers, one
+    /// local root signature for every library (null: UE's per library, <see cref="LocalRs"/>), the rule's fields.</summary>
+    public sealed record Choice(RootSig.Desc Global, byte[] Samplers, RootSig.Desc? Local, uint Flags, uint Depth, uint Payload, uint Attributes, string How);
+
+    /// <summary>The game's ray tracing rule (<see cref="RulesFile.RtFor"/>) applied to its libraries: its global root signature,
+    /// or with "avalancheGlobal" Avalanche's fork's when the libraries carry its marker (each library's own payload); with
+    /// "ue5Shape" none for libraries without 5.1's binding shape. Null, with <paramref name="why"/>, when there is none.</summary>
+    public static Choice? Choose(PlanRule? rule, EngineInfo engine, IReadOnlyCollection<ShaderInfo> libs, out string why)
+    {
+        why = $"no collection rule for {engine.Family} {engine.Version} without a recording";
+        if (rule?.Rt is not { } rt) return null;
+        bool Selects(string shape) => rt.Select?.Contains(shape) == true;
+        if (Selects("ue5Shape") && Ue5ShapeMismatch(libs) is { } mismatch)
+        {
+            why = $"not stock UE 5.0-5.4's binding shape ({mismatch}): no collection rule without a recording";
+            return null;
+        }
+        if (rt.Global?.ToDesc() is not { } stock) return null;
+        var samplers = RulesFile.RtSamplers(rt);
+        var flags = rt.Config ? rt.Flags : NoConfig;
+        // each library's own payload: the fork's recording, 981/981 collections, the ray generation ones once per payload
+        if (Selects("avalancheGlobal") && GlobalFor(libs, stock) is var fork && !ReferenceEquals(fork, stock))
+            return new(fork, samplers, null, flags, rt.Depth, 0, rt.Attributes, "Avalanche's UE 4.27 fork (its bindless spaces; Hogwarts Legacy's recording: 981/981 collections rebuilt from its files)");
+        return new(stock, samplers, rt.Local?.ToDesc(), flags, rt.Depth, rt.Payload, rt.Attributes, rt.Note);
     }
 
     static bool IsSpaceBindless(Binding b) => b is { Class: "srv", Count: -1, Space: >= 4 and < 10 };
@@ -140,9 +136,50 @@ public static class RtCollections
     public static Nv? LearnedNv(IReadOnlyCollection<Rec> collections, IEnumerable<Rec> records)
     {
         var keys = collections.Select(r => r.Key).ToHashSet();
-        var nv = records.Where(r => r.Tag == 'N').Select(NvState.Parse).Where(n => keys.Contains(n.Target)).ToList();
+        var nv = records.Where(r => r.Tag == 'N').Select(NvState.Parse).Where(n => keys.Contains(n.Target) && !n.Bare).ToList();
         if (keys.Count == 0 || nv.Select(n => n.Target).Distinct().Count() < 0.99 * keys.Count) return null;
         return nv.GroupBy(n => new Nv(n.Slot, n.Space, n.Options)).MaxBy(g => g.Count())!.Key;
+    }
+
+    /// <summary>The NVAPI pipeline creation options a recording's ray tracing state objects are created with: the most common
+    /// non-zero options of its 'R' records' last 'N'; 0 when none has any. The options are global and only state objects use
+    /// them (nvapi.h, NvAPI_D3D12_SetCreatePipelineStateOptions).</summary>
+    public static uint RecordedOptions(IEnumerable<Rec> records)
+    {
+        var last = LastNv(records, out var so);
+        return Options(last, so);
+    }
+
+    static uint Options(Dictionary<string, NvState> last, List<Rec> stateObjects) =>
+        stateObjects.DistinctBy(r => r.Key).Where(r => r.Tag == 'R' && last.TryGetValue(r.Key, out var n) && n.Options != 0)
+            .GroupBy(r => last[r.Key].Options).MaxBy(g => g.Count())?.Key ?? 0;
+
+    /// <summary>'N' records giving a recording's state objects ('R' / 'A') recorded with options 0 its
+    /// <see cref="RecordedOptions"/>, but those whose 'N' has <see cref="NvState.GlobalOptions"/>. A recorder that kept the
+    /// options per thread recorded 0 for every create on another thread than the one that set them (The Witcher 3 sets 0x11
+    /// once and creates its pipelines on workers).</summary>
+    public static List<Rec> OptionFixes(IEnumerable<Rec> records)
+    {
+        var last = LastNv(records, out var so);
+        var options = Options(last, so);
+        if (options == 0) return [];
+        return [.. so.DistinctBy(r => r.Key).Where(r => !last.TryGetValue(r.Key, out var n) || n.Options == 0 && (n.Scope & NvState.GlobalOptions) == 0)
+            .Select(r => (last.TryGetValue(r.Key, out var n) ? n : new NvState(r.Key, uint.MaxValue, 0, 0, 0)) with { Options = options })
+            .Select(n => n.ToRec())];
+    }
+
+    /// <summary><paramref name="nv"/> with <paramref name="options"/> (<see cref="RecordedOptions"/>) when it has none.</summary>
+    public static Nv? WithOptions(Nv? nv, uint options) =>
+        options == 0 || nv is { Options: not 0 } ? nv : (nv ?? new Nv(uint.MaxValue, 0, 0)) with { Options = options };
+
+    static Dictionary<string, NvState> LastNv(IEnumerable<Rec> records, out List<Rec> stateObjects)
+    {
+        var last = new Dictionary<string, NvState>();
+        stateObjects = [];
+        foreach (var r in records)
+            if (r.Tag == 'N' && r.Payload.Length == NvState.Size) { var n = NvState.Parse(r); last[n.Target] = n; }
+            else if (IsStateObject(r.Tag)) stateObjects.Add(r);
+        return last;
     }
 
     /// <summary>The payload a library's ray tracing functions declare (their largest; 0 for a ray generation library: it has none).</summary>

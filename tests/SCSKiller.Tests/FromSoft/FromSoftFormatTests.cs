@@ -107,6 +107,7 @@ public class FromSoftFormatTests
         Assert.Equal([$"/shader/A_DX11.shaderbnd.dcx: {Sha(vs)},{Sha(ps)}", $"/shader/B_DX11.shaderbnd.dcx: {Sha(vs2)}"],
             index.Maps.Select(m => $"{m.Library}: {string.Join(',', m.Shaders)}").Order());
         Assert.All(index.Shaders.Values, s => Assert.NotNull(s.RootSignature));
+        Assert.All(index.Shaders.Values.Select(s => s.RootSignature).OfType<string>(), h => Assert.Contains(h, index.RootSignatures!.Keys));   // the planner checks coverage with them
         Assert.Equal(["D3D11"], index.Platforms);
 
         var got = new Dictionary<string, byte[]>();
@@ -122,7 +123,7 @@ public class FromSoftFormatTests
 
     /// <summary>Elden Ring's layout with keys generated here: the fake exe carries each archive's public key as PEM text (plus
     /// a key of no archive), found at run time, matched to its archive, kept only in the data folder and reused; an archive
-    /// no key opens makes the game Unsupported, naming the key file a user can fill by hand.</summary>
+    /// no key opens is left out (the page says so, the log says where a user can put its key) and the rest compiles.</summary>
     [Fact]
     public void ArchiveKeysComeFromTheExe()
     {
@@ -142,10 +143,10 @@ public class FromSoftFormatTests
             .. RandomNumberGenerator.GetBytes(3000), .. Encoding.ASCII.GetBytes(Pem(k0) + "\0-----BEGIN RSA PUBLIC KEY-----\nnot base64\n-----END RSA PUBLIC KEY-----\n")]);
         var game = new Game("test:er", "er", Store.Steam, dir, exe);
         var data = Path.Combine(dir, "data");
-        var reader = new FromSoftReader(data);
+        var reader = new FromSoftReader(data, Offline);
 
         var engine = reader.Detect(game)!;
-        Assert.Equal((FromSoftReader.Family, "Elden Ring", (string?)null), (engine.Family, engine.Fork, engine.Unsupported));
+        Assert.Equal((FromSoftReader.Family, "Elden Ring", (string?)null, (string?)null), (engine.Family, engine.Fork, engine.Unsupported, engine.Note));
         var index = reader.Index(game, engine, null, CancellationToken.None);
         string Sha(byte[] b) => Convert.ToHexStringLower(SHA1.HashData(b));
         Assert.Equal(new[] { vs, ps, vs2 }.Select(Sha).Order(), index.Shaders.Keys.Order());
@@ -159,19 +160,74 @@ public class FromSoftFormatTests
         Assert.Equal($"exe {Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(exe)))}", string.Join(' ', lines[0].Split(' ')[..2]));
         Assert.Equal([$"Data0 {Convert.ToBase64String(k0.ExportRSAPublicKey())}", $"Data1 {Convert.ToBase64String(k1.ExportRSAPublicKey())}"], lines[1..]);
         File.Move(exe, exe + ".gone");
-        Assert.Null(new FromSoftReader(data).Detect(game)!.Unsupported);
+        Assert.Null(new FromSoftReader(data, Offline).Detect(game)!.Unsupported);
         File.Move(exe + ".gone", exe);
+        Assert.Equal("", reader.IndexStamp(game));
 
-        // an archive no key opens (Dark Souls III's case: its exe doesn't carry them in the clear): Unsupported, says where
-        Archive("DLC", missing, "/shader/grass.shaderbnd.dcx", Dflt(Bnd4([("C.fpo", Hlsl.Ps(2, Hlsl.Rs1), false)], true)));
-        var none = new FromSoftReader(data).Detect(game)!;
-        Assert.Contains("DLC", none.Unsupported);
-        Assert.Contains(keyFile, none.Unsupported);
-        Assert.Throws<InvalidDataException>(() => new FromSoftReader(data).Index(game, engine, null, CancellationToken.None));
-        File.AppendAllLines(keyFile, [$"DLC {Convert.ToBase64String(missing.ExportRSAPublicKey())}"]); // given by hand
-        Assert.Null(new FromSoftReader(data).Detect(game)!.Unsupported);
-        Assert.Equal(4, new FromSoftReader(data).Index(game, engine, null, CancellationToken.None).Shaders.Count); // and the DLC's shader
+        // an archive no key opens (the exe doesn't carry it, offline): left out, the rest compiles, the page says so plainly
+        var dlc = Hlsl.Ps(2, Hlsl.Rs1);
+        Archive("DLC", missing, "/shader/grass.shaderbnd.dcx", Dflt(Bnd4([("C.fpo", dlc, false)], true)));
+        var asked = new List<string>();
+        var skip = new FromSoftReader(data, u => { asked.Add(u); return null; });
+        var partial = skip.Detect(game)!;
+        Assert.Equal(((string?)null, "Its DLC shaders are left out."), (partial.Unsupported, partial.Note));
+        Assert.Equal(partial.Note, Core.App.ScsKiller.GuessNote(partial));
+        Assert.Equal([SoulsKeys.Uxm], asked); // Elden Ring's keys are tried from UXM's file too
+        Assert.Equal("DLC", skip.IndexStamp(game));
+        Assert.Equal(skip.IndexStamp(game), skip.DetectStamp(game, partial));
+        var logged = new List<string>();
+        var left = skip.Index(game, partial, new SyncLog(logged.Add), CancellationToken.None);
+        Assert.Equal(index.Shaders.Keys.Order(), left.Shaders.Keys.Order());
+        Assert.Equal(index.ContentHash, left.ContentHash); // only the archives a key opens: the same as before the DLC
+        Assert.Contains(logged, l => l.Contains(keyFile) && l.Contains("PEM"));
+        Assert.DoesNotContain("PEM", partial.Note);
+        Assert.DoesNotContain(keyFile, partial.Note);
+        got.Clear();
+        skip.ReadShaders(game, partial, new HashSet<string> { Sha(vs2) }, (h, b) => got.Add(h, b), CancellationToken.None);
+        Assert.Equal(vs2, got[Sha(vs2)]);
+
+        // its key turns up later (UXM's pinned file, downloaded): kept, the stamp and the content hash change, the DLC is indexed
+        byte[] uxm = Encoding.UTF8.GetBytes(UxmSource(("EldenRingKeys", [("Data0", k0), ("DLC", missing)])));
+        var all = new FromSoftReader(data, _ => uxm, Sha256(uxm));
+        var allEngine = all.Detect(game)!;
+        Assert.Equal($"DLC {Convert.ToBase64String(missing.ExportRSAPublicKey())}", File.ReadAllLines(keyFile)[^1]);
+        Assert.Equal("", skip.IndexStamp(game));
+        Assert.Equal(((string?)null, (string?)null), (allEngine.Unsupported, allEngine.Note));
+        var full = all.Index(game, allEngine, null, CancellationToken.None);
+        Assert.Equal(4, full.Shaders.Count);
+        Assert.Contains(Sha(dlc), full.Shaders.Keys);
+        Assert.NotEqual(left.ContentHash, full.ContentHash);
     }
+
+    /// <summary>Every archive keyless: refused in plain words (Index too), where to put the keys only in the log.</summary>
+    [Fact]
+    public void NoArchiveAKeyOpensIsRefusedWithoutKeyFileText()
+    {
+        var dir = Ff7.TempDir("fromsoft-nokey");
+        using RSA k0 = RSA.Create(2048);
+        var content = Dflt(Bnd4([("A.vpo", Hlsl.Vs(1, Hlsl.Rs1), false)], true));
+        File.WriteAllBytes(Path.Combine(dir, "Data0.bdt"), new byte[16].Concat(content).ToArray());
+        File.WriteAllBytes(Path.Combine(dir, "Data0.bhd"), Bhd(k0, true, (Souls.NameHash("/shader/gxgui.shaderbnd.dcx", true), 16, content.Length, null)).Cipher);
+        var exe = Path.Combine(dir, "eldenring.exe");
+        File.WriteAllBytes(exe, RandomNumberGenerator.GetBytes(4000));
+        var game = new Game("test:er-nokey", "er", Store.Steam, dir, exe);
+        var data = Path.Combine(dir, "data");
+        var reader = new FromSoftReader(data, Offline);
+        var keyFile = new SoulsKeys(data).KeyFile(game);
+
+        var engine = reader.Detect(game)!;
+        Assert.Equal("no key found for its archives, and none could be downloaded", engine.Unsupported);
+        var logged = new List<string>();
+        var thrown = Assert.Throws<InvalidDataException>(() => reader.Index(game, engine, new SyncLog(logged.Add), CancellationToken.None));
+        Assert.Equal(engine.Unsupported, thrown.Message);
+        Assert.Contains(logged, l => l.Contains(keyFile) && l.Contains("PEM"));
+    }
+
+    static readonly Func<string, byte[]?> Offline = _ => null;
+
+    static string Sha256(byte[] b) => Convert.ToHexStringLower(SHA256.HashData(b));
+
+    sealed class SyncLog(Action<string> a) : IProgress<string> { public void Report(string value) => a(value); }
 
     static string Pem(RSA rsa) => new(PemEncoding.Write("RSA PUBLIC KEY", rsa.ExportRSAPublicKey()));
 
@@ -186,15 +242,18 @@ public class FromSoftFormatTests
     public void UxmKeysReadsOnlyTheTitlesSection()
     {
         using RSA a = RSA.Create(2048), b = RSA.Create(2048), c = RSA.Create(2048);
-        var src = UxmSource(("DarkSouls3KeysOld", [("Data1", c)]), ("SekiroKeys", [("Data1", a)]), ("DarkSouls3Keys", [("Data1", b), ("DLC1", c)]), ("EldenRingKeys", [("Data0", a)]));
-        Assert.Equal([Convert.ToBase64String(b.ExportRSAPublicKey()), Convert.ToBase64String(c.ExportRSAPublicKey())], SoulsKeys.UxmKeys(src, "DarkSouls3Keys"));
+        var src = UxmSource(("DarkSouls3KeysOld", [("Data1", c)]), ("SekiroKeys", [("Data1", a)]), ("DarkSouls3Keys", [("Data1", b), ("DLC1", c)]),
+            ("EldenRingKeys", [("Data0", a), ("DLC", b), (@"sd\\sd", c)]), ("EldenRingNightreignKeys", [("Data0", c)]));
+        string B64(RSA k) => Convert.ToBase64String(k.ExportRSAPublicKey());
+        Assert.Equal([B64(b), B64(c)], SoulsKeys.UxmKeys(src, "DarkSouls3Keys"));
+        Assert.Equal([B64(a), B64(b), B64(c)], SoulsKeys.UxmKeys(src, "EldenRingKeys")); // an archive name like UXM's ["sd\\sd"] doesn't stop it
         Assert.Empty(SoulsKeys.UxmKeys(src, "ArmoredCore6Keys"));
         Assert.Empty(SoulsKeys.UxmKeys("not C# at all", "DarkSouls3Keys"));
     }
 
     /// <summary>Dark Souls III's case with keys generated here: the exe has none, so the keys come from UXM's published file
-    /// (a fake download of its shape): only keys that open the archives are kept, and a failed download leaves the game
-    /// Unsupported, naming the file, with nothing written; the next Detect tries again.</summary>
+    /// (a fake download of its shape): only keys that open the archives are kept, and a failed download, or one that isn't
+    /// the pinned file, leaves the game Unsupported in plain words with nothing written; the next Detect tries again.</summary>
     [Fact]
     public void ArchiveKeysAreDownloadedWhenTheExeHasNone()
     {
@@ -216,14 +275,22 @@ public class FromSoftFormatTests
 
         var asked = new List<string>();
         var offline = new FromSoftReader(data, u => { asked.Add(u); return null; }).Detect(game)!;
-        Assert.Contains("downloaded", offline.Unsupported);
-        Assert.Contains(keyFile, offline.Unsupported);
+        Assert.Equal("no key found for its archives, and none could be downloaded", offline.Unsupported);
         Assert.Equal([SoulsKeys.Uxm], asked);
         Assert.StartsWith("https://raw.githubusercontent.com/Nordgaren/UXM-Selective-Unpack/9501be87e272b6dae55e60a13c3f4753ca6fb3bb/", SoulsKeys.Uxm); // pinned
         Assert.DoesNotContain(File.ReadAllLines(keyFile), l => !l.StartsWith("exe ")); // only the exe scan's stamp
 
-        var src = UxmSource(("SekiroKeys", [("Data1", k1)]), ("DarkSouls3Keys", [("Data1", decoy), ("Data2", k1), ("DLC1", k2)]));
-        var engine = new FromSoftReader(data, _ => src).Detect(game)!;
+        // served with a BOM, as UXM's file is: the hash covers the bytes as served
+        byte[] src = [.. Encoding.UTF8.Preamble, .. Encoding.UTF8.GetBytes(UxmSource(("SekiroKeys", [("Data1", k1)]), ("DarkSouls3Keys", [("Data1", decoy), ("Data2", k1), ("DLC1", k2)])))];
+        var logged = new List<string>();
+        var tampered = new FromSoftReader(data, _ => src); // the real pin: not this file
+        Assert.Equal(offline.Unsupported, tampered.Detect(game)!.Unsupported);
+        Assert.Throws<InvalidDataException>(() => tampered.Index(game, offline, new SyncLog(logged.Add), CancellationToken.None));
+        Assert.Contains(logged, l => l.Contains("not the pinned"));
+        Assert.DoesNotContain(File.ReadAllLines(keyFile), l => !l.StartsWith("exe ")); // nothing kept from it
+        Assert.Equal(offline.Unsupported, new FromSoftReader(data, _ => src, Sha256(src[3..])).Detect(game)!.Unsupported); // the text's hash isn't the file's
+
+        var engine = new FromSoftReader(data, _ => src, Sha256(src)).Detect(game)!;
         Assert.Equal(("Dark Souls III", (string?)null), (engine.Fork, engine.Unsupported));
         Assert.Equal([$"Data1 {Convert.ToBase64String(k1.ExportRSAPublicKey())}", $"DLC1 {Convert.ToBase64String(k2.ExportRSAPublicKey())}"], File.ReadAllLines(keyFile)[1..]);
         var reader = new FromSoftReader(data, _ => throw new InvalidOperationException("kept locally: no second download"));

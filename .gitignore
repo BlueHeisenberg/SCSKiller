@@ -11,6 +11,7 @@ out/
 # runtime artifacts
 *.log
 *.csv
+!tests/SCSKiller.Tests/Fixtures/**/*.csv
 bin/
 obj/
 .claude/

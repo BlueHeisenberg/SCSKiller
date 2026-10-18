@@ -5,10 +5,12 @@ a public issue.
 
 ## Anti-cheat games
 
-SCSKiller never touches a game with anti-cheat beyond reading its files: no recorder, no injection, no opening its
-processes. The one exception is the offline session (ARCHITECTURE.md, Recorder), for the EasyAntiCheat games listed in
-`src/SCSKiller.Core/Games/offline-eac.json` only: opted into per game, confirmed per launch, started by SCSKiller and
-recorded in that process alone. Changes that widen it or work around the rule aren't accepted.
+Outside a session SCSKiller never touches a game with anti-cheat beyond reading its files: no recorder, no injection,
+no opening its processes. A session (ARCHITECTURE.md, Rules) is opted into per game, confirmed per launch, started by
+SCSKiller, recorded in that process alone and cleaned up at exit: without EasyAntiCheat for the games listed in
+`src/SCSKiller.Core/Games/offline-eac.json`, or in any other supported game with anti-cheat when the user turned on
+"Allow the recorder in games with anti-cheat (at your own risk)". Changes that widen it past a confirmed session or
+work around the rule aren't accepted.
 
 ## How pull requests are merged
 
@@ -43,7 +45,7 @@ device.
 dotnet test tests/SCSKiller.Tests -c Release --filter "Needs!=Gpu&Needs!=Game"
 ```
 
-CI runs this on a clean Windows machine with no games and no GPU, and it must pass. Tests that need more carry a trait:
+It must pass on a Windows machine with no games and no GPU. Tests that need more carry a trait:
 `[Trait("Needs", "Gpu")]` drives a real GPU and its driver cache, `[Trait("Needs", "Game")]` reads installed games,
 launchers or recordings. Such a test returns early when what it needs isn't there. Run them locally
 (`dotnet test tests/SCSKiller.Tests -c Release`) when your change touches their area.

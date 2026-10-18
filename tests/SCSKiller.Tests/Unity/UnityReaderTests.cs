@@ -87,6 +87,30 @@ public class UnityReaderTests
     }
 
     [Fact]
+    public void HiddenDataFolderIsRead()
+    {
+        foreach (var attr in new[] { FileAttributes.Hidden, FileAttributes.Hidden | FileAttributes.System })
+        {
+            var dir = Temp();
+            var data = Directory.CreateDirectory(Path.Combine(dir, "Game_Data")).FullName;
+            File.WriteAllBytes(Path.Combine(dir, "UnityPlayer.dll"), []);
+            File.WriteAllBytes(Path.Combine(data, "globalgamemanagers"), Serialized(Build(2)));
+            Directory.CreateDirectory(Path.Combine(data, "StreamingAssets"));
+            File.WriteAllBytes(Path.Combine(data, "StreamingAssets", "a.bundle"), Bundle(Serialized(Shader(ShaderObject(Programs(Vs, Ps), true))), "CAB-a"));
+            // Explorer's Hidden applies to the folder, its subfolders and files
+            foreach (var p in Directory.EnumerateFileSystemEntries(data, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0 }).Prepend(data))
+                File.SetAttributes(p, File.GetAttributes(p) | attr);
+
+            var game = new Game("test:unity", "Unity test", Store.Other, dir, Path.Combine(dir, "Game.exe"));
+            var reader = new UnityReader();
+            var e = reader.Detect(game)!;
+            Assert.Equal(("2022.3.1f1", "D3D11"), (e.Version, e.GraphicsApi));
+            Assert.Equal(new[] { Sha(Vs), Sha(Ps) }.Order(), reader.Index(game, e, null, CancellationToken.None).Shaders.Keys.Order());
+            Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
     public void ApiFromTheListOrTheLastRun()
     {
         Assert.Equal("D3D12", UnityReader.Api([18, 2], null));
@@ -94,6 +118,12 @@ public class UnityReaderTests
         Assert.Equal("D3D11 (last run)", UnityReader.Api([18, 2], "D3D11"));
         Assert.Equal("D3D11 or D3D12", UnityReader.Api(null, null));
         Assert.Null(UnityFiles.GraphicsApis([1, 0, 0, 0, 7, 0, 0, 0])); // 7 isn't a desktop renderer
+        Assert.True(UnityReader.ApiGuessed([2, 18], null));   // DirectX 11 and 12 built, no log: the first is a guess
+        Assert.True(UnityReader.ApiGuessed([18, 21, 2], null));
+        Assert.False(UnityReader.ApiGuessed([18, 2], "D3D11"));
+        Assert.False(UnityReader.ApiGuessed([2, 21], null));
+        Assert.False(UnityReader.ApiGuessed([21, 2, 18], null));   // Vulkan first: no DirectX guessed
+        Assert.False(UnityReader.ApiGuessed(null, null));
     }
 
     static string Temp() => Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "scskiller-tests", "unity-" + Guid.NewGuid().ToString("n")[..8])).FullName;
@@ -141,10 +171,10 @@ public class UnityReaderTests
 
     static (int, byte[]) Shader(byte[] b) => (UnityFiles.ShaderClass, b);
     static (int, byte[]) Compute(byte[] b) => (UnityFiles.ComputeShaderClass, b);
-    static (int, byte[]) Build(params int[] apis) => (UnityFiles.BuildSettingsClass, BuildSettings(apis));
+    internal static (int, byte[]) Build(params int[] apis) => (UnityFiles.BuildSettingsClass, BuildSettings(apis));
 
     /// <summary>A format-22 SerializedFile with the given objects (class id, bytes), one type per object.</summary>
-    static byte[] Serialized(params (int Class, byte[] Bytes)[] objs)
+    internal static byte[] Serialized(params (int Class, byte[] Bytes)[] objs)
     {
         var classes = objs.Select(o => o.Class).ToArray();
         var objects = objs.Select(o => o.Bytes).ToArray();

@@ -121,15 +121,42 @@ public partial class AppTests
         finally { GameVerdicts.Current = GameVerdicts.Embedded; }
     }
 
-    /// <summary>Wuthering Waves (Kuro's 4.26 fork) in its Anti-Cheat Expert install plans only from a recording its anti-cheat
-    /// blocks: "Not supported", like any anti-cheat game that needs a recording.</summary>
-    [Fact]
-    public async Task Wuthering_Waves_with_its_anti_cheat_is_not_supported()
+    /// <summary>Wuthering Waves (Kuro's 4.26 fork) in its Anti-Cheat Expert install: its own rule plans it on NVIDIA, without
+    /// a recording, and the recorder stays out. AMD needs a recording its anti-cheat blocks: "Not supported", until the setting
+    /// offers a session on its page.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Wuthering_Waves_with_its_anti_cheat_compiles_on_nvidia_only(bool stateIndependent)
     {
         Directory.CreateDirectory(Path.Combine(_game.InstallDir, "AntiCheatExpert"));
-        var engine = Unreal with { Fork = "GAME_WutheringWaves", Unsupported = "needs a recording, which its anti-cheat blocks" };
-        var s = (await Killer(new FakeReader(engine), new Planner()).ScanAsync(default)).Single();
-        Assert.Equal((AntiCheat.Other, GameStatus.Unsupported, "needs a recording, which its anti-cheat blocks", true), (s.AntiCheat, s.Status, s.StatusReason, s.NotPlanned));
+        var vendor = new FakeVendor(Gpu) { StateIndependent = stateIndependent };
+        var k = Killer(new FakeReader(Unreal with { Fork = "GAME_WutheringWaves" }), new Planner(), vendor: vendor);
+        var s = (await k.ScanAsync(default)).Single();
+        Assert.Equal((AntiCheat.Other, ScsKiller.SkipAntiCheat, false), (s.AntiCheat, s.RecorderSkip, s.RiskEligible));
+        Assert.Equal(stateIndependent ? (GameStatus.Ready, false) : (GameStatus.Unsupported, true), (s.Status, s.NotPlanned));
+        Assert.StartsWith(stateIndependent ? Planner.UntestedNote : "needs a recording, which its anti-cheat blocks", s.StatusReason);
+
+        k.Settings = k.Settings with { RecordAntiCheatGames = true };
+        await k.SettingsRefresh;
+        s = k.Games.Single();
+        Assert.Equal(stateIndependent ? (GameStatus.Ready, true) : (GameStatus.NeedsRecording, true), (s.Status, s.RiskEligible));
+        if (!stateIndependent) Assert.Equal("needs a recording, " + ScsKiller.RiskNoRecording, s.StatusReason);
+    }
+
+    /// <summary>A Riot Client game (VALORANT: Unreal, encrypted paks, Vanguard outside its folder) is anti-cheat by its
+    /// source: with no key found in its exe, it says its files are encrypted, and the recorder stays out.</summary>
+    [Fact]
+    public async Task A_riot_game_with_encrypted_files_says_so_and_never_gets_the_recorder()
+    {
+        var game = _game with { Id = "riot:valorant.live", Name = "VALORANT" };
+        var encrypted = Unreal with { Encrypted = true, Unsupported = "encrypted game files (needs the game's AES key)" };
+        var k = Killer(new FakeReader(encrypted), new Planner(), game: game);
+        var s = (await k.ScanAsync(default)).Single();
+        Assert.Equal((AntiCheat.Other, GameStatus.Unsupported, "encrypted game files (needs the game's AES key)", ScsKiller.SkipAntiCheat),
+            (s.AntiCheat, s.Status, s.StatusReason, s.RecorderSkip));
+        Assert.Null(Format.ShortNote(s));   // the status title says it: "Encrypted game files"
+        Assert.Contains(ScsKiller.SkipAntiCheat, Assert.Throws<InvalidOperationException>(() => k.InstallRecorder(game.Id)).Message);
     }
 
     /// <summary>A game added by hand and recorded, then listed by a store (a launcher SCSKiller finds since) that flags its
@@ -180,6 +207,7 @@ public partial class AppTests
             foreach (var f in new[] { "d3d12.dll", "scskiller.ini" }) was.RecorderFiles[f] = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(dir, f))));
             (was.RecorderExe, was.RecorderInstallDir) = (exe, _game.InstallDir);
             k.Store.SaveGame(added.Id, was);
+            ScsKiller.MigrateInis(k.Store);   // as an earlier build left it: the ini's hash in the record
         }
 
         var s = (await k.ScanAsync(default)).Single();
@@ -212,6 +240,7 @@ public partial class AppTests
         foreach (var f in new[] { "d3d12.dll", "scskiller.ini" }) was.RecorderFiles[f] = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(dir, f))));
         (was.RecorderExe, was.RecorderInstallDir) = (exe, dir);
         k.Store.SaveGame(added.Id, was);
+        ScsKiller.MigrateInis(k.Store);   // as an earlier build left it: the ini's hash in the record
 
         var s = (await k.ScanAsync(default)).Single();
         Assert.Equal((AntiCheat.Other, ScsKiller.SkipAntiCheat), (s.AntiCheat, s.RecorderSkip));
@@ -219,6 +248,69 @@ public partial class AppTests
         Assert.Empty(k.Store.LoadGame(added.Id).RecorderFiles);
         Assert.Throws<InvalidOperationException>(() => k.InstallRecorder(added.Id));
         Assert.False(File.Exists(Path.Combine(dir, "d3d12.dll")));
+    }
+
+    /// <summary>Overwatch's Steam install carries no Battle.net file, only its static container's build config: it is an
+    /// anti-cheat game. Its DirectX 11 shaders compile from its files (on AMD the pixel and compute shaders), the recorder
+    /// never goes in, even with every game recorded, and one an older build put there is taken out.</summary>
+    [Theory]
+    [InlineData(GpuVendor.Nvidia, "nvidia-1", "Dx11", "compiles every DirectX 11 shader")]
+    [InlineData(GpuVendor.Amd, "amd-1", "Dx11", "compiles every DirectX 11 shader but the vertex shaders")]
+    [InlineData(GpuVendor.Nvidia, "nvidia-1", null, "compiles every DirectX 11 shader (the game may run on either); for DirectX 12, needs a recording, which its anti-cheat blocks")]
+    public async Task Overwatch_on_Steam_compiles_offline_and_never_gets_the_recorder(GpuVendor vendor, string profile, string? api, string reason)
+    {
+        Tank.TankReaderTests.WriteStorage(_game.InstallDir, Tank.TankReaderTests.VsAndPs, api == null ? null : "GraphicsAPI = " + api);
+        var k = Killer(new Core.Tank.TankReader(Path.Combine(_game.InstallDir, "docs")), new Planner(), vendor: new FakeVendor(Gpu with { Vendor = vendor }, profile: profile));
+        k.ProcessNames = () => new HashSet<string>();
+        k.ManageRecorders = true;
+        k.Settings = k.Settings with { RecordAllGames = true };
+        var dll = Path.Combine(_exeDir, ScsKiller.Dll11);
+        File.Copy(_proxy, dll);   // what a build that didn't know the marker may have installed
+        var was = k.Store.LoadGame(_game.Id);
+        was.RecorderFiles[ScsKiller.Dll11] = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(dll)));
+        (was.RecorderExe, was.RecorderInstallDir) = (_game.ExePath, _exeDir);
+        k.Store.SaveGame(_game.Id, was);
+
+        var s = (await k.ScanAsync(default)).Single();
+        Assert.Equal(("Tank", AntiCheat.Other, GameStatus.Ready, reason, ScsKiller.SkipAntiCheat, false),
+            (s.Engine?.Family, s.AntiCheat, s.Status, s.StatusReason, s.RecorderSkip, s.RecorderEffective));
+        Assert.False(File.Exists(dll));
+        Assert.Throws<InvalidOperationException>(() => k.InstallRecorder(_game.Id));
+        await WarmOnce(k, _game.Id);
+        Assert.Equal(GameStatus.Warmed, k.Games.Single().Status);
+        Assert.DoesNotContain(Directory.EnumerateFiles(_exeDir), f => Path.GetFileName(f) is ScsKiller.Dll11 or ScsKiller.Dll12 || Path.GetFileName(f).StartsWith("scskiller", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>After an update that knows more anti-cheat markers, a game an older build checked clean is walked again before
+    /// its recorder is kept: the cached clean verdict was for the older list. The marker sits deep in the install, where
+    /// neither the quick check nor the folder stamp reads.</summary>
+    [Fact]
+    public async Task A_recorder_kept_from_an_older_build_is_taken_out_when_a_new_marker_is_found()
+    {
+        var deep = Directory.CreateDirectory(Path.Combine(_game.InstallDir, "Engine", "Plugins")).FullName;
+        await Killer(new StampReader()).ScanAsync(default);   // the older build's clean scan
+        Directory.CreateDirectory(Path.Combine(deep, "HShield"));   // a marker the older build didn't know; the install root's entries are unchanged
+        var dll = Path.Combine(_exeDir, ScsKiller.Dll12);
+        File.Copy(_proxy, dll);
+        var store = new AppStore(Path.Combine(_root, "data"));
+        var was = store.LoadGame(_game.Id);
+        was.RecorderFiles[ScsKiller.Dll12] = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(dll)));
+        (was.RecorderExe, was.RecorderInstallDir) = (_game.ExePath, _game.InstallDir);
+        store.SaveGame(_game.Id, was);
+        var stamp = typeof(ScsKiller).GetMethod("Stamp", BindingFlags.NonPublic | BindingFlags.Static, [typeof(string), typeof(string[])])!;
+        var older = (string?)stamp.Invoke(null, [_game.Version, new[] { GameFiles.DirKey(_game.InstallDir), GameFiles.DirKey(_exeDir) }]);   // without the marker list
+        var scan = store.LoadScan();
+        scan[_game.Id] = scan[_game.Id] with { Key = string.Join('|', scan[_game.Id].Key.Split('|').Select((f, i) => i == 5 ? "0.0.1-older" : f)), Clean = older };
+        store.SaveScan(scan);
+
+        var reader = new StampReader { Gate = new() };   // the background detection waits: the scan alone takes it out
+        var k = Killer(reader);
+        k.ManageRecorders = true;
+        k.ProcessNames = () => new HashSet<string>();
+        var s = (await k.ScanAsync(default)).Single();
+        Assert.Equal(AntiCheat.Other, s.AntiCheat);
+        Assert.False(File.Exists(dll));
+        reader.Gate.Set();
     }
 
     [Fact]

@@ -20,15 +20,33 @@ public sealed class NvidiaAppCache(string dir) : IAppCache
     public IReadOnlyList<FileInfo> FilesOf(IEnumerable<string> keys)
     {
         var set = keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return set.Count == 0 || !Directory.Exists(Dir) ? []
+        return set.Count == 0 || !AppCacheFiles.Readable(Dir) ? []
             : new DirectoryInfo(Dir).EnumerateFiles("*.nvph").Where(f => Key(f.Name) is { } k && set.Contains(k)).ToList();
     }
 
     public long SizeOf(IEnumerable<string> keys) => FilesOf(keys).Sum(f => f.Length);
 
-    public IReadOnlySet<string> KeysOpenBy(string exeFileName) => !Directory.Exists(Dir) ? new HashSet<string>()
+    /// <summary>The bytes the file holds: a u64 at header offset 8 (lengths step 16x from 4 KiB to 256 MiB, then double).
+    /// Null when unreadable (the driver opens its files unshared while the device lives) or another layout (7e55 files).</summary>
+    public static long? UsedBytes(string path)
+    {
+        try
+        {
+            using var h = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            Span<byte> head = stackalloc byte[16];
+            if (RandomAccess.Read(h, head, 0) < head.Length || !head[..4].SequenceEqual("nvph"u8)) return null;
+            long used = System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(head[8..]);
+            return used > 0 && used <= RandomAccess.GetLength(h) ? used : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    public IReadOnlySet<string> KeysOpenBy(string exeFileName) => !AppCacheFiles.Readable(Dir) ? new HashSet<string>()
         : AppCacheFiles.KeysOpenBy(exeFileName, Directory.EnumerateFiles(Dir, "*.nvph")
             .Select(f => (Path: f, Key: Key(Path.GetFileName(f))!)).Where(f => f.Key != null));
 
     public int Delete(IEnumerable<string> keys) => AppCacheFiles.DeleteAll(FilesOf(keys));
+
+    public IReadOnlySet<string> AllKeys() => !Directory.Exists(Dir) ? new HashSet<string>()
+        : Directory.EnumerateFiles(Dir, "*.nvph").Select(f => Key(Path.GetFileName(f))).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
 }

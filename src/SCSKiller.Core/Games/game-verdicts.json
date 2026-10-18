@@ -1,14 +1,4 @@
 {
   "about": "Verdicts on single games. \"no-stutter\": the game prepares its shaders itself, so SCSKiller doesn't suggest compiling it but still allows it. \"unsupported-yet\" (Not supported yet) and \"unsupported\" (Not supported): never compiled, recorded or queued. reason is a code the app words itself: engine-precompiles, driver-cache-ignored, anti-cheat, crashes, engine-unreadable, or other with a note (one short English line); an unknown code shows the note. ids are Game.Id values, the only match. engines (\"Unreal 5.7\" takes 5.7.x) and builds (store build ids) limit an entry when present. source is never shown but this file is public. date = when the entry was last checked. This is the body: the server serves it signed (release-sign sign-content --name game-verdicts). The app skips an entry it can't read, so later versions can add members, verdicts and codes.",
-  "games": [
-    {
-      "name": "STAR WARS: Galactic Racer",
-      "ids": ["steam:4078430"],
-      "verdict": "unsupported-yet",
-      "reason": "other",
-      "note": "An app update is needed for support",
-      "source": "",
-      "date": "2026-10-06"
-    }
-  ]
+  "games": []
 }

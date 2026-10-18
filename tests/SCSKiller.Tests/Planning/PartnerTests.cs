@@ -114,13 +114,13 @@ public class PartnerTests
         foreach (var ps in pss)
         {
             var modes = ShaderContainer.InputInterpolation(blobs[ps.Sha1]);
-            Assert.All(ps.Inputs.Where(i => i.SysValue == 0), i => Assert.InRange(modes[i.Semantic.ToUpperInvariant() + i.Index], 1, 8));
+            Assert.All(ps.Inputs.Where(i => i.SysValue == 0), i => Assert.InRange(modes[(i.Semantic, i.Index)], 1, 8));
             Assert.Equal(ps.Inputs.Count(i => i.SysValue == 0), x.PartnerKeys[ps.Sha1].Split(',').Length);
             // the parser fills the signature itself: read mask known, interpolation = PSV0's, the same partner key
             var parsed = ShaderContainer.Parse(blobs[ps.Sha1], ps.Sha1, new ResourceCounts(0, 0, 0, 0))!;
             Assert.All(parsed.Inputs, i => Assert.NotEqual(SigElement.UnknownReadMask, i.ReadMask));
-            Assert.All(parsed.Inputs.Where(i => i.SysValue == 0), i => Assert.Equal(modes[i.Semantic.ToUpperInvariant() + i.Index], i.Interpolation));
-            Assert.All(parsed.Outputs, o => Assert.Equal(SigElement.UnknownReadMask, o.ReadMask));
+            Assert.All(parsed.Inputs.Where(i => i.SysValue == 0), i => Assert.Equal(modes[(i.Semantic, i.Index)], i.Interpolation));
+            Assert.All(parsed.Outputs, o => Assert.Equal((byte)o.Mask, o.ReadMask));
             Assert.Equal(x.PartnerKeys[ps.Sha1], ExactLayouts.PartnerKey(parsed));
         }
     }

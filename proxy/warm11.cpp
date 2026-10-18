@@ -1,6 +1,7 @@
 // D3D11 warm: make the driver compile single shaders (scskiller_gen.db '1' items, see proxy.cpp) by using each once.
-// Measured (probe11.cpp, NVIDIA 610.88): CreateXShader is lazy, the compile happens at the first draw/dispatch that uses
-// the shader, is cached per shader (not per VS+PS pair) and doesn't depend on blend/RT format/input layout/depth/MSAA.
+// Measured (probe11.cpp, layout11.cpp): the compile starts at CreateXShader in the background, the first draw/dispatch that
+// uses the shader waits for it, and it is cached per shader (not per VS+PS pair). On NVIDIA it doesn't depend on
+// blend/RT format/input layout/depth/MSAA; on AMD only the PS and CS are free of state (ARCHITECTURE.md "D3D11").
 // So an item = one draw on a 1x1 target with a generated partner stage (a trivial PS for a VS, a pass-through VS whose
 // outputs line up with a PS's or GS's inputs) and dummy resources in every slot the bytecode declares, or one dispatch.
 // A '2' item is a HS and a DS of one map drawn together (warm11_pair): neither can be drawn alone.
@@ -19,6 +20,7 @@
 #include <atomic>
 #include <bit>
 #include <cstdio>
+#include <functional>
 #include <map>
 #include <string>
 #include <string_view>
@@ -156,7 +158,9 @@ static std::string partner_vs(const Shader& s) {
             else f += (e->sv ? "" : m) + hlsl_type(*e, w) + " e" + std::to_string(fields++) + ":" + e->name + std::to_string(e->index) + ";";
             c = start + w;
         }
-        if (c < 4) pad(4 - c);
+        // fxc packs nothing after a system value, also one a PS reads as a plain value (SV_InstanceID: sv 0, constant):
+        // a pad there would shift every later register
+        if (c < 4 && !(es.size() && (es.back()->sv || !_strnicmp(es.back()->name.c_str(), "SV_", 3)))) pad(4 - c);
     }
     // only a PS needs a position from it; a HS or GS may already take all 32 registers
     if (!pos && (s.type == 0 || f.empty())) f += "float4 pos:SV_Position;", pos = true;
@@ -180,7 +184,15 @@ static bool lines_up(const std::vector<Sig>& in, const std::vector<Sig>& out) {
 static ComPtr<ID3DBlob> compile(const std::string& src, const char* target, std::string* err = nullptr) {
     ComPtr<ID3DBlob> code, msg;
     D3DCompile(src.data(), src.size(), "scskiller", nullptr, nullptr, "main", target, 0, 0, &code, &msg);
-    if (msg && err) *err = std::string((const char*)msg->GetBufferPointer(), msg->GetBufferSize());
+    if (!msg || !err) return code;
+    // FXC may put the working folder (a user's) before the source name: each line from the source name on
+    const std::string_view all((const char*)msg->GetBufferPointer(), msg->GetBufferSize());
+    for (size_t b = 0, e; b < all.size(); b = e) {
+        e = std::min(all.find('\n', b), all.size() - 1) + 1;
+        const std::string_view line = all.substr(b, e - b);
+        const size_t at = line.find("scskiller(");
+        *err += line.substr(at == std::string_view::npos ? 0 : at);
+    }
     return code;
 }
 
@@ -233,6 +245,13 @@ static ComPtr<ID3D11Resource> texture(ID3D11Device* d, uint32_t dim, DXGI_FORMAT
         d->CreateTexture2D(&td, nullptr, (ID3D11Texture2D**)r.GetAddressOf());
     }
     return r;
+}
+
+// A Texture2DMS whose sample count the device can't make for its format (Counter-Strike 2: Texture2DMS<float4,16>) stays
+// unbound: a view of another count is a debug-layer error, a null view is valid, and the compile doesn't read the view.
+static bool unbound(Dev11& v, const Slot& s) {
+    UINT q = 0;
+    return (s.dim == 4 || s.dim == 9) && s.extra > 1 && (FAILED(v.d->CheckMultisampleQualityLevels(view_format(s.ret), std::min(s.extra, 32u), &q)) || !q);
 }
 
 static ID3D11ShaderResourceView* srv(Dev11& v, const Slot& s) {
@@ -385,7 +404,7 @@ bool warm11_item(Dev11* v, uint32_t stage, const void* bytes, size_t n, const ch
     ID3D11Buffer* cbs[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT];
     ID3D11UnorderedAccessView* uavs[D3D11_1_UAV_SLOT_COUNT] = {};
     UINT counts[D3D11_1_UAV_SLOT_COUNT] = {}, nuav = 0, uav_from = 0;
-    for (auto& r : s.srv) if (r.reg < std::size(srvs) && !(srvs[r.reg] = srv(*v, r))) return *why = "unsupported SRV declaration", false;
+    for (auto& r : s.srv) if (r.reg < std::size(srvs) && !unbound(*v, r) && !(srvs[r.reg] = srv(*v, r))) return *why = "unsupported SRV declaration", false;
     for (UINT i = 0; i < std::size(smps); ++i) smps[i] = (s.cmp_samplers >> i & 1 ? v->cmp : v->smp).Get();
     for (auto& b : cbs) b = v->cb.Get();
     for (auto& u : s.uav) {
@@ -479,7 +498,7 @@ bool warm11_pair(Dev11* v, const void* hsb, size_t hsn, const void* dsb, size_t 
     for (auto& b : cbs) b = v->cb.Get();
     for (int k = 0; k < 2; ++k) {
         const Shader& s = k ? ds : hs;
-        for (auto& r : s.srv) if (r.reg < std::size(srvs[k]) && !(srvs[k][r.reg] = srv(*v, r))) return *why = "unsupported SRV declaration", false;
+        for (auto& r : s.srv) if (r.reg < std::size(srvs[k]) && !unbound(*v, r) && !(srvs[k][r.reg] = srv(*v, r))) return *why = "unsupported SRV declaration", false;
         for (UINT i = 0; i < std::size(smps[k]); ++i) smps[k][i] = (s.cmp_samplers >> i & 1 ? v->cmp : v->smp).Get();
     }
     ComPtr<ID3D11HullShader> h;
@@ -528,4 +547,92 @@ void warm11_close(Dev11* v) {
     for (auto& [k, m] : v->msgs) logf("warm11: debug layer %s id=%u x%llu, first: %s", sev[k.first], k.second, m.first, m.second.c_str());
     if (v->c) v->c->ClearState(), v->c->Flush();
     delete v;
+}
+
+// A '3' item: a recorded draw's vertex stages (VS, then GS and/or HS+DS), its input layout and topology, as the game drew
+// them (the 'D' payload, proxy.cpp). AMD compiles a VS for the layout elements it reads and the topology class, and a GS or
+// HS together with the VS before it (ARCHITECTURE.md "D3D11"). The PS, when the game had one, is the trivial one: AMD's
+// VS doesn't depend on its PS.
+bool warm11_draw(Dev11* v, std::string_view it, std::string_view (*blob)(const uint8_t*), const char** why) {
+    if (it.size() < 92) return *why = "malformed item", false;
+    static const uint32_t program_type[] = {1, 2, 3, 4};  // VS, GS, HS, DS
+    std::string_view code[4];
+    Shader s[4];
+    for (int i = 0; i < 4; ++i) {
+        auto h = (const uint8_t*)it.data() + 20 * i;
+        if (std::all_of(h, h + 20, [](uint8_t b) { return !b; })) continue;
+        if ((code[i] = blob(h)).empty()) return *why = "missing blob", false;
+        if (!parse(code[i], s[i]) || s[i].type != program_type[i]) return *why = "stage doesn't match the bytecode", false;
+        if (s[i].interfaces) return *why = "uses class linkage", false;
+    }
+    if (code[0].empty()) return *why = "no vertex shader", false;
+    if (code[2].empty() != code[3].empty()) return *why = "a HS without its DS", false;
+    const uint32_t topo = u32(it, 80), flags = u32(it, 84), n = u32(it, 88);
+    if (n > D3D11_IA_VERTEX_INPUT_STRUCTURE_ELEMENT_COUNT) return *why = "malformed item", false;
+    std::vector<std::string> names(n);
+    std::vector<D3D11_INPUT_ELEMENT_DESC> ie(n);
+    UINT slots = 0;
+    for (size_t i = 0, o = 92; i < n; ++i) {
+        uint32_t len = u32(it, o);
+        if (len > 256 || o + 4 + len + 24 > it.size()) return *why = "malformed item", false;
+        names[i] = std::string(it.substr(o + 4, len)), o += 4 + len;
+        ie[i] = {nullptr, u32(it, o), (DXGI_FORMAT)u32(it, o + 4), u32(it, o + 8), u32(it, o + 12), (D3D11_INPUT_CLASSIFICATION)u32(it, o + 16), u32(it, o + 20)};
+        o += 24;
+        if (ie[i].InputSlot >= D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT) return *why = "malformed item", false;
+        slots = std::max(slots, ie[i].InputSlot + 1);
+    }
+    for (size_t i = 0; i < n; ++i) ie[i].SemanticName = names[i].c_str();
+
+    auto d = v->d.Get();
+    auto c = v->c.Get();
+    ComPtr<ID3D11VertexShader> vs;
+    ComPtr<ID3D11GeometryShader> gs;
+    ComPtr<ID3D11HullShader> hs;
+    ComPtr<ID3D11DomainShader> ds;
+    ComPtr<ID3D11InputLayout> il;
+    if (FAILED(d->CreateVertexShader(code[0].data(), code[0].size(), nullptr, &vs)) ||
+        (!code[1].empty() && FAILED(d->CreateGeometryShader(code[1].data(), code[1].size(), nullptr, &gs))) ||
+        (!code[2].empty() && (FAILED(d->CreateHullShader(code[2].data(), code[2].size(), nullptr, &hs)) ||
+                              FAILED(d->CreateDomainShader(code[3].data(), code[3].size(), nullptr, &ds)))))
+        return *why = "the runtime rejects the bytecode", false;
+    if (n && FAILED(d->CreateInputLayout(ie.data(), n, code[0].data(), code[0].size(), &il))) return *why = "the runtime rejects the input layout", false;
+
+    // every declared slot of every stage gets its dummy, as for a single shader
+    ID3D11ShaderResourceView* srvs[4][D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
+    ID3D11SamplerState* smps[4][D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT];
+    ID3D11Buffer* cbs[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT];
+    ID3D11UnorderedAccessView* uavs[D3D11_1_UAV_SLOT_COUNT] = {};
+    UINT counts[D3D11_1_UAV_SLOT_COUNT] = {}, nuav = 0;
+    for (auto& b : cbs) b = v->cb.Get();
+    for (int k = 0; k < 4; ++k) {
+        for (auto& r : s[k].srv) if (r.reg < std::size(srvs[k]) && !(srvs[k][r.reg] = srv(*v, r))) return *why = "unsupported SRV declaration", false;
+        for (UINT i = 0; i < std::size(smps[k]); ++i) smps[k][i] = (s[k].cmp_samplers >> i & 1 ? v->cmp : v->smp).Get();
+        for (auto& u : s[k].uav) {
+            if (u.reg >= v->uav_slots || !(uavs[u.reg] = uav(*v, u, false))) return *why = "unsupported UAV declaration", false;
+            nuav = std::max(nuav, u.reg + 1);
+        }
+    }
+    const Shader& last = !code[1].empty() ? s[1] : !code[3].empty() ? s[3] : s[0];
+    const bool raster = std::any_of(last.out.begin(), last.out.end(), [](auto& e) { return e.sv == SV_POSITION; });
+    ID3D11PixelShader* ps = flags & 1 && raster ? v->null_ps.Get() : nullptr;
+    ID3D11RenderTargetView* rt = ps ? rtv(*v, 0, 3) : nullptr;
+    const UINT nrt = rt ? 1 : 0;
+    for (auto& k : s) for (auto& u : k.uav) if (u.reg < nrt) return *why = "UAV slot overlaps a render target", false;
+
+    ID3D11Buffer* vbs[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
+    UINT strides[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT], offsets[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+    for (UINT i = 0; i < slots; ++i) vbs[i] = v->vb.Get(), strides[i] = 16;
+    if (slots) c->IASetVertexBuffers(0, slots, vbs, strides, offsets);
+    c->IASetInputLayout(il.Get());
+    c->IASetPrimitiveTopology((D3D11_PRIMITIVE_TOPOLOGY)topo);
+    c->VSSetShader(vs.Get(), nullptr, 0), c->GSSetShader(gs.Get(), nullptr, 0);
+    c->HSSetShader(hs.Get(), nullptr, 0), c->DSSetShader(ds.Get(), nullptr, 0), c->PSSetShader(ps, nullptr, 0);
+#define BIND(S, k) c->S##SetShaderResources(0, (UINT)std::size(srvs[k]), srvs[k]), c->S##SetSamplers(0, (UINT)std::size(smps[k]), smps[k]), \
+                   c->S##SetConstantBuffers(0, (UINT)std::size(cbs), cbs)
+    BIND(VS, 0), BIND(GS, 1), BIND(HS, 2), BIND(DS, 3);
+#undef BIND
+    c->OMSetDepthStencilState((ps ? v->depth_on : v->depth_off).Get(), 0);
+    c->OMSetRenderTargetsAndUnorderedAccessViews(nrt, &rt, ps ? v->dsv.Get() : nullptr, nrt, nuav > nrt ? nuav - nrt : 0, uavs + nrt, counts);
+    c->DrawInstancedIndirect(v->args.Get(), 0);
+    return true;
 }

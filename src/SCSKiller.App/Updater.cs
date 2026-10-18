@@ -15,11 +15,34 @@ public static class Updater
     static readonly SemaphoreSlim One = new(1, 1);
     // no static here may build an UpdateManager: one needs Velopack's locator, which UpdateHooks.Run sets
     static readonly string DataDir = UpdateHooks.DataDir;
-    static readonly FeedTrust Trust = new(new AppStore(DataDir), FeedTrust.ReleaseKeys);
+    static readonly AppStore Store = new(DataDir);
+    static readonly FeedTrust Trust = new(Store, FeedTrust.ReleaseKeys);
+
+    // bookkeeping only: a package-tries.json that can't be read or written never stops an update
+    static PackageTries Tries()
+    {
+        try { return Store.LoadPackageTries(); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return new(); }
+    }
+
+    static void Tried(Action<PackageTries> change)
+    {
+        try
+        {
+            lock (Store)
+            {
+                var t = Store.LoadPackageTries();
+                change(t);
+                Store.SavePackageTries(t);
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log($"Couldn't note the package download: {e.Message}"); }
+    }
     static string ResumeFile => Path.Combine(DataDir, "resume-queue.txt");
 
-    /// <summary>A finished download: the manager that downloaded it, its package and its record on disk.</summary>
-    sealed record Download(Velo M, VelopackAsset R, StagedUpdate S)
+    /// <summary>A finished download: the manager that downloaded it, its package and its record on disk.
+    /// <paramref name="BackToStable"/>: "Go back to stable now"'s, never one read back from the disk.</summary>
+    sealed record Download(Velo M, VelopackAsset R, StagedUpdate S, bool BackToStable = false)
     {
         public string Channel => S.Channel;
     }
@@ -38,8 +61,15 @@ public static class Updater
     /// <summary>The token's entitlements; null while signed in and none was read yet.</summary>
     static IReadOnlyCollection<string>? Ent() => App.Account.Status is { } s ? s.Ent : App.Account.SignedIn ? null : [];
 
-    /// <summary>A download is installed, and offered, only while its channel is still the chosen one.</summary>
-    static Download? Usable(Download? d) => AutoInstall.OffersRestart(d?.S, App.Core.Settings.UpdateChannel, AppVersion.Current.Channel, Ent()) ? d : null;
+    /// <summary>A download is installed, and offered, only while its channel is still the chosen one and it is newer than
+    /// this build. Every apply goes through here.</summary>
+    static Download? Usable(Download? d) => AutoInstall.OffersRestart(d?.S, App.Core.Settings.UpdateChannel, AppVersion.Current, Ent(), d?.BackToStable == true) ? d : null;
+
+    /// <summary>The ready download's channel, or else the one the next check reads.</summary>
+    public static string Channel => Usable(ready)?.Channel ?? Chosen();
+
+    /// <summary>Whether the ready download, or else the next one, installs by itself at a start or quit.</summary>
+    public static bool InstallsAutomatically => AutoInstall.On(App.Core.Settings, Channel);
 
     /// <summary>The ready download, and its record for the next start.</summary>
     static void Stage(Download? d)
@@ -84,7 +114,7 @@ public static class Updater
     static Velo Manager(string channel, bool downgrade) =>
         new(new SignedFeedSource(), new UpdateOptions
         {
-            ExplicitChannel = channel, AllowVersionDowngrade = downgrade || UpdateChannels.AllowsDowngrade(channel),
+            ExplicitChannel = channel, AllowVersionDowngrade = downgrade,
             MaximumDeltasBeforeFallback = -1,   // full packages only: a package rebuilt from deltas fails the feed's checksum
         });
 
@@ -122,14 +152,14 @@ public static class Updater
     /// <summary>The one way an update is applied (Quit, "Restart to update"), in order: the check's lock (a check may be
     /// replacing the download; <paramref name="wait"/> at most); the ready download read again; its file whole on disk,
     /// else deleted so the next check downloads it again; every other package deleted, so Update.exe has nothing else to
-    /// fall back on; then, last, no compile running anywhere, the channel still the chosen one and <paramref name="still"/>;
-    /// then <paramref name="apply"/>.</summary>
-    static async Task<bool> ApplyAsync(TimeSpan wait, Action<Velo, VelopackAsset> apply, Func<bool>? still = null)
+    /// fall back on; then, last, no compile running anywhere, the channel still the chosen one and <paramref name="still"/>
+    /// for the download being applied; then <paramref name="apply"/>.</summary>
+    static async Task<bool> ApplyAsync(TimeSpan wait, Action<Velo, VelopackAsset> apply, Func<Download, bool>? still = null)
     {
         if (!await One.WaitAsync(wait)) return false;
         try
         {
-            if (Usable(ready) is not var (m, r, _))
+            if (Usable(ready) is not { M: var m, R: var r } d)
                 return Fail("The update changed meanwhile. Restart to update again once it is ready.");
             if (!await m.OnDisk(r))
             {
@@ -143,7 +173,7 @@ public static class Updater
             Busy.MarkApplying(DataDir, DateTimeOffset.UtcNow);
             if (Busy.IsHeld()) return Undo("A compile started meanwhile. The update installs when SCSKiller quits after it has finished.");
             if (Usable(ready) is null) return Undo("The update channel changed meanwhile. Restart to update again once it is ready.");
-            if (still?.Invoke() == false) return Undo(null);
+            if (still?.Invoke(d) == false) return Undo(null);
             if (OfflineBlocks()) return Undo(OfflineRunning);
             Log($"Handing the update to {r.Version} to Update.exe");
             apply(m, r);   // its preparation too (the resume file): a failure anywhere is undone below
@@ -178,7 +208,7 @@ public static class Updater
         }
     }
 
-    const string OfflineRunning = "An offline session's game or cleanup is running. The update installs once it has ended.";
+    const string OfflineRunning = "A recording session's game or cleanup is running. The update installs once it has ended.";
 
     /// <summary>Read on first use, after UpdateHooks.Run; a failure isn't kept, the next use tries again.</summary>
     public static bool Installed => installed.Value;
@@ -216,9 +246,9 @@ public static class Updater
         else if (marked) Log($"An update didn't install: {AppVersion.Current} started instead.");
         Changed?.Invoke();
         // the games must be known to tell whether one runs: the scan also ends what an offline session left first
-        if (!marked && Usable(ready) is not null && Untouched() && App.Core.Settings.InstallUpdatesAutomatically) await App.Core.ScanAsync(CancellationToken.None);
-        if (!marked && Usable(ready) is { } r && Untouched() && HeldBack() is null && BeginUpdate()
-            && !await ApplyAsync(TimeSpan.Zero, (m, a) => m.ApplyUpdatesAndRestart(a, args), () => Untouched() && !GameRunning()))   // exits this process
+        if (!marked && Usable(ready) is { } u && Untouched() && AutoInstall.On(App.Core.Settings, u.Channel)) await App.Core.ScanAsync(CancellationToken.None);
+        if (!marked && Usable(ready) is { } r && Untouched() && HeldBack(r.Channel) is null && BeginUpdate()
+            && !await ApplyAsync(TimeSpan.Zero, (m, a) => m.ApplyUpdatesAndRestart(a, args), now => Untouched() && !GameRunning() && AutoInstall.On(App.Core.Settings, now.Channel)))   // exits this process
         {
             EndUpdate();
             Log($"The update to {r.S.Version} didn't install at the start: {Problem ?? "the queue started or SCSKiller quit meanwhile."}");
@@ -235,7 +265,7 @@ public static class Updater
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
 
-    static string? HeldBack() => AutoInstall.HeldBack(App.Core.Settings, Busy.IsHeld() || App.Core.Compiling, OfflineBlocks(), GameRunning());
+    static string? HeldBack(string channel) => AutoInstall.HeldBack(App.Core.Settings, channel, Busy.IsHeld() || App.Core.Compiling, OfflineBlocks(), GameRunning());
 
     static bool GameRunning() => App.Core is ScsKiller k ? k.GameRunning() : App.Core.Games.Any(g => g.Playing);
 
@@ -277,14 +307,26 @@ public static class Updater
             {
                 if (!await m.OnDisk(info.TargetFullRelease))
                 {
+                    if (UpdateFeeds.PackageHold(Tries(), DateTimeOffset.Now, asked, AppVersion.Parse(info.TargetFullRelease.Version.ToString())?.Channel != UpdateChannels.Stable) is { } until)
+                    {
+                        Log($"The download of {info.TargetFullRelease.Version} waits until {until:g}");
+                        Problem = asked ? $"The update was downloaded too many times today. SCSKiller tries again at {until:g}." : null;   // a click skips only the backoff
+                        return;
+                    }
                     Downloading = info.TargetFullRelease.Version.ToString();
                     Changed?.Invoke();
                 }
                 Log($"Checked {channel}: {info.TargetFullRelease.Version} is available");
-                await m.DownloadUpdatesAsync(info);   // a package already whole on disk is not fetched again
+                try { await m.DownloadUpdatesAsync(info); }   // a package already whole on disk is not fetched again
+                catch
+                {
+                    Tried(t => t.Failed(DateTimeOffset.Now));
+                    throw;
+                }
+                Tried(t => t.Succeeded());
                 var t = info.TargetFullRelease;
                 Log($"Downloaded {t.Version} ({t.FileName})");
-                if (channel == Chosen()) Stage(new(m, t, new(channel, t.Version.ToString(), t.FileName, t.Size, t.SHA256, SignedFeedSource.Fetched)));   // the choice may have changed meanwhile
+                if (channel == Chosen()) Stage(new(m, t, new(channel, t.Version.ToString(), t.FileName, t.Size, t.SHA256, SignedFeedSource.Fetched), backToStable));   // the choice may have changed meanwhile
             }
         }
         catch (FeedRejectedException e)
@@ -331,13 +373,13 @@ public static class Updater
     public static async Task ApplyOnExitAsync()
     {
         if (Usable(ready) is not { } d) return;
-        if (HeldBack() is { } why)
+        if (HeldBack(d.Channel) is { } why)
         {
             Log($"The update to {d.S.Version} waits for the next start: {why}");
             return;
         }
         if (!BeginUpdate()) return;
-        if (!await ApplyAsync(TimeSpan.FromSeconds(30), (m, r) => m.WaitExitThenApplyUpdates(r, silent: true, restart: false), () => !GameRunning()))
+        if (!await ApplyAsync(TimeSpan.FromSeconds(30), (m, r) => m.WaitExitThenApplyUpdates(r, silent: true, restart: false), now => !GameRunning() && AutoInstall.On(App.Core.Settings, now.Channel)))
         {
             EndUpdate();
             Log($"The update to {d.S.Version} didn't install at the quit: {Problem ?? "a game started meanwhile."}");
@@ -437,6 +479,8 @@ public static class Updater
             using var headers = CancellationTokenSource.CreateLinkedTokenSource(ct);
             headers.CancelAfter(TimeSpan.FromMinutes(1));
             using var r = await Feeds.PackageAsync(version, entry.FileName, headers.Token);
+            // what the edge counts: a full package it answered with a body (stable is on GitHub)
+            if (version.Channel != UpdateChannels.Stable && entry.Type == VelopackAssetType.Full && r.Content.Headers.ContentLength != 0) Tried(t => t.Requested(DateTimeOffset.Now));
             headers.CancelAfter(Timeout.InfiniteTimeSpan);   // the body has its own stall limit
             await using var file = File.Create(localFile);
             await using var body = await r.Content.ReadAsStreamAsync(ct);

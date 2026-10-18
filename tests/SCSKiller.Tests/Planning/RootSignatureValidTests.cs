@@ -209,7 +209,7 @@ public class RootSignatureValidTests
     [Fact]
     public void TheRuntimesOwnOutputPasses()
     {
-        foreach (var rule in Enum.GetValues<RootSig.Rule>())
-            Assert.True(Dxbc.RootSignatureValid(RootSig.Serialize(new RootSig.Desc(1, [[0, 0, 0, 64, 0, 0, 5], [2, 0, 0, 0, 0]]), RootSig.StaticSamplers(rule))), rule.ToString());
+        foreach (var rule in RulesFile.Embedded.Rules.Where(r => r.RootSignature != null))
+            Assert.True(Dxbc.RootSignatureValid(RootSig.Serialize(new RootSig.Desc(1, [[0, 0, 0, 64, 0, 0, 5], [2, 0, 0, 0, 0]]), RootSig.StaticSamplers(rule))), rule.Id);
     }
 }

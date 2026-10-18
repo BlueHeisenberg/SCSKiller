@@ -1,0 +1,87 @@
+{
+  "about": "Store apps that install several games in one folder, listed as one game each. The first game keeps the app's id and its recorder records whichever of them ran last. exes: the game's own exes in the install folder, the first the one it's listed with. data: the folder its engine reader reads, relative to the install folder. A collection whose exes are paths inside each game's data folder lists each game with that folder as its install, with its own recorder.",
+  "collections": [
+    {
+      "games": [
+        {
+          "id": "steam:1659420",
+          "name": "UNCHARTED 4: A Thief's End",
+          "exes": ["u4.exe", "u4-l.exe"],
+          "data": "Uncharted4_data\\build\\pc\\uncharted4"
+        },
+        {
+          "id": "steam:1659420:tll",
+          "name": "UNCHARTED: The Lost Legacy",
+          "exes": ["tll.exe", "tll-l.exe"],
+          "data": "Uncharted4_data\\build\\pc\\thelostlegacy"
+        }
+      ]
+    },
+    {
+      "games": [
+        {
+          "id": "steam:1004640",
+          "name": "FINAL FANTASY TACTICS - The Ivalice Chronicles (Enhanced)",
+          "exes": ["FFT_enhanced.exe"],
+          "data": "data\\enhanced"
+        },
+        {
+          "id": "steam:1004640:classic",
+          "name": "FINAL FANTASY TACTICS - The Ivalice Chronicles (Classic)",
+          "exes": ["FFT_classic.exe"],
+          "data": "data\\classic"
+        }
+      ]
+    },
+    {
+      "games": [
+        {
+          "id": "steam:2552430",
+          "name": "KINGDOM HEARTS FINAL MIX",
+          "exes": ["KINGDOM HEARTS FINAL MIX.exe"],
+          "data": "Image"
+        },
+        {
+          "id": "steam:2552430:recom",
+          "name": "KINGDOM HEARTS Re:Chain of Memories",
+          "exes": ["KINGDOM HEARTS Re_Chain of Memories.exe"],
+          "data": "Image"
+        },
+        {
+          "id": "steam:2552430:kh2",
+          "name": "KINGDOM HEARTS II FINAL MIX",
+          "exes": ["KINGDOM HEARTS II FINAL MIX.exe"],
+          "data": "Image"
+        },
+        {
+          "id": "steam:2552430:bbs",
+          "name": "KINGDOM HEARTS Birth by Sleep FINAL MIX",
+          "exes": ["KINGDOM HEARTS Birth by Sleep FINAL MIX.exe"],
+          "data": "Image"
+        }
+      ]
+    },
+    {
+      "games": [
+        {
+          "id": "steam:1328670",
+          "name": "Mass Effect 3 (Legendary Edition)",
+          "exes": ["Game\\ME3\\Binaries\\Win64\\MassEffect3.exe"],
+          "data": "Game\\ME3"
+        },
+        {
+          "id": "steam:1328670:me1",
+          "name": "Mass Effect (Legendary Edition)",
+          "exes": ["Game\\ME1\\Binaries\\Win64\\MassEffect1.exe"],
+          "data": "Game\\ME1"
+        },
+        {
+          "id": "steam:1328670:me2",
+          "name": "Mass Effect 2 (Legendary Edition)",
+          "exes": ["Game\\ME2\\Binaries\\Win64\\MassEffect2.exe"],
+          "data": "Game\\ME2"
+        }
+      ]
+    }
+  ]
+}

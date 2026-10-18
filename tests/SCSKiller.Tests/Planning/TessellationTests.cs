@@ -61,6 +61,19 @@ public class TessellationTests
 
     /// <summary>A DS writing SV_Position draws on its own and also feeds a GS taking its triangles (e.g. one routing them to
     /// render-target slices): both chains plan, alone and with the PS.</summary>
+    /// <summary>A control-point component the VS declares but never writes doesn't feed a HS that always reads it: the runtime
+    /// rejects that link (Returnal: 34 planned tessellation sets, E_INVALIDARG). An unknown mask on either side links.</summary>
+    [Fact]
+    public void AComponentTheVsNeverWritesDoesntFeedTheHs()
+    {
+        var vsShort = Vs with { Outputs = [Cp[0] with { ReadMask = 0x3 }, Cp[1]] };
+        var hsReads = Hs with { Inputs = [Cp[0] with { ReadMask = 0xF }, Cp[1]] };
+        Assert.False(Planner.Links(vsShort, hsReads));
+        Assert.True(Planner.Links(vsShort, hsReads with { Inputs = [Cp[0] with { ReadMask = 0x3 }, Cp[1]] }));
+        Assert.True(Planner.Links(vsShort, Hs));
+        Assert.True(Planner.Links(Vs, hsReads));
+    }
+
     [Fact]
     public void ADomainShaderWritingPositionAlsoFeedsAGeometryShader()
     {
@@ -78,7 +91,7 @@ public class TessellationTests
     public void RootSignaturesCoverHullAndDomainShaders()
     {
         var st = new SortedDictionary<Stage, ShaderInfo> { [Stage.Vertex] = Vs, [Stage.Hull] = Hs, [Stage.Domain] = Ds, [Stage.Pixel] = Ps };
-        foreach (var rule in new[] { RootSig.Rule.Ue422, RootSig.Rule.Ue425, RootSig.Rule.Ue426, RootSig.Rule.Ff7 })
+        foreach (var rule in new[] { Rules.Ue422, Rules.Ue425, Rules.Ue426, Rules.Ff7 })
         {
             var rs = RootSig.Parse(RootSig.Serialize(RootSig.Build(rule, st, false), RootSig.StaticSamplers(rule)));
             Assert.All(st, s => Assert.Null(RootSig.Uncovered(rs, s.Key, s.Value)));
@@ -172,7 +185,7 @@ public class TessellationTests
             return SCSKiller.Core.Unreal.ShaderContainer.Parse(b, h, c)!;
         }
         var (v, p, h1, d1, h2, d2) = (Info(vs, new(1, 0, 0, 0)), Info(ps, new(0, 1, 0, 1)), Info(hs1, new(1, 0, 0, 0)), Info(ds1, new(1, 1, 0, 1)), Info(hs2, new(1, 0, 0, 0)), Info(ds2, new(1, 1, 0, 1)));
-        var rsBlob = RootSig.Serialize(RootSig.Build(RootSig.Rule.Ue426, new SortedDictionary<Stage, ShaderInfo> { [Stage.Vertex] = v, [Stage.Hull] = h1, [Stage.Domain] = d1, [Stage.Pixel] = p }, false), RootSig.Ue426Samplers);
+        var rsBlob = RootSig.Serialize(RootSig.Build(Rules.Ue426, new SortedDictionary<Stage, ShaderInfo> { [Stage.Vertex] = v, [Stage.Hull] = h1, [Stage.Domain] = d1, [Stage.Pixel] = p }, false), RootSig.Ue426Samplers);
         var rs = PsoDb.Hex(System.Security.Cryptography.SHA1.HashData(rsBlob));
         blobs[rs] = rsBlob;
         SortedDictionary<int, string> St(ShaderInfo h, ShaderInfo d) => new() { [(int)Stage.Vertex] = v.Sha1, [(int)Stage.Hull] = h.Sha1, [(int)Stage.Domain] = d.Sha1, [(int)Stage.Pixel] = p.Sha1 };
@@ -207,7 +220,7 @@ public class TessellationTests
         {
             var (sv, sp) = (Info(Compile("sv" + tag, $"float4 main(uint i:SV_VertexID):SV_Position{{return i*{seed}.{tag};}}", "vs_5_0"), new(0, 0, 0, 0)),
                 Info(Compile("sp" + tag, $"float4 main():SV_Target{{return {seed}.{tag};}}", "ps_5_0"), new(0, 0, 0, 0)));
-            var b = RootSig.Serialize(RootSig.Build(RootSig.Rule.Ue426, new SortedDictionary<Stage, ShaderInfo> { [Stage.Vertex] = sv, [Stage.Pixel] = sp }, false), RootSig.Ue426Samplers);
+            var b = RootSig.Serialize(RootSig.Build(Rules.Ue426, new SortedDictionary<Stage, ShaderInfo> { [Stage.Vertex] = sv, [Stage.Pixel] = sp }, false), RootSig.Ue426Samplers);
             var h = PsoDb.Hex(System.Security.Cryptography.SHA1.HashData(b));
             blobs[h] = b;
             return new('S', PsoDb.Stream(h, new SortedDictionary<int, string> { [(int)Stage.Vertex] = sv.Sha1, [(int)Stage.Pixel] = sp.Sha1 }, [], 3, [28], 0));

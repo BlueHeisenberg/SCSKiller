@@ -85,7 +85,7 @@ public class LinkStateTests
 
     static string Recording(string dir)
     {
-        var b = RootSig.Serialize(RootSig.Build(RootSig.Rule.Ff7, new[] { Vs1, Ps1 }.ToDictionary(s => s.Stage), true), RootSig.StaticSamplers(RootSig.Rule.Ff7));
+        var b = RootSig.Serialize(RootSig.Build(Rules.Ff7, new[] { Vs1, Ps1 }.ToDictionary(s => s.Stage), true), RootSig.StaticSamplers(Rules.Ff7));
         var rs = Hex(System.Security.Cryptography.SHA1.HashData(b));
         var path = Path.Combine(dir, "recording.db");
         using var f = File.Create(path);
@@ -156,7 +156,7 @@ public class LinkStateTests
         var c = new ShaderInfo(new string('c', 40), Stage.Compute, "cs_6_0", 0, new(0, 1, 0, 0), [new("srv", 0, 0, 1)], [], []);
         var sampler = RootSig.Ue426Samplers[..52];
         BinaryPrimitives.WriteUInt32LittleEndian(sampler.AsSpan(44), 0);   // space 0: s0 space 0
-        var rs = RootSig.Serialize(RootSig.Build(RootSig.Rule.Ff7, new Dictionary<Stage, ShaderInfo> { [Stage.Compute] = a }, true), sampler);
+        var rs = RootSig.Serialize(RootSig.Build(Rules.Ff7, new Dictionary<Stage, ShaderInfo> { [Stage.Compute] = a }, true), sampler);
         Assert.True(Core.Carved.Dxbc.RootSignatureValid(rs));
         var dir = Ff7.TempDir("linkstate-unserializable");
         var path = Path.Combine(dir, "recording.db");
@@ -187,7 +187,7 @@ public class LinkStateTests
     {
         var recorded = Enumerable.Range(0, 4).Select(i => new ShaderInfo($"{i:x}".PadLeft(40, 'a'), Stage.Compute, "cs_6_0", 0, new(0, 0, 0, 0), [], [], [])).ToList();
         var unseen = new ShaderInfo(new string('e', 40), Stage.Compute, "cs_6_0", 0, new(0, 1, 0, 0), [new("srv", 0, 0, 1)], [], []);
-        var x16 = RootSig.StaticSamplers(RootSig.Rule.Ff7).ToArray();
+        var x16 = RootSig.StaticSamplers(Rules.Ff7).ToArray();
         for (var o = 0; o < x16.Length; o += 52)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(x16.AsSpan(o), 0x55);        // D3D12_FILTER_ANISOTROPIC
@@ -196,9 +196,9 @@ public class LinkStateTests
         var dir = Ff7.TempDir("linkstate-samplers");
         var path = Path.Combine(dir, "recording.db");
         using (var f = File.Create(path))
-            foreach (var samplers in new[] { RootSig.StaticSamplers(RootSig.Rule.Ff7), x16 })
+            foreach (var samplers in new[] { RootSig.StaticSamplers(Rules.Ff7), x16 })
             {
-                var rs = RootSig.Serialize(RootSig.Build(RootSig.Rule.Ff7, new Dictionary<Stage, ShaderInfo> { [Stage.Compute] = recorded[0] }, true), samplers);
+                var rs = RootSig.Serialize(RootSig.Build(Rules.Ff7, new Dictionary<Stage, ShaderInfo> { [Stage.Compute] = recorded[0] }, true), samplers);
                 var h = Hex(System.Security.Cryptography.SHA1.HashData(rs));
                 WriteBlob(f, h, rs);
                 foreach (var cs in recorded) Write(f, 'C', Compute(h, cs.Sha1));
@@ -213,6 +213,38 @@ public class LinkStateTests
             Assert.Equal((true, 0L), (plan.Stats.RootSigRuleVerified, plan.Stats.LeftOut));
             var planned = PlanFile.Read(plan.FilePath).Records.Where(r => r.Tag is 'C' or 'S' or 'P').Select(r => r.Tag == 'P' ? ParseItem(r.Payload).Stages : Parse(r).Stages);
             Assert.Contains(planned, s => s.ContainsValue(unseen.Sha1));
+        }
+    }
+
+    /// <summary>UE leaves the mesh and amplification deny flags out on a GPU without mesh shaders. A shared recording mixing such
+    /// a player with others still verifies the stock rule (Townfall's community entry: 9,426 of 23,937 records, 82,190 stage
+    /// sets left out); a root signature differing in any other flag or row still doesn't.</summary>
+    [Fact]
+    public void RecordsOfAGpuWithoutMeshShadersStillVerifyTheRule()
+    {
+        var ue56 = new EngineInfo("Unreal", "5.6", null, "D3D12", false, null);
+        var rule = RootSig.RuleFor(ue56)!;
+        var recorded = Enumerable.Range(0, 4).Select(i => new ShaderInfo($"{i:x}".PadLeft(40, 'a'), Stage.Compute, "cs_6_6", 0, new(0, 0, 0, 0), [], [], [])).ToList();
+        var mesh = RootSig.Build(rule, new Dictionary<Stage, ShaderInfo> { [Stage.Compute] = recorded[0] }, true);
+        Assert.Equal(0x300u, mesh.Flags & 0x300);
+        var noMesh = mesh with { Flags = mesh.Flags & ~0x300u };
+        foreach (var (other, verified) in new[] { (noMesh, true), (noMesh with { Flags = noMesh.Flags & ~2u }, false), (noMesh with { Rows = [.. noMesh.Rows, [1, 0, 0, 3, 4]] }, false) })
+        {
+            var dir = Ff7.TempDir("linkstate-meshless");
+            var path = Path.Combine(dir, "recording.db");
+            using (var f = File.Create(path))
+                foreach (var d in new[] { mesh, other })
+                {
+                    var rs = RootSig.Serialize(d, RootSig.StaticSamplers(rule));
+                    var h = Hex(System.Security.Cryptography.SHA1.HashData(rs));
+                    WriteBlob(f, h, rs);
+                    foreach (var cs in recorded) Write(f, 'C', Compute(h, cs.Sha1));
+                }
+            var index = new ShaderIndex("synthetic", ["PCD3D_SM6"], recorded.ToDictionary(s => s.Sha1), [new ShaderMap("m", "Game", "PCD3D_SM6", recorded.Select(s => s.Sha1).ToList())]);
+            var log = new List<string>();
+            var plan = new Planner().Build(Ff7.Game, ue56, index, new Recording(path), Ff7.Nvidia, Path.Combine(dir, "plan"), new SyncLog(log.Add), CancellationToken.None);
+            Assert.Contains(log, l => l.Contains(verified ? "8/8 exact -> building" : "4/8 exact -> learned lookup"));
+            Assert.Equal(verified, plan.Stats.RootSigRuleVerified);
         }
     }
 

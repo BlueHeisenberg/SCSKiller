@@ -41,7 +41,7 @@ public class DawnStoresTests
                 (R1, VsId(2), PsId(2), 0),        // a second record of one pipeline (another state)
                 (R2, VsId(3), 0, 0),              // a depth pass
                 (R3, Cs1, 0, 0),
-                (R3, Cs2, 0, 0), (R4, Cs2, 0, 0), // a lone shader under two root signatures: no root signature to plan it with
+                (R3, Cs2, 0, 0), (R4, Cs2, 0, 0), // a lone shader under two root signatures: a PSO under each
                 (R2, VsId(5), PsId(5), VsId(4)),  // a shader where a GS would be: not read
             ]);
             var bin = Directory.CreateDirectory(Path.Combine(Dir, "bin")).FullName;
@@ -108,8 +108,9 @@ public class DawnStoresTests
         Assert.Null(index.Shaders[S(Cs2)].RootSignature);
         Assert.Equal((rs1, rs2, Sha(d.Roots[R3])), (index.Shaders[S(PsId(0))].RootSignature, index.Shaders[S(PsId(1))].RootSignature, index.Shaders[S(Cs1)].RootSignature));
         for (var i = 1; i < Pairs; i++) Assert.Equal(i % 2 == 0 ? rs1 : rs2, index.Shaders[S(VsId(i))].RootSignature);
+        Assert.All(index.Shaders.Values.Select(s => s.RootSignature).OfType<string>(), h => Assert.Contains(h, index.RootSignatures!.Keys));   // the planner checks coverage with them
         Assert.All(index.Maps, m => Assert.True(m.IsPipeline));   // the records replace the store's pool
-        Assert.Equal(Pairs + 4, index.Maps.Count);
+        Assert.Equal(Pairs + 5, index.Maps.Count);
 
         var got = new Dictionary<string, byte[]>();
         reader.ReadShaders(d.Game, engine, new HashSet<string> { rs1, rs2 }, (h, b) => got.Add(h, b), CancellationToken.None);
@@ -122,14 +123,14 @@ public class DawnStoresTests
         Assert.DoesNotContain(body, r => r.Tag == 'B');
         var psos = body.Where(r => r.Tag == 'S').Select(r => (PsoDb.Parse(r).Rs, PsoDb.Parse(r).Stages))
             .Concat(body.Where(r => r.Tag == 'P').Select(r => PsoDb.ParseItem(r.Payload)).Select(i => (i.Rs, i.Stages))).ToList();
-        var want = d.Records.Where(r => r.Gs == 0 && r.First != Cs2).Select(r => (Stages: string.Join(',', new[] { r.First, r.Ps }.Where(x => x != 0).Select(S)), Rs: Sha(d.Roots[r.Root])))
-            .Distinct().ToDictionary(r => r.Stages, r => r.Rs);
-        Assert.Equal(want, psos.ToDictionary(p => string.Join(',', p.Stages.Values), p => p.Rs));
+        var want = d.Records.Where(r => r.Gs == 0).Select(r => (Stages: string.Join(',', new[] { r.First, r.Ps }.Where(x => x != 0).Select(S)), Rs: Sha(d.Roots[r.Root])))
+            .Distinct().Order();
+        Assert.Equal(want, psos.Select(p => (string.Join(',', p.Stages.Values), p.Rs)).Order());
         // each stage's resources are in its pipeline's root signature (the runtime's check: E_INVALIDARG otherwise)
         var rootOf = d.Roots.Values.ToDictionary(Sha, b => RootSig.Parse(b));
         foreach (var (rs, st) in psos)
             foreach (var (stage, h) in st) Assert.Null(RootSig.Uncovered(rootOf[rs], (Stage)stage, index.Shaders[h]));
-        Assert.Equal((Pairs + 4L, 1L, 3L, true), (plan.Stats.StageSets, plan.Stats.LeftOut, plan.Stats.RootSignatures, plan.Stats.RootSigRuleVerified));
+        Assert.Equal((Pairs + 5L, 0L, 4L, true), (plan.Stats.StageSets, plan.Stats.LeftOut, plan.Stats.RootSignatures, plan.Stats.RootSigRuleVerified));
 
         var work = Path.Combine(dir, "work");
         planner.Materialize(plan, d.Game, engine, reader, null, work, CancellationToken.None);

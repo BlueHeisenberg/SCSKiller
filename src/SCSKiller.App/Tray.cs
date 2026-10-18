@@ -18,8 +18,9 @@ sealed class Tray : IDisposable
     readonly nint _hwnd, _icon;
     string _tip = "SCSKiller";
 
-    /// <summary>Left-click or double-click.</summary>
+    /// <summary>Left click, and the menu's first item.</summary>
     public required Action Open { get; init; }
+    readonly Core.App.TrayClicks _clicks = new((int)GetDoubleClickTime());
     /// <summary>The menu's middle item: "Pause compiling" or "Resume", null = nothing to pause (shown disabled).</summary>
     public required Func<string?> PauseLabel { get; init; }
     public required Action PauseOrResume { get; init; }
@@ -46,6 +47,7 @@ sealed class Tray : IDisposable
         set
         {
             _tip = value.Length > 127 ? value[..127] : value;
+            if (!Added) { Add(); return; }   // retried at each status change: a failed add otherwise lasts until the next TaskbarCreated
             var d = Data(0x4 /* NIF_TIP */);
             Shell_NotifyIconW(1 /* NIM_MODIFY */, ref d);
         }
@@ -58,7 +60,8 @@ sealed class Tray : IDisposable
     void Add()
     {
         var d = Data(0x1 | 0x2 | 0x4 /* NIF_MESSAGE | NIF_ICON | NIF_TIP */);
-        Added = Shell_NotifyIconW(0 /* NIM_ADD */, ref d);
+        // NIM_ADD fails for an icon the shell still has (a TaskbarCreated that kept it) or added after timing out
+        Added = Shell_NotifyIconW(0 /* NIM_ADD */, ref d) || Shell_NotifyIconW(1 /* NIM_MODIFY */, ref d);
     }
 
     NotifyIconData Data(uint flags) => new()
@@ -93,10 +96,10 @@ sealed class Tray : IDisposable
             switch (msg)
             {
                 case CallbackMessage:
-                    switch ((uint)l & 0xFFFF)
+                    switch (t._clicks.On((uint)l & 0xFFFF, Environment.TickCount64))
                     {
-                        case 0x202 or 0x203: t.Open(); break;       // WM_LBUTTONUP, WM_LBUTTONDBLCLK
-                        case 0x205: t.ShowMenu(); break;            // WM_RBUTTONUP
+                        case Core.App.TrayAction.Open: t.Open(); break;
+                        case Core.App.TrayAction.Menu: t.ShowMenu(); break;
                     }
                     return 0;
                 case 0x11:   // WM_QUERYENDSESSION: allow it, and start stopping
@@ -172,4 +175,5 @@ sealed class Tray : IDisposable
     [DllImport("user32.dll")] static extern bool GetCursorPos(out Point p);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(nint hwnd);
     [DllImport("user32.dll")] static extern bool PostMessageW(nint hwnd, uint msg, nint w, nint l);
+    [DllImport("user32.dll")] static extern uint GetDoubleClickTime();
 }

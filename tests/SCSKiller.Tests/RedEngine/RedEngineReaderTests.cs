@@ -97,8 +97,8 @@ public class RedEngineReaderTests
     const string Graphics = "f6c0d61f3ac22727d9ff6e93114588e5309b60be", Tessellation = "e4dd5cf68f8a5071fe1101be89f34b82ff1aab8c", Compute = "576ddc174436275ef40738aff737215322d2e5e1";
 
     static string Rs(params Stage[] stages) => Convert.ToHexStringLower(SHA1.HashData(RootSig.Serialize(
-        RootSig.Build(RootSig.Rule.Red3, stages.ToDictionary(s => s, s => new ShaderInfo("", s, "", 0, new(0, 0, 0, 0), [], [], [])), false),
-        RootSig.StaticSamplers(RootSig.Rule.Red3))));
+        RootSig.Build(Rules.Red3, stages.ToDictionary(s => s, s => new ShaderInfo("", s, "", 0, new(0, 0, 0, 0), [], [], [])), false),
+        RootSig.StaticSamplers(Rules.Red3))));
 
     [Fact]
     public void RootSignaturesAreTheGamesByteForByte()
@@ -109,7 +109,7 @@ public class RedEngineReaderTests
         Assert.Equal(Tessellation, Rs(Stage.Vertex, Stage.Geometry, Stage.Pixel));
         Assert.Equal(Compute, Rs(Stage.Compute));
         var engine = new EngineInfo(RedEngineReader.Family, RedEngineReader.Version, null, "D3D12", false, null);
-        Assert.Equal(RootSig.Rule.Red3, RootSig.RuleFor(engine));
+        Assert.Equal(Rules.Red3, RootSig.RuleFor(engine));
         Assert.True(RootSig.Verified(engine));
     }
 
@@ -232,10 +232,11 @@ public class RedEngineReaderTests
         }
     }
 
-    /// <summary>Slots VS, PS, GS, HS, DS, CS: a technique plans only as a stage set the root signatures are confirmed for,
-    /// with each key a shader of its slot's stage; its compute shader is a pipeline of its own.</summary>
+    /// <summary>Slots VS, PS, GS, HS, DS, CS: a technique is a pipeline when each key is a shader of its slot's stage and the
+    /// stages form one; its compute shader is a pipeline of its own. Whether the rule has a root signature for the set is
+    /// decided at plan time.</summary>
     [Fact]
-    public void TechniquesMustBeConfirmedStageSets()
+    public void TechniquesAreTheirSlotsStages()
     {
         Stage[] st = [Stage.Vertex, Stage.Pixel, Stage.Geometry, Stage.Hull, Stage.Domain, Stage.Compute];
         var shaders = st.ToDictionary(s => s.ToString(), s => new ShaderInfo(s.ToString(), s, "", 0, new(0, 0, 0, 0), [], [], []));
@@ -248,15 +249,151 @@ public class RedEngineReaderTests
         Assert.Null(G(0, 2, 0, 0, 0, 0));    // PS without a VS
         Assert.Null(G(1, 2, 0, 4, 0, 0));    // HS without a DS
         Assert.Null(G(1, 2, 0, 0, 5, 0));    // DS without a HS
-        Assert.Null(G(1, 0, 3, 0, 0, 0));    // VS+GS: not a set the recording confirmed
-        Assert.Null(G(1, 2, 3, 4, 5, 0));    // nor all five
+        Assert.Equal(["Vertex", "Geometry"], G(1, 0, 3, 0, 0, 0));    // not a set the rule lists: left out at plan time
+        Assert.Equal(["Vertex", "Pixel", "Geometry", "Hull", "Domain"], G(1, 2, 3, 4, 5, 0));
         Assert.Null(G(2, 1, 0, 0, 0, 0));    // a PS in the VS slot
         Assert.Null(G(1, 0, 0, 0, 0, 2));    // a PS in the CS slot
         Assert.Null(G(1, 9, 0, 0, 0, 0));    // a key the cache doesn't have
         Assert.Null(G(0, 0, 0, 0, 0, 0));
-        Assert.False(RootSig.Red3Validated([Stage.Mesh, Stage.Pixel]));
+        Assert.False(RootSig.InStageSets(Rules.Red3, [Stage.Vertex, Stage.Geometry]));
+        Assert.False(RootSig.InStageSets(Rules.Red3, [Stage.Mesh, Stage.Pixel]));
         Assert.Throws<RootSig.SerializeException>(() => Rs(Stage.Vertex, Stage.Geometry));
     }
+
+    /// <summary>A server copy of the red3 rule with these stage sets (same id: it replaces the embedded one).</summary>
+    static RulesFile Red3With(params string[][] stageSets)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new { rules = new[] { Rules.Red3 with { StageSets = stageSets } } },
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web) { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+        var server = RulesFile.TryParse(json)!;
+        Assert.Empty(server.Dropped);
+        return RulesFile.WithServer(server);
+    }
+
+    static readonly string[][] Red3Sets = Rules.Red3.StageSets!;
+
+    static List<(char, string)> Records(Plan plan) => [.. PlanFile.Read(plan.FilePath).Records.Select(r => (r.Tag, Convert.ToHexString(r.Payload)))];
+
+    /// <summary>The index keeps every technique; the rule decides at plan time which stage sets get a root signature. Under
+    /// the embedded rules a VS+GS technique with a compute pass (no set the embedded rule lists) plans nothing: records and
+    /// counts as for a cache without it, which is what an index-time filter gave. Once a server rule lists VS+GS, the same
+    /// index plans its graphics pipeline; its compute pass stays out (it goes by the embedded rule's sets). A cache whose
+    /// only technique is such a set isn't REDengine 3's.</summary>
+    [Fact]
+    public void ServerRulesWideningTheStageSetsPlanThemWithoutAReindex()
+    {
+        var d = Data.Value;
+        var gs = Hlsl.Compile("""
+            struct V { float2 uv : TEXCOORD0; float4 p : SV_Position; };
+            [maxvertexcount(3)] void main(triangle V i[3], inout TriangleStream<V> o) { for (int k = 0; k < 3; k++) o.Append(i[k]); }
+            """, "main", "gs_5_1");
+        (ulong, byte[]?)[] shaders = [(10, d.Vs[0]), (11, d.Ps[0]), (12, gs), (14, d.Cs)];
+        var (game, cache) = Install("redengine-widened");
+        File.WriteAllBytes(cache, Materials(shaders, [[10, 11, 0, 0, 0, 0], [10, 0, 12, 0, 0, 14]]));
+        var reader = new RedEngineReader();
+        var engine = reader.Detect(game)!;
+        var index = reader.Index(game, engine, null, CancellationToken.None);
+        var vsGs = T(Tessellation, (Stage.Vertex, d.Vs[0]), (Stage.Geometry, gs));
+        Assert.Contains(index.Maps, m => m.IsPipeline && m.Shaders.Contains(Sha(gs)));
+        Assert.DoesNotContain(index.Maps, m => m.Shaders.Contains(Sha(d.Cs)));
+
+        var (without, withoutCache) = Install("redengine-widened-without");
+        File.WriteAllBytes(withoutCache, Materials(shaders, [[10, 11, 0, 0, 0, 0]]));
+        var baseline = new Planner { Rules = RulesFile.Embedded }.Build(without, engine, reader.Index(without, engine, null, CancellationToken.None), null, Ff7.Nvidia,
+            Ff7.TempDir("redengine-widened-without-plan"), null, CancellationToken.None);
+        var embedded = new Planner { Rules = RulesFile.Embedded }.Build(game, engine, index, null, Ff7.Nvidia, Ff7.TempDir("redengine-widened-embedded"), null, CancellationToken.None);
+        Assert.Equal(Records(baseline), Records(embedded));
+        Assert.Equal(baseline.Stats, embedded.Stats);
+        Assert.Equal([T(Graphics, (Stage.Vertex, d.Vs[0]), (Stage.Pixel, d.Ps[0]))], Psos(embedded));
+
+        var widened = new Planner { Rules = Red3With([.. Red3Sets, ["VS", "GS"]]) }.Build(game, engine, index, null, Ff7.Nvidia, Ff7.TempDir("redengine-widened-server"), null, CancellationToken.None);
+        Assert.Equal([.. Psos(embedded), vsGs], Psos(widened));
+
+        File.WriteAllBytes(withoutCache, Materials(shaders, [[10, 0, 12, 0, 0, 14]]));
+        Assert.Null(new RedEngineReader().Detect(without));
+
+        static HashSet<string> Psos(Plan plan) => PlanFile.Read(plan.FilePath).Records.Where(r => r.Tag is 'S' or 'P')
+            .Select(r => r.Tag == 'S' ? PsoDb.Tuple(PsoDb.Parse(r).Rs, PsoDb.Parse(r).Stages) : PsoDb.Tuple(PsoDb.ParseItem(r.Payload).Rs, PsoDb.ParseItem(r.Payload).Stages)).ToHashSet();
+        string T(string rs, params (Stage S, byte[] B)[] st) => PsoDb.Tuple(rs, st.Select(x => new KeyValuePair<int, string>((int)x.S, Sha(x.B))));
+    }
+
+    /// <summary>A server red3 rule without the description for VS and VS+PS is dropped at load. Rules that still fail to
+    /// build a plan (here such a rule made without the loader) leave the game the embedded rules' plan, never a failed
+    /// compile, and the log says why.</summary>
+    [Fact]
+    public void ServerRulesThatCantPlanFallBackToTheEmbeddedPlan()
+    {
+        var noDefault = Rules.Red3 with { RootSignature = Rules.Red3.RootSignature! with { ByStages = [.. Rules.Red3.RootSignature!.ByStages!.Where(b => b.Any != null)] } };
+        var json = System.Text.Json.JsonSerializer.Serialize(new { rules = new[] { noDefault } },
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web) { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+        var loaded = RulesFile.TryParse(json)!;
+        Assert.Empty(loaded.Rules);
+        Assert.Equal("red3: bad byStages: a stage set with no description", Assert.Single(loaded.Dropped));
+
+        var unchecked_ = (RulesFile)typeof(RulesFile).GetConstructors(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            .Single().Invoke([new List<PlanRule> { noDefault }, new List<string>()]);
+        var d = Data.Value;
+        var reader = new RedEngineReader();
+        var engine = reader.Detect(d.Game)!;
+        var index = reader.Index(d.Game, engine, null, CancellationToken.None);
+        var own = new Planner { Rules = RulesFile.Embedded }.Build(d.Game, engine, index, null, Ff7.Nvidia, Ff7.TempDir("redengine-fallback-own"), null, CancellationToken.None);
+        var log = new List<string>();
+        var dir = Ff7.TempDir("redengine-fallback-server");
+        var plan = new Planner { Rules = unchecked_ }.Build(d.Game, engine, index, null, Ff7.Nvidia, dir, new SyncLog(log.Add), CancellationToken.None);
+        Assert.Equal(Records(own), Records(plan));
+        Assert.Equal(own.Stats, plan.Stats);
+        Assert.Equal(Path.Combine(dir, "plan.bin"), plan.FilePath);
+        Assert.Contains(log, l => l.StartsWith("warning: planning rules: the server's rules for REDengine 3 DX12 build no plan (no red3 root signature for"));
+    }
+
+    /// <summary>A server rule replacing the embedded red3 rule that plans under 90% of its items (here: compute only) isn't
+    /// used for the game: the plan is the embedded rules' one, record for record, and the log says why. One planning as
+    /// much is used.</summary>
+    [Fact]
+    public void AServerRuleThatShrinksThePlanIsIgnoredForTheGame()
+    {
+        var d = Data.Value;
+        var reader = new RedEngineReader();
+        var engine = reader.Detect(d.Game)!;
+        var index = reader.Index(d.Game, engine, null, CancellationToken.None);
+        var own = new Planner { Rules = RulesFile.Embedded }.Build(d.Game, engine, index, null, Ff7.Nvidia, Ff7.TempDir("redengine-shrink-own"), null, CancellationToken.None);
+
+        var log = new List<string>();
+        var dir = Ff7.TempDir("redengine-shrink");
+        var plan = new Planner { Rules = Red3With(["CS"]) }.Build(d.Game, engine, index, null, Ff7.Nvidia, dir, new SyncLog(log.Add), CancellationToken.None);
+        Assert.Equal(Records(own), Records(plan));
+        Assert.Equal(own.Stats, plan.Stats);
+        Assert.Equal(Path.Combine(dir, "plan.bin"), plan.FilePath);
+        Assert.False(Directory.Exists(Path.Combine(dir, "embedded-rules")));
+        Assert.Contains(log, l => l.StartsWith("warning: planning rules: the server's rules for REDengine 3 DX12 plan 1 item, under 90% of the 6 the app's own rules plan"));
+
+        log.Clear();   // another stage set the game doesn't use: as many items, the server's rule is used
+        var same = new Planner { Rules = Red3With([.. Red3Sets, ["VS", "GS"]]) }.Build(d.Game, engine, index, null, Ff7.Nvidia, Ff7.TempDir("redengine-shrink-same"), new SyncLog(log.Add), CancellationToken.None);
+        Assert.Equal(Records(own), Records(same));
+        Assert.DoesNotContain(log, l => l.Contains("planning rules"));
+    }
+
+    /// <summary>The embedded rules' plan is the same, record for record, whether they come as <see cref="RulesFile.Current"/>,
+    /// passed in, or as a server copy that differs only in layout (no second plan then).</summary>
+    [Fact]
+    public void TheEmbeddedRulesPlanIsTheSameHoweverTheyCome()
+    {
+        var d = Data.Value;
+        var reader = new RedEngineReader();
+        var engine = reader.Detect(d.Game)!;
+        var index = reader.Index(d.Game, engine, null, CancellationToken.None);
+        var copy = RulesFile.WithServer(RulesFile.TryParse(System.Text.Json.Nodes.JsonNode.Parse(SCSKiller.Core.App.ContentFile.Embedded("SCSKiller.Core.Planning.plan-rules.json"))!.ToJsonString())!);
+        Assert.Equal(RulesFile.Embedded.Hash(engine), copy.Hash(engine));
+        foreach (var caps in new[] { Ff7.Nvidia, Ff7.Nvidia with { PerStageCache = true }, Ff7.Amd with { StateIndependentCache = true } })
+        {
+            var plans = new[] { new Planner(), new Planner { Rules = RulesFile.Embedded }, new Planner { Rules = copy } }
+                .Select((p, i) => p.Build(d.Game, engine, index, null, caps, Ff7.TempDir($"redengine-same-{i}"), null, CancellationToken.None)).ToList();
+            Assert.All(plans, p => Assert.Equal(Records(plans[0]), Records(p)));
+            Assert.All(plans, p => Assert.Equal(plans[0].Stats, p.Stats));
+        }
+    }
+
+    sealed class SyncLog(Action<string> a) : IProgress<string> { public void Report(string value) => a(value); }
 
     sealed class Stub : IEngineReader
     {
@@ -340,7 +477,7 @@ public class RedEngineReaderTests
         Assert.True(index.Shaders.ContainsKey(vs) && index.Shaders.ContainsKey(ps));
         Assert.DoesNotContain(index.Maps, m => m.Shaders.Contains(vs) || m.Shaders.Contains(ps));
 
-        var rsBlob = RootSig.Serialize(RootSig.Build(RootSig.Rule.Red3, new Dictionary<Stage, ShaderInfo> { [Stage.Vertex] = index.Shaders[vs], [Stage.Pixel] = index.Shaders[ps] }, false), []);
+        var rsBlob = RootSig.Serialize(RootSig.Build(Rules.Red3, new Dictionary<Stage, ShaderInfo> { [Stage.Vertex] = index.Shaders[vs], [Stage.Pixel] = index.Shaders[ps] }, false), []);
         var db = Path.Combine(game.InstallDir, "recording.db");
         using (var s = File.Create(db))
         {
@@ -362,17 +499,17 @@ public class RedEngineReaderTests
         var recs = Enumerable.Range(0, 200).Select(i => new PsoDb.Rec('C', PsoDb.Compute(new string('a', 40), $"{i:x40}"))).ToList();
         PsoDb.Rec N(PsoDb.Rec r, uint slot, uint options = 0) => new PsoDb.NvState(r.Key, slot, 1, 1, options).ToRec();
         var nv = recs.Take(199).Select((r, i) => N(r, 12, i < 150 ? 0u : 17u)).ToList();   // one record without a state: 199 of 200
-        Assert.Equal(new RtCollections.Nv(12, 1, 0), PlanBuilder.RasterNv(Ff7.Nvidia, RootSig.Rule.Ue426, recs, nv));
-        Assert.Null(PlanBuilder.RasterNv(Ff7.Amd, RootSig.Rule.Ue426, recs, nv));
-        Assert.Null(PlanBuilder.RasterNv(Ff7.Nvidia, RootSig.Rule.Ue426, recs, nv.Take(197)));                    // 197 of 200: under 99%
-        Assert.Null(PlanBuilder.RasterNv(Ff7.Nvidia, RootSig.Rule.Ue426, recs, [.. nv.Take(150), .. recs.Skip(150).Take(49).Select(r => N(r, 5))])); // two slots
-        Assert.Null(PlanBuilder.RasterNv(Ff7.Nvidia, RootSig.Rule.Ue426, recs, [.. nv, .. recs.Select(r => N(r, uint.MaxValue, 17))]));   // each one's last state: no slot
-        Assert.Equal(new RtCollections.Nv(12, 1, 0), PlanBuilder.RasterNv(Ff7.Nvidia, RootSig.Rule.Ue426, recs, [.. recs.Select(r => N(r, 5)), .. nv]));   // nor an earlier one
-        Assert.Equal(new RtCollections.Nv(12, 1, 0), PlanBuilder.RasterNv(Ff7.Nvidia, RootSig.Rule.Red3, [], []));
-        Assert.Equal(new RtCollections.Nv(12, 1, 0), PlanBuilder.RasterNv(Ff7.Nvidia, RootSig.Rule.Red3, recs, []));   // a recording made on AMD: none recorded
-        Assert.Equal(new RtCollections.Nv(12, 1, 0), PlanBuilder.RasterNv(Ff7.Nvidia, RootSig.Rule.Red3, recs, nv));
-        Assert.Null(PlanBuilder.RasterNv(Ff7.Nvidia, RootSig.Rule.Ue426, [], []));
-        Assert.Null(PlanBuilder.RasterNv(Ff7.Amd, RootSig.Rule.Red3, [], []));
+        Assert.Equal(new RtCollections.Nv(12, 1, 0), PlanBuilder.RasterNv(Ff7.Nvidia, "Unreal", recs, nv));
+        Assert.Null(PlanBuilder.RasterNv(Ff7.Amd, "Unreal", recs, nv));
+        Assert.Null(PlanBuilder.RasterNv(Ff7.Nvidia, "Unreal", recs, nv.Take(197)));                    // 197 of 200: under 99%
+        Assert.Null(PlanBuilder.RasterNv(Ff7.Nvidia, "Unreal", recs, [.. nv.Take(150), .. recs.Skip(150).Take(49).Select(r => N(r, 5))])); // two slots
+        Assert.Null(PlanBuilder.RasterNv(Ff7.Nvidia, "Unreal", recs, [.. nv, .. recs.Select(r => N(r, uint.MaxValue, 17))]));   // each one's last state: no slot
+        Assert.Equal(new RtCollections.Nv(12, 1, 0), PlanBuilder.RasterNv(Ff7.Nvidia, "Unreal", recs, [.. recs.Select(r => N(r, 5)), .. nv]));   // nor an earlier one
+        Assert.Equal(new RtCollections.Nv(12, 1, 0), PlanBuilder.RasterNv(Ff7.Nvidia, RedEngineReader.Family, [], []));
+        Assert.Equal(new RtCollections.Nv(12, 1, 0), PlanBuilder.RasterNv(Ff7.Nvidia, RedEngineReader.Family, recs, []));   // a recording made on AMD: none recorded
+        Assert.Equal(new RtCollections.Nv(12, 1, 0), PlanBuilder.RasterNv(Ff7.Nvidia, RedEngineReader.Family, recs, nv));
+        Assert.Null(PlanBuilder.RasterNv(Ff7.Nvidia, "Unreal", [], []));
+        Assert.Null(PlanBuilder.RasterNv(Ff7.Amd, RedEngineReader.Family, [], []));
     }
 
     /// <summary>A cache replaced by a shorter one after the index: its shaders are unavailable, never an exception.</summary>

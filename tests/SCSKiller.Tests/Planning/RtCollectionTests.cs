@@ -36,7 +36,7 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Equal(Chs.Sha1, y.Library);
         Assert.Equal((32u, 8u, 1u, 4u), (y.Payload, y.Attributes, y.Depth, y.Flags));
         var blobs = PlanFile.Read(nv.FilePath).Records.Where(r => r.Tag == 'B').ToDictionary(r => Hex(r.Payload.AsSpan(0, 20)), r => r.Payload[20..]);
-        Assert.Equal(RtCollections.Serialize(RtCollections.Ue426Global, RootSig.Ue426Samplers).Hash, y.Global);
+        Assert.Equal(RtCollections.Serialize(Rules.Ue426Global, RootSig.Ue426Samplers).Hash, y.Global);
         var local = RootSig.Parse(blobs[y.LocalOther]);
         Assert.Equal(0x80u, local.Flags); // LOCAL_ROOT_SIGNATURE
         Assert.Null(RootSig.Uncovered(new RootSig.Ranges(0, [.. RootSig.Parse(blobs[y.Global]).Slots, .. local.Slots]), Stage.Library, Chs));
@@ -58,7 +58,7 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         var db = Path.Combine(dir, "rec.db");
         using (var f = File.Create(db))
         {
-            var rs = RootSig.Serialize(RootSig.Build(RootSig.Rule.Ue426, new Dictionary<Stage, ShaderInfo> { [Stage.Vertex] = Vs }, false), RootSig.Ue426Samplers);
+            var rs = RootSig.Serialize(RootSig.Build(Rules.Ue426, new Dictionary<Stage, ShaderInfo> { [Stage.Vertex] = Vs }, false), RootSig.Ue426Samplers);
             var h = Hex(System.Security.Cryptography.SHA1.HashData(rs));
             WriteBlob(f, h, rs);
             var s = Stream(h, new SortedDictionary<int, string> { [(int)Stage.Vertex] = Vs.Sha1 }, Planner.VsLayout(Vs), 3, [], D32Float);
@@ -76,7 +76,7 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
     {
         var dir = Ff7.TempDir("rt-gap");
         var db = Path.Combine(dir, "rec.db");
-        var (rs, blob) = RtCollections.Serialize(RtCollections.Ue426Global, RootSig.Ue426Samplers);
+        var (rs, blob) = RtCollections.Serialize(Rules.Ue426Global, RootSig.Ue426Samplers);
         using (var f = File.Create(db))
         {
             WriteBlob(f, rs, blob);
@@ -175,6 +175,56 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Equal((0L, 0L), Rt("inline-only", noLibraries, Sfi0(RayQuery)));
     }
 
+    /// <summary>Ray tracing shaders off (Settings.CompileRayTracing, a game's override): no collection is synthesized and the
+    /// recording's state objects are left out, so no library counts as missing. Every other PSO stays, those that trace rays
+    /// inline (RayQuery) too, from the game files and from the recording.</summary>
+    [Fact]
+    public void RayTracingOffLeavesOutStateObjectsAndCollectionsOnly()
+    {
+        var dir = Ff7.TempDir("rt-setting-off");
+        var cs = new ShaderInfo(Hash("rq-cs-off"), Stage.Compute, "cs_6_5", 100, new ResourceCounts(1, 1, 1, 0), [], [], [], InlineRayTracing: true);
+        var index = new ShaderIndex("rt", ["PCD3D_SM5"], new[] { Vs, Chs, Bindless, cs }.ToDictionary(s => s.Sha1),
+            [new ShaderMap("m", "Game", "PCD3D_SM5", [Vs.Sha1, Chs.Sha1, Bindless.Sha1]), new ShaderMap("c", "Game", "PCD3D_SM5", [cs.Sha1])]);
+        List<Rec> Body(Plan p) => [.. PlanFile.Read(p.FilePath).Records];
+
+        // NVIDIA, no recording: the collection goes, the game files' PSOs stay
+        Plan Nv(bool rt) => new Planner().Build(Ff7.Game, Ue427, index, null, Nvidia, Path.Combine(dir, $"nv-{rt}"), new Log(output.WriteLine), CancellationToken.None, rayTracing: rt);
+        var (on, off) = (Nv(true), Nv(false));
+        Assert.Single(Items(on));
+        Assert.Empty(Items(off));
+        Assert.Equal((2L, 1L), (on.Stats.RtLibraries, on.Stats.RtUncovered));
+        Assert.Equal((2L, 0L), (off.Stats.RtLibraries, off.Stats.RtUncovered));
+        Assert.Equal(Body(on).Where(r => r.Tag is not ('Y' or 'B')).Select(r => r.Key).Order(), Body(off).Where(r => r.Tag != 'B').Select(r => r.Key).Order());
+        Assert.Contains(Body(off), r => r.Tag != 'B' && Core.Planning.Rehydrate.References([r]).Contains(cs.Sha1));
+        // a plan built with them before the setting went off: its collections aren't counted as new pipelines either
+        var y = Body(on).Single(r => r.Tag == 'Y').Key;
+        bool Counted(bool rt) => WarmInputs.Of(WarmInputs.Recorded.Read([], _ => true, rayTracing: rt), on.FilePath, [], _ => true).Any(i => WarmInputs.Key(i) == y);
+        Assert.Equal((true, false), (Counted(true), Counted(false)));
+
+        // AMD, a recording with a state object and a RayQuery PSO: the state object goes, the PSO stays
+        var db = Path.Combine(dir, "rec.db");
+        var (rs, blob) = RtCollections.Serialize(Rules.Ue426Global, RootSig.Ue426Samplers);
+        var rq = Sfi0(0x100000);
+        var rqHash = Hex(System.Security.Cryptography.SHA1.HashData(rq));
+        using (var f = File.Create(db))
+        {
+            WriteBlob(f, rs, blob);
+            var so = new MemoryStream();
+            var w = new BinaryWriter(so);
+            w.Write(3u); w.Write(2u);
+            w.Write(1u); w.Write(Convert.FromHexString(rs));
+            w.Write(5u); w.Write(Convert.FromHexString(Chs.Sha1)); w.Write(0u);
+            Write(f, 'R', so.ToArray());
+            WriteBlob(f, rqHash, rq);
+            Write(f, 'C', Compute(Zero, rqHash));
+        }
+        PlanStats Amd(bool rt) => new Planner().Build(Ff7.Game, Ue427, index, new Recording(db), Ff7.Amd, Path.Combine(dir, $"amd-{rt}"), null, CancellationToken.None, rayTracing: rt).Stats;
+        var (amdOn, amdOff) = (Amd(true), Amd(false));
+        Assert.Equal((1L, 2L), (amdOn.RtStateObjects, amdOn.Recorded));
+        Assert.Equal((0L, 1L, 0L), (amdOff.RtStateObjects, amdOff.Recorded, amdOff.RtUncovered));
+        Assert.False(ScsKiller.NeedsRtRecording(amdOff));
+    }
+
     /// <summary>Unreal 5 whose game files have shaders that trace rays inline (hardware Lumen) counts them: its DXIL
     /// libraries, still uncovered, then don't need a recording. Unreal 4 and a state object recorded keep the DXR rule.</summary>
     [Fact]
@@ -202,6 +252,17 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
 
     /// <summary>The Windows device profile's r.RayTracing.AllowPipeline from the configs in the paks (SILENT HILL: Townfall's
     /// Townfall/Platforms/Windows/Config/WindowsDeviceProfiles.ini), the project's over the engine's.</summary>
+    [Fact]
+    public void HasRayTracingFromAnyOfTheThreeKinds()
+    {
+        var none = new PlanStats(0, 1, 0, 0, true, RtInline: 0);
+        Assert.False(ScsKiller.HasRayTracing(null));
+        Assert.False(ScsKiller.HasRayTracing(none));
+        Assert.True(ScsKiller.HasRayTracing(none with { RtLibraries = 3 }));
+        Assert.True(ScsKiller.HasRayTracing(none with { RtStateObjects = 2 }));
+        Assert.True(ScsKiller.HasRayTracing(none with { RtInline = 5 }));
+    }
+
     [Fact]
     public void RayTracingPipelinesOffInTheWindowsDeviceProfile()
     {
@@ -315,8 +376,8 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Equal("shared uniform buffers in space 4", RtCollections.Ue5ShapeMismatch([Rgs, Hit5, Hit56 with { Counts = Hit56.Counts with { Flags = 0 } }]));
     }
 
-    /// <summary>UE 5.0-5.4 without a recording, for libraries of 5.1's binding shape: <see cref="RtCollections.Ue51Global"/>
-    /// (5.4: <see cref="RtCollections.Ue54Global"/>, its 32 samplers), 6 system constants, each library's own payload.</summary>
+    /// <summary>UE 5.0-5.4 without a recording, for libraries of 5.1's binding shape: <see cref="Rules.Ue51Global"/>
+    /// (5.4: <see cref="Rules.Ue54Global"/>, its 32 samplers), 6 system constants, each library's own payload.</summary>
     [Theory]
     [InlineData("5.0")]
     [InlineData("5.1")]
@@ -331,7 +392,7 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Equal([Rgs.Sha1, Hit5.Sha1], ys.Keys.Order());
         var y = ys[Hit5.Sha1];
         Assert.Equal((0u, 8u, 1u, 4u), (y.Payload, y.Attributes, y.Depth, y.Flags));
-        var desc = version == "5.4" ? RtCollections.Ue54Global : RtCollections.Ue51Global;
+        var desc = version == "5.4" ? Rules.Ue54Global : Rules.Ue51Global;
         var (global, blob) = RtCollections.Serialize(desc, RootSig.Ue426Samplers);
         Assert.Equal(global, y.Global);
         Assert.Equal(["0,0,0,64,0,1,5", $"0,0,3,{(version == "5.4" ? 32 : 16)},0,1,1", "0,0,1,16,0,1,3", "2,0,0,1,8"], desc.Rows.Take(4).Select(r => string.Join(',', r)));
@@ -339,7 +400,7 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         if (D3D12Runtime.Available) Assert.Equal(0, D3D12Runtime.CreateRootSignature(blob));
         Assert.Equal(RtCollections.Serialize(RtCollections.LocalRs(Hit5.Counts, false, Hit5.Bindings, 6), []).Hash, y.LocalOther);
         Assert.Equal((3L, 1L), (plan.Stats.RtLibraries, plan.Stats.RtUncovered));
-        Assert.Contains(log, l => l.Contains(version == "5.1" ? "Oblivion Remastered's recording" : $"unverified for {version}"));
+        Assert.Contains(log, l => l.Contains(version == "5.4" ? "unverified for 5.4" : "Oblivion Remastered's 5.1 recording"));
     }
 
     /// <summary>Libraries not of 5.1's binding shape (5.4 bindless, a 5.1 game whose hit libraries bind no index buffers) and
@@ -413,7 +474,7 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         var other = Lib("rt425-other");
         var lib = Library((10, "DefaultMainCHS", 24));
         var (local, localBlob) = RtCollections.Serialize(RtCollections.LocalRs(recorded.Counts, false, recorded.Bindings), []);
-        var (global, globalBlob) = RtCollections.Serialize(RtCollections.Ue426Global, RootSig.Ue426Samplers);
+        var (global, globalBlob) = RtCollections.Serialize(Rules.Ue426Global, RootSig.Ue426Samplers);
         const string name = "7ec183cab5332e20";
         var so = new MemoryStream();
         var w = new BinaryWriter(so);
@@ -449,34 +510,88 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Equal([(other.Sha1, RtCollections.NoConfig)], Items(plan).Select(y => (y.Library, y.Flags)));
     }
 
-    /// <summary>Kuro's 4.26 fork (Wuthering Waves) without a recording: its root signatures aren't 4.26's, so nothing is
-    /// synthesized, ray tracing collections included, where stock 4.26 gets its collection.</summary>
+    /// <summary>Kuro's 4.26 fork (Wuthering Waves) without a recording: its raster root signatures are 4.26's denying the mesh
+    /// and amplification stages (ue-kuro), its collections get its own global root signature (space 77, then 4.26's space 1
+    /// block without the NVAPI slot, then NVAPI's u0 space 1001 as a table), each library's own payload and NVAPI's slot u0
+    /// space 1001 (ue-kuro-rt). A library binding space 77 is covered by that rule alone: stock 4.26, another fork and 4.27 under
+    /// the fork's name leave it out and keep 4.26's root signatures.</summary>
     [Fact]
-    public void KuroForkSynthesizesNothingWithoutARecording()
+    public void KuroForkHasItsOwnRules()
     {
         var dir = Ff7.TempDir("rt-kuro");
-        var stock = new Planner().Build(Ff7.Game, Ue427 with { Version = "4.26" }, Index(), null, Nvidia, Path.Combine(dir, "stock"), null, CancellationToken.None);
-        Assert.Single(Items(stock));
-        var log = new List<string>();
-        var kuro = new Planner().Build(Ff7.Game, Ue427 with { Version = "4.26", Fork = "GAME_WutheringWaves" }, Index(), null, Nvidia, Path.Combine(dir, "kuro"),
-            new Log(log.Add), CancellationToken.None);
-        Assert.Empty(Items(kuro));
-        Assert.Equal(0, kuro.Stats.Generated);
-        Assert.Contains(log, l => l.Contains("no collection rule"));
+        var space77 = Lib("rt-space77", new Binding("uav", 77, 0, 16), new Binding("srv", 77, 3, 1), new Binding("cbv", 77, 1, 1), new Binding("cbv", 0, 0, 1));
+        var ps = Shader("rt-kuro-ps", Stage.Pixel, [In("SV_Position", 0, 0, 0xF, 3, 1)], [In("SV_Target", 0, 0, 0xF, 3, 64)]);
+        var index = new ShaderIndex("rt-kuro", ["PCD3D_SM5"], new[] { Vs, ps, Chs, Bindless, space77 }.ToDictionary(s => s.Sha1),
+            [new ShaderMap("m", "Game", "PCD3D_SM5", [Vs.Sha1, ps.Sha1, Chs.Sha1, Bindless.Sha1, space77.Sha1])]);
+        Plan Build(EngineInfo e, string name) => new Planner().Build(Ff7.Game, e, index, null, Nvidia, Path.Combine(dir, name), new Log(output.WriteLine), CancellationToken.None);
+        static Dictionary<string, byte[]> Blobs(Plan p) => PlanFile.Read(p.FilePath).Records.Where(r => r.Tag == 'B').ToDictionary(r => Hex(r.Payload.AsSpan(0, 20)), r => r.Payload[20..]);
+
+        var kuro = Build(Ue427 with { Version = "4.26", Fork = "GAME_WutheringWaves" }, "kuro");
+        Assert.Equal("ue-kuro", kuro.Stats.RsRule);
+        // the fork's global root signature as its recording shows it, built here apart from plan-rules.json
+        RootSig.Desc expected = new(0, [[0, 0, 1, 16, 0, 77, 3], [0, 0, 0, 64, 0, 77, 5], [2, 0, 2, 77, 8], [2, 0, 1, 77, 8],
+            .. Rules.Ue426Global.Rows.Skip(1), [0, 0, 1, 1, 0, 1001, 0, 0]]);
+        Assert.Equal(expected.Key, Rules.KuroGlobal.Key);
+        Assert.Equal("0,0,1,1,0,404,3", string.Join(',', Rules.Ue426Global.Rows[0]));   // the NVAPI slot the fork drops
+        var (global, blob) = RtCollections.Serialize(expected, RootSig.Ue426Samplers);
+        Assert.Equal(new[] { Chs.Sha1, space77.Sha1 }.Order(), Items(kuro).Select(y => y.Library).Order());
+        Assert.All(Items(kuro), y => Assert.Equal((global, 0u, 8u, 1u, 4u, new RtCollections.Nv(0, 1001, 0)), (y.Global, y.Payload, y.Attributes, y.Depth, y.Flags, y.Nv!.Value)));
+        Assert.Equal((3L, 1L), (kuro.Stats.RtLibraries, kuro.Stats.RtUncovered));   // the bindless library: space 3 is in neither root signature
+        var ranges = RootSig.Parse(blob);
+        Assert.Equal(0u, ranges.Flags);
+        Assert.Equal(4 + 19 + 1 + 6, ranges.Slots.Length);   // 4 in space 77, 19 in space 1, the NVAPI table, 6 static samplers
+        Assert.Equal((0u, 1u, 0u, 16u, 77u, true), ranges.Slots[0]);   // UAV table u0-u15 space 77 first
+        Assert.Equal((0u, 2u, 2u, 1u, 77u, false), ranges.Slots[2]);   // root CBV b2 space 77 before b1
+        Assert.Equal((0u, 1u, 0u, 1u, 1001u, true), ranges.Slots[23]); // NVAPI u0 space 1001 as a table
+        Assert.DoesNotContain(ranges.Slots, x => x.Space == 404);
+        if (D3D12Runtime.Available) Assert.Equal(0, D3D12Runtime.CreateRootSignature(blob));
+        var raster = Blobs(kuro).Where(b => b.Key != global && (RootSig.Parse(b.Value).Flags & 0x80) == 0).Select(b => RootSig.Parse(b.Value).Flags).ToList();
+        Assert.NotEmpty(raster);
+        Assert.All(raster, f => Assert.Equal(0x300u, f & 0x300));
+
+        // a recording with ray tracing off: its NVAPI record names a raster pipeline, not a collection, so the rule's slot stays
+        var db = Path.Combine(dir, "raster.db");
+        using (var f = File.Create(db))
+        {
+            var rs = RootSig.Serialize(RootSig.Build(Rules.Kuro, new Dictionary<Stage, ShaderInfo> { [Stage.Vertex] = Vs }, false), RootSig.Ue426Samplers);
+            var h = Hex(System.Security.Cryptography.SHA1.HashData(rs));
+            WriteBlob(f, h, rs);
+            var stream = new Rec('S', Stream(h, new SortedDictionary<int, string> { [(int)Stage.Vertex] = Vs.Sha1 }, Planner.VsLayout(Vs), 3, [], D32Float));
+            Write(f, stream.Tag, stream.Payload);
+            var n = new NvState(stream.Key, uint.MaxValue, 0, 1, 0).ToRec();
+            Write(f, n.Tag, n.Payload);
+        }
+        var recorded = new Planner().Build(Ff7.Game, Ue427 with { Version = "4.26", Fork = "GAME_WutheringWaves" }, index, new Recording(db), Nvidia,
+            Path.Combine(dir, "raster-rec"), new Log(output.WriteLine), CancellationToken.None);
+        Assert.Equal(2, Items(recorded).Count);
+        Assert.All(Items(recorded), y => Assert.Equal(new RtCollections.Nv(0, 1001, 0), y.Nv));
+
+        foreach (var (e, name) in new[] { (Ue427 with { Version = "4.26" }, "stock"), (Ue427 with { Version = "4.26", Fork = "GAME_FinalFantasy7Rebirth" }, "ff7"),
+            (Ue427 with { Version = "4.26", Fork = "GAME_StellarBlade" }, "stellar"), (Ue427 with { Fork = "GAME_WutheringWaves" }, "kuro-427") })
+        {
+            var other = Build(e, name);
+            Assert.NotEqual("ue-kuro", other.Stats.RsRule);
+            Assert.DoesNotContain(space77.Sha1, Items(other).Select(y => y.Library));
+            Assert.All(Items(other), y => Assert.NotEqual(global, y.Global));
+            Assert.All(Items(other), y => Assert.Null(y.Nv));
+            if (name != "ff7")   // FF7's own construction denies every unused stage, mesh and amplification included
+                Assert.All(Blobs(other).Values.Select(b => RootSig.Parse(b)).Where(r => (r.Flags & 0x80) == 0), r => Assert.Equal(0u, r.Flags & 0x300));
+        }
     }
 
-    /// <summary>UE 4.25 without a recording: 4.26's global root signature without the NVAPI slot, with 4.25's static samplers
-    /// (s1000-s1005, space 0), no state object config, payload 64 (Returnal's recording: 401 of its 403 collections rebuilt).</summary>
+    /// <summary>UE 4.25 without a recording (plan-rules.json's ue-4.25-rt): 4.26's global root signature without the NVAPI
+    /// slot, with 4.25's static samplers (s1000-s1005, space 0), no state object config, payload 64 (Returnal's recording: 401
+    /// of its 403 collections rebuilt).</summary>
     [Fact]
     public void Ue425CollectionsWithoutARecording()
     {
         var dir = Ff7.TempDir("rt-425");
         var log = new List<string>();
         var plan = new Planner().Build(Ff7.Game, Ue427 with { Version = "4.25" }, Index(), null, Nvidia, Path.Combine(dir, "plan"), new Log(log.Add), CancellationToken.None);
-        var (global, blob) = RtCollections.Serialize(RtCollections.Ue425Global, RootSig.StaticSamplers(RootSig.Rule.Ue425));
+        var (global, blob) = RtCollections.Serialize(Rules.Ue425Global, RootSig.UeSamplers(1000, 0));
         var y = Items(plan).Single(i => i.Library == Chs.Sha1);
         Assert.Equal((global, 64u, 8u, 1u, RtCollections.NoConfig), (y.Global, y.Payload, y.Attributes, y.Depth, y.Flags));
-        Assert.Equal("0,0,0,64,0,1,5", string.Join(',', RtCollections.Ue425Global.Rows[0]));
+        Assert.Equal(Rules.Ue426Global.Rows.Skip(1).Select(r => string.Join(',', r)), Rules.Ue425Global.Rows.Select(r => string.Join(',', r)));
         Assert.Contains(log, l => l.Contains("UE 4.25's"));
         if (D3D12Runtime.Available) Assert.Equal(0, D3D12Runtime.CreateRootSignature(blob));
         var work = Path.Combine(dir, "work");
@@ -513,7 +628,7 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         var items = Items(plan);
         Assert.Equal(3, items.Count); // none uncovered
         Assert.All(items, y => Assert.Equal((0u, 8u, 1u, 4u), (y.Payload, y.Attributes, y.Depth, y.Flags)));
-        var global = RtCollections.GlobalFor([hit, shadow, rayGen]);
+        var global = RtCollections.GlobalFor([hit, shadow, rayGen], Rules.Ue426Global);
         Assert.Equal(RtCollections.Serialize(global, RootSig.Ue426Samplers).Hash, items[0].Global);
         Assert.Equal(["0,0,0,128,0,1,5", "0,0,0,4294967295,0,5,5", "0,0,0,4294967295,0,6,5", "0,0,0,4294967295,0,7,5", "0,0,3,16,0,1,1", "0,0,1,16,0,1,3"],
             global.Rows.Take(6).Select(r => string.Join(',', r)));
@@ -592,6 +707,62 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Equal(new NvState(r.Key, 0, 1001, 2, 0), NvState.Parse(Assert.Single(gen, r => r.Tag == 'N')));
     }
 
+    /// <summary>NVAPI's pipeline creation options are global and only state objects use them (nvapi.h): once a recording has an
+    /// 'R' created with options, its state objects recorded with 0 and the collections it synthesizes take them, and
+    /// Materialize writes their 'N' records after the recording's; a recording with none changes nothing.</summary>
+    [Fact]
+    public void RecordedCreationOptionsGoToStateObjectsAndCollectionsWithout()
+    {
+        static byte[] U(uint v) => BitConverter.GetBytes(v);
+        var (libA, libB, rs) = (Hash("opts-a"), Hash("opts-b"), Hash("opts-rs"));
+        byte[] So(string? baseKey, string lib) => [.. baseKey == null ? [] : Convert.FromHexString(baseKey), .. U(3), .. U(2),
+            .. U(5), .. Convert.FromHexString(lib), .. U(1), .. U(3), .. System.Text.Encoding.Unicode.GetBytes("Hit"), .. U(uint.MaxValue), .. U(0),
+            .. U(1), .. Convert.FromHexString(rs)];
+        var occlusion = new Rec('R', So(null, libA));
+        var material = new Rec('A', So(occlusion.Key, libB));
+        var other = new Rec('R', So(null, libB));
+        var recs = new[] { occlusion, new NvState(occlusion.Key, 12, 1, 1, 0x11).ToRec(), material, other, new NvState(other.Key, 12, 1, 1, 0).ToRec() };
+        Assert.Equal(0x11u, RtCollections.RecordedOptions(recs));
+        var third = new Rec('R', So(null, rs));   // two 'R' at 5 against 0x11 once, though 0x11's is in the union twice
+        Assert.Equal(5u, RtCollections.RecordedOptions([.. recs, new NvState(other.Key, 12, 1, 1, 5).ToRec(), third, new NvState(third.Key, 12, 1, 1, 5).ToRec(), occlusion]));
+        Assert.Equal([new NvState(material.Key, uint.MaxValue, 0, 0, 0x11), new NvState(other.Key, 12, 1, 1, 0x11)], RtCollections.OptionFixes(recs).Select(NvState.Parse));
+        Assert.Empty(RtCollections.OptionFixes([occlusion, material, new NvState(occlusion.Key, 12, 1, 1, 0).ToRec(), new NvState(material.Key, 12, 1, 1, 0x11).ToRec()]));
+        // a recorder that records the global options: its 0 is the driver's (created before the game set them, or reset)
+        Assert.Empty(RtCollections.OptionFixes([recs[0], recs[1], material, new NvState(material.Key, uint.MaxValue, 0, NvState.GlobalOptions, 0).ToRec()]));
+        Assert.Equal(new RtCollections.Nv(12, 1, 0x11), RtCollections.WithOptions(new(12, 1, 0), 0x11));
+        Assert.Equal(new RtCollections.Nv(12, 1, 5), RtCollections.WithOptions(new(12, 1, 5), 0x11));
+        Assert.Equal(new RtCollections.Nv(uint.MaxValue, 0, 0x11), RtCollections.WithOptions(null, 0x11));
+        Assert.Null(RtCollections.WithOptions(null, 0));
+
+        var dir = Ff7.TempDir("rt-options");
+        var recording = Path.Combine(dir, "recording.db");
+        using (var f = File.Create(recording))
+        {
+            foreach (var h in new[] { libA, libB, rs }) Write(f, 'B', [.. Convert.FromHexString(h), 1, 2, 3]);
+            foreach (var r in recs) Write(f, r.Tag, r.Payload);
+        }
+        var hit = Lib("opts-hit", new Binding("srv", 4, 0, -1));
+        var rule = new RtCollections.Rule(Zero.Replace('0', '1'), 4, 1, 0, 8, true);
+        var plan = new Plan("t", "t", "PCD3D_SM5", "nvidia-1", new PlanStats(0, 1, 0, 0, true), Path.Combine(dir, "plan.bin"));
+        PlanFile.Write(plan, [new('Y', RtCollections.Item(hit.Sha1, rule.GlobalRs, Zero, Zero, rule, new(0, 1001, 0)))]);
+        new Planner().Materialize(plan, Ff7.Game, Ue427, new Shaders(new() { [hit.Sha1] = HitLib }), new Recording(recording), Path.Combine(dir, "work"), CancellationToken.None);
+        var gen = Read(Path.Combine(dir, "work", "scskiller_gen.db")).ToList();
+        var collection = Assert.Single(gen, r => r.Tag == 'R');
+        Assert.Equal([new NvState(material.Key, uint.MaxValue, 0, 0, 0x11), new NvState(other.Key, 12, 1, 1, 0x11), new NvState(collection.Key, 0, 1001, 2, 0x11)],
+            gen.Where(r => r.Tag == 'N').Select(NvState.Parse));
+
+        // the 'R' with the options isn't in this install (nor what builds on it): the rest still takes its options
+        using (var f = File.Create(recording))
+        {
+            foreach (var h in new[] { libB, rs }) Write(f, 'B', [.. Convert.FromHexString(h), 1, 2, 3]);
+            foreach (var r in recs) Write(f, r.Tag, r.Payload);
+        }
+        new Planner().Materialize(plan, Ff7.Game, Ue427, new Shaders(new() { [hit.Sha1] = HitLib }), new Recording(recording), Path.Combine(dir, "work2"), CancellationToken.None);
+        Assert.DoesNotContain(Read(Path.Combine(dir, "work2", "scskiller.db")), r => r.Key == occlusion.Key || r.Key == material.Key);
+        Assert.Equal([new NvState(other.Key, 12, 1, 1, 0x11), new NvState(collection.Key, 0, 1001, 2, 0x11)],
+            Read(Path.Combine(dir, "work2", "scskiller_gen.db")).Where(r => r.Tag == 'N').Select(NvState.Parse));
+    }
+
     /// <summary>Hash-only recordings keep an 'N' only with the record it applies to.</summary>
     [Fact]
     public void HashOnlyKeepsNvapiStateWithItsRecord()
@@ -635,13 +806,13 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         var index = reader.Index(game, engine, null, CancellationToken.None);
         var bc = index.Shaders;
         var blobs = recs.Where(r => r.Tag == 'B').ToDictionary(r => Hex(r.Payload.AsSpan(0, 20)), r => r.Payload[20..]);
-        var maxSrvs = RootSig.MaxSrvsFor(RootSig.Rule.Ue426, bc.Values);
+        var maxSrvs = RootSig.MaxSrvsFor(Rules.Ue426, bc.Values);
         int n = 0, ok = 0;
         foreach (var pso in recs.Where(r => r.Tag is 'G' or 'C' or 'S').Select(Parse))
         {
             if (!pso.Stages.Values.All(bc.ContainsKey) || !blobs.TryGetValue(pso.Rs, out var blob)) continue;
             n++;
-            if (RootSig.Serialize(RootSig.Build(RootSig.Rule.Ue426, pso.Stages.ToDictionary(s => (Stage)s.Key, s => bc[s.Value]), false, maxSrvs), RootSig.Ue426Samplers).AsSpan().SequenceEqual(blob)) ok++;
+            if (RootSig.Serialize(RootSig.Build(Rules.Ue426, pso.Stages.ToDictionary(s => (Stage)s.Key, s => bc[s.Value]), false, maxSrvs), RootSig.Ue426Samplers).AsSpan().SequenceEqual(blob)) ok++;
         }
         output.WriteLine($"root signatures rebuilt byte-exact: {ok}/{n} recorded PSOs (SRV tables of {maxSrvs})");
         Assert.True(n > 10_000, $"only {n} recorded PSOs of index shaders");
@@ -662,6 +833,35 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Equal(cols.Count, same);
     }
 
+    /// <summary>Returnal (UE 4.25) against SCSKiller's recording of it, read only: the plan made WITHOUT the recording (the
+    /// ue-4.25-rt rule) gives each of its 13,735 libraries a collection without a state object config, and rebuilds every
+    /// recorded collection but 2, which are only in a pipeline of a 24-byte payload (401 of 403 in the first recording). Returns early without the game or its recording.</summary>
+    [Trait("Needs", "Game")]
+    [Fact]
+    public void ReturnalRecordingConfirmsTheUe425Rule()
+    {
+        var game = new SCSKiller.Core.Games.ManualSource(new SCSKiller.Core.App.AppStore(SCSKiller.Core.App.AppStore.DefaultDir)).Discover()
+            .FirstOrDefault(g => g.Name == "Returnal");
+        if (game == null) return;
+        var reader = new UnrealReader(Ff7.TempDir("rt-returnal-data"));
+        var engine = reader.Detect(game)!;
+        Assert.Equal("4.25", engine.Version);
+        if (Ff7.Recording(game, engine, reader, "rt-returnal-rec") is not { } db) return;
+        var recs = Read(db).ToList();
+        var index = reader.Index(game, engine, null, CancellationToken.None);
+        var blobs = recs.Where(r => r.Tag == 'B').ToDictionary(r => Hex(r.Payload.AsSpan(0, 20)), r => r.Payload[20..]);
+        var plan = new Planner().Build(game, engine, index, null, Nvidia, Ff7.TempDir("rt-returnal-plan"), new Log(output.WriteLine), CancellationToken.None);
+        var ys = Items(plan).ToDictionary(y => y.Library);
+        Assert.All(ys.Values, y => Assert.Equal(RtCollections.NoConfig, y.Flags));
+        var keys = recs.Where(r => IsStateObject(r.Tag)).Select(r => r.Key).ToHashSet();
+        var cols = recs.Where(r => IsStateObject(r.Tag)).Select(RtCollections.Read).OfType<RtCollections.Recorded>().ToList();
+        var same = cols.Count(c => ys.TryGetValue(c.Library, out var y) && blobs.TryGetValue(c.Library, out var lib)
+            && keys.Contains(new Rec('R', RtCollections.Collection(lib, c.Library, y.Global, y.LocalRayGen, y.LocalOther, y.Payload, y.Attributes, y.Depth, y.Flags, c.NameHash)!).Key));
+        output.WriteLine($"{ys.Count} collections planned without the recording; recorded collections rebuilt from them: {same}/{cols.Count}");
+        Assert.True(cols.Count >= 403, $"only {cols.Count} recorded collections");   // the recording grows as the game is played
+        Assert.Equal((13_735, cols.Count - 2), (ys.Count, same));
+    }
+
     /// <summary>Oblivion Remastered (stock UE 5.1) against SCSKiller's recording of it, read only: every root signature and
     /// collection rebuilt byte for byte, and the no-recording plan covers the units of most of its PSOs.</summary>
     [Trait("Needs", "Game")]
@@ -674,12 +874,12 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         var engine = reader.Detect(game)!;
         if (Ff7.Recording(game, engine, reader, "rt-oblivion-rec") is not { } db) return;
         var recs = Read(db).ToList();
-        Assert.Equal((RootSig.Rule.Ue51, true), (RootSig.RuleFor(engine), RootSig.Verified(engine)));
+        Assert.Equal((Rules.Ue51, true), (RootSig.RuleFor(engine), RootSig.Verified(engine)));
         var index = reader.Index(game, engine, null, CancellationToken.None);
         var bc = index.Shaders;
         var blobs = recs.Where(r => r.Tag == 'B').GroupBy(r => Hex(r.Payload.AsSpan(0, 20))).ToDictionary(g => g.Key, g => g.First().Payload[20..]);
         var psos = recs.Where(r => r.Tag is 'G' or 'C' or 'S').Select(Parse).Where(p => p.Stages.Values.All(bc.ContainsKey) && blobs.ContainsKey(p.Rs)).ToList();
-        var ok = psos.Count(p => RootSig.Serialize(RootSig.Build(RootSig.Rule.Ue51, p.Stages.ToDictionary(s => (Stage)s.Key, s => bc[s.Value]), true), RootSig.Ue426Samplers).AsSpan().SequenceEqual(blobs[p.Rs]));
+        var ok = psos.Count(p => RootSig.Serialize(RootSig.Build(Rules.Ue51, p.Stages.ToDictionary(s => (Stage)s.Key, s => bc[s.Value]), true), RootSig.Ue426Samplers).AsSpan().SequenceEqual(blobs[p.Rs]));
         output.WriteLine($"root signatures rebuilt byte-exact: {ok}/{psos.Count} recorded PSOs");
         Assert.True(psos.Count > 20_000, $"only {psos.Count} recorded PSOs of index shaders");
         Assert.Equal(psos.Count, ok);
@@ -706,7 +906,7 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
     }
 
     /// <summary>Darwin's Paradox (stock UE 5.4, no recording), read only: its DXIL libraries have 5.1's binding shape, so
-    /// its plan synthesizes a collection per library with <see cref="RtCollections.Ue54Global"/>, unverified in game.</summary>
+    /// its plan synthesizes a collection per library with <see cref="Rules.Ue54Global"/>, unverified in game.</summary>
     [Trait("Needs", "Game")]
     [Fact]
     public void DarwinsParadoxGetsTheUe5Rule()
@@ -723,7 +923,7 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         var plan = new Planner().Build(game, engine, index, null, Nvidia, Ff7.TempDir("rt-darwin-plan"), new Log(log.Add), CancellationToken.None);
         foreach (var l in log.Where(l => l.StartsWith("ray tracing"))) output.WriteLine(l);
         var ys = Items(plan);
-        Assert.All(ys, y => Assert.Equal(RtCollections.Serialize(RtCollections.Ue54Global, RootSig.Ue426Samplers).Hash, y.Global));
+        Assert.All(ys, y => Assert.Equal(RtCollections.Serialize(Rules.Ue54Global, RootSig.Ue426Samplers).Hash, y.Global));
         Assert.Equal(plan.Stats.RtLibraries, ys.Count + plan.Stats.RtUncovered);
         Assert.True(ys.Count > 0.99 * libs.Count, $"{ys.Count}/{libs.Count}");
     }
@@ -763,7 +963,7 @@ public class RtCollectionTests(Xunit.Abstractions.ITestOutputHelper output)
         if (!HasJedi) return;
         var x = ReadJedi();
         var bc = JediShaders.Value;
-        Assert.Equal(x.Global, RtCollections.Serialize(RtCollections.Ue426Global, RootSig.Ue426Samplers).Hash);
+        Assert.Equal(x.Global, RtCollections.Serialize(Rules.Ue426Global, RootSig.Ue426Samplers).Hash);
         var keys = x.StateObjects.Select(r => r.Key).ToHashSet();
         var global = RootSig.Parse(x.Blobs[x.Global]);
         int n = 0, same = 0, sameButNames = 0, covered = 0, withResources = 0;

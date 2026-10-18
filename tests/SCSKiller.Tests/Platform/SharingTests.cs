@@ -2,6 +2,7 @@ using System.Buffers.Text;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using SCSKiller.Core;
 using SCSKiller.Core.App;
 using SCSKiller.Core.Planning;
@@ -19,7 +20,7 @@ public class SharingTests : IDisposable
     readonly string _dir = Path.Combine(Path.GetTempPath(), "scskiller-sharing-test-" + Guid.NewGuid().ToString("N")[..8]);
     readonly Clock _clock = new();
     readonly List<(string Line, byte[] Body, string? Meta)> _sent = [];
-    Func<HttpRequestMessage, HttpResponseMessage>? _upload;
+    Func<HttpRequestMessage, HttpResponseMessage>? _upload, _report;
     bool _enabled = true;
 
     string GameDir => Path.Combine(_dir, "games", "steam_480");
@@ -71,6 +72,7 @@ public class SharingTests : IDisposable
         {
             "/v1/devices" => Ours(HttpStatusCode.OK, """{"device_token":"sd1_test-anon","device_id":"dev1"}"""u8.ToArray()),
             "/v1/upload" => _upload?.Invoke(r) ?? Ours(HttpStatusCode.Accepted, """{"upload_id":"up1","records":1,"new_records":1}"""u8.ToArray()),
+            "/v1/report" => _report?.Invoke(r) ?? Ours(HttpStatusCode.NoContent),
             _ => Ours(HttpStatusCode.NotFound),
         };
     }
@@ -125,7 +127,7 @@ public class SharingTests : IDisposable
         Assert.NotNull(await Make().ShareAsync(GameDir, Content, Meta));
         var records = Core.Planning.HashOnly.Decompress(_sent.Single(s => s.Line.Contains("/v1/upload")).Body);
         Assert.Equal(local.Where(r => r.Tag is 'R' or 'A').Select(r => r.Key), records.Where(r => r.Tag is 'R' or 'A').Select(r => r.Key));
-        Assert.Equal(Core.Planning.HashOnly.Tags.Order(), records.Select(r => r.Tag).Distinct().Order());
+        Assert.Equal(Core.Planning.HashOnly.Tags.Replace("D", "").Order(), records.Select(r => r.Tag).Distinct().Order());
         Assert.DoesNotContain(records, r => r.Tag == 'B' && PsoDb.Hex(r.Payload.AsSpan(0, 20)) == libSha);
         Assert.DoesNotContain(records, r => r.Payload.AsSpan().IndexOf(Shader) >= 0);
     }
@@ -388,6 +390,66 @@ public class SharingTests : IDisposable
         Assert.Single(_sent, s => s.Line.Contains("/v1/devices"));   // a 403 is not a 401: no new device
     }
 
+    /// <summary>D3D11 draws go in their own upload under the build's draws key, never in the game build's; a server that refuses
+    /// that key gets no draws again until another app version, and the game's pipelines still go.</summary>
+    [Fact]
+    public async Task D3D11_draws_go_apart_under_the_draws_key_and_a_refusal_holds_until_the_next_version()
+    {
+        static PsoDb.Rec Draw(string vs) => new('D', PsoDb.Draw11Bytes(new(vs, PsoDb.Zero, PsoDb.Zero, PsoDb.Zero, 4, true, [new("POSITION", 0, 6, 0)])));
+        void Mixed(params string[] vss)
+        {
+            using var m = new MemoryStream();
+            m.Write(LocalRecording(vss));
+            foreach (var vs in vss) PsoDb.Write(m, 'D', Draw(vs).Payload);
+            PsoDb.Write(m, 'D', Draw(vs: new string('8', 40)).Payload[..^24]);   // an element cut off: dropped, the rest still go
+            Record(m.ToArray());
+        }
+        var key = Core.Planning.HashOnly.DrawsKey(Content);
+        File.WriteAllBytes(Path.Combine(GameDir, Sharing.ShippedFile), Convert.FromHexString(Content + new string('a', 40) + new string('9', 40)));   // flags run over the draws
+        // a draws-only recording an earlier version stamped as done goes now
+        using (var only = new MemoryStream())
+        {
+            PsoDb.Write(only, 'D', Draw(new string('9', 40)).Payload);
+            Record(only.ToArray(), ageMinutes: 10);
+        }
+        var rec = new FileInfo(Path.Combine(GameDir, "recording.db"));
+        File.WriteAllText(Path.Combine(GameDir, "shared.json"), JsonSerializer.Serialize(new SharedRecording($"{rec.Length}:{rec.LastWriteTimeUtc.Ticks}|{Content}|2")));
+        Assert.NotNull(await Make().ShareAsync(GameDir, Content, Meta));
+        Assert.Single(Uploads);
+        _sent.Clear();
+
+        Mixed(new string('a', 40));
+        Assert.NotNull(await Make().ShareAsync(GameDir, Content, Meta));
+        var ups = _sent.Where(s => s.Line.Contains("/v1/upload")).ToList();
+        Assert.Equal(2, ups.Count);
+        Assert.Equal("steam:480@1", JsonDocument.Parse(ups[0].Meta!).RootElement.GetProperty("store_build_key").GetString());
+        Assert.DoesNotContain(Core.Planning.HashOnly.Decompress(ups[0].Body), r => r.Tag == 'D');
+        var meta = JsonDocument.Parse(ups[1].Meta!).RootElement;
+        Assert.Equal((key, Core.Planning.HashOnly.PackHash(key)), (meta.GetProperty("store_build_key").GetString(), meta.GetProperty("content_hash").GetString()));
+        Assert.Equal([Draw(new string('a', 40)).Key], Core.Planning.HashOnly.CheckDraws(Core.Planning.HashOnly.Decompress(ups[1].Body)).Select(r => r.Key));
+
+        // a server without draws entries: refused quietly, remembered for this version
+        _upload = r => JsonDocument.Parse(Encoding.UTF8.GetString(Base64Url.DecodeFromChars(r.Headers.GetValues("X-SCSK-Upload").Single()))).RootElement
+            .GetProperty("store_build_key").GetString() == key ? Ours(HttpStatusCode.BadRequest, """{"error":"bad_request"}"""u8.ToArray()) : null!;
+        var sharing = Make();
+        Mixed(new string('b', 40));
+        Assert.NotNull(await sharing.ShareAsync(GameDir, Content, Meta));
+        Assert.Null(sharing.Problem);
+        Assert.Equal(AppVersion.Current.ToString(), File.ReadAllText(Path.Combine(_dir, Sharing.DrawsRefusedFile)));
+        _sent.Clear();
+        Assert.Null(await sharing.ShareAsync(GameDir, Content, Meta));
+        Mixed(new string('c', 40));
+        Assert.NotNull(await sharing.ShareAsync(GameDir, Content, Meta));
+        Assert.Single(Uploads);   // the pipelines only
+
+        // another version tries the draws again, without a change of the recording
+        File.WriteAllText(Path.Combine(_dir, Sharing.DrawsRefusedFile), "0.0.1");
+        _upload = null;
+        _sent.Clear();
+        Assert.NotNull(await Make().ShareAsync(GameDir, Content, Meta));
+        Assert.Equal(key, JsonDocument.Parse(_sent.Single(s => s.Line.Contains("/v1/upload")).Meta!).RootElement.GetProperty("store_build_key").GetString());
+    }
+
     [Fact]
     public async Task Sharing_turned_off_during_a_pass_sends_nothing_more()
     {
@@ -549,5 +611,220 @@ public class SharingTests : IDisposable
         _enabled = true;
         await sharing.SharePacksAsync(packs, "nvidia", "1.4.0");
         Assert.Equal(3, Uploads.Count);
+    }
+
+    static readonly JsonSerializerOptions SnakeCase = new(JsonSerializerDefaults.Web) { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+
+    [Fact]
+    public async Task The_plans_rule_check_rides_in_the_upload_header_and_is_left_out_when_unknown()
+    {
+        Record(LocalRecording());
+        var meta = Meta() with { RsRule = "Ue426", BuiltOk = 994, BuiltN = 994, PlannerVersion = 26, DriverVersion = "610.88", GpuModel = "NVIDIA GeForce Test" };
+        Assert.NotNull(await Make().ShareAsync(GameDir, Content, () => meta));
+        var json = _sent.Single(s => s.Line.Contains("/v1/upload")).Meta!;
+        Assert.Equal(["store_build_key", "content_hash", "engine", "vendor", "app_version", "middleware", "rs_rule", "built_ok", "built_n", "planner_version",
+            "driver_version", "gpu_model"],
+            JsonDocument.Parse(json).RootElement.EnumerateObject().Select(p => p.Name));
+        var back = JsonSerializer.Deserialize<UploadMeta>(json, SnakeCase)!;
+        Assert.Equal(meta.Middleware, back.Middleware);
+        Assert.Equal(meta, back with { Middleware = meta.Middleware });
+        // the header without them is the one older servers parse (The_upload_is_hash_only_... checks its members)
+        Assert.DoesNotContain("rs_rule", JsonSerializer.Serialize(Meta(), SnakeCase));
+    }
+
+    static string K(int n) => n.ToString("x40");
+    static string B64(params int[] keys) => Base64Url.EncodeToString([.. keys.SelectMany(k => Convert.FromHexString(K(k)))]);
+    static readonly DateTimeOffset Warmed = new(2026, 9, 28, 12, 0, 0, TimeSpan.Zero);
+
+    string Csv(params string[] lines)
+    {
+        var path = Path.Combine(_dir, "scskiller_creates.csv");
+        File.WriteAllLines(path, lines);
+        return path;
+    }
+
+    [Fact]
+    public void The_report_holds_the_first_launch_after_the_warm_its_compiles_counted_and_their_keys_by_ms()
+    {
+        var at = Warmed.ToUnixTimeMilliseconds();
+        var csv = Csv(
+            $"#session,{at - 60_000},Game.exe", $"1.0,G,0,0,500.0,{K(9)}", $"#end,{at - 1000}",   // before the warm
+            $"#session,{at + 1000},Launcher.exe", $"1.0,G,0,0,500.0,{K(8)}", $"#end,{at + 1500}",   // another exe of the folder
+            $"#session,{at + 2000},GAME.EXE", "#clock,0.0",
+            $"1.0,g,0,0,300.0,{K(7)}",    // the game's own pipeline library
+            $"2.0,G,0,0,1.0,{K(6)}",      // a driver cache hit
+            $"3.0,G,0,0,5.0,{K(1)}",
+            $"4.0,C,0,0,20.0,{K(2)}",
+            $"5.0,S,1,1,80.0,{K(3)}",     // recorded, still compiled: known isn't "in the plan"
+            $"6.0,G,0,0,250.0,{K(4)}",
+            $"7.0,G,0,0,4.0,{K(4)}",      // the same key again: counted, its slowest create kept
+            $"8.0,R,0,0,90.0,{K(5)}",     // a state object: a cached one can take 25 ms
+            "9.0,G,0,0,40.0",             // an older proxy's row without a key: counted only
+            $"#end,{at + 60_000}",
+            $"#session,{at + 70_000},Game.exe", $"1.0,G,0,0,999.0,{K(10)}");
+
+        var r = OutcomeReport.Build(csv, "Game.exe", Warmed, null, null, About)!;
+
+        Assert.Equal(About with { Cold = 6, Keys = r.Keys }, r);
+        Assert.Equal([B64(1), B64(2), B64(3), B64(4)], r.Keys!);
+        var json = JsonSerializer.Serialize(r, SnakeCase);
+        Assert.Equal(["content_hash", "vendor", "gpu_model", "driver_version", "app_version", "rs_rule", "planner_version", "cold", "keys"], JsonDocument.Parse(json).RootElement.EnumerateObject().Select(p => p.Name));
+    }
+
+    [Fact]
+    public void The_report_waits_for_the_launch_to_end_and_keeps_every_key_up_to_the_ceiling()
+    {
+        var at = Warmed.ToUnixTimeMilliseconds();
+        string[] creates = [.. Enumerable.Range(0, OutcomeReport.MaxKeys + 1).Select(i => FormattableString.Invariant($"{i}.0,G,0,0,{4 + i * 0.1:0.0},{K(i)}"))];
+        var csv = Csv([$"#session,{at + 1000},game.exe", .. creates]);
+        Assert.Null(OutcomeReport.Build(csv, "game.exe", Warmed, null, null, About));   // still running, or not seen to exit
+        var played = new PlayWindow(Warmed, Warmed.AddHours(1));
+        var r = OutcomeReport.Build(csv, "game.exe", Warmed, played, null, About)!;
+        Assert.Equal(OutcomeReport.MaxKeys + 1, r.Cold);
+        var kept = r.Keys!.SelectMany(k => Base64Url.DecodeFromChars(k).Chunk(20)).Select(Convert.ToHexStringLower).ToList();
+        Assert.Equal(OutcomeReport.MaxKeys, kept.Distinct().Count());
+        Assert.DoesNotContain(K(0), kept);   // the fastest
+        Assert.Equal([59, 400, 1500, 98_041], r.Keys!.Select(k => Base64Url.DecodeFromChars(k).Length / 20));   // 4.1-9.9 ms, 10-49.9, 50-199.9, 200 and over
+        Assert.Equal(K(OutcomeReport.MaxKeys), Convert.ToHexStringLower(Base64Url.DecodeFromChars(r.Keys![3])[..20]));   // slowest first
+        Assert.InRange(JsonSerializer.SerializeToUtf8Bytes(r, SnakeCase).Length, 2_600_000, 4 << 20);   // the edge's cap
+        Assert.Null(OutcomeReport.Build(Csv(), "game.exe", Warmed, played, null, About));
+        Assert.Null(OutcomeReport.Build(csv, "game.exe", Warmed, played, null, About, minCreates: OutcomeReport.MaxKeys + 2));   // too short a launch
+
+        // the 2,000 slowest an older server takes: all of the 200 ms bucket's first, slowest first
+        var old = r.Slowest(OutcomeReport.OldMaxKeys);
+        Assert.Equal(["", "", "", B64([.. Enumerable.Range(0, 2000).Select(i => OutcomeReport.MaxKeys - i)])], old.Keys!);
+        Assert.Equal(r with { Keys = old.Keys }, old);
+        Assert.Equal([0, 10, 1500, 98_041], r.Slowest(98_041 + 1500 + 10).Keys!.Select(k => Base64Url.DecodeFromChars(k).Length / 20));
+        Assert.Equal(B64(459, 458), r.Slowest(98_041 + 1500 + 2).Keys![1]);
+    }
+
+    static readonly OutcomeReport About = new(Content, "nvidia", "NVIDIA GeForce Test", "610.88", "1.3.0", "Ue426", 26);
+    static OutcomeReport Report() => About with { Cold = 1, Keys = [B64(1), "", "", ""] };
+    string Stamp => Path.Combine(GameDir, Sharing.ReportedFile);
+
+    [Fact]
+    public async Task The_report_goes_once_per_warm_without_any_token_and_never_with_sharing_off()
+    {
+        var built = 0;
+        OutcomeReport? Build() { built++; return Report(); }
+        _enabled = false;
+        Assert.False(await Make().ReportAsync(GameDir, "warm1", Build));
+        Assert.Equal((0, 0), (built, _sent.Count));
+
+        _enabled = true;
+        var sharing = Make();
+        Assert.True(await sharing.ReportAsync(GameDir, "warm1", Build));
+        // no upload device, no token: nothing to link a report to
+        Assert.Equal(["POST https://api.test.com/v1/report"], _sent.Select(s => s.Line));
+        Assert.False(File.Exists(Path.Combine(_dir, "upload.dat")));
+        Assert.Equal(JsonSerializer.Serialize(Report(), SnakeCase), Encoding.UTF8.GetString(_sent[0].Body));
+        Assert.Null(_sent[0].Meta);
+        Assert.False(await sharing.ReportAsync(GameDir, "warm1", Build));
+        Assert.False(await Make().ReportAsync(GameDir, "warm1", Build));   // after a restart too
+        Assert.Equal((1, 1), (built, _sent.Count));
+        Assert.True(await sharing.ReportAsync(GameDir, "warm2", Build));   // the next warm's
+        Assert.Equal((2, 2), (built, _sent.Count));
+        Assert.False(await sharing.ReportAsync(GameDir, "warm3", () => null));   // its first launch hasn't ended: nothing sent, not stamped
+        Assert.Equal(("warm2", 2), (File.ReadAllText(Stamp), _sent.Count));
+    }
+
+    /// <summary>A report of <paramref name="n"/> keys: half at 200 ms and over, half at 50-200.</summary>
+    static OutcomeReport ReportOf(int n) => About with { Cold = n, Keys = ["", "", B64([.. Enumerable.Range(n / 2, n - n / 2)]), B64([.. Enumerable.Range(0, n / 2)])] };
+
+    static int KeysIn(byte[] body) => JsonDocument.Parse(body).RootElement.GetProperty("keys").EnumerateArray().Sum(k => Base64Url.DecodeFromChars(k.GetString()).Length / 20);
+
+    [Fact]
+    public async Task Every_key_goes_in_one_report()
+    {
+        Assert.True(await Make().ReportAsync(GameDir, "warm1", () => ReportOf(5000)));
+        Assert.Equal(5000, KeysIn(Assert.Single(_sent).Body));
+    }
+
+    [Theory]
+    [InlineData(2400)]    // under 64 KB: the older origin's 400
+    [InlineData(5000)]    // over it: the older edge's 413
+    public async Task An_older_server_gets_the_2000_slowest_keys_once_more(int n)
+    {
+        // a server from before every key was sent
+        _report = r =>
+        {
+            var body = r.Content!.ReadAsByteArrayAsync().Result;
+            return body.Length > 64 << 10 ? Ours(HttpStatusCode.RequestEntityTooLarge)
+                : KeysIn(body) > 2000 ? Ours(HttpStatusCode.BadRequest) : Ours(HttpStatusCode.NoContent);
+        };
+        Assert.True(await Make().ReportAsync(GameDir, "warm1", () => ReportOf(n)));
+        Assert.Equal([n, 2000], _sent.Select(s => KeysIn(s.Body)));
+        Assert.Equal(JsonSerializer.Serialize(ReportOf(n).Slowest(2000), SnakeCase), Encoding.UTF8.GetString(_sent[1].Body));
+        Assert.Equal("warm1", File.ReadAllText(Stamp));
+    }
+
+    [Fact]
+    public async Task A_refused_report_goes_once_more_at_most_and_only_when_it_had_more_than_2000_keys()
+    {
+        _report = _ => Ours(HttpStatusCode.BadRequest);
+        Assert.False(await Make().ReportAsync(GameDir, "warm1", () => ReportOf(2000)));
+        Assert.Single(_sent);
+        Assert.False(await Make().ReportAsync(GameDir, "warm2", () => ReportOf(3000)));
+        Assert.Equal([2000, 3000, 2000], _sent.Select(s => KeysIn(s.Body)));
+        Assert.Equal("warm2", File.ReadAllText(Stamp));   // refused for good
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.NotImplemented)]
+    public async Task A_server_without_the_report_route_is_not_sent_to_quietly_and_asked_again_a_day_later(HttpStatusCode code)
+    {
+        var sharing = Make();
+        _report = _ => Ours(code);
+        Assert.False(await sharing.ReportAsync(GameDir, "warm1", Report));
+        Assert.Null(sharing.Problem);
+        Assert.False(File.Exists(Stamp));
+        _clock.Now += TimeSpan.FromHours(23);
+        Assert.False(await sharing.ReportAsync(GameDir, "warm1", Report));
+        Assert.Single(_sent, s => s.Line.Contains("/v1/report"));
+
+        Record(LocalRecording());   // uploads aren't held back by it
+        Assert.NotNull(await sharing.ShareAsync(GameDir, Content, Meta));
+
+        _report = null;
+        _clock.Now += TimeSpan.FromHours(1);
+        Assert.True(await sharing.ReportAsync(GameDir, "warm1", Report));
+        Assert.True(File.Exists(Stamp));
+    }
+
+    [Fact]
+    public async Task A_new_rule_check_goes_with_one_pipeline_when_nothing_else_is_new()
+    {
+        Record(LocalRecording("a".PadLeft(40, 'a'), "b".PadLeft(40, 'b')), ageMinutes: 10);
+        var sharing = Make();
+        UploadMeta With(string check) => Meta() with { RsRule = "Ue426", BuiltOk = 3, BuiltN = 3, PlannerVersion = check == "v1" ? 26 : 27 };
+        Assert.NotNull(await sharing.ShareAsync(GameDir, Content, () => With("v1"), planCheck: "v1"));
+        Assert.Equal(2, Core.Planning.HashOnly.Decompress(_sent.Single(s => s.Line.Contains("/v1/upload")).Body).Count(r => r.Tag != 'B'));
+        _sent.Clear();
+        Assert.Null(await sharing.ShareAsync(GameDir, Content, () => With("v1"), planCheck: "v1"));
+        Assert.Empty(_sent);
+
+        // the recording is the same, the plan's check isn't: the smallest valid upload carries it
+        Assert.NotNull(await sharing.ShareAsync(GameDir, Content, () => With("v2"), planCheck: "v2"));
+        var upload = _sent.Single(s => s.Line.Contains("/v1/upload"));
+        var records = Core.Planning.HashOnly.Decompress(upload.Body);
+        Assert.Equal(["B", "S"], records.Select(r => r.Tag.ToString()));
+        Assert.Equal(records, Core.Planning.HashOnly.Canonical(records, local: false, out _));
+        Assert.Contains("\"planner_version\":27", upload.Meta);
+        _sent.Clear();
+        Assert.Null(await sharing.ShareAsync(GameDir, Content, () => With("v2"), planCheck: "v2"));
+        Assert.Null(await Make().ShareAsync(GameDir, Content, () => With("v2"), planCheck: "v2"));
+        Assert.Empty(_sent);
+    }
+
+    /// <summary>A plan names its root-signature rule by its id in plan-rules.json (PlanStats.RsRule): every id of the
+    /// embedded file is one origin's reports.rs rule_id takes.</summary>
+    [Fact]
+    public void Every_plan_rule_id_is_one_the_server_takes_as_rs_rule()
+    {
+        var ids = System.Text.Json.Nodes.JsonNode.Parse(ContentFile.Embedded("SCSKiller.Core.Planning.plan-rules.json"))!["rules"]!.AsArray()
+            .Select(r => r!["id"]!.GetValue<string>()).ToList();
+        Assert.Equal(RulesFile.Embedded.Rules.Select(r => r.Id), ids);
+        Assert.All(ids, id => Assert.Matches("^[a-z0-9][a-z0-9.-]{0,31}$", id));
     }
 }

@@ -13,7 +13,10 @@ namespace SCSKiller.Core.Unreal;
 ///      PreferredGraphicsAPI (Gearbox). UE4 honours it only when the project doesn't set DefaultGraphicsRHI explicitly;
 ///   3. [/Script/WindowsTargetPlatform.WindowsTargetSettings] DefaultGraphicsRHI over the Engine ini hierarchy, from the
 ///      engine's BaseEngine.ini (a fork may set it there: Dead Island 2) to the user's saved Engine.ini; _Default or unset =
-///      the engine default: UE4 DX11, UE5 DX12.
+///      the engine default: UE4 DX11, UE5 DX12. A WinGDK build (the Xbox app's PC builds) reads its own target's
+///      [/Script/WinGDKPlatformEditor.WinGDKTargetSettings] over the WinGDK hierarchy instead (<see cref="WinGdkEngineIni"/>):
+///      the engine's BaseWinGDKEngine.ini sets DX12 there. Without it the game's last log decides, else UE5's DX12 is a
+///      guess and UE4 offers both.
 /// A fork whose own WindowsDynamicRHI.cpp starts DX12 unless -dx11/-d3d11 is given (<see cref="Dx12Forks"/>) skips 2 and 3.
 /// Values: "D3D12" / "D3D11" / "Vulkan", suffixed " (launch option)", " (user setting)" or " (last run)" when that decided
 /// it rather than the project default; "D3D11 or D3D12" when it can't be decided: the project defaults to DX11 but ships
@@ -33,6 +36,14 @@ public static class UnrealRhi
         ProjectEngineIni, "Engine/Config/Windows/WindowsEngine.ini", "Engine/Platforms/Windows/Config/WindowsEngine.ini", "{P}/Config/Windows/WindowsEngine.ini",
         "{P}/Platforms/Windows/Config/WindowsEngine.ini"];
     const string ProjectEngineIni = "{P}/Config/DefaultEngine.ini";
+
+    /// <summary>A WinGDK build's Engine ini hierarchy, lowest priority first.</summary>
+    static readonly string[] WinGdkEngineIni = ["Engine/Config/BaseEngine.ini", "Engine/Platforms/WinGDK/Config/BaseWinGDKEngine.ini", ProjectEngineIni,
+        "Engine/Platforms/WinGDK/Config/WinGDKEngine.ini", "{P}/Config/WinGDK/WinGDKEngine.ini", "{P}/Platforms/WinGDK/Config/WinGDKEngine.ini"];
+
+    /// <summary>The exe is a WinGDK build's (…\Binaries\WinGDK\).</summary>
+    public static bool IsWinGdk(string exePath) => Path.GetFileName(Path.GetDirectoryName(exePath))?.Equals("WinGDK", StringComparison.OrdinalIgnoreCase) == true;
+
     static readonly string[] UserSettingsIni = ["{P}/Config/DefaultGameUserSettings.ini", "{P}/Config/Windows/WindowsGameUserSettings.ini"];
 
     static readonly string[] DeviceProfilesIni = ["Engine/Config/BaseDeviceProfiles.ini", "Engine/Config/Windows/WindowsDeviceProfiles.ini",
@@ -41,10 +52,112 @@ public static class UnrealRhi
 
     static readonly string[] ConsoleVariablesIni = ["Engine/Config/ConsoleVariables.ini", "{P}/Config/ConsoleVariables.ini"];
 
-    /// <summary>Whether a pak file path is one of the config files <see cref="Resolve"/>, <see cref="RtPipelinesOff"/> or
-    /// <see cref="RayTracingOff"/> reads.</summary>
+    static readonly string[] ScalabilityIni = ["Engine/Config/BaseScalability.ini", "Engine/Config/Windows/BaseWindowsScalability.ini",
+        "Engine/Config/Windows/WindowsScalability.ini", "Engine/Platforms/Windows/Config/WindowsScalability.ini", "{P}/Config/DefaultScalability.ini",
+        "{P}/Config/Windows/WindowsScalability.ini", "{P}/Platforms/Windows/Config/WindowsScalability.ini"];
+
+    /// <summary>Whether a pak file path is one of the config files <see cref="Resolve"/>, <see cref="RtPipelinesOff"/>,
+    /// <see cref="RayTracingOff"/> or <see cref="MaxAnisotropy"/> reads.</summary>
     public static bool IsConfig(string path, string project) =>
-        EngineIni.Concat(UserSettingsIni).Concat(DeviceProfilesIni).Concat(ConsoleVariablesIni).Any(p => Same(p, path, project));
+        EngineIni.Concat(WinGdkEngineIni).Concat(UserSettingsIni).Concat(DeviceProfilesIni).Concat(ConsoleVariablesIni).Concat(ScalabilityIni).Any(p => Same(p, path, project));
+
+    /// <summary>The engine's own scalability groups (sg.&lt;Group&gt;): it applies their [Group@Level] sections itself.</summary>
+    static readonly string[] EngineGroups = ["ResolutionQuality", "ViewDistanceQuality", "AntiAliasingQuality", "ShadowQuality", "GlobalIlluminationQuality",
+        "ReflectionQuality", "PostProcessQuality", "TextureQuality", "EffectsQuality", "FoliageQuality", "ShadingQuality", "LandscapeQuality"];
+
+    /// <summary>The player's r.MaxAnisotropy, which a fork's static samplers may follow (texture filtering, Planning.SamplerVariants);
+    /// null when the config doesn't decide it: nothing sets it, a value isn't a number, the launch options name it, or a
+    /// game-specific [Group@Level] group sets it at a level its saved settings don't name. Lowest priority first (ECVF_SetBy):
+    ///   1. the engine's scalability groups ([TextureQuality@N] over the Scalability ini hierarchy and the user's Scalability.ini),
+    ///      at the level the GameUserSettings [ScalabilityGroups] save, else the device profile's sg value, else 3 (Epic);
+    ///   2. [/Script/Engine.RendererSettings] over the Engine ini hierarchy (project setting);
+    ///   3. [SystemSettings] and [ConsoleVariables] over the Engine ini hierarchy and the user's Engine.ini;
+    ///   4. the active device profile's CVars (dp.Override, else WindowsNoEditor for UE4 or Windows for UE5), its base profiles below it;
+    ///   5. a game's own groups: [Group@Level] sections outside the Scalability inis, or of a group no sg cvar names, at
+    ///      the level its saved settings name (Group=..._LEVEL). The game applies them itself, after startup.</summary>
+    public static int? MaxAnisotropy(int engineMajor, IReadOnlyDictionary<string, string> configs, string project, string? userDir, string launch = "")
+    {
+        const string Key = "r.MaxAnisotropy";
+        if (Regex.IsMatch(launch, @"r\.MaxAnisotropy(?![.\w])", RegexOptions.IgnoreCase)) return null;
+        var user = UserConfig(userDir);
+        string User(string file) => user != null && File.Exists(Path.Combine(user, file)) ? File.ReadAllText(Path.Combine(user, file)).TrimStart('﻿') : "";
+        var engine = Ordered(EngineIni, configs, project).Append(User("Engine.ini")).ToList();
+        var scalability = Ordered(ScalabilityIni, configs, project).Append(User("Scalability.ini")).ToList();
+        var settings = Ordered(UserSettingsIni, configs, project).Append(User("GameUserSettings.ini")).ToList();
+        var profile = ProfileCVars(Ordered(DeviceProfilesIni, configs, project).Append(User("DeviceProfiles.ini")).ToList(),
+            Last(engine, "SystemSettings", "dp.Override") ?? Last(engine, "ConsoleVariables", "dp.Override") ?? (engineMajor >= 5 ? "Windows" : "WindowsNoEditor"));
+        var sg = settings.SelectMany(Entries).Where(e => e.Section.Equals("ScalabilityGroups", StringComparison.OrdinalIgnoreCase) && e.Key.StartsWith("sg.", StringComparison.OrdinalIgnoreCase))
+            .Concat(profile.Where(c => c.Key.StartsWith("sg.", StringComparison.OrdinalIgnoreCase)).Select(c => ("", c.Key, c.Value)))
+            .Select(e => e.Key[3..]).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool ByEngine(string group) => EngineGroups.Contains(group, StringComparer.OrdinalIgnoreCase) || sg.Contains(group);
+
+        string? value = null;   // "?": not decidable
+        string? Pick(string? higher) => value = higher ?? value;
+        // the device profile's sg values are only the defaults the saved settings override
+        foreach (var group in Groups(scalability, Key).Where(ByEngine))
+            Pick(Int(Last(settings, "ScalabilityGroups", "sg." + group) ?? profile.GetValueOrDefault("sg." + group) ?? "3") is not { } n ? "?"
+                : Last(scalability, $"{group}@{(Math.Clamp(n, 0, 4) == 4 ? "Cine" : n)}", Key));   // the top level's section is @Cine
+        Pick(Last(engine, Renderer, Key));
+        Pick(Last(engine, "SystemSettings", Key) is { } s && Last(engine, "ConsoleVariables", Key) is { } c && s != c ? "?"
+            : Last(engine, "SystemSettings", Key) ?? Last(engine, "ConsoleVariables", Key));
+        Pick(profile.GetValueOrDefault(Key));
+        // ConsoleVariables.ini outranks the device profile, but a Shipping build never reads it (DISABLE_CHEAT_CVARS)
+        var own = settings.Concat(scalability).Concat(engine).ToList();
+        foreach (var group in Groups(settings.Concat(engine), Key).Concat(Groups(scalability, Key).Where(g => !ByEngine(g))).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var levels = own.SelectMany(Entries).Select(e => e.Section).Where(x => x.StartsWith(group + "@", StringComparison.OrdinalIgnoreCase))
+                .Select(x => x[(group.Length + 1)..]).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var saved = settings.SelectMany(Entries).Where(e => e.Key.Equals(group, StringComparison.OrdinalIgnoreCase)).Select(e => e.Value).LastOrDefault();
+            var level = saved == null ? null : levels.FirstOrDefault(l => saved.Equals(l, StringComparison.OrdinalIgnoreCase) || saved.EndsWith("_" + l, StringComparison.OrdinalIgnoreCase));
+            if (level == null) return null;   // the game applies it: no order among its groups makes another one's value sure
+            Pick(Last(own, $"{group}@{level}", Key));
+        }
+        return value == "?" ? null : Int(value);
+    }
+
+    /// <summary>A cvar's integer as the engine reads it (Atoi: the leading digits).</summary>
+    static int? Int(string? v) => v != null && Regex.Match(v, @"^\s*-?\d+") is { Success: true } m && int.TryParse(m.Value, out var n) ? n : null;
+
+    /// <summary>The groups whose [Group@Level] sections set <paramref name="key"/>.</summary>
+    static IEnumerable<string> Groups(IEnumerable<string> inis, string key) =>
+        inis.SelectMany(Entries).Where(e => e.Key.Equals(key, StringComparison.OrdinalIgnoreCase) && e.Section.IndexOf('@') > 0)
+            .Select(e => e.Section[..e.Section.IndexOf('@')]).Distinct(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>(section, key, value) of each key line; array prefixes (+ - . !) kept on the key.</summary>
+    static IEnumerable<(string Section, string Key, string Value)> Entries(string ini)
+    {
+        var section = "";
+        foreach (var raw in ini.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.StartsWith('[')) { section = line.Trim('[', ']'); continue; }
+            var eq = line.IndexOf('=');
+            if (eq > 0 && line[0] != ';') yield return (section, line[..eq].Trim(), line[(eq + 1)..].Trim().Trim('"'));
+        }
+    }
+
+    /// <summary>The CVars a device profile sets, its base profiles' (BaseProfileName) overridden by its own. CVars array
+    /// entries: "+"/"." add, "-" removes the same entry, "!" clears, over the files in order.</summary>
+    static Dictionary<string, string> ProfileCVars(List<string> files, string name)
+    {
+        var chain = new List<string>();
+        for (var n = name; n.Length > 0 && !chain.Contains(n, StringComparer.OrdinalIgnoreCase); n = Last(files, $"{n} DeviceProfile", "BaseProfileName") ?? "") chain.Add(n);
+        var cvars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var n in Enumerable.Reverse(chain))
+        {
+            var entries = new List<string>();
+            foreach (var (_, key, value) in files.SelectMany(Entries).Where(e => e.Section.Equals($"{n} DeviceProfile", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (!key.TrimStart('+', '.', '-', '!').Trim().Equals("CVars", StringComparison.OrdinalIgnoreCase)) continue;
+                if (key[0] == '!') entries.Clear();
+                else if (key[0] == '-') entries.Remove(value);
+                else entries.Add(value);
+            }
+            foreach (var e in entries)
+                if (e.IndexOf('=') is > 0 and var eq) cvars[e[..eq].Trim()] = e[(eq + 1)..].Trim();
+        }
+        return cvars;
+    }
 
     /// <summary>Ray tracing is off in the game (DRAGON BALL: Sparking! ZERO): [/Script/Engine.RendererSettings] r.RayTracing,
     /// the last of the Engine ini hierarchy (base, project default, Windows platform layers) and the user's Engine.ini, is
@@ -143,13 +256,15 @@ public static class UnrealRhi
     /// <see cref="IsConfig"/> selects; <paramref name="userDir"/>: the user's Saved folder or null; <paramref name="launch"/>:
     /// the command line the store adds; <paramref name="menu"/>, <paramref name="menuDefault"/>: <see cref="LaunchMenu"/>.</summary>
     public static (string Api, string Why) Resolve(int engineMajor, IReadOnlyCollection<string> platforms, IReadOnlyDictionary<string, string> configs,
-        string project, string? userDir, string launch, IReadOnlyList<string>? menu = null, string? menuDefault = null, string? fork = null) =>
-        Resolve(engineMajor, platforms, configs, project, userDir, launch, out _, menu, menuDefault, fork);
+        string project, string? userDir, string launch, IReadOnlyList<string>? menu = null, string? menuDefault = null, string? fork = null, bool winGdk = false) =>
+        Resolve(engineMajor, platforms, configs, project, userDir, launch, out _, menu, menuDefault, fork, winGdk);
 
     /// <param name="engineDefault">the engine's default API for <paramref name="engineMajor"/> decided it: neither the game,
     /// its config nor the user's settings name one (step 3, DefaultGraphicsRHI unset or _Default)</param>
+    /// <param name="winGdk">the exe is a WinGDK build's (<see cref="IsWinGdk"/>)</param>
     public static (string Api, string Why) Resolve(int engineMajor, IReadOnlyCollection<string> platforms, IReadOnlyDictionary<string, string> configs,
-        string project, string? userDir, string launch, out bool engineDefault, IReadOnlyList<string>? menu = null, string? menuDefault = null, string? fork = null)
+        string project, string? userDir, string launch, out bool engineDefault, IReadOnlyList<string>? menu = null, string? menuDefault = null, string? fork = null,
+        bool winGdk = false)
     {
         engineDefault = false;
         bool sm5 = platforms.Contains("PCD3D_SM5"), sm6 = platforms.Contains("PCD3D_SM6");
@@ -158,7 +273,7 @@ public static class UnrealRhi
             return ($"{Api(cmd.Groups[1].Value)} (launch option)", $"launch option -{cmd.Groups[1].Value}");
         if (menu?.Any(e => MenuApi(e) != null) == true)
         {
-            var bare = Resolve(engineMajor, platforms, configs, project, userDir, launch, out var bareDefault, fork: fork);   // what an entry without a flag runs
+            var bare = Resolve(engineMajor, platforms, configs, project, userDir, launch, out var bareDefault, fork: fork, winGdk: winGdk);   // what an entry without a flag runs
             var plain = bare.Api.Split(" (")[0];
             var offered = menu.Select(e => MenuApi(e) ?? plain).Distinct().ToList();
             if (offered.Count == 1)
@@ -175,12 +290,23 @@ public static class UnrealRhi
         }
         if (fork != null && Dx12Forks.Contains(fork)) return ("D3D12", $"{fork} starts DX12 unless -dx11 or -d3d11 is given");
 
-        var userConfig = UserConfig(userDir);
+        var userConfig = UserConfig(userDir, winGdk);
         string? User(string file) => userConfig != null && File.Exists(Path.Combine(userConfig, file)) ? File.ReadAllText(Path.Combine(userConfig, file)) : null;
-        var engine = Ordered(EngineIni, configs, project).Append(User("Engine.ini") ?? "").ToList();
+        var layers = winGdk ? WinGdkEngineIni : EngineIni;
+        var engine = Ordered(layers, configs, project).Append(User("Engine.ini") ?? "").ToList();
         var settings = Ordered(UserSettingsIni, configs, project).Append(User("GameUserSettings.ini") ?? "").ToList();
 
-        var def = Last(engine, "/Script/WindowsTargetPlatform.WindowsTargetSettings", "DefaultGraphicsRHI");
+        var def = Last(engine, winGdk ? "/Script/WinGDKPlatformEditor.WinGDKTargetSettings" : "/Script/WindowsTargetPlatform.WindowsTargetSettings", "DefaultGraphicsRHI");
+        if (winGdk && def == null)   // the Windows target's setting doesn't apply to a WinGDK build
+        {
+            if (LastRun(userDir) is { } ran) return ($"{ran.Api} (last run)", $"no WinGDK DefaultGraphicsRHI; the game's last log: {ran.Line}");
+            if (engineMajor >= 5)
+            {
+                engineDefault = true;
+                return ("D3D12", "no WinGDK DefaultGraphicsRHI (UE5 default)");
+            }
+            return (Ambiguous, "no WinGDK DefaultGraphicsRHI, no log");
+        }
         var explicitDefault = def is not (null or "DefaultGraphicsRHI_Default");
         var byProject = def switch
         {
@@ -207,7 +333,7 @@ public static class UnrealRhi
         // a UE4 DX12 game may ship SM5 libraries only; ray tracing runs on DX12 only, so a project that ships it offers DX12
         var offers = byProject != "D3D11" ? null
             : sm6 ? $"{why}, but DX12-only (SM6) shaders ship: DX12 is a launch or in-game option"
-            : Last(Ordered(EngineIni, configs, project), "/Script/Engine.RendererSettings", "r.RayTracing") is { } rt && IsOn(rt)
+            : Last(Ordered(layers, configs, project), "/Script/Engine.RendererSettings", "r.RayTracing") is { } rt && IsOn(rt)
                 ? $"{why}, but the project ships ray tracing (r.RayTracing={rt}), which runs on DX12 only: DX12 is a launch or in-game option" : null;
         // the player's own choice of the default API outranks a log of an earlier run on the other one
         if (offers != null && honoured != null) return ($"{honoured} (user setting)", $"{pref.Item2} in the user's GameUserSettings.ini; {offers}");
@@ -262,7 +388,7 @@ public static class UnrealRhi
 
     static IEnumerable<FileInfo> Logs(string userDir)
     {
-        var opts = new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 2, IgnoreInaccessible = true };
+        var opts = new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 2, IgnoreInaccessible = true, AttributesToSkip = 0 };
         return new[] { "Logs", "Crashes" }.Select(d => Path.Combine(userDir, d)).Where(Directory.Exists)
             .SelectMany(d => new DirectoryInfo(d).EnumerateFiles("*.log", opts)).OrderByDescending(f => f.LastWriteTimeUtc);
     }
@@ -272,26 +398,28 @@ public static class UnrealRhi
     public static string Stamp(Game game, string project)
     {
         var (entries, def) = LaunchMenu(game);
-        return string.Join('|', UserFiles(UserDir(game, project)), LaunchOptions(game), string.Join(';', entries), def);
+        return string.Join('|', UserFiles(UserDir(game, project), IsWinGdk(game.ExePath)), LaunchOptions(game), string.Join(';', entries), def);
     }
 
-    /// <summary>The user files <see cref="Resolve"/> reads, each by presence, length and write time: the selected config
-    /// folder's Engine.ini and GameUserSettings.ini, and every log <see cref="LastRun"/> may read.</summary>
-    internal static string UserFiles(string? userDir)
+    /// <summary>The user files <see cref="Resolve"/> and <see cref="MaxAnisotropy"/> read, each by presence, length and write
+    /// time: the selected config folder's inis, and every log <see cref="LastRun"/> may read.</summary>
+    internal static string UserFiles(string? userDir, bool winGdk = false)
     {
         if (userDir == null) return "";
         static string Of(FileInfo f) => f.Exists ? $"{f.FullName}:{f.Length}:{f.LastWriteTimeUtc.Ticks}" : $"{f.FullName}:-";
-        var config = UserConfig(userDir);
-        var inis = config == null ? [] : new[] { "Engine.ini", "GameUserSettings.ini" }.Select(n => Of(new FileInfo(Path.Combine(config, n))));
+        var config = UserConfig(userDir, winGdk);
+        var inis = config == null ? [] : new[] { "Engine.ini", "GameUserSettings.ini", "Scalability.ini", "DeviceProfiles.ini" }.Select(n => Of(new FileInfo(Path.Combine(config, n))));
         return string.Join('>', inis.Prepend(userDir).Concat(Logs(userDir).Select(Of)));
     }
 
-    /// <summary>The newest Saved\Config\Windows* folder: the one the game reads.</summary>
-    static string? UserConfig(string? userDir) =>
+    /// <summary>The newest Saved\Config\Windows* folder, a WinGDK build's Saved\Config\WinGDK: the one the game reads.</summary>
+    static string? UserConfig(string? userDir, bool winGdk = false) =>
         userDir == null || !Directory.Exists(Path.Combine(userDir, "Config")) ? null
-            : Directory.EnumerateDirectories(Path.Combine(userDir, "Config"), "Windows*").MaxBy(Directory.GetLastWriteTimeUtc);
+            : Directory.EnumerateDirectories(Path.Combine(userDir, "Config"), ConfigFolders(winGdk)).MaxBy(Directory.GetLastWriteTimeUtc);
 
-    /// <summary>The user's Saved folder (…\Saved\Config\Windows*\ holds Engine.ini and GameUserSettings.ini): under
+    static string ConfigFolders(bool winGdk) => winGdk ? "WinGDK" : "Windows*";
+
+    /// <summary>The user's Saved folder (…\Saved\Config\Windows*\, a WinGDK build's …\WinGDK\, holds Engine.ini and GameUserSettings.ini): under
     /// %LOCALAPPDATA%, Documents\My Games or Saved Games, named after the project, the exe, the install folder or the game,
     /// possibly under a company folder, "Saved" or "Saved_&lt;store&gt;_&lt;user&gt;". Newest wins. Read-only.</summary>
     public static string? UserDir(Game game, string project)
@@ -301,10 +429,11 @@ public static class UnrealRhi
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var roots = new[] { Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "My Games"), Path.Combine(home, "Saved Games") }
             .Where(Directory.Exists).ToList();
-        var flat = new EnumerationOptions { IgnoreInaccessible = true };
+        var flat = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 };
+        var folders = ConfigFolders(IsWinGdk(game.ExePath));
         return roots.SelectMany(r => names.Select(n => Path.Combine(r, n)).Concat(Directory.EnumerateDirectories(r, "*", flat).SelectMany(c => names.Select(n => Path.Combine(c, n)))))
             .Where(Directory.Exists).SelectMany(d => Directory.EnumerateDirectories(d, "Saved*", flat))
-            .Where(s => Directory.Exists(Path.Combine(s, "Config")) && Directory.EnumerateDirectories(Path.Combine(s, "Config"), "Windows*", flat).Any())
+            .Where(s => Directory.Exists(Path.Combine(s, "Config")) && Directory.EnumerateDirectories(Path.Combine(s, "Config"), folders, flat).Any())
             .OrderByDescending(s => Directory.GetLastWriteTimeUtc(Path.Combine(s, "Config"))).FirstOrDefault();
     }
 
@@ -314,14 +443,14 @@ public static class UnrealRhi
     /// userdata\*\config\localconfig.vdf, the app's block.</summary>
     public static string LaunchOptions(Game game)
     {
-        if (!game.Id.StartsWith("steam:")) return "";
+        if (SteamSource.AppId(game.Id) is not { } app) return "";
         var userdata = Path.Combine(SteamRoot, "userdata");
         var vdf = Directory.Exists(userdata)
             ? Directory.EnumerateDirectories(userdata).Select(u => new FileInfo(Path.Combine(u, "config", "localconfig.vdf"))).Where(f => f.Exists).MaxBy(f => f.LastWriteTimeUtc)
             : null;
         if (vdf == null) return "";
         var text = File.ReadAllText(vdf.FullName);
-        foreach (Match m in Regex.Matches(text, $@"""{Regex.Escape(game.Id[6..])}""\s*\{{")) // the app id also keys other blocks
+        foreach (Match m in Regex.Matches(text, $@"""{app}""\s*\{{")) // the app id also keys other blocks
         {
             var end = m.Index + m.Length;
             for (var depth = 1; end < text.Length && depth > 0; end++) depth += text[end] == '{' ? 1 : text[end] == '}' ? -1 : 0;
@@ -335,7 +464,7 @@ public static class UnrealRhi
     /// out, and the one of type "default". Empty if none, or not a Steam game. Kept per appinfo.vdf stamp.</summary>
     public static (IReadOnlyList<string> Entries, string? Default) LaunchMenu(Game game)
     {
-        if (!game.Id.StartsWith("steam:") || !uint.TryParse(game.Id[6..], out var id)) return ([], null);
+        if (SteamSource.AppId(game.Id) is not { } id) return ([], null);
         var f = new FileInfo(Path.Combine(SteamRoot, "appcache", "appinfo.vdf"));
         var stamp = f.Exists ? $"{f.Length}:{f.LastWriteTimeUtc.Ticks}" : "";
         var key = $"{game.Id}|{game.InstallDir}|{game.ExePath}";

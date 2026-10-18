@@ -17,7 +17,7 @@ public enum AddonKind
     LayoutInjecting,   // adds a constant to every root signature the game creates: every pipeline changes
 }
 
-/// <param name="Mod">"RenoDX" or "Luma"; the file's name for one that couldn't be read; null = another add-on</param>
+/// <param name="Mod">"RenoDX"; the file's name for one that couldn't be read; null = another add-on</param>
 /// <param name="Disabled">listed in ReShade.ini's DisabledAddons: never loaded</param>
 public sealed record ReShadeAddon(string Path, string? Mod, AddonKind Kind, bool Disabled = false);
 
@@ -25,13 +25,13 @@ public sealed record ReShadeAddon(string Path, string? Mod, AddonKind Kind, bool
 public enum LayerBlock
 {
     None,
-    Luma,               // a Luma add-on, whose shader files a copy leaves out
     NotBesideExe,       // only in the install root above the exe: the game may not load it
     OptiScalerOff,      // ReShade64.dll beside an OptiScaler whose OptiScaler.ini doesn't set LoadReshade=true
     OptiScalerIni,      // ...that does, in an OptiScaler.ini with a section header not whole on its line: SimpleIni may read
                         // it across lines, so a copy can't be sure its paths and update check are out
     UnloadedName,       // an .asi, ReShade64.dll or a renamed file another loader may or may not pick up
     SpecialK,           // Special K under a name the game loads: it loads ReShade as a plug-in, from its own folders or this one
+    ProxyLibrary,       // ReShade.ini's [PROXY] chains a DLL a copy lacks; as dxgi.dll it then hooks any d3d12.dll, the recorder's too
 }
 
 /// <summary>ReShade next to the game: its DLL (whatever its name), ReShade.ini and ReShade.log when present, and the
@@ -44,8 +44,9 @@ public enum LayerBlock
 /// <param name="OptiScaler">that OptiScaler's DLL; null = none</param>
 /// <param name="OptiScalerIniOdd">its OptiScaler.ini has a section header that isn't a whole [name] on its line</param>
 /// <param name="SpecialK">Special K beside it under a name the game loads; <paramref name="Dll"/> is Special K's when no ReShade is there</param>
+/// <param name="ProxyLibrary">ReShade.ini sets [PROXY] EnableProxyLibrary with a ProxyLibrary: ReShade's own exports go to that DLL</param>
 public sealed record ReShadeInstall(string Dll, bool LoadsAddons, string? Ini, string? Log, IReadOnlyList<ReShadeAddon> Addons, bool BesideExe = true,
-    bool? OptiScalerLoads = null, string? OptiScaler = null, bool OptiScalerIniOdd = false, bool SpecialK = false)
+    bool? OptiScalerLoads = null, string? OptiScaler = null, bool OptiScalerIniOdd = false, bool SpecialK = false, bool ProxyLibrary = false)
 {
     /// <summary>The OptiScaler that loads ReShade64.dll: a copy of the layer runs through it too, as the game does.</summary>
     public string? Loader => OptiScalerLoads == true ? OptiScaler : null;
@@ -54,16 +55,15 @@ public sealed record ReShadeInstall(string Dll, bool LoadsAddons, string? Ini, s
     public ReShadeAddon? ShaderMod => LoadsAddons ? Addons.Where(a => a is { Disabled: false, Kind: not AddonKind.NotPipeline }).MaxBy(a => a.Kind) : null;
 
     // the names the game itself loads ReShade under from its exe's folder or package root (system DLLs it imports, or the recorder's chain)
-    internal static readonly string[] Loaded = ["dxgi.dll", "d3d12.dll", "d3d11.dll", "d3d10.dll", "d3d9.dll", "opengl32.dll", "dinput8.dll", ScsKiller.ChainName];
+    internal static readonly string[] Loaded = ["dxgi.dll", "d3d12.dll", "d3d11.dll", "d3d10.dll", "d3d9.dll", "opengl32.dll", "dinput8.dll", ScsKiller.ChainName, ScsKiller.ChainName11];
 
     /// <summary>What keeps a copy of the layer next to the warm's exe from reproducing what the game loads; None = ReShade
     /// beside the exe under a name the game loads by itself, or ReShade64.dll that OptiScaler loads.</summary>
     public LayerBlock Block =>
-        Addons.Any(a => a is { Disabled: false, Mod: "Luma" }) ? LayerBlock.Luma
-        : !BesideExe ? LayerBlock.NotBesideExe
+        !BesideExe ? LayerBlock.NotBesideExe
         : SpecialK ? LayerBlock.SpecialK
         : OptiScalerLoads == true ? OptiScalerIniOdd ? LayerBlock.OptiScalerIni : LayerBlock.None
-        : Loaded.Contains(Path.GetFileName(Dll), StringComparer.OrdinalIgnoreCase) ? LayerBlock.None
+        : Loaded.Contains(Path.GetFileName(Dll), StringComparer.OrdinalIgnoreCase) ? ProxyLibrary ? LayerBlock.ProxyLibrary : LayerBlock.None
         : OptiScalerLoads == false ? LayerBlock.OptiScalerOff
         : LayerBlock.UnloadedName;
 
@@ -90,7 +90,7 @@ public sealed record ReShadeInstall(string Dll, bool LoadsAddons, string? Ini, s
 
 public static class ReShade
 {
-    static readonly EnumerationOptions Flat = new() { IgnoreInaccessible = true };
+    static readonly EnumerationOptions Flat = new() { IgnoreInaccessible = true, AttributesToSkip = 0 };
 
     // Raw bytes for a DLL without a readable version resource: its FileDescription. The export add-ons register through is
     // read from the export table: Special K and add-on hosts hold the name too, to look it up.
@@ -98,16 +98,15 @@ public static class ReShade
     // only in the standard build, which loads no add-on files
     static readonly byte[][] Limited = ["only limited add-on functionality"u8.ToArray()];
     // the names ReShade loads under next to the exe, read whole when the version resource doesn't name it
-    static readonly string[] Names = ["dxgi.dll", "d3d12.dll", "d3d11.dll", "d3d10.dll", "d3d9.dll", "opengl32.dll", "dinput8.dll", "ReShade64.dll", ScsKiller.ChainName];
+    static readonly string[] Names = ["dxgi.dll", "d3d12.dll", "d3d11.dll", "d3d10.dll", "d3d9.dll", "opengl32.dll", "dinput8.dll", "ReShade64.dll", ScsKiller.ChainName, ScsKiller.ChainName11];
     // the names OptiScaler works under as a DLL the game loads by itself (OptiScaler.asi and OptiScaler.dll need another
     // loader): every D3D12 game loads the first two; the rest only when the exe imports them
     static readonly string[] OptiScalerNames = ["dxgi.dll", "d3d12.dll", "winmm.dll", "version.dll", "dbghelp.dll", "wininet.dll", "winhttp.dll"];
 
     // Logged unconditionally where release builds register their pipeline hooks: RenoDX's shader-replacement util (every
-    // HDR add-on and the devkit, in both RenoDX repos; not dlssfix, fpslimiter or DLSS-only add-ons) and Luma's core.
-    static readonly (string Mod, byte[] Marker)[] Mods =
-        [("RenoDX", "utils::shader attached."u8.ToArray()), ("Luma", "Luma: trying to load a config from a newer version of the mod"u8.ToArray())];
-    static readonly byte[][] ModMarkers = [.. Mods.Select(m => m.Marker)];
+    // HDR add-on and the devkit, in both RenoDX repos; not dlssfix, fpslimiter or DLSS-only add-ons). Luma add-ons are
+    // DirectX 11 only (a D3D12 device gets a message box, no hooks), so they change no D3D12 pipeline.
+    static readonly byte[][] ModMarkers = ["utils::shader attached."u8.ToArray()];
 
     // ReShade.log: which file each add-on name was registered from, then RenoDX (prefixed with that name) adding its
     // constants to a game root signature or cloning the layout instead. Both paths are in every build and a runtime flag
@@ -212,7 +211,7 @@ public static class ReShade
         string? Named(string name) => files!.FirstOrDefault(f => f.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.FullName;
         // ReShade reads its ini and resolves AddonPath in its own folder
         var (ini, log) = (Named("ReShade.ini"), Named("ReShade.log"));
-        var (addonPath, disabled) = ini != null ? Config(new FileInfo(ini)) : (null, []);
+        var (addonPath, disabled, proxy) = ini != null ? Config(new FileInfo(ini)) : (null, [], false);
         var addonDir = addonPath != null ? GameFiles.DirKey(Path.Combine(dir, addonPath)) : dir;
         var verdicts = log != null ? LogVerdicts(new FileInfo(log)) : null;
         var addons = (addonDir == dir ? files! : List(addonDir) ?? []).Where(f => Ext(f, ".addon") || Ext(f, ".addon64")).Concat(addonDir == exeDir ? [] : hostAddons)
@@ -223,7 +222,7 @@ public static class ReShade
             }).ToList();
         // OptiScaler loads ReShade from the exe's folder under this one name only
         var (loads, opti, odd) = besideExe && dll.Name.Equals("ReShade64.dll", StringComparison.OrdinalIgnoreCase) ? OptiScalerLoads(files!, game.ExePath) : (null, null, false);
-        return new(dll.FullName, Find(dll, "limited", Limited) != 0, ini, log, addons, besideExe || dir.Equals(root, StringComparison.OrdinalIgnoreCase), loads, opti?.FullName, odd, sk != null);
+        return new(dll.FullName, Find(dll, "limited", Limited) != 0, ini, log, addons, besideExe || dir.Equals(root, StringComparison.OrdinalIgnoreCase), loads, opti?.FullName, odd, sk != null, proxy);
     }
 
     /// <summary>Whether an OptiScaler the game loads loads ReShade64.dll: its OptiScaler.ini, next to it, sets [Plugins]
@@ -277,7 +276,7 @@ public static class ReShade
     // elsewhere as it would without it
     const long MaxLibraryBytes = 128L << 20, LibraryBudget = 512L << 20;
 
-    static bool IsPe(string path, long length)
+    internal static bool IsPe(string path, long length)
     {
         if (length < 0x40) return false;
         using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
@@ -369,6 +368,21 @@ public static class ReShade
 
     static bool Ext(FileInfo f, string ext) => f.Extension.Equals(ext, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>DXVK as the game's d3d11.dll or dxgi.dll beside its exe (<see cref="ScsKiller.ChainBlocker"/>, which rules out
+    /// OptiScaler and Special K by name, and a variable DXVK reads): the game runs on Vulkan. ReShade is ruled out by its own identity.</summary>
+    public static bool Dxvk(string exeDir) => new[] { ScsKiller.Dll11, "dxgi.dll" }.Any(n => IsDxvk(Path.Combine(exeDir, n)));
+
+    /// <summary>This DLL is DXVK's (<see cref="Dxvk"/>).</summary>
+    public static bool IsDxvk(string dll)
+    {
+        var f = new FileInfo(dll);
+        return Cached(f, "dxvk", () => !IsReShade(f) && Find(f, "dxvkvars", DxvkVars) >= 0
+            && ScsKiller.ChainBlocker(f.FullName) == ScsKiller.SkipVulkanMod) is true;
+    }
+
+    // "vkd3d-proton" alone isn't enough here: OptiScaler and other wrappers name it in their own strings
+    static readonly byte[][] DxvkVars = ["DXVK_LOG_LEVEL"u8.ToArray(), "DXVK_HUD"u8.ToArray()];
+
     static bool IsReShade(FileInfo f) =>
         Cached(f, "product", () => FileVersionInfo.GetVersionInfo(f.FullName).ProductName == "ReShade") is true
         || Names.Contains(f.Name, StringComparer.OrdinalIgnoreCase) && (Find(f, "description", Identity) >= 0 || ExportsAddonApi(f));
@@ -377,7 +391,6 @@ public static class ReShade
     {
         var mod = Find(f, "mods", ModMarkers);
         if (mod == -1) return new(f.FullName, null, AddonKind.NotPipeline);
-        if (mod >= 0 && Mods[mod].Mod != "RenoDX") return new(f.FullName, Mods[mod].Mod, AddonKind.ReplacesShaders);
         // a log from before the file was replaced says nothing about it
         var logged = verdicts != null && verdicts.TryGetValue(f.FullName, out var k) && File.GetLastWriteTimeUtc(log!) > f.LastWriteTimeUtc ? k : (AddonKind?)null;
         var kind = logged ?? Listed(f.Name) ?? Listed(OriginalName(f.FullName));
@@ -396,11 +409,15 @@ public static class ReShade
 
     static string OriginalName(string path) => Cached(new FileInfo(path), "original", () => FileVersionInfo.GetVersionInfo(path).OriginalFilename ?? "") as string ?? "";
 
-    /// <summary>ReShade.ini's [ADDON] AddonPath (relative to ReShade's folder) and DisabledAddons' entries.</summary>
-    static (string? AddonPath, List<string> Disabled) Config(FileInfo ini)
+    /// <summary>ReShade.ini's [ADDON] AddonPath (relative to ReShade's folder), DisabledAddons' entries, and whether [PROXY]
+    /// EnableProxyLibrary is on (its first value a nonzero number by strtol, or "true") with a ProxyLibrary key, even empty.</summary>
+    static (string? AddonPath, List<string> Disabled, bool ProxyLibrary) Config(FileInfo ini)
     {
         string? addonPath = null;
         var disabled = new List<string>();
+        var lines = IniAll(ini).Select(e => e.Line).ToList();
+        var proxy = ReShadeFirst(lines, "PROXY", "EnableProxyLibrary") is { } on && (on is "true" or "True" or "TRUE" || Regex.IsMatch(on, @"^[ \t\n\v\f\r]*[+-]?0*[1-9]"))
+            && ReShadeFirst(lines, "PROXY", "ProxyLibrary") != null;
         foreach (var (section, _, key, value, _) in IniEntries(ini))
         {
             if (!section.Equals("ADDON", StringComparison.OrdinalIgnoreCase)) continue;
@@ -408,7 +425,36 @@ public static class ReShade
             else if (key.Equals("DisabledAddons", StringComparison.OrdinalIgnoreCase))
                 disabled.AddRange(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         }
-        return (addonPath, disabled);
+        return (addonPath, disabled, proxy);
+    }
+
+    /// <summary>A key's first value as ReShade's ini_file.cpp reads it: names case-sensitive, a section named by its line up to
+    /// ']' less spaces, tabs and brackets, a line starting with ';', '/' or '#' skipped; a key without '=' or with an empty
+    /// value is there with no value, and repeats add theirs after it; a value splits at single commas (",," is a comma).
+    /// "" = there with no value; null = not there.</summary>
+    static string? ReShadeFirst(IEnumerable<string> lines, string section, string key)
+    {
+        var (current, found) = ("", false);
+        foreach (var raw in lines)
+        {
+            var line = raw.Split('\0')[0].Trim(' ', '\t', '\r', '\n');   // a line ends at its first NUL (strlen)
+            if (line.Length == 0 || line[0] is ';' or '/' or '#') continue;
+            if (line[0] == '[')
+            {
+                current = (line.IndexOf(']') is var end and >= 0 ? line[..end] : line).Trim(' ', '\t', '[', ']');
+                continue;
+            }
+            var eq = line.IndexOf('=');
+            if (current != section || (eq < 0 ? line : line[..eq].Trim(' ', '\t')) != key) continue;
+            found = true;
+            var value = eq < 0 ? "" : line[(eq + 1)..].Trim(' ', '\t');
+            if (value.Length == 0) continue;
+            var first = new StringBuilder();
+            for (var i = 0; i < value.Length && (value[i] != ',' || i + 1 < value.Length && value[i + 1] == ','); i++)
+                first.Append(value[i] == ',' ? value[i++] : value[i]);
+            return first.ToString();
+        }
+        return found ? "" : null;
     }
 
     /// <summary>An ini file's key=value lines (<see cref="IniLines"/>).</summary>

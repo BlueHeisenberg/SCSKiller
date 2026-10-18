@@ -200,3 +200,36 @@ public static class UnrealUserCache
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 }
+
+/// <summary>Pipeline caches a game writes and rebuilds when they're gone, never a file it ships, each tied to its game's engine:
+///   - Dawn (Guardians of the Galaxy): <c>bin\pipelineLibrary.cache</c> beside the shipped <c>bin\raw*.store2</c>
+///     (<see cref="Carved.DawnStores"/>), a serialized ID3D12PipelineLibrary, which only loads on the GPU and driver that
+///     wrote it;
+///   - RE Engine: <c>shader.cache2</c> and <c>piplinelist.bin</c> beside the exe, written at the first start after an
+///     install (RE Engine);
+///   - GTA V Enhanced (RAGE, <c>GTA5_Enhanced.exe</c>): <c>*.d3d12PipelineCacheWindows</c> in
+///     <c>Documents\Rockstar Games\GTAV Enhanced\Settings</c>, a pipeline library;
+///   - HELLDIVERS 2 (Stingray, <c>helldivers2.exe</c>): <c>%APPDATA%\Arrowhead\Helldivers2\shader_cache\pipeline_library.cache</c>,
+///     a pipeline library.
+/// Folders outside the install are another game's for every other game of the engine, so those go by the exe too. A list of
+/// the pipelines play created (War Thunder's dx12.cache, GTA V's warmup cache, Unreal's .upipelinecache) is never one:
+/// only playing again refills it.</summary>
+public static class OwnPipelineCaches
+{
+    static readonly string[] DawnFiles = ["rawshader.store2", "rawroot.store2", "rawpso.store2"], ReFiles = ["shader.cache2", "piplinelist.bin"];
+
+    public static IReadOnlyList<string> FilesOf(Game g, EngineInfo? engine, string documents, string roamingAppData)
+    {
+        var bin = Path.Combine(g.InstallDir, "bin");
+        var files = new List<string>();
+        if (DawnFiles.All(f => File.Exists(Path.Combine(bin, f)))) files.Add(Path.Combine(bin, "pipelineLibrary.cache"));
+        if (engine?.Family == ReEngine.ReEngineReader.Family) files.AddRange(ReFiles.Select(f => Path.Combine(Path.GetDirectoryName(g.ExePath)!, f)));
+        var exe = Path.GetFileName(g.ExePath);
+        if (engine?.Family == Rage.RageReader.Family && exe.Equals("GTA5_Enhanced.exe", StringComparison.OrdinalIgnoreCase)
+            && Path.Combine(documents, "Rockstar Games", "GTAV Enhanced", "Settings") is var settings && Directory.Exists(settings))
+            files.AddRange(Directory.EnumerateFiles(settings, "*.d3d12PipelineCacheWindows", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 }));
+        if (engine is { Family: Nixxes.NixxesReader.Family, Fork: Nixxes.NixxesReader.Stingray } && exe.Equals("helldivers2.exe", StringComparison.OrdinalIgnoreCase))
+            files.Add(Path.Combine(roamingAppData, "Arrowhead", "Helldivers2", "shader_cache", "pipeline_library.cache"));
+        return files.Where(File.Exists).ToList();
+    }
+}

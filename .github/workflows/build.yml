@@ -1,7 +1,8 @@
 # Build, test and package on a clean Windows runner.
-# One file serves both repos. Private repo: never on a push to a branch; on PRs, workflow_dispatch, the nightly schedule
-# (skipped when main didn't change) and release tags (release.yml), every job on the runner the repository variable
-# SCSK_RUNNER names (the team's self-hosted Windows runner). Public repo (free, GitHub-hosted): also every push to main.
+# One file serves both repos. Private repo: PRs, workflow_dispatch, the nightly schedule (skipped when main didn't
+# change) and release tags (release.yml), every job on the runner the repository variable SCSK_RUNNER names (the team's
+# self-hosted Windows runner). Public repo: only release tags build, GitHub-hosted, without tests (the suite already
+# passed on the private repo, and a hosted runner has no Steam or GPU).
 name: build
 
 on:
@@ -10,15 +11,21 @@ on:
     paths-ignore: ['**.md']
   pull_request:
     branches: [main, 'release/**']
-    paths-ignore: ['**.md']
+    paths-ignore: ['**.md', 'docs*/**', 'tools*/linux/**']   # nothing the Windows build or tests use ('*': not read as a private path by the export's leak scan)
   schedule:
     - cron: '17 3 * * *'   # nightly, 03:17 UTC
   workflow_dispatch:
+    inputs:
+      filter:
+        description: 'Only the tests this dotnet test filter selects (e.g. FullyQualifiedName~SomeTest), no publish'
+        required: false
+        default: ''
   workflow_call:   # release.yml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # a main run finishes instead of being cancelled by the next merge; queued main runs collapse to the newest
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -27,7 +34,7 @@ jobs:
   # Nightly only: did main get a commit in the last 25 h? (Linux, 1x minutes, a few seconds.) Not a numeric output:
   # expressions coerce a skipped job's null and '0' both to 0.
   changed:
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' && github.event.repository.private
     runs-on: ${{ vars.SCSK_RUNNER && fromJSON(vars.SCSK_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 5
     outputs:
@@ -43,12 +50,10 @@ jobs:
 
   build:
     needs: changed
-    if: >-
-      !cancelled() && needs.changed.outputs.unchanged != 'yes' &&
-      (!github.event.repository.private || github.event_name != 'push' || github.ref_type == 'tag')
+    if: ${{ !cancelled() && needs.changed.outputs.unchanged != 'yes' && (github.event.repository.private && github.event_name != 'push' || !github.event.repository.private && github.ref_type == 'tag') }}
     # VS 2022 (MSVC x64, MASM, Windows SDK) and CMake: preinstalled on windows-2025, installed on the self-hosted runner
     runs-on: ${{ vars.SCSK_RUNNER && fromJSON(vars.SCSK_RUNNER) || 'windows-2025' }}
-    timeout-minutes: 30     # a hung test or publish would otherwise bill up to 6 h x 2
+    timeout-minutes: 45     # green runs take 22-35 min with several runners on one PC, a hang still stops well short of 6 h
     env:
       DOTNET_NOLOGO: 'true'
       DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
@@ -87,11 +92,23 @@ jobs:
 
       # Tests that need installed games/recordings or a real GPU carry [Trait("Needs", "Game"|"Gpu")]; the rest must
       # pass on a machine with neither. The proxy is built, so the WARP selftest (RuntimeLayoutRules) runs.
+      # A dispatch's filter narrows it to the tests a change is about (proving a new test fails on main takes minutes).
+      # Each test's time goes to the log, so the slow ones can be found. The full suite runs in shares, one test process
+      # each (build/test.ps1).
       - name: Test
-        run: dotnet test tests/SCSKiller.Tests -c Release --no-build --filter "Needs!=Gpu&Needs!=Game"
+        if: github.event.repository.private
+        shell: powershell
+        env:
+          TEST_FILTER: ${{ inputs.filter }}
+        run: |
+          $f = 'Needs!=Gpu&Needs!=Game'
+          if (-not $env:TEST_FILTER) { build/test.ps1 -Filter $f; exit $LASTEXITCODE }
+          dotnet test tests/SCSKiller.Tests -c Release --no-build --filter "($env:TEST_FILTER)&$f" --logger "console;verbosity=normal"
+          exit $LASTEXITCODE
 
       # The pinned Oodle DLL needs AVX2 and BMI2; .NET reports neither with this knob, as on a CPU without them
       - name: Test codecs without AVX2
+        if: ${{ !inputs.filter && github.event.repository.private }}
         env:
           DOTNET_EnableAVX2: '0'
         run: dotnet test tests/SCSKiller.Tests -c Release --no-build --filter "FullyQualifiedName~CodecCpuTests"
@@ -99,7 +116,9 @@ jobs:
       # No Oodle DLL in anything that leaves the build (THIRD-PARTY-NOTICES.md); the app downloads it on first use.
       # Nothing is signed here: the release step signs these exact bytes after checking them against the sums.
       # A tag build is stamped with the tag's version (publish.ps1 drops the v; a bad tag fails it). Otherwise the dev default.
+      # Private-repo PRs publish nothing (no artifact is kept), the nightly run still proves the packaging.
       - name: Publish
+        if: ${{ !inputs.filter && (!github.event.repository.private || github.ref_type == 'tag' || github.event_name != 'pull_request') }}
         shell: powershell
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
@@ -113,7 +132,7 @@ jobs:
 
       # Archived (not archive: false): `gh run download`, which the release step uses, can't read unarchived artifacts.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
-        if: ${{ !github.event.repository.private || github.ref_type == 'tag' }}   # private: storage is billed, only release tags need it
+        if: ${{ !inputs.filter && (!github.event.repository.private || github.ref_type == 'tag') }}   # private: storage is billed, only release tags need it
         with:
           name: SCSKiller-unsigned
           path: |

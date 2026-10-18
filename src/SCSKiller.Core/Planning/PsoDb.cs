@@ -11,7 +11,8 @@ namespace SCSKiller.Core.Planning;
 /// root sig[20], u32 n, n x (u32 stage, sha1[20]), then u32 0xFFFFFFFF (keep the template's input layout) or a canonical
 /// input layout. '1' D3D11 item = u32 stage (1 VS, 2 PS, 3 DS, 4 HS, 5 GS, 6 CS) + sha1[20] of a 'B' blob in the same db:
 /// the warmer creates that shader and draws/dispatches it once. '2' D3D11 tessellation pair = HS sha1[20] + DS sha1[20]: the warmer draws them together,
-/// behind a generated VS. 'Y' (plan only) = a ray tracing collection to synthesize at materialize (<see cref="RtCollections.Item"/>); 'H' (plan only) = a REDengine 3 or FromSoftware hit group's (<see cref="RedEngine.RedRayTracing.Item"/>).
+/// behind a generated VS. 'D' (the D3D11 recorder) = a draw's vertex stages, input layout and topology (<see cref="Draw11"/>);
+/// '3' (plan only) the same payload, for the warmer to draw. 'Y' (plan only) = a ray tracing collection to synthesize at materialize (<see cref="RtCollections.Item"/>); 'H' (plan only) = a REDengine 3 or FromSoftware hit group's (<see cref="RedEngine.RedRayTracing.Item"/>).
 /// A stream output declaration: <see cref="SoDecl"/>. 'R' / 'A' = ray tracing state objects
 /// (<see cref="ParseStateObject"/>), replayed exactly as recorded. 'N' = the NVAPI state another record was created with
 /// (<see cref="NvState"/>). 'W' = a create a layer wrapping the device (a mod) changed: key[20] of the record the driver got +
@@ -119,6 +120,18 @@ public static partial class PsoDb
         }
     }
 
+    /// <summary>A compact recording's bytes around <paramref name="brotli"/>, a proxy db of <paramref name="raw"/> bytes as
+    /// Brotli (a download kept as it came).</summary>
+    public static byte[] Compact(long raw, ReadOnlySpan<byte> brotli)
+    {
+        var f = new byte[CompactHead + brotli.Length];
+        CompactMagic.CopyTo(f);
+        f[CompactMagic.Length] = CompactVersion;
+        BinaryPrimitives.WriteInt64LittleEndian(f.AsSpan(CompactMagic.Length + 1), raw);
+        brotli.CopyTo(f.AsSpan(CompactHead));
+        return f;
+    }
+
     /// <summary>Copies a recording as a proxy db, which is what the proxy reads.</summary>
     public static void CopyRaw(string from, string to)
     {
@@ -135,23 +148,24 @@ public static partial class PsoDb
             var len = BinaryPrimitives.ReadUInt32LittleEndian(head.AsSpan(1));
             if (head[0] == 'B' && len < 20) throw new InvalidDataException($"a 'B' record of {len} bytes, short of its SHA-1");
             if (f.CanSeek && len > f.Length - f.Position) yield break;   // a torn tail, or a stray file's "length": nothing allocated
-            byte[] body;
-            if (f.CanSeek || len <= 1 << 20)
-            {
-                body = new byte[len];
-                if (f.ReadAtLeast(body, body.Length, false) < body.Length) yield break;
-            }
-            else
-            {
-                // a stream (a compact recording's Brotli) can't tell its length: the buffer grows only with bytes that arrive
-                using var m = new MemoryStream();
-                var chunk = new byte[1 << 20];
-                for (int n; m.Length < len && (n = f.Read(chunk, 0, (int)Math.Min(chunk.Length, len - m.Length))) > 0;) m.Write(chunk, 0, n);
-                if (m.Length < len) yield break;
-                body = m.ToArray();
-            }
+            if (Body(f, len) is not { } body) yield break;
             yield return new Rec((char)head[0], body);
         }
+    }
+
+    /// <summary>The next <paramref name="len"/> bytes of <paramref name="f"/>; null when it ends first.</summary>
+    internal static byte[]? Body(Stream f, uint len)
+    {
+        if (f.CanSeek || len <= 1 << 20)
+        {
+            var body = new byte[len];
+            return f.ReadAtLeast(body, body.Length, false) < body.Length ? null : body;
+        }
+        // a stream (a compact recording's Brotli) can't tell its length: the buffer grows only with bytes that arrive
+        using var m = new MemoryStream();
+        var chunk = new byte[1 << 20];
+        for (int n; m.Length < len && (n = f.Read(chunk, 0, (int)Math.Min(chunk.Length, len - m.Length))) > 0;) m.Write(chunk, 0, n);
+        return m.Length < len ? null : m.ToArray();
     }
 
     public static void Write(Stream s, char tag, ReadOnlySpan<byte> payload)
@@ -312,11 +326,19 @@ public static partial class PsoDb
     /// <summary>An 'N' record: the NVAPI state the record with key <paramref name="Target"/> was created with, which NVIDIA's
     /// compiler keys on (selftest nvext). <paramref name="Slot"/> / <paramref name="Space"/>: the shader-extension UAV
     /// (uint.MaxValue = none); <paramref name="Scope"/>: how the game set it (1 device, 2 thread, 3 PSO extension; the warm
-    /// sets any on its creating thread); <paramref name="Options"/>: NvAPI_D3D12_SetCreatePipelineStateOptions flags.
-    /// Payload: key[20], u32 slot, space, scope, options.</summary>
+    /// sets any on its creating thread), with <see cref="GlobalOptions"/>; <paramref name="Options"/>:
+    /// NvAPI_D3D12_SetCreatePipelineStateOptions flags. Payload: key[20], u32 slot, space, scope, options.</summary>
     public readonly record struct NvState(string Target, uint Slot, uint Space, uint Scope, uint Options)
     {
         public const int Size = 36;
+
+        /// <summary>Scope bit of a state object's record from a recorder that takes the options as the process's (they are
+        /// global, nvapi.h): its options are as the driver had them, also 0. Without it they may be missing
+        /// (<see cref="RtCollections.OptionFixes"/>).</summary>
+        public const uint GlobalOptions = 0x100;
+
+        /// <summary>No slot and no options: nothing NVIDIA keys on.</summary>
+        public bool Bare => Slot == uint.MaxValue && Options == 0;
 
         public static NvState Parse(Rec r)
         {
@@ -334,7 +356,7 @@ public static partial class PsoDb
         }
     }
 
-    /// <summary>Parses an 'R' / 'A' payload (format in proxy.cpp write_so and ARCHITECTURE.md): u32 type, u32 n, n x
+    /// <summary>Parses an 'R' / 'A' payload (format in proxy.cpp write_so): u32 type, u32 n, n x
     /// (u32 subobject type + its canonical form). InvalidDataException when it doesn't parse to its end.</summary>
     public static StateObject ParseStateObject(Rec r)
     {
@@ -603,6 +625,19 @@ public static partial class PsoDb
     public static byte[] Compute(string rs, string cs) => new ArrayBufferWriter().Hash(rs).Hash(cs).U32(0).U32(0).ToArray();
 
     public static byte[] D3D11Item(Stage stage, string sha1) => new ArrayBufferWriter().U32((uint)stage).Hash(sha1).ToArray();
+
+    /// <summary>A D3D11 draw's vertex stages ('D' recorded, '3' planned): VS, GS, HS, DS (<see cref="Zero"/> = none), its
+    /// D3D11_PRIMITIVE_TOPOLOGY (a triangle strip recorded as a list), whether a PS was bound, and the input layout as bound
+    /// (offsets as given, append-aligned included; empty = none).</summary>
+    public sealed record Draw11(string Vs, string Gs, string Hs, string Ds, uint Topology, bool Ps, List<LayoutElem> Layout);
+
+    /// <summary>The payload of a 'D' / '3' record: VS[20] GS[20] HS[20] DS[20], u32 topology, u32 flags (1: a PS), layout.</summary>
+    public static Draw11 ParseDraw11(byte[] p) =>
+        p.Length < 92 ? throw new InvalidDataException($"a D3D11 draw of {p.Length} bytes")
+            : new(Hex(p.AsSpan(0, 20)), Hex(p.AsSpan(20, 20)), Hex(p.AsSpan(40, 20)), Hex(p.AsSpan(60, 20)), U(p, 80), (U(p, 84) & 1) != 0, ReadLayout(p, 88));
+
+    public static byte[] Draw11Bytes(Draw11 d) =>
+        new ArrayBufferWriter().Hash(d.Vs).Hash(d.Gs).Hash(d.Hs).Hash(d.Ds).U32(d.Topology).U32(d.Ps ? 1u : 0).Layout(d.Layout).ToArray();
     public static byte[] D3D11Pair(string hs, string ds) => new ArrayBufferWriter().Hash(hs).Hash(ds).ToArray();
 
     public static (string Template, string Rs, SortedDictionary<int, string> Stages) ParseItem(byte[] p)

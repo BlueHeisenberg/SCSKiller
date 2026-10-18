@@ -12,12 +12,12 @@ namespace SCSKiller.Tests.Platform;
 public partial class AppTests
 {
     /// <summary>The fake game listed as an offline-session game while <paramref name="body"/> runs; the child processes
-    /// don't arm themselves (the selftest's own attestation is the app's, here the test's).</summary>
-    async Task Listed(Func<Task> body, string exe = "Fake-Win64-Shipping.exe", string? id = null)
+    /// don't stamp themselves (the selftest's own stamp is the app's, here the test's).</summary>
+    async Task Listed(Func<Task> body, string exe = "Fake-Win64-Shipping.exe", string? id = null, string? eacProduct = null)
     {
         id ??= _game.Id;   // this test's: the cleanup helper's mutex is named by it, shared with every run in the logon session
         var (list, unarmed) = (OfflineEac.Current, Environment.GetEnvironmentVariable("SCSKILLER_SELFTEST_UNARMED"));
-        OfflineEac.Current = [new(id, "Fake Game", exe, "480")];
+        OfflineEac.Current = [new(id, "Fake Game", exe, "480", eacProduct)];
         Environment.SetEnvironmentVariable("SCSKILLER_SELFTEST_UNARMED", "1");
         try { await body(); }
         finally
@@ -27,10 +27,12 @@ public partial class AppTests
         }
     }
 
+    /// <summary>EasyAntiCheat's markers beside the exe and in the install root, as its games ship them.</summary>
     void EasyAntiCheatBeside()
     {
         Directory.CreateDirectory(Path.Combine(_exeDir, "EasyAntiCheat"));
         File.WriteAllBytes(Path.Combine(_exeDir, "start_protected_game.exe"), [0]);
+        Directory.CreateDirectory(Path.Combine(_game.InstallDir, "EasyAntiCheat"));
     }
 
     static string[] Names(string dir) => [.. Directory.EnumerateFileSystemEntries(dir).Select(Path.GetFileName).OfType<string>().Order()];
@@ -54,22 +56,23 @@ public partial class AppTests
         return k;
     }
 
-    /// <summary>An attestation bound to one process the app started (suspended, armed, resumed) admits that process even
-    /// with EasyAntiCheat's markers beside the exe; any other process with the same files there is a pass-through, as is
-    /// the bound one when another anti-cheat's marker is there or EasyAntiCheat's client is loaded before its device.</summary>
+    /// <summary>An ini bound to one process the app started (suspended, the ini placed, resumed) admits that process even
+    /// with EasyAntiCheat's markers beside the exe and in the install root; any other process with the same files there is a
+    /// pass-through, as is the bound one when another anti-cheat's marker is there or EasyAntiCheat's client is loaded
+    /// before its device.</summary>
     [Fact]
     public async Task The_proxy_admits_only_the_process_the_app_started_for_an_offline_session()
     {
-        UseProxyLedger();
         if (OwnWarmExe() is not { } warm) return;
         var bin = Path.GetDirectoryName(warm)!;
-        var dir = Path.Combine(_root, "offline");
+        var dir = Path.Combine(_root, "offline", "bin");
         Directory.CreateDirectory(Path.Combine(dir, "EasyAntiCheat"));
+        Directory.CreateDirectory(Path.Combine(_root, "offline", "EasyAntiCheat"));
         File.WriteAllBytes(Path.Combine(dir, "start_protected_game.exe"), [0]);
         var exe = Path.Combine(dir, "selftest.exe");
         File.Copy(Path.Combine(bin, "selftest.exe"), exe);
         File.Copy(Path.Combine(bin, "d3d12.dll"), Path.Combine(dir, "d3d12.dll"));
-        File.WriteAllText(Path.Combine(dir, "scskiller.ini"), "[scskiller]\r\nmode=record\r\nframes=0\r\n");
+        var ini = Path.Combine(dir, "scskiller.ini");
         var client = Path.Combine(Directory.CreateDirectory(Path.Combine(_root, "eac")).FullName, "EasyAntiCheat_x64.dll");
         File.Copy(Path.Combine(bin, "fakenext.dll"), client);
         int Computes()
@@ -81,18 +84,18 @@ public partial class AppTests
         }
         int Bound(string args)
         {
-            using (var h = ScsKiller.StartAttested(exe, args)) WaitExit(h);
+            using (var h = ScsKiller.StartAttested(exe, args, (_, pid, created) =>
+                       File.WriteAllText(ini, "[scskiller]\r\nmode=record\r\nframes=0\r\nroot=..\r\n"
+                           + ScsKiller.Signed(exe, "..", ScsKiller.Stamp(exe)!, ScsKiller.BoundTo(pid, created)))))
+                WaitExit(h);
             return Computes();
         }
         await Listed(() =>
         {
-            File.WriteAllText(ScsKiller.LedgerFile(exe) + ".revoked", "");   // StartAttested's caller deletes it first
-            Assert.Equal(0, Bound("anticheat -"));
-            File.Delete(ScsKiller.LedgerFile(exe) + ".revoked");
             Assert.Equal(2, Bound("anticheat -"));
-            Assert.Contains("pid=", File.ReadAllText(Path.Combine(dir, ScsKiller.ArmedFile)));
+            Assert.Contains("pid=", File.ReadAllText(ini));
 
-            // the same files, the attestation still bound to that process: another launch records nothing
+            // the same files, the ini still bound to that process: another launch records nothing
             var start = new ProcessStartInfo(exe, "anticheat -") { RedirectStandardOutput = true };
             using (var p = Process.Start(start)!)
             {
@@ -107,14 +110,12 @@ public partial class AppTests
             return Task.CompletedTask;
         });
     }
-
     /// <summary>An offline session: refused unless allowed for the game, confirmed and Steam runs (nothing written then);
     /// started, it records the game's process, and the moment that exits (by its handle: here the watcher would still
     /// call the game running) the recording is imported and the folder has exactly the entries it had before.</summary>
     [Fact]
     public async Task An_offline_session_records_and_leaves_the_folder_as_it_was_when_its_process_exits()
     {
-        UseProxyLedger();
         EasyAntiCheatBeside();
         if (OfflineKiller() is not { } k) return;
         await Listed(async () =>
@@ -137,7 +138,6 @@ public partial class AppTests
             await k.StartOfflineSession(_game.Id, confirmed: true).WaitAsync(TimeSpan.FromSeconds(120));
 
             Assert.Equal(before, Names(_exeDir));
-            Assert.False(File.Exists(ScsKiller.LedgerFile(_game.ExePath)));
             Assert.Equal(2, PsoDb.Read(Path.Combine(k.Store.GameDir(_game.Id), "recording.db")).Count(r => r.Tag == 'C'));
             var rec = k.Store.LoadGame(_game.Id);
             Assert.Equal((null, 0, null), (rec.OfflineSession, rec.RecorderFiles.Count, rec.RecorderExe));
@@ -149,6 +149,37 @@ public partial class AppTests
         });
     }
 
+    /// <summary>An offline session places the dll a risk session would (<see cref="ScsKiller.RiskDll"/>): an Unreal 4 game that
+    /// may run on either DirectX gets d3d11.dll on AMD, others d3d12.dll. A launch that loaded neither leaves the never-saw
+    /// note naming the other DirectX, and the folder as it was.</summary>
+    [Theory]
+    [InlineData("D3D11 or D3D12", "4.26", ScsKiller.Dll11, ScsKiller.NeverSawDx12Note)]
+    [InlineData("D3D11 or D3D12", "5.4", ScsKiller.Dll12, ScsKiller.NeverSawDx11Note)]
+    [InlineData("D3D12", "4.26", ScsKiller.Dll12, ScsKiller.NeverSawNote)]
+    public async Task An_offline_session_places_the_dll_a_risk_session_would_and_says_when_it_never_loaded(string api, string version, string dll, string note)
+    {
+        EasyAntiCheatBeside();
+        PingAsGame();
+        var k = Killer(new FakeReader(Unreal with { GraphicsApi = api, Version = version }), vendor: new FakeVendor(Gpu with { Vendor = GpuVendor.Amd }, profile: "amd-1"));
+        k.ProcessNames = () => new HashSet<string> { "steam" };
+        k.OfflineArguments = "-n 4 127.0.0.1";
+        await Listed(async () =>
+        {
+            await k.ScanAsync(default);
+            Assert.True(k.Games.Single().OfflineEligible);
+            k.SetOfflineRecording(_game.Id, true);
+            var before = Names(_exeDir);
+            var session = k.StartOfflineSession(_game.Id, confirmed: true);
+            Assert.True(ScsKiller.IsOurProxy(Path.Combine(_exeDir, dll)));
+            Assert.False(File.Exists(Path.Combine(_exeDir, dll == ScsKiller.Dll11 ? ScsKiller.Dll12 : ScsKiller.Dll11)));
+            Assert.Contains(dll, k.Store.LoadGame(_game.Id).RecorderFiles.Keys);
+            await session.WaitAsync(TimeSpan.FromSeconds(60));
+            Assert.Equal(before, Names(_exeDir));
+            Assert.Null(k.Store.LoadGame(_game.Id).OfflineSession);
+            Assert.Equal(note, k.Games.Single().SessionNote);
+        }, exe: Path.GetFileName(_game.ExePath));
+    }
+
     /// <summary>The session's process exits while another runs from the game folder: what would load into it goes at once,
     /// the data files and the session stay. The cleanup helper (SCSKiller closed meanwhile), given that process's pid, which
     /// has exited, finishes it; so does the next start.</summary>
@@ -157,7 +188,6 @@ public partial class AppTests
     [InlineData(false)]
     public async Task An_offline_session_left_behind_is_cleaned_up_by_the_helper_or_the_next_start(bool helper)
     {
-        UseProxyLedger();
         EasyAntiCheatBeside();
         if (OfflineKiller() is not { } k) return;
         await Listed(async () =>
@@ -185,21 +215,15 @@ public partial class AppTests
         });
     }
 
-    /// <summary>A write cut off midway (a temp name, a half file under the real name) is the session's all the same: every
-    /// journaled name goes whatever it holds, a file that was there before stays, and the session stays pending while one
-    /// can't be deleted yet.</summary>
+    /// <summary>A write cut off midway leaves a temp name: it goes by its name. A placed file still holding what the session
+    /// placed goes; a file that was there before stays; the session stays pending while one can't be deleted yet.</summary>
     [Fact]
     public void An_interrupted_offline_session_leaves_nothing_it_created()
     {
         File.WriteAllText(Path.Combine(_exeDir, ScsKiller.SteamAppIdFile), "480");   // the user's own
-        var store = new AppStore(Path.Combine(_root, "data"));
-        var rec = store.LoadGame(_game.Id);
         var before = Names(_exeDir);
-        rec.OfflineSession = new(_game.Id, _game.ExePath, _game.InstallDir, before,
-            ["d3d12.dll", "d3d12.dll.scskiller-new", "scskiller.ini", "scskiller.ini.scskiller-new", ScsKiller.ArmedFile, "scskiller.db"]);
-        store.SaveGame(_game.Id, rec);
+        var store = Journal(["scskiller.ini"], created: ["d3d12.dll.scskiller-new", "scskiller.ini.scskiller-new"]);
         File.WriteAllBytes(Path.Combine(_exeDir, "d3d12.dll.scskiller-new"), [1, 2, 3]);
-        File.WriteAllText(Path.Combine(_exeDir, "scskiller.ini"), "[scski");
 
         using (new FileStream(Path.Combine(_exeDir, "scskiller.ini"), FileMode.Open, FileAccess.Read, FileShare.None))
             Assert.Equal(1, ScsKiller.RunOfflineCleanup(store, _game.Id, TimeSpan.Zero, othersRun: OurOthersRun));
@@ -210,7 +234,6 @@ public partial class AppTests
         Assert.Equal(before, Names(_exeDir));
         Assert.Null(store.LoadGame(_game.Id).OfflineSession);
     }
-
     /// <summary>Only a listed game whose install has EasyAntiCheat and nothing else gets the option; anything else has none,
     /// and a session is refused with nothing written.</summary>
     [Theory]
@@ -233,6 +256,41 @@ public partial class AppTests
             if (!eligible) Assert.Throws<InvalidOperationException>(() => k.SetOfflineRecording(_game.Id, true));
             Assert.Throws<InvalidOperationException>(() => { _ = k.StartOfflineSession(_game.Id, confirmed: true); });
         }, exe: listedExe ?? "Fake-Win64-Shipping.exe", id: listed ? _game.Id : "steam:1");
+        Assert.DoesNotContain("d3d12.dll", Names(_exeDir));
+    }
+
+    /// <summary>A copy of a listed game added by hand qualifies only by the listed exe, its folder confirmed, and the
+    /// EasyAntiCheat product (productid/sandboxid of EasyAntiCheat\Settings.json beside the exe) the entry names.</summary>
+    [Theory]
+    [InlineData("aaaa/bbbb", "aaaa", "bbbb", null, true, true)]
+    [InlineData("aaaa/bbbb", "aaaa", "cccc", null, true, false)]    // another sandbox
+    [InlineData("aaaa/bbbb", "cccc", "bbbb", null, true, false)]    // another product
+    [InlineData("aaaa/bbbb", null, null, null, true, false)]        // EasyAntiCheat without its settings
+    [InlineData(null, "aaaa", "bbbb", null, true, false)]           // listed without its product: the store's copy only
+    [InlineData("aaaa/bbbb", "aaaa", "bbbb", "Other.exe", true, false)]
+    [InlineData("aaaa/bbbb", "aaaa", "bbbb", null, false, false)]   // its folder not confirmed
+    public async Task A_copy_added_by_hand_is_offered_offline_sessions_only_as_the_listed_easyanticheat_product(
+        string? listed, string? product, string? sandbox, string? listedExe, bool confirmed, bool eligible)
+    {
+        Directory.CreateDirectory(Path.Combine(_exeDir, "EasyAntiCheat"));
+        if (product != null)
+            File.WriteAllText(Path.Combine(_exeDir, "EasyAntiCheat", "Settings.json"),
+                $"{{ \"title\": \"Fake\", \"executable\": \"{Path.GetFileName(_game.ExePath)}\", \"productid\": \"{product}\", \"sandboxid\": \"{sandbox}\" }}");
+        var manual = new ManualSource(new AppStore(Path.Combine(_root, "data")));
+        var game = manual.Add(new ManualEntry(_game.ExePath, _game.InstallDir, "Fake Game", confirmed)).Game;
+        var k = Killer(new FakeReader(Unreal), sources: [manual]);
+        k.ProcessNames = () => new HashSet<string>();
+        await Listed(async () =>
+        {
+            var s = (await k.ScanAsync(default)).Single();
+            Assert.Equal((game.Id, AntiCheat.EasyAntiCheat, eligible), (s.Game.Id, s.AntiCheat, s.OfflineEligible));
+            if (!eligible) Assert.Throws<InvalidOperationException>(() => k.SetOfflineRecording(game.Id, true));
+            Assert.Throws<InvalidOperationException>(() => { _ = k.StartOfflineSession(game.Id, confirmed: true); });
+            if (!eligible) return;
+            k.SetOfflineRecording(game.Id, true);
+            File.WriteAllText(Path.Combine(_exeDir, "EasyAntiCheat", "Settings.json"), """{ "productid": "cccc", "sandboxid": "bbbb" }""");
+            Assert.Contains("aren't available for this game", Assert.Throws<InvalidOperationException>(() => { _ = k.StartOfflineSession(game.Id, confirmed: true); }).Message);
+        }, exe: listedExe ?? "Fake-Win64-Shipping.exe", id: "steam:1", eacProduct: listed);
         Assert.DoesNotContain("d3d12.dll", Names(_exeDir));
     }
 
@@ -259,24 +317,20 @@ public partial class AppTests
         });
     }
 
-    /// <summary>A session as a crash leaves it: the journal, and <paramref name="files"/> written under those names (the
-    /// proxy as d3d12.dll, the app id as steam_appid.txt, its hash recorded).</summary>
-    AppStore Journal(string[] created, string[]? files = null, int pid = 0, long started = 0, string? exe = null, bool resumed = true)
+    /// <summary>A session as a crash leaves it: <paramref name="placed"/> in the manifest by hash, written ("x") unless
+    /// <paramref name="write"/> is false, <paramref name="created"/> (the names it made itself), and <paramref name="data"/>
+    /// (other files: the recorder's data files, a temp name) written too.</summary>
+    AppStore Journal(string[] placed, bool write = true, string[]? data = null, int pid = 0, long started = 0, string? exe = null, bool resumed = true,
+        string[]? created = null)
     {
         var store = new AppStore(Path.Combine(_root, "data"));
         var rec = store.LoadGame(_game.Id);
-        rec.OfflineSession = new(_game.Id, exe ?? _game.ExePath, _game.InstallDir, Names(_exeDir), created, pid, started, resumed);
-        foreach (var f in files ?? created)
-        {
-            var path = Path.Combine(_exeDir, f);
-            if (f == "d3d12.dll") File.Copy(_proxy, path);
-            else File.WriteAllText(path, f == ScsKiller.SteamAppIdFile ? "480" : "x");
-            if (f == ScsKiller.SteamAppIdFile) rec.RecorderFiles[f] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)));
-        }
+        rec.OfflineSession = new(_game.Id, exe ?? _game.ExePath, _game.InstallDir, pid, started, resumed, created);
+        rec.RecorderFiles = placed.ToDictionary(f => f, _ => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData("x"u8)));
         store.SaveGame(_game.Id, rec);
+        foreach (var f in (write ? placed : []).Concat(data ?? [])) File.WriteAllText(Path.Combine(_exeDir, f), "x");
         return store;
     }
-
     /// <summary>A session cut off, then a mod's d3d12.dll and the user's own steam_appid.txt put under its names: the
     /// cleanup deletes only what is proven SCSKiller's, by its own names, the proxy's export or the bytes it wrote, and
     /// ends, leaving those. Without them, nothing it created is left.</summary>
@@ -286,9 +340,10 @@ public partial class AppTests
     public void An_offline_cleanup_deletes_only_what_is_proven_ours(bool replaced)
     {
         var before = Names(_exeDir);
-        var store = Journal(["d3d12.dll", "d3d12.dll.scskiller-new", "scskiller.ini", "scskiller.ini.scskiller-new", ScsKiller.SteamAppIdFile,
-            ScsKiller.ArmedFile, "scskiller.log"]);
+        var store = Journal([ScsKiller.SteamAppIdFile], data: ["d3d12.dll.scskiller-new", "scskiller.ini.scskiller-new", ScsKiller.ArmedFile, "scskiller.log"],
+            created: ["d3d12.dll", "d3d12.dll.scskiller-new", "scskiller.ini.scskiller-new", ScsKiller.SteamAppIdFile, ScsKiller.ArmedFile]);
         var (mod, appId) = (Path.Combine(_exeDir, "d3d12.dll"), Path.Combine(_exeDir, ScsKiller.SteamAppIdFile));
+        File.Copy(_proxy, mod);
         if (replaced)
         {
             File.WriteAllBytes(mod, [.. "MZ ReShade "u8]);
@@ -302,24 +357,12 @@ public partial class AppTests
         Assert.Equal("480\r\n", File.ReadAllText(appId));
     }
 
-    /// <summary>A proxy of another SCSKiller build (our export, other bytes) under the session's d3d12.dll goes too: none is
-    /// left in an EasyAntiCheat game's folder.</summary>
-    [Fact]
-    public void An_offline_cleanup_deletes_any_build_of_our_proxy()
-    {
-        var before = Names(_exeDir);
-        var store = Journal(["d3d12.dll"]);
-        File.WriteAllBytes(Path.Combine(_exeDir, "d3d12.dll"), [.. "MZ older proxy SCSKiller_StartWarm "u8]);
-        Assert.Null(ScsKiller.CleanOfflineSession(store, _game.Id, _ => false, _ => { }));
-        Assert.Equal(before, Names(_exeDir));
-    }
-
-    /// <summary>What a launch loads goes first, and leaves the journal at once: the recording's merge waiting for its lock
+    /// <summary>What a launch loads goes first, and leaves the manifest at once: the recording's merge waiting for its lock
     /// doesn't hold d3d12.dll back, and a d3d12.dll put there meanwhile is never deleted.</summary>
     [Fact]
     public async Task An_offline_cleanup_takes_the_dll_out_before_it_waits_for_the_recording()
     {
-        var store = Journal(["d3d12.dll", "scskiller.ini", ScsKiller.SteamAppIdFile, "scskiller.db"]);
+        var store = Journal(["d3d12.dll", "scskiller.ini", ScsKiller.SteamAppIdFile]);
         using (var db = File.Create(Path.Combine(_exeDir, "scskiller.db"))) PsoDb.WriteBlob(db, PsoDb.Hex(System.Security.Cryptography.SHA1.HashData("x"u8)), "x"u8);
         var held = new ManualResetEventSlim();
         var release = new ManualResetEventSlim();
@@ -333,7 +376,7 @@ public partial class AppTests
         });
         held.Wait();
         var cleanup = Task.Run(() => ScsKiller.CleanOfflineSession(store, _game.Id, _ => false, _ => { }));
-        await Until(() => store.LoadGame(_game.Id).OfflineSession!.Created is ["scskiller.db"]);
+        await Until(() => store.LoadGame(_game.Id).RecorderFiles.Count == 0);
         Assert.False(cleanup.IsCompleted);
         Assert.Equal(["Fake-Win64-Shipping.exe", "scskiller.db"], Names(_exeDir));
         File.WriteAllText(Path.Combine(_exeDir, "d3d12.dll"), "the user's");
@@ -342,18 +385,110 @@ public partial class AppTests
         Assert.Null(await cleanup);
         Assert.Equal("the user's", File.ReadAllText(Path.Combine(_exeDir, "d3d12.dll")));
     }
-
-    /// <summary>A name confirmed gone leaves the journal: a d3d12.dll the user puts there before the retry stays.</summary>
+    /// <summary>A placed file gone leaves the manifest, and one with other bytes than the session placed is someone else's: a
+    /// d3d12.dll the user puts there before the retry stays.</summary>
     [Fact]
     public void An_offline_cleanup_retry_leaves_a_file_put_there_since()
     {
-        var store = Journal(["d3d12.dll", "scskiller.log"]);
+        var store = Journal(["d3d12.dll"], data: ["scskiller.log"]);
         using (new FileStream(Path.Combine(_exeDir, "scskiller.log"), FileMode.Open, FileAccess.Read, FileShare.None))
             Assert.Equal(["scskiller.log"], ScsKiller.CleanOfflineSession(store, _game.Id, _ => false, _ => { }));
-        Assert.Equal(["scskiller.log"], store.LoadGame(_game.Id).OfflineSession!.Created);
+        Assert.Empty(store.LoadGame(_game.Id).RecorderFiles);
         File.WriteAllText(Path.Combine(_exeDir, "d3d12.dll"), "the user's");
         Assert.Null(ScsKiller.CleanOfflineSession(store, _game.Id, _ => false, _ => { }));
         Assert.Equal("the user's", File.ReadAllText(Path.Combine(_exeDir, "d3d12.dll")));
+    }
+
+    /// <summary>A 1.2 session (its journal's Original and Created names, a scskiller.armed it made, a temp name) left when
+    /// 1.3.0 starts: cleaned up by what it placed, by hash, and those names.</summary>
+    [Fact]
+    public void A_12_offline_session_is_cleaned_up_by_identity()
+    {
+        var before = Names(_exeDir);
+        var store = Journal(["d3d12.dll", "scskiller.ini"], data: [ScsKiller.ArmedFile, "scskiller.ini.scskiller-new", "scskiller.db"]);
+        var state = Path.Combine(store.GameDir(_game.Id), "state.json");
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(state))!;
+        json["OfflineSession"]!["Original"] = new System.Text.Json.Nodes.JsonArray([.. before.Select(n => System.Text.Json.Nodes.JsonValue.Create(n))]);
+        json["OfflineSession"]!["Created"] = new System.Text.Json.Nodes.JsonArray(["d3d12.dll", "scskiller.ini", ScsKiller.ArmedFile, "scskiller.ini.scskiller-new", "scskiller.db"]);
+        File.WriteAllText(state, json.ToJsonString());
+        Assert.Equal(0, ScsKiller.RunOfflineCleanup(store, _game.Id, TimeSpan.Zero, othersRun: OurOthersRun));
+        Assert.Equal(before, Names(_exeDir));
+        Assert.Null(store.LoadGame(_game.Id).OfflineSession);
+    }
+    /// <summary>An offline session's cleanup in an EasyAntiCheat game whose d3d12.dll is a proxy of ours with other bytes than
+    /// the session recorded (another build's), or one its manifest doesn't name: it goes by its export, whatever the
+    /// manifest says.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void An_offline_cleanup_takes_our_proxy_out_of_an_easyanticheat_game_by_its_export(bool named)
+    {
+        EasyAntiCheatBeside();
+        var store = Journal(named ? ["d3d12.dll"] : [], write: false);
+        File.Copy(_proxy, Path.Combine(_exeDir, "d3d12.dll"));
+        Assert.Null(ScsKiller.CleanOfflineSession(store, _game.Id, _ => false, _ => { }));
+        Assert.False(File.Exists(Path.Combine(_exeDir, "d3d12.dll")));
+    }
+
+    /// <summary>A 1.2 session whose journal lists scskiller.ini among the names it created: the ini is never taken by its name,
+    /// only as every removal takes it, so one the user put there since stays as it is.</summary>
+    [Fact]
+    public void A_12_offline_session_never_takes_an_ini_by_its_name()
+    {
+        var store = Journal(["d3d12.dll", "scskiller.ini"], created: ["d3d12.dll", "scskiller.ini"]);
+        File.WriteAllText(Path.Combine(_exeDir, "scskiller.ini"), "[settings]\r\nfoo=mine\r\n");
+        ScsKiller.CleanOfflineSession(store, _game.Id, _ => false, _ => { });
+        Assert.Equal("[settings]\r\nfoo=mine\r\n", File.ReadAllText(Path.Combine(_exeDir, "scskiller.ini")));
+        Assert.False(File.Exists(Path.Combine(_exeDir, "d3d12.dll")));
+    }
+
+    /// <summary>Only names the session made itself go by name: a temp name or a scskiller.armed it didn't make stays (a mod's,
+    /// put there since). A steam_appid.txt goes only with the bytes the session wrote: one it added and the user edited
+    /// since stays, as does the user's own, there before.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void An_offline_cleanup_takes_only_what_the_session_made(bool sessionAppId)
+    {
+        var appId = Path.Combine(_exeDir, ScsKiller.SteamAppIdFile);
+        if (!sessionAppId) File.WriteAllText(appId, "480");   // the user's own
+        var store = Journal(sessionAppId ? ["d3d12.dll", ScsKiller.SteamAppIdFile] : ["d3d12.dll"],
+            data: ["d3d12.dll.scskiller-new", "mod.scskiller-new", ScsKiller.ArmedFile],
+            created: sessionAppId ? ["d3d12.dll.scskiller-new", ScsKiller.SteamAppIdFile] : ["d3d12.dll.scskiller-new"]);
+        File.WriteAllText(appId, sessionAppId ? "480 edited" : "480");
+        Assert.Null(ScsKiller.CleanOfflineSession(store, _game.Id, _ => false, _ => { }));
+        Assert.Equal(["Fake-Win64-Shipping.exe", "mod.scskiller-new", ScsKiller.ArmedFile, ScsKiller.SteamAppIdFile], Names(_exeDir).Order(StringComparer.Ordinal));
+        Assert.Equal(sessionAppId ? "480 edited" : "480", File.ReadAllText(appId));
+    }
+
+    /// <summary>A journaled name is gone only when the folder, listed whole, lacks it: a folder that can't be listed keeps
+    /// every name and the session for a retry, which takes them once it can be.</summary>
+    [Fact]
+    public void An_offline_cleanup_takes_nothing_in_a_folder_it_cannot_list_for_gone()
+    {
+        var store = Journal(["d3d12.dll"]);
+        var dll = Path.Combine(_exeDir, "d3d12.dll");
+        var sid = System.Security.Principal.WindowsIdentity.GetCurrent().User!;
+        var deny = new System.Security.AccessControl.FileSystemAccessRule(sid, System.Security.AccessControl.FileSystemRights.ListDirectory,
+            System.Security.AccessControl.AccessControlType.Deny);
+        var info = new DirectoryInfo(_exeDir);
+        var acl = info.GetAccessControl();
+        acl.AddAccessRule(deny);
+        info.SetAccessControl(acl);
+        try
+        {
+            Assert.NotNull(ScsKiller.CleanOfflineSession(store, _game.Id, _ => false, _ => { }));
+            Assert.Contains("d3d12.dll", store.LoadGame(_game.Id).RecorderFiles.Keys);
+        }
+        finally
+        {
+            acl.RemoveAccessRule(deny);
+            info.SetAccessControl(acl);
+        }
+        Assert.True(File.Exists(dll));
+        Assert.Null(ScsKiller.CleanOfflineSession(store, _game.Id, _ => false, _ => { }));
+        Assert.False(File.Exists(dll));
+        Assert.Null(store.LoadGame(_game.Id).OfflineSession);
     }
 
     /// <summary>A game folder that is gone, its drive still there (the game uninstalled): the session is over. One on a
@@ -361,12 +496,12 @@ public partial class AppTests
     [Fact]
     public void An_offline_cleanup_ends_for_a_folder_gone_and_waits_for_a_drive_gone()
     {
-        var store = Journal(["d3d12.dll"], files: [], exe: Path.Combine(_root, "uninstalled", "Game", "game.exe"));
+        var store = Journal(["d3d12.dll"], write: false, exe: Path.Combine(_root, "uninstalled", "Game", "game.exe"));
         Assert.Equal(0, ScsKiller.RunOfflineCleanup(store, _game.Id, TimeSpan.Zero, othersRun: OurOthersRun));
         Assert.Null(store.LoadGame(_game.Id).OfflineSession);
 
         var free = "ZYXWVUTSRQPONMLKJIHGFED".Select(c => $"{c}:\\").First(d => !Directory.Exists(d));
-        store = Journal(["d3d12.dll"], files: [], exe: Path.Combine(free, "Games", "Game", "game.exe"));
+        store = Journal(["d3d12.dll"], write: false, exe: Path.Combine(free, "Games", "Game", "game.exe"));
         Assert.Equal(1, ScsKiller.RunOfflineCleanup(store, _game.Id, TimeSpan.Zero, othersRun: OurOthersRun));
         Assert.NotNull(store.LoadGame(_game.Id).OfflineSession);
         Assert.True(ScsKiller.Gone(Path.Combine(_root, "uninstalled")));
@@ -397,7 +532,6 @@ public partial class AppTests
     [Fact]
     public async Task An_update_and_an_offline_session_exclude_each_other()
     {
-        UseProxyLedger();
         EasyAntiCheatBeside();
         if (OfflineKiller() is not { } k) return;
         await Listed(async () =>
@@ -408,7 +542,7 @@ public partial class AppTests
             Assert.Equal(ScsKiller.UpdateInstalling, Assert.Throws<InvalidOperationException>(() => { _ = k.StartOfflineSession(_game.Id, confirmed: true); }).Message);
             k.EndUpdate();
 
-            Journal(["d3d12.dll"], files: [], pid: Environment.ProcessId, started: ScsKiller.StartedAt(Environment.ProcessId)!.Value);
+            Journal(["d3d12.dll"], write: false, pid: Environment.ProcessId, started: ScsKiller.StartedAt(Environment.ProcessId)!.Value);
             var next = Killer(new FakeReader(Unreal));   // its process runs: an earlier run's session
             Assert.True(next.OfflineBlocksUpdate);
             Assert.False(next.BeginUpdate());
@@ -416,38 +550,35 @@ public partial class AppTests
     }
 
     /// <summary>SCSKiller opens again while the session's game, started by an earlier run, still loads: neither the scan's
-    /// cleanup nor its anti-cheat removal touches the attestation or the files. Once that process is gone (here: another
-    /// creation time), they go.</summary>
+    /// cleanup nor its anti-cheat removal touches the files. Once that process is gone (here: another creation time), they go.</summary>
     [Fact]
     public async Task A_live_offline_session_from_an_earlier_run_is_left_alone()
     {
         EasyAntiCheatBeside();
         var store = Journal(["d3d12.dll", "scskiller.ini"], pid: Environment.ProcessId, started: ScsKiller.StartedAt(Environment.ProcessId)!.Value);
-        ScsKiller.WriteAttestation(_game.ExePath, (Environment.ProcessId, ScsKiller.StartedAt(Environment.ProcessId)!.Value));
         var k = Killer(new FakeReader(Unreal));
         k.ProcessNames = () => new HashSet<string>();
+        k.RemovalRetryInterval = TimeSpan.Zero;
         await Listed(async () =>
         {
             await k.ScanAsync(default);
-            await k.CheckRecorderGames(true);
-            Assert.True(File.Exists(ScsKiller.LedgerFile(_game.ExePath)));
+            await k.CheckRecorderGames();
+            Assert.True(File.Exists(Path.Combine(_exeDir, "scskiller.ini")));
             Assert.True(File.Exists(Path.Combine(_exeDir, "d3d12.dll")));
 
             var rec = store.LoadGame(_game.Id);
             rec.OfflineSession = rec.OfflineSession! with { Started = rec.OfflineSession.Started + 1 };
             store.SaveGame(_game.Id, rec);
-            await k.CheckRecorderGames(true);
-            Assert.False(File.Exists(ScsKiller.LedgerFile(_game.ExePath)));
+            await k.CheckRecorderGames();
+            Assert.False(File.Exists(Path.Combine(_exeDir, "scskiller.ini")));
             Assert.False(File.Exists(Path.Combine(_exeDir, "d3d12.dll")));
             Assert.Null(store.LoadGame(_game.Id).OfflineSession);
         });
     }
-
     /// <summary>Recovery is in place before any file is published: a helper that can't start refuses the session.</summary>
     [Fact]
     public async Task An_offline_session_whose_cleanup_helper_cannot_start_is_refused()
     {
-        UseProxyLedger();
         EasyAntiCheatBeside();
         if (OfflineKiller() is not { } k) return;
         await Listed(async () =>
@@ -473,7 +604,6 @@ public partial class AppTests
     [Fact]
     public async Task An_offline_session_runs_beside_a_dinput8_mod_loader_and_leaves_it()
     {
-        UseProxyLedger();
         EasyAntiCheatBeside();
         var loader = Planning.MiddlewarePackTests.Pe("dinput8.dll", Guid.NewGuid().ToByteArray());
         File.WriteAllBytes(Path.Combine(_exeDir, "dinput8.dll"), loader);
@@ -499,7 +629,6 @@ public partial class AppTests
     [InlineData(ScsKiller.ChainName)]
     public async Task An_offline_session_beside_a_d3d12_mod_is_refused_naming_it(string name)
     {
-        UseProxyLedger();
         EasyAntiCheatBeside();
         if (OfflineKiller() is not { } k) return;
         var mod = Planning.MiddlewarePackTests.Pe("d3d12.dll", Guid.NewGuid().ToByteArray());

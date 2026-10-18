@@ -17,6 +17,8 @@
 //        (see vk_child). Needs vulkan-1.dll (installed with every Vulkan driver); SPIR-V from vk_spirv.h.
 // `selftest cacheprobe`: what NVIDIA's DXCache keeps of a PSO (see cacheprobe_parent).
 // `selftest nvext [runs]`: is NVAPI's shader-extension slot in the driver's key, and does the warm carry it (see nvext_child).
+// `selftest nvopts`: on WARP, NVAPI's pipeline creation flags as recorded and as the warm sets them (see nvopts_child).
+// `selftest amwarm [n]`: does a warm that starts NVIDIA Aftermath as the game does reach the game's cache (see amwarm_parent).
 // `selftest bindless [runs] [exe name]`: are heap-indexed (SM 6.6 bindless) and RayQuery compute PSOs cached, per runtime (see bindless_parent).
 #define NOMINMAX
 #include <windows.h>
@@ -25,9 +27,11 @@
 #include <shlobj.h>
 #include <knownfolders.h>
 #include <d3d12.h>
+#include <d3d11.h>
 #include <d3d12shader.h>
 #include <dxgi1_4.h>
 #include <tlhelp32.h>
+#include <psapi.h>
 #include <winternl.h>
 #include <bcrypt.h>
 #include <dxcapi.h>
@@ -35,7 +39,10 @@
 #include <vulkan/vulkan_core.h>  // third_party/vulkan: Khronos Vulkan-Headers vulkan-sdk-1.4.341.0 (Apache-2.0)
 #include "vk_spirv.h"
 #include "probe_util.h"
-#include "ledger_key.h"
+#include "recorder_key.h"
+#include "overlay.h"
+#include "admission.h"
+#include "warm_memory.h"
 #include "sys_dxgi.h"
 #include <algorithm>
 #include <array>
@@ -127,6 +134,9 @@ template <class F> static bool read_rows(const std::wstring& path, std::vector<s
 static int child(const std::wstring& dir, const std::wstring& mode, unsigned seed) {
     bool warm = mode == L"warm" || mode == L"warmonly" || mode == L"debugwarm";
     SetEnvironmentVariableW(L"SCSKILLER_MODE", warm ? L"warm" : L"record");
+    // agsunsigned: vendor=amd added by hand to an ini signed without it, before the proxy loads (its load-time gate, which
+    // can't check sig=, then hooks AGS), and taken out again before the first device: admission takes the hook out
+    if (mode == L"agsunsigned") CHECK(WritePrivateProfileStringW(L"scskiller", L"vendor", L"amd", (dir + L"scskiller.ini").c_str()));
     HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
     CHECK(m);
     auto create_device = (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice");
@@ -139,6 +149,100 @@ static int child(const std::wstring& dir, const std::wstring& mode, unsigned see
         ID3D12Debug* dbg = nullptr;
         CHECK(get_debug && SUCCEEDED(get_debug(IID_PPV_ARGS(&dbg))));
         dbg->EnableDebugLayer();
+    }
+    if (mode == L"ags" || mode == L"agsrevoked" || mode == L"agsnoldr" || mode == L"agsdisarmed" || mode == L"agsunsigned") {  // a game's device through its AGS DLL (SELFTEST_AGS, AGS 6), loaded after the proxy as by LoadLibrary
+        wchar_t path[MAX_PATH], self[MAX_PATH];
+        GetModuleFileNameW(nullptr, self, MAX_PATH);
+        std::wstring dir2 = std::wstring(self, wcsrchr(self, L'\\') + 1), revoked;
+        bool pristineCmp = mode == L"agsrevoked" || mode == L"agsnoldr" || mode == L"agsdisarmed" || mode == L"agsunsigned";   // these compare the entry against a pristine copy
+        bool expectNoHook = mode == L"agsnoldr" || mode == L"agsdisarmed";
+        std::string before;
+        bool listed = false;
+        if (mode == L"agsrevoked") {  // the app revokes the folder after the proxy loaded: admission refuses at the first device
+            revoked = recorder_dir(dir2) + L"\\recorder.revoked";
+            CHECK(revoked.size() > 17);
+            if (FILE* f = _wfopen(revoked.c_str(), L"rb")) {
+                char b[4096];
+                for (size_t n; (n = fread(b, 1, sizeof b, f));) before.append(b, n);
+                fclose(f), listed = true;
+            }
+            std::string line;
+            for (wchar_t c : file_key(dir2.substr(0, dir2.size() - 1))) line += (char)c;
+            FILE* f = _wfopen(revoked.c_str(), L"ab");
+            CHECK(f);
+            fputs(("\r\n" + line + "\r\n").c_str(), f), fclose(f);
+        }
+        struct Unrevoke {
+            std::wstring& f;
+            std::string& was;
+            bool& listed;
+            ~Unrevoke() {
+                if (f.empty()) return;
+                if (!listed) DeleteFileW(f.c_str());
+                else if (FILE* o = _wfopen(f.c_str(), L"wb")) fwrite(was.data(), 1, was.size(), o), fclose(o);
+            }
+        } unrevoke{revoked, before, listed};
+        // the stamp's sig= gone after the proxy loaded (so its notification is registered) but before AGS loads: the
+        // load-time gate must then install nothing. Its cheap check (no key, no shell) is loader-lock safe.
+        if (mode == L"agsdisarmed") CHECK(WritePrivateProfileStringW(L"scskiller", L"sig", nullptr, (dir2 + L"scskiller.ini").c_str()));
+        HMODULE ags = GetEnvironmentVariableW(L"SELFTEST_AGS", path, MAX_PATH) ? LoadLibraryW(path) : nullptr;
+        CHECK(ags);
+        // the hook patches the thunk's target, not the exported thunk: follow the same E9 chain the recorder does, bounded
+        // to the module (the recorder's relay jump leaves the image, so a hooked entry stops at the module's own function)
+        auto imgsize = [](HMODULE m) { auto b = (const uint8_t*)m; return ((const IMAGE_NT_HEADERS64*)(b + ((const IMAGE_DOS_HEADER*)b)->e_lfanew))->OptionalHeader.SizeOfImage; };
+        auto follow = [](const uint8_t* p, const uint8_t* base, uint32_t size) {
+            for (int i = 0; i < 4 && p && p[0] == 0xE9; ++i) { int32_t r; memcpy(&r, p + 1, 4); auto to = p + 5 + r; if (to < base || to >= base + size) break; p = to; }
+            return p;
+        };
+        auto entry = follow((const uint8_t*)GetProcAddress(ags, "agsDriverExtensionsDX12_CreateDevice"), (const uint8_t*)ags, imgsize(ags));
+        CHECK(entry);
+        uint8_t pristine[8] = {};
+        if (pristineCmp) {
+            // a second amd_ags_x64.dll from another folder stays the original (the recorder declines a second once one is
+            // bound, and installs nothing at all with no notification), so its entry is the pristine reference.
+            std::wstring second = dir2 + L"second\\";
+            CreateDirectoryW(second.c_str(), nullptr);
+            CHECK(CopyFileW(path, (second + L"amd_ags_x64.dll").c_str(), FALSE));
+            HMODULE p2 = LoadLibraryW((second + L"amd_ags_x64.dll").c_str());
+            auto e2 = p2 ? follow((const uint8_t*)GetProcAddress(p2, "agsDriverExtensionsDX12_CreateDevice"), (const uint8_t*)p2, imgsize(p2)) : nullptr;
+            CHECK(p2 && p2 != ags && e2);
+            memcpy(pristine, e2, 8);
+        }
+        if (expectNoHook) {  // no notification (agsnoldr) or disarmed before AGS loaded (agsdisarmed): nothing installed
+            if (memcmp(entry, pristine, 8)) return printf("FAIL: %ls: AGS was hooked when the load-time gate should have refused\n", mode.c_str()), 1;
+            printf("ags: %ls: not installed\n", mode.c_str());
+            return 0;
+        }
+        if ((mode == L"agsrevoked" || mode == L"agsunsigned") && !memcmp(pristine, entry, 8)) return printf("FAIL: the recorder didn't hook the first AGS, or hooked the second copy\n"), 1;
+        if (mode == L"agsunsigned") CHECK(WritePrivateProfileStringW(L"scskiller", L"vendor", nullptr, (dir2 + L"scskiller.ini").c_str()));
+        auto version = (int (*)())GetProcAddress(ags, "agsGetVersionNumber");
+        auto init = (int (*)(int, const void*, void**, void*))GetProcAddress(ags, "agsInitialize");
+        auto create = (int (*)(void*, const void*, const void*, void*))GetProcAddress(ags, "agsDriverExtensionsDX12_CreateDevice");
+        CHECK(version && init && create);
+        void* ctx = nullptr;
+        if (int r = init(version(), nullptr, &ctx, nullptr)) {
+            if (HANDLE h = CreateFileW((dir2 + L"no-ags-device").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr); h != INVALID_HANDLE_VALUE) CloseHandle(h);
+            return printf("ags: agsInitialize = %d, no AMD driver\n", r), 0;
+        }
+        IDXGIFactory1* f = nullptr;
+        IDXGIAdapter1* adapter = nullptr;
+        CHECK(SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumAdapters1(0, &adapter)));
+        struct { IDXGIAdapter* adapter; IID iid; D3D_FEATURE_LEVEL level; } dp = {adapter, __uuidof(ID3D12Device), D3D_FEATURE_LEVEL_11_0};
+        struct { const wchar_t *app, *engine; unsigned av, ev, uav; } ep = {L"SelftestAgsApp", L"Selftest,Engine%", 0x10203, 0x40506, 0};
+        struct { ID3D12Device* device; unsigned ext; unsigned char later[60]; } rp = {};
+        int r = create(ctx, &dp, &ep, &rp);
+        printf("ags: DX12_CreateDevice = %d, extensions 0x%x\n", r, rp.ext);
+        CHECK(r == 0 && rp.device);
+        // admission refused at the device create: our own patch is cleaned back out, so the entry equals the pristine copy
+        if ((mode == L"agsrevoked" || mode == L"agsunsigned") && memcmp(entry, pristine, 8)) return printf("FAIL: %ls: our AGS patch wasn't taken back out at admission\n", mode.c_str()), 1;
+        if (mode == L"agsrevoked" || mode == L"agsunsigned") return printf("ags: %ls: patch removed at admission\n", mode.c_str()), 0;
+        // a game that registers app X, then Y, then X again: only a consecutive repeat is dropped, so the csv gets all three
+        for (auto app : {L"SelftestAgsAppB", L"SelftestAgsApp"}) {
+            ep.app = app;
+            rp = {};
+            create(ctx, &dp, &ep, &rp);
+        }
+        return 0;
     }
     wchar_t am[MAX_PATH];  // loaded before the device, as a game does: the recorder hooks it at device creation
     HMODULE aftermath = mode == L"aftermath" && GetEnvironmentVariableW(L"SELFTEST_AFTERMATH", am, MAX_PATH) ? LoadLibraryW(am) : nullptr;
@@ -165,6 +269,8 @@ static int child(const std::wstring& dir, const std::wstring& mode, unsigned see
         auto init = (int (*)(int, uint32_t, ID3D12Device*))GetProcAddress(aftermath, "GFSDK_Aftermath_DX12_Initialize");
         CHECK(init);
         printf("aftermath: DX12_Initialize = 0x%x\n", init(0x217, 8, dev));
+        auto init11 = (int (*)(int, uint32_t, void*))GetProcAddress(aftermath, "GFSDK_Aftermath_DX11_Initialize");
+        if (init11) printf("aftermath: DX11_Initialize = 0x%x\n", init11(0x217, 4, nullptr));   // shares the hooked init, never logged
         return 0;
     }
 
@@ -1489,6 +1595,165 @@ static void list_new_cache(const DxrSnap& start) {
     for (auto& p : made) printf("  %ls\n", p.c_str());
 }
 
+// `selftest ledgerdir`: stamped_recorder_dir on scskiller.ledger files as a copy writes them and as garbage.
+static int ledger_dir_rules() {
+    wchar_t tmp[MAX_PATH];
+    GetTempPathW(MAX_PATH, tmp);
+    RunDir run(tmp, L"scsk-ledger");
+    CHECK(!run.path.empty());
+    std::wstring out = L"x";
+    CHECK(!stamped_recorder_dir(run.path, out) && out.empty());  // none: the installed copy's
+    const auto with = [&](const std::string& text) {
+        HANDLE f = CreateFileW((run.path + L"scskiller.ledger").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+        DWORD n = 0;
+        if (f != INVALID_HANDLE_VALUE) WriteFile(f, text.data(), (DWORD)text.size(), &n, nullptr), CloseHandle(f);
+        return stamped_recorder_dir(run.path, out);
+    };
+    CHECK(with(R"(C:\SCSKiller\data\armed)") && out == LR"(C:\SCSKiller\data)");
+    CHECK(with("D:\\Jeux\\donn\xc3\xa9" "es\\armed\r\n") && out == L"D:\\Jeux\\donn\u00e9es");
+    CHECK(with(R"(\\server\share\data\ARMED)") && out == LR"(\\server\share\data)");
+    CHECK(with(R"(C:\Users\x\.scs\armed)") && out == LR"(C:\Users\x\.scs)");
+    for (const char* bad : {"", "\r\n", R"(data\armed)", R"(C:\armed)", R"(C:\data\other)", R"(C:\data\armed\)", "C:\\da\xff" "ta\\armed",
+                            R"(\\?\C:\data\armed)", R"(\\?\C:\armed)", R"(\\.\C:\data\armed)", R"(C:\data\..\armed)", R"(C:\data\.\armed)",
+                            R"(1:\data\armed)", R"(\\server\armed)", R"(\\\server\share\armed)", R"(\\server\\armed)", R"(C:\data/..\armed)",
+                            R"(C:\data\.. \armed)", R"(C:\data\x.\armed)", R"(C:\data\armed:x)", R"(C:\data:x\armed)"})
+        CHECK(with(bad) && out.empty());
+    CHECK(with(std::string("C:\\data\0\\armed", 14)) && out.empty());
+    CHECK(with(std::string(4 * MAX_PATH, 'a')) && out.empty());
+    SetEnvironmentVariableW(L"SCSKILLER_TEST_RECORDER_DIR", nullptr);  // this process only: as in a game
+    CHECK(with(R"(C:\SCSKiller\data\armed)") && recorder_dir(run.path) == LR"(C:\SCSKiller\data)");
+    CHECK(with("armed") && recorder_dir(run.path).empty());
+    CHECK(DeleteFileW((run.path + L"scskiller.ledger").c_str()) && CreateDirectoryW((run.path + L"scskiller.ledger").c_str(), nullptr));
+    CHECK(stamped_recorder_dir(run.path, out) && out.empty());  // can't be read: refused, never the installed copy's
+    CHECK(RemoveDirectoryW((run.path + L"scskiller.ledger").c_str()));
+    const std::wstring target = run.path + L"target";
+    if (CreateSymbolicLinkW((run.path + L"scskiller.ledger").c_str(), target.c_str(), SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        CHECK(stamped_recorder_dir(run.path, out) && out.empty());  // a dangling link is there too
+        HANDLE f = CreateFileW(target.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
+        DWORD n = 0;
+        CHECK(f != INVALID_HANDLE_VALUE && WriteFile(f, "C:\\data\\armed", 13, &n, nullptr));
+        CloseHandle(f);
+        CHECK(stamped_recorder_dir(run.path, out) && out.empty());  // a link to a good marker is still no marker the app wrote
+    } else printf("ledgerdir: no symbolic link here (error %lu), link cases skipped\n", GetLastError());
+    printf("ledgerdir OK\n");
+    return 0;
+}
+
+// `selftest admission` (no GPU, no proxy): the stamp sig= covers, risk='s form, and the verdict from what the checks found.
+static int admission_rules() {
+    CHECK(signed_stamp(L"1", L"2", L"", L"", L"") == L"exe_size=1\r\nexe_time=2\r\n");
+    {
+        const std::wstring deep = L"C:\\" + std::wstring(300, L'a') + L"\\b";
+        CHECK(long_path(L"C:\\a\\b") == L"C:\\a\\b" && long_path(deep) == L"\\\\?\\" + deep && long_path(L"\\\\?\\" + deep) == L"\\\\?\\" + deep);
+        CHECK(long_path(L"\\\\s\\share\\" + std::wstring(300, L'a')) == L"\\\\?\\UNC\\s\\share\\" + std::wstring(300, L'a'));
+        for (const std::wstring& raw : {deep + L"\\..\\c", deep + L"\\.\\c", deep + L"\\..", deep + L"/c", L"a\\" + deep.substr(3)})
+            CHECK(long_path(raw) == raw);   // not normalized or not absolute: as it is
+        CHECK(!odd_name(L"C:\\Games\\Game\\") && !odd_name(L"\\\\s\\share\\Game\\") && !odd_name(L"C:\\"));
+        CHECK(odd_name(L"C:\\Games\\Game.\\x\\") && odd_name(L"C:\\Games\\Game \\") && odd_name(L"C:\\Games\\Game."));
+    }
+    // ini_value against GetPrivateProfileStringW: equal wherever it reads a value, empty where the two could differ
+    {
+        wchar_t tmp[MAX_PATH];
+        GetTempPathW(MAX_PATH, tmp);
+        const std::wstring file = std::wstring(tmp) + L"scsk-ini-" + std::to_wstring(GetCurrentProcessId()) + L".ini";
+        const auto native = [&](const std::string& bytes, const wchar_t* key) {
+            if (FILE* f = _wfopen(file.c_str(), L"wb")) fwrite(bytes.data(), 1, bytes.size(), f), fclose(f);
+            wchar_t v[256] = {};
+            GetPrivateProfileStringW(L"scskiller", key, L"", v, 256, file.c_str());
+            return std::wstring(v);
+        };
+        const std::string signed_ini = "[scskiller]\r\n; a comment\r\nmode=record\r\nroot=..\\..\r\nexe_size=1\r\nsig=ab\r\n";
+        struct Case { std::string bytes; const wchar_t* key; bool same; };
+        for (const Case& c : std::vector<Case>{
+                 {signed_ini, L"sig", true}, {signed_ini, L"root", true}, {signed_ini, L"vendor", true},
+                 {"[SCSKiller]\nsig = ab \nsig=cd\n", L"sig", true}, {"vendor=amd\r\n[scskiller]\r\nsig=ab\r\n", L"vendor", true},
+                 {"[scskiller]\r\nab_tag=\"before\"\r\n", L"ab_tag", true},
+                 {"[scskiller]\r\n;c\rvendor=amd\r\nsig=ab\r\n", L"vendor", false},   // a CR alone ends a line natively
+                 {"[ scskiller ]\r\nsig=bad\r\n[scskiller]\r\nsig=ab\r\n", L"sig", false},
+                 {"[scskiller]\r\nsig=ab\r\n[scskiller]\r\nvendor=amd\r\n", L"vendor", false},
+                 {"[other]\r\nsig=x\r\n[scskiller]\r\nsig=ab\r\n", L"sig", false},
+                 {std::string("[scskiller]\r\nsig=ab\0\r\nvendor=amd\r\n", 34), L"vendor", false}}) {
+            const std::wstring mine = ini_value(c.bytes, c.key);
+            CHECK(c.same ? mine == native(c.bytes, c.key) : mine.empty());
+        }
+        DeleteFileW(file.c_str());
+    }
+    CHECK(signed_stamp(L"1", L"2", L"3", L"4", L"") == L"exe_size=1\r\nexe_time=2\r\npid=3\r\npid_time=4\r\n");
+    CHECK(signed_stamp(L"1", L"2", L"3", L"4", L"1") == L"exe_size=1\r\nexe_time=2\r\npid=3\r\npid_time=4\r\nrisk=1\r\n");  // ScsKiller.BoundTo + "risk=1"
+    CHECK(signed_stamp(L"1", L"2", L"", L"", L"1") == L"exe_size=1\r\nexe_time=2\r\nrisk=1\r\n");
+    // ScsKiller.SignedLines after the binding: vendor=, then the countdown's three lines
+    CHECK(signed_stamp(L"1", L"2", L"", L"", L"", L"amd", L"1", L"420", L"before") == L"exe_size=1\r\nexe_time=2\r\nvendor=amd\r\noverlay=1\r\nab_play_s=420\r\nab_tag=before\r\n");
+    CHECK(signed_stamp(L"1", L"2", L"3", L"4", L"1", L"amd") == L"exe_size=1\r\nexe_time=2\r\npid=3\r\npid_time=4\r\nrisk=1\r\nvendor=amd\r\n");
+    CHECK(risk_well_formed(L"", L"") && risk_well_formed(L"3", L"") && risk_well_formed(L"3", L"1"));
+    CHECK(!risk_well_formed(L"", L"1") && !risk_well_formed(L"3", L"2") && !risk_well_formed(L"3", L"yes"));
+    // the verdict: a finding refuses unless the session takes the risk, and the log then names them all
+    std::string seen;
+    const char* beside = "anti-cheat next to the exe";
+    const std::vector<std::string> none, be{"BEService_x64.exe (next to the exe)"}, client{"BEClient_x64.dll"},
+        eac{"EasyAntiCheat (next to the exe)", "start_protected_game.exe (in the install folder)"};
+    const char* vac = "VAC (a Valve game)";
+    CHECK(!decide(false, false, none, nullptr, none, nullptr, seen) && seen.empty());
+    CHECK(!strcmp(decide(false, false, be, beside, none, nullptr, seen), beside));
+    CHECK(!strcmp(decide(false, false, eac, "anti-cheat in the install folder", none, nullptr, seen), "anti-cheat in the install folder"));
+    CHECK(!strcmp(decide(false, false, none, nullptr, client, nullptr, seen), "anti-cheat client loaded"));
+    CHECK(!strcmp(decide(false, true, none, nullptr, none, nullptr, seen), "Riot Games install"));
+    CHECK(!strcmp(decide(false, false, none, nullptr, none, vac, seen), vac));
+    CHECK(!decide(true, true, eac, beside, client, vac, seen)
+          && seen == "EasyAntiCheat (next to the exe), start_protected_game.exe (in the install folder), BEClient_x64.dll loaded, Riot Games install, VAC");
+    seen.clear();
+    CHECK(!decide(true, false, be, beside, none, nullptr, seen) && seen == "BEService_x64.exe (next to the exe)");
+    seen.clear();
+    CHECK(!decide(true, false, none, nullptr, none, nullptr, seen) && seen == "none at the first device");
+    seen.clear();
+    CHECK(!strcmp(decide(true, false, {"?"}, beside, none, nullptr, seen), beside));  // a folder couldn't be listed
+    CHECK(!strcmp(decide(true, false, none, nullptr, none, "VAC: Steam's files couldn't be checked", seen), "VAC: Steam's files couldn't be checked"));
+    CHECK(seen.empty());
+    printf("admission OK\n");
+    return 0;
+}
+
+// `selftest warmmemory` (no GPU, no proxy): the warm's workers under its memory budget, tick by tick.
+static int warm_memory_rules() {
+    WarmMemory m{6000, 20, 19};
+    double t = 0;
+    auto run = [&](double mb, double held, bool low, double until) {  // one tick a second
+        std::string steps;
+        for (; t < until; t += 1000)
+            if (char c = warm_memory_tick(m, mb, held, low, t)) steps += c;
+        return steps;
+    };
+    CHECK(run(3000, 0, true, 120000) == "" && m.allowed == 19);  // low on memory, under the budget: the workers stay, none comes
+    CHECK(run(3000, 0, false, 121000) == "u" && m.allowed == 20);  // no longer low: one comes back
+    CHECK(run(6500, 0, true, 127000) == "d" && m.allowed == 19);  // over the budget: one goes, low or not
+    CHECK(run(6400, 0, false, 133000) == "d" && m.allowed == 18);  // the drop lowered it, still over: one more 6 s later
+    CHECK(run(6300, 0, false, 139000) == "d" && m.allowed == 17);
+    CHECK(run(6500, 1000, false, 200000) == "" && m.allowed == 17);  // kept state objects count in the limit
+    CHECK(run(7200, 1000, false, 206000) == "d" && m.allowed == 16);
+    CHECK(run(7200, 1000, false, 212000) == "k" && m.allowed == 17 && m.kept == 3000);  // the drop freed nothing: undone, kept
+    CHECK(run(7200, 1000, false, 240000) == "u" && m.allowed == 18);  // 0.3x under the new limit: the climb is open again
+    CHECK(run(8100, 1000, false, 300000) == "");  // under it, not by the margin
+    m = {2000, 16, 1};
+    t = 0;
+    CHECK(run(2600, 0, false, 31000) == "" && m.allowed == 1);  // the dbs' records alone over the budget: one worker
+    CHECK(run(2600, 0, false, 600000) == "kuuuuuuuuuuuuuuu" && m.allowed == 16);  // over on one worker for 30 s: kept, then back
+    m = {6000, 20, 20};
+    t = 0;
+    CHECK(run(6500, 0, true, 7000) == "d" && run(6500, 0, true, 13000) == "k" && m.allowed == 19);  // low: kept, the drop stays
+    CHECK(run(6500, 0, true, 100000) == "" && m.allowed == 19);
+    m = {1000, 16, 16};  // memory the driver keeps grows 20 MB/s whatever the workers: at most one worker goes at a time
+    int fewest = 16, steps = 0;
+    for (t = 0; t < 600000; t += 100)
+        if (warm_memory_tick(m, 500 + t / 50, 0, false, t)) fewest = std::min(fewest, m.allowed), ++steps;
+    CHECK(fewest == 15 && m.allowed >= 15 && steps < 2 * 600 / 15 + 2);  // a drop and its undo per 0.3x of growth (15 s) at most
+    m = {1000, 8, 8};  // each drop frees 50 MB: one worker's 1250 MB counts as kept only 30 s after the last drop
+    double last_drop = 0, kept_at = 0;
+    for (t = 0; t < 120000 && !kept_at; t += 100)
+        if (char c = warm_memory_tick(m, 1600 - 50 * (8 - m.allowed), 0, false, t)) (c == 'd' ? last_drop : kept_at) = t;
+    CHECK(m.allowed == 1 && kept_at - last_drop > 30000 && m.kept == 1250 - 700);
+    printf("warmmemory OK\n");
+    return 0;
+}
+
 // `selftest gpulock` (no GPU): the GPU lock has one owner at a time and goes with its handle.
 static int gpu_lock_rules() {
     wchar_t tmp[MAX_PATH];
@@ -2149,11 +2414,55 @@ static std::string fill_src(char stage, unsigned k, int loops) {
 // name X); each row has its own fresh shaders (a closest hit collection, a DXIL VS + PS). Modes: n none, t this thread
 // (NvAPI_D3D12_SetNvShaderExtnSlotSpaceLocalThread u0 space 1001), u this thread u0 space 404, d the device
 // (NvAPI_D3D12_SetNvShaderExtnSlotSpace u0 space 1001), x the PSO extension SET_SHADER_EXTENSION_SLOT_AND_SPACE (u0 space
-// 1001, NvAPI_D3D12_CreateGraphicsPipelineState; PSOs only). Every set is undone right after its create with slot ~0u. A
-// row "-b" is a p2-only cold control. p2 creates "t>t" before "n>n": a hit there also says the reset works.
+// 1001, NvAPI_D3D12_CreateGraphicsPipelineState; PSOs only), o pipeline creation flags 0x11 (NvAPI_D3D12_SetCreatePipelineStateOptions,
+// The Witcher 3's), O the same set from another thread. Every set is undone right after its create (slot ~0u, flags 0). A
+// row "-b" is a p2-only cold control. p2 creates "t>t" before "n>n": a hit there also says the reset works. Kind A times an
+// AddToStateObject (one more closest hit) on a pipeline created under the same mode just before it.
+// The flags rows: a miss on "o>n" where "o>o" hits = the flags are in the key of that kind of object.
 // The e2e rows (p3-p5) go through the proxy: p3 (exe R, record mode) creates each row with its first mode, p4 (exe Y, warm
 // mode) replays that recording, p5 (exe Y, system d3d12.dll) creates each row with its second mode: a hit = the recording
 // carried the state and the warm applied it.
+// One closest hit of seed k, exported as CH<k> in hit group HG<k>: a collection, a ray tracing pipeline that allows
+// additions, or an addition to one. Not copyable: the subobjects point into it.
+struct SoOne {
+    std::string lib;
+    std::wstring ch, hg;
+    D3D12_EXPORT_DESC ex{};
+    D3D12_DXIL_LIBRARY_DESC ld{};
+    D3D12_HIT_GROUP_DESC hgd{};
+    D3D12_RAYTRACING_SHADER_CONFIG sc = {16, 8};
+    D3D12_RAYTRACING_PIPELINE_CONFIG pc = {1};
+    D3D12_GLOBAL_ROOT_SIGNATURE g{};
+    D3D12_STATE_OBJECT_CONFIG cfg = {D3D12_STATE_OBJECT_FLAG_ALLOW_STATE_OBJECT_ADDITIONS};
+    D3D12_STATE_SUBOBJECT subs[6]{};
+    D3D12_STATE_OBJECT_DESC d{};
+    SoOne(const SoOne&) = delete;
+    SoOne(IDxcCompiler3* comp, unsigned k, ID3D12RootSignature* grs, D3D12_STATE_OBJECT_TYPE type) {
+        std::string K = std::to_string(k) + ".0";
+        if (!dxc_compile(comp,
+                         "struct P { float4 c; }; cbuffer L : register(b0, space1) { float4 lk; };\n"
+                         "[shader(\"closesthit\")] void CH(inout P p, in BuiltInTriangleIntersectionAttributes a) { float3 x = float3(a.barycentrics, " + K +
+                             "); [unroll] for (int i = 0; i < 24; ++i) x = sin(x * 1.37 + float3(i, " + K + ", x.y)) * cos(x.zxy + " + K + "); p.c = float4(x, 1) * lk; }\n",
+                         lib)) {
+            lib.clear();
+            return;
+        }
+        ch = L"CH" + std::to_wstring(k), hg = L"HG" + std::to_wstring(k);
+        ex = {ch.c_str(), L"CH", D3D12_EXPORT_FLAG_NONE};
+        ld = {{lib.data(), lib.size()}, 1, &ex};
+        hgd = {hg.c_str(), D3D12_HIT_GROUP_TYPE_TRIANGLES, nullptr, ch.c_str(), nullptr};
+        g = {grs};
+        UINT n = 0;
+        subs[n++] = {D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY, &ld};
+        subs[n++] = {D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP, &hgd};
+        subs[n++] = {D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG, &sc};
+        subs[n++] = {D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG, &pc};
+        subs[n++] = {D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE, &g};
+        if (type != D3D12_STATE_OBJECT_TYPE_COLLECTION) subs[n++] = {D3D12_STATE_SUBOBJECT_TYPE_STATE_OBJECT_CONFIG, &cfg};
+        d = {type, n, subs};
+    }
+};
+
 struct NvApi {
     int (*slot)(IUnknown*, uint32_t, uint32_t) = nullptr;
     int (*slot_thread)(IUnknown*, uint32_t, uint32_t) = nullptr;
@@ -2170,16 +2479,18 @@ struct NvApi {
 };
 struct NvPsoExt { uint32_t base_version, extension, version, slot, space; };  // NVAPI_D3D12_PSO_SET_SHADER_EXTENSION_SLOT_DESC_V1
 
-struct NvRow { const char* name; char kind, a, b; int phase; };  // kind R collection, P PSO; phase 0 direct (p1, p2), 1 e2e (p3-p5)
+struct NvRow { const char* name; char kind, a, b; int phase; };  // kind R collection, A addition, P PSO; phase 0 direct (p1, p2), 1 e2e (p3-p5)
 static const NvRow kNvRows[] = {
     {"R n>n", 'R', 'n', 'n', 0}, {"R t>t", 'R', 't', 't', 0}, {"R t>n", 'R', 't', 'n', 0}, {"R n>t", 'R', 'n', 't', 0},
     {"R d>t", 'R', 'd', 't', 0}, {"R t>d", 'R', 't', 'd', 0}, {"R t>u", 'R', 't', 'u', 0}, {"R -t", 'R', '-', 't', 0}, {"R -n", 'R', '-', 'n', 0},
     {"P n>n", 'P', 'n', 'n', 0}, {"P t>t", 'P', 't', 't', 0}, {"P t>n", 'P', 't', 'n', 0}, {"P n>t", 'P', 'n', 't', 0},
     {"P d>t", 'P', 'd', 't', 0}, {"P t>d", 'P', 't', 'd', 0}, {"P t>u", 'P', 't', 'u', 0}, {"P x>t", 'P', 'x', 't', 0},
     {"P t>x", 'P', 't', 'x', 0}, {"P x>x", 'P', 'x', 'x', 0}, {"P -t", 'P', '-', 't', 0}, {"P -n", 'P', '-', 'n', 0},
+    {"R o>o", 'R', 'o', 'o', 0}, {"R o>n", 'R', 'o', 'n', 0}, {"R -o", 'R', '-', 'o', 0}, {"A o>o", 'A', 'o', 'o', 0},
+    {"A o>n", 'A', 'o', 'n', 0}, {"A -o", 'A', '-', 'o', 0}, {"P o>n", 'P', 'o', 'n', 0},
     {"e2e R t>t", 'R', 't', 't', 1}, {"e2e R n>t", 'R', 'n', 't', 1}, {"e2e R n>n", 'R', 'n', 'n', 1}, {"e2e R -t", 'R', '-', 't', 1},
     {"e2e P t>t", 'P', 't', 't', 1}, {"e2e P x>x", 'P', 'x', 'x', 1}, {"e2e P n>t", 'P', 'n', 't', 1}, {"e2e P n>n", 'P', 'n', 'n', 1},
-    {"e2e P -t", 'P', '-', 't', 1},
+    {"e2e P -t", 'P', '-', 't', 1}, {"e2e R O>o", 'R', 'O', 'o', 1}, {"e2e A O>o", 'A', 'O', 'o', 1},
 };
 
 static int nvext_child(int proc, unsigned seed, const std::wstring& dir, const std::wstring& out) {
@@ -2206,6 +2517,8 @@ static int nvext_child(int proc, unsigned seed, const std::wstring& dir, const s
     CHECK(nv.load());
     ID3D12Device5* dev5 = nullptr;
     CHECK(SUCCEEDED(dev->QueryInterface(IID_PPV_ARGS(&dev5))));
+    ID3D12Device7* dev7 = nullptr;  // kind A
+    dev->QueryInterface(IID_PPV_ARGS(&dev7));
     if (proc == 1 && nv.opts) {  // 0x5C607A27 is NvAPI_D3D12_SetCreatePipelineStateOptions: 0 for its {version, flags}, -9 (struct version) otherwise
         uint32_t good[2] = {8 | 1 << 16, 0}, bad[2] = {8 | 2 << 16, 0};
         printf("  SetCreatePipelineStateOptions: v1 %d, v2 %d\n", nv.opts(dev5, good), nv.opts(dev5, bad));
@@ -2236,14 +2549,22 @@ static int nvext_child(int proc, unsigned seed, const std::wstring& dir, const s
     auto nvcall = [&](const char* what, int st) {
         if (st && ++bad_status <= 8) printf("  p%d: %s: NvAPI status %d\n", proc, what, st);
     };
+    auto flags = [&](uint32_t f, bool other_thread) {
+        uint32_t p[2] = {8 | 1 << 16, f};
+        auto call = [&] { nvcall(f ? "flags set" : "flags reset", nv.opts ? nv.opts(dev5, p) : -1); };
+        if (other_thread) std::thread(call).join();
+        else call();
+    };
     auto set = [&](char mode) {
         if (mode == 't') nvcall("thread set", nv.slot_thread(dev, 0, 1001));
         if (mode == 'u') nvcall("thread set", nv.slot_thread(dev, 0, 404));
         if (mode == 'd') nvcall("device set", nv.slot(dev, 0, 1001));
+        if (mode == 'o' || mode == 'O') flags(0x11, mode == 'O');
     };
     auto reset = [&](char mode) {
         if (mode == 't' || mode == 'u') nvcall("thread reset", nv.slot_thread(dev, ~0u, 0));
         if (mode == 'd') nvcall("device reset", nv.slot(dev, ~0u, 0));
+        if (mode == 'o' || mode == 'O') flags(0, mode == 'O');
     };
     const bool e2e = proc >= 3;
     std::vector<size_t> order;
@@ -2282,6 +2603,18 @@ static int nvext_child(int proc, unsigned seed, const std::wstring& dir, const s
             reset(mode);
             if (SUCCEEDED(hr)) so->Release(), t = x;
             else printf("  p%d: %s: CreateStateObject hr=0x%08x\n", proc, row.name, (unsigned)hr);
+        } else if (row.kind == 'A') {
+            SoOne base(comp, k, grs, D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE), add(comp, k + 1, grs, D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE);
+            CHECK(!base.lib.empty() && !add.lib.empty());
+            ID3D12StateObject *b = nullptr, *so = nullptr;
+            HRESULT hr = E_NOINTERFACE;
+            double x = 0;
+            set(mode);
+            if (dev7 && SUCCEEDED(hr = dev5->CreateStateObject(&base.d, IID_PPV_ARGS(&b)))) x = ms([&] { hr = dev7->AddToStateObject(&add.d, b, IID_PPV_ARGS(&so)); });
+            reset(mode);
+            if (SUCCEEDED(hr)) so->Release(), t = x;
+            else printf("  p%d: %s: state object or addition hr=0x%08x\n", proc, row.name, (unsigned)hr);
+            if (b) b->Release();
         } else {
             std::string vs, ps;
             CHECK(dxc_compile(comp, fill_src('v', k, 32), vs, L"vs_6_0") && dxc_compile(comp, fill_src('p', k, 32), ps, L"ps_6_0"));
@@ -2321,6 +2654,7 @@ static bool process_running(const wchar_t* exe) {
 }
 
 static int nvext_parent(const std::wstring& a, const std::wstring& dir, int runs) {
+    if (GetEnvironmentVariableW(L"SELFTEST_WARP", nullptr, 0) || !NvApi().load()) return printf("nvext: skipped, it needs the NVIDIA driver (NVAPI)\n"), 0;
     if (process_running(L"scskiller_warm.exe")) return printf("GPU busy: scskiller_warm.exe is running\n"), 1;
     std::wstring lock = gpu_lock("selftest nvext");
     if (lock.empty()) return 1;
@@ -2350,7 +2684,9 @@ static int nvext_parent(const std::wstring& a, const std::wstring& dir, int runs
                         uint32_t n;
                         if (fread(&n, 4, 1, db) != 1) break;
                         ++tags[(char)tag];
-                        _fseeki64(db, n, SEEK_CUR);
+                        uint32_t nv[4];  // an 'N' (key[20] + slot, space, scope, flags): one with flags counts as 'F' too
+                        if (tag == 'N' && n == 36 && !_fseeki64(db, 20, SEEK_CUR) && fread(nv, 4, 4, db) == 4) tags['F'] += nv[3] != 0;
+                        else _fseeki64(db, n, SEEK_CUR);
                     }
                     fclose(db);
                 }
@@ -3004,6 +3340,217 @@ static int layerwarm_parent(const std::wstring& a, const std::wstring& dir, cons
     return r;
 }
 
+// `selftest amwarm [n]` (SELFTEST_AFTERMATH=<a game's GFSDK_Aftermath_Lib.x64.dll, 2.23 or later>): does a warm that
+// starts NVIDIA Aftermath as the game does (scskiller_warm --aftermath) fill the cache the game reads? Each phase runs
+// this exe under its own throwaway name in its own folder with the proxy recording: A records n compute PSOs with
+// Aftermath on (crash dumps, then DX12_Initialize with shader debug info and resource tracking, 0xa, as Mafia: The Old
+// Country starts it). B, D, E and F are warmed from A's recording with --aftermath 0xa, C without, E with 0x8 only; then
+// each creates the same PSOs: B, C and E with Aftermath 0xa, D without, F with 0xa and the DRED settings Unreal turns on
+// with it (device flags 0xd8), Z (not warmed) with 0xa. Prints each one's create ms (median, max). B must hit, C and D miss.
+static void am_drop(const void*, uint32_t, void*) {}
+
+static int amwarm_child(const std::wstring& dir, unsigned seed, int n, uint32_t features, bool dred) {
+    if (features) {
+        wchar_t path[MAX_PATH];
+        CHECK(GetEnvironmentVariableW(L"SELFTEST_AFTERMATH", path, MAX_PATH));
+        HMODULE am = LoadLibraryW(path);
+        auto dumps = am ? (int (*)(uint32_t, uint32_t, uint32_t, void*, void*, void*, void*, void*))GetProcAddress(am, "GFSDK_Aftermath_EnableGpuCrashDumps") : nullptr;
+        CHECK(dumps && dumps(0x217, 3, 1, (void*)am_drop, (void*)am_drop, nullptr, nullptr, nullptr) == 1);   // Mafia's call
+    }
+    if (dred) {
+        HMODULE sys = load_system(L"d3d12.dll");
+        auto debug = sys ? (decltype(&D3D12GetDebugInterface))GetProcAddress(sys, "D3D12GetDebugInterface") : nullptr;
+        ID3D12DeviceRemovedExtendedDataSettings2* s = nullptr;
+        CHECK(debug && SUCCEEDED(debug(IID_PPV_ARGS(&s))));
+        s->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON), s->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+        s->SetBreadcrumbContextEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON), s->UseMarkersOnlyAutoBreadcrumbs(TRUE);
+    }
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    CHECK(m);
+    auto create_device = (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice");
+    auto ser = (decltype(&D3D12SerializeRootSignature))GetProcAddress(m, "D3D12SerializeRootSignature");
+    ID3D12Device* dev = nullptr;
+    CHECK(create_device && ser && SUCCEEDED(create_device(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+    if (features) {
+        auto init = (int (*)(uint32_t, uint32_t, ID3D12Device*))GetProcAddress(GetModuleHandleW(L"GFSDK_Aftermath_Lib.x64.dll"), "GFSDK_Aftermath_DX12_Initialize");
+        CHECK(init && init(0x217, features, dev) == 1);
+    }
+    D3D12_ROOT_PARAMETER up = {D3D12_ROOT_PARAMETER_TYPE_UAV};
+    D3D12_ROOT_SIGNATURE_DESC rd = {1, &up};
+    ID3DBlob *rb = nullptr, *err = nullptr;
+    ID3D12RootSignature* rs = nullptr;
+    CHECK(SUCCEEDED(ser(&rd, D3D_ROOT_SIGNATURE_VERSION_1, &rb, &err)) && SUCCEEDED(dev->CreateRootSignature(0, rb->GetBufferPointer(), rb->GetBufferSize(), IID_PPV_ARGS(&rs))));
+    std::vector<double> t;
+    for (int i = 0; i < n; ++i) {
+        std::string K = std::to_string(seed + i) + ".0";
+        ID3DBlob* cs = compile("RWByteAddressBuffer b : register(u0); [numthreads(64,1,1)] void main(uint i : SV_DispatchThreadID) {"
+                               " float4 x = float4(asfloat(b.Load(i * 4)), " + K + ", i, 2); [unroll] for (int k = 0; k < 64; ++k) x = sin(x * 1.37 + float4(k, " + K +
+                               ", x.y, x.w)) * cos(x.zxyw + " + K + "); b.Store(i * 4, asuint(dot(x, x))); }", "cs_5_0");
+        CHECK(cs);
+        D3D12_COMPUTE_PIPELINE_STATE_DESC c = {};
+        c.pRootSignature = rs, c.CS = {cs->GetBufferPointer(), cs->GetBufferSize()};
+        ID3D12PipelineState* pso = nullptr;
+        HRESULT hr = S_OK;
+        t.push_back(ms([&] { hr = dev->CreateComputePipelineState(&c, IID_PPV_ARGS(&pso)); }));
+        CHECK(SUCCEEDED(hr));
+        pso->Release(), cs->Release();
+    }
+    std::sort(t.begin(), t.end());
+    printf("%.2f %.2f\n", t[t.size() / 2], t.back());
+    if (FILE* f = _wfopen((dir + L"median.txt").c_str(), L"w")) fprintf(f, "%f", t[t.size() / 2]), fclose(f);
+    return 0;
+}
+
+static int amwarm_parent(const std::wstring& a, const std::wstring& dir, int n) {
+    wchar_t am[MAX_PATH];
+    if (!GetEnvironmentVariableW(L"SELFTEST_AFTERMATH", am, MAX_PATH)) return printf("set SELFTEST_AFTERMATH to a game's GFSDK_Aftermath_Lib.x64.dll\n"), 1;
+    std::wstring lock = gpu_lock("selftest amwarm");
+    if (lock.empty()) return 1;
+    RunDir run_dir(dir, L"amwarm");
+    CHECK(!run_dir.path.empty());
+    std::random_device rd;
+    unsigned seed = 100000 + rd() % 8000000;
+    DxrSnap start = dxr_snap();
+    std::map<wchar_t, double> median;
+    std::map<wchar_t, std::string> log;
+    auto exe_of = [&](wchar_t p) { return L"scsklam" + std::to_wstring(seed) + p + L".exe"; };
+    auto game = [&](wchar_t p, uint32_t features, bool dred) {  // in its own folder: this exe under a throwaway name, the proxy recording
+        std::wstring d = run_dir.path + p + L"\\";
+        CreateDirectoryW(d.c_str(), nullptr);
+        CopyFileW(a.c_str(), (d + exe_of(p)).c_str(), FALSE), CopyFileW((dir + L"d3d12.dll").c_str(), (d + L"d3d12.dll").c_str(), FALSE);
+        if (FILE* ini = _wfopen((d + L"scskiller.ini").c_str(), L"w")) fputs("[scskiller]\nmode=record\n", ini), fclose(ini);
+        printf("%lc (Aftermath 0x%x%s): ", p, features, dred ? ", DRED" : "");
+        int r = run(d + exe_of(p), L"amwarmchild " + std::to_wstring(seed) + L" " + std::to_wstring(n) + L" " + std::to_wstring(features) + (dred ? L" dred" : L""));
+        median[p] = strtod(read_all(d + L"median.txt").c_str(), nullptr), log[p] = read_all(d + L"scskiller.log");
+        return r;
+    };
+    int r = [&] {
+        if (int e = game(L'A', 0xa, false)) return e;
+        std::string db = read_all(run_dir.path + L"A\\scskiller.db");
+        CHECK(!db.empty());
+        for (auto [p, init] : {std::pair{L'B', L"217,a,3,1"}, {L'C', L""}, {L'D', L"217,a,3,1"}, {L'E', L"217,8,3,1"}, {L'F', L"217,a,3,1"}}) {
+            std::wstring work = run_dir.path + L"warm" + p + L"\\";
+            CreateDirectoryW(work.c_str(), nullptr);
+            FILE* f = _wfopen((work + L"scskiller.db").c_str(), L"wb");
+            CHECK(f);
+            fwrite(db.data(), 1, db.size(), f), fclose(f);
+            std::wstring args = L"\"" + work + L".\" " + exe_of(p) + L" --threads 4";
+            if (*init) args += L" --aftermath \"" + std::wstring(am) + L"\" --aftermath-init " + init;
+            if (int e = run(dir + L"scskiller_warm.exe", args)) return e;
+            if (*init) {  // the proxy's hook in the warm saw the init take
+                std::string wlog;
+                for (auto& e : std::filesystem::recursive_directory_iterator(work))
+                    if (e.path().filename() == L"scskiller.log") wlog += read_all(e.path().wstring());
+                std::string want = std::string("aftermath: DX12_Initialize(version 0x217, feature flags 0x") + (char)init[4] + ") = 0x1";
+                if (wlog.find(want) == std::string::npos) return printf("FAIL: warm %lc's log has no \"%s\"\n", p, want.c_str()), 1;
+            }
+        }
+        for (auto [p, features, dred] : {std::tuple{L'B', 0xau, false}, {L'C', 0xau, false}, {L'D', 0u, false}, {L'E', 0xau, false}, {L'F', 0xau, true}, {L'Z', 0xau, false}})
+            if (int e = game(p, features, dred)) return e;
+        for (wchar_t p : {L'A', L'B', L'C', L'E', L'F', L'Z'})
+            if (log[p].find("aftermath: DX12_Initialize(version 0x217, feature flags 0xa) = 0x1") == std::string::npos)
+                return printf("FAIL: %lc's log has no Aftermath init\n", p), 1;
+        if (log[L'F'].find("flags 0x400000d8") == std::string::npos) printf("note: F's device flags aren't 0x400000d8\n");
+        printf("hit: B %.2f ms; miss: C (warmed without Aftermath) %.2f, D (game without Aftermath) %.2f, Z (not warmed) %.2f; E (warmed 0x8) %.2f, F (DRED) %.2f\n",
+               median[L'B'], median[L'C'], median[L'D'], median[L'Z'], median[L'E'], median[L'F']);
+        // a hit costs a few ms at most, a compile of these tens
+        if (!(median[L'B'] * 4 < std::min({median[L'C'], median[L'D'], median[L'Z']})))
+            return printf("FAIL: B isn't a hit next to C, D and Z\n"), 1;
+        return 0;
+    }();
+    list_new_cache(start);
+    if (r) run_dir.keep = true, printf("kept %ls\n", run_dir.path.c_str());
+    return r;
+}
+
+// `selftest burst <n> <threads> <rec|plain> [shaders] [compute]`: a game's startup compile on WARP: n graphics PSOs (or compute
+// PSOs of <shaders> shaders, mostly repeats) created by <threads> threads at once, each released right away, every fourth
+// the desc of an earlier one; through the proxy beside it recording (rec)
+// or the system d3d12.dll (plain). Prints creates/s, the process's private bytes at the start, at their peak and at the end,
+// and its file writes during the burst.
+static int burst_rows(const std::wstring& dir, long n, unsigned threads, bool rec, int shaders, bool cs) {
+    auto priv = [] {
+        PROCESS_MEMORY_COUNTERS_EX m{sizeof m};
+        return K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&m, sizeof m) ? m.PrivateUsage / 1048576.0 : 0;
+    };
+    if (rec) SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    HMODULE m = rec ? LoadLibraryW((dir + L"d3d12.dll").c_str()) : load_system(L"d3d12.dll");
+    CHECK(m);
+    auto create_device = (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice");
+    auto ser = (decltype(&D3D12SerializeRootSignature))GetProcAddress(m, "D3D12SerializeRootSignature");
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    CHECK(create_device && ser && SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+    ID3D12Device* dev = nullptr;
+    CHECK(SUCCEEDED(create_device(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+    D3D12_ROOT_SIGNATURE_DESC rd = {0, nullptr, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT};
+    ID3DBlob *rb = nullptr, *err = nullptr;
+    ID3D12RootSignature* rs = nullptr;
+    CHECK(SUCCEEDED(ser(&rd, D3D_ROOT_SIGNATURE_VERSION_1, &rb, &err)) && SUCCEEDED(dev->CreateRootSignature(0, rb->GetBufferPointer(), rb->GetBufferSize(), IID_PPV_ARGS(&rs))));
+    ID3DBlob* vs = compile("float4 main(float3 p : POSITION) : SV_Position { return float4(p, 1); }", "vs_5_0");
+    CHECK(vs);
+    D3D12_ROOT_PARAMETER up = {D3D12_ROOT_PARAMETER_TYPE_UAV};
+    D3D12_ROOT_SIGNATURE_DESC crd = {1, &up};
+    ID3D12RootSignature* crs = nullptr;
+    CHECK(SUCCEEDED(ser(&crd, D3D_ROOT_SIGNATURE_VERSION_1, &rb, &err)) && SUCCEEDED(dev->CreateRootSignature(0, rb->GetBufferPointer(), rb->GetBufferSize(), IID_PPV_ARGS(&crs))));
+    std::vector<ID3DBlob*> ps(shaders);
+    std::atomic<int> next_ps{0};
+    std::vector<std::thread> ts;
+    for (unsigned t = 0; t < threads; ++t)
+        ts.emplace_back([&] {
+            for (int k; (k = next_ps++) < shaders;)
+                ps[k] = cs ? compile("RWByteAddressBuffer b : register(u0); [numthreads(1, 1, 1)] void main() { b.Store(0, " + std::to_string(k + 1) + "); }", "cs_5_0")
+                           : compile("float4 main(float4 p : SV_Position) : SV_Target { return float4(p.xy * " + std::to_string(k + 1) + ".0, 0, 1); }", "ps_5_0");
+        });
+    for (auto& t : ts) t.join();
+    ts.clear();
+    for (auto* b : ps) CHECK(b);
+    D3D12_INPUT_ELEMENT_DESC ie = {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0};
+    IO_COUNTERS io0{}, io1{};
+    GetProcessIoCounters(GetCurrentProcess(), &io0);
+    double start = priv();
+    std::atomic<double> peak{start};
+    std::atomic<bool> done{false};
+    std::thread watch([&] {
+        while (!done) {
+            for (double p = priv(), q = peak; p > q && !peak.compare_exchange_weak(q, p);) {}
+            Sleep(5);
+        }
+    });
+    std::atomic<long> next{0}, bad{0};
+    auto t0 = std::chrono::steady_clock::now();
+    for (unsigned t = 0; t < threads; ++t)
+        ts.emplace_back([&] {
+            for (long i; (i = next++) < n;) {
+                long j = i % 4 == 3 ? i / 2 : i;  // a repeat: the desc of an earlier create
+                ID3D12PipelineState* pso = nullptr;
+                if (cs) {
+                    D3D12_COMPUTE_PIPELINE_STATE_DESC c = {crs, {ps[j % shaders]->GetBufferPointer(), ps[j % shaders]->GetBufferSize()}};
+                    if (SUCCEEDED(dev->CreateComputePipelineState(&c, IID_PPV_ARGS(&pso)))) pso->Release();
+                    else ++bad;
+                    continue;
+                }
+                D3D12_GRAPHICS_PIPELINE_STATE_DESC g = {};
+                g.pRootSignature = rs, g.InputLayout = {&ie, 1};
+                g.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+                g.PS = {ps[j % shaders]->GetBufferPointer(), ps[j % shaders]->GetBufferSize()};
+                g.SampleMask = UINT_MAX, g.RasterizerState = {D3D12_FILL_MODE_SOLID, D3D12_CULL_MODE_NONE}, g.RasterizerState.DepthClipEnable = TRUE;
+                g.RasterizerState.DepthBias = (INT)(j / shaders);  // n distinct descs over a few shaders
+                g.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, g.NumRenderTargets = 1, g.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+                g.SampleDesc = {1, 0};
+                if (SUCCEEDED(dev->CreateGraphicsPipelineState(&g, IID_PPV_ARGS(&pso)))) pso->Release();
+                else ++bad;
+            }
+        });
+    for (auto& t : ts) t.join();
+    double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    done = true, watch.join();
+    GetProcessIoCounters(GetCurrentProcess(), &io1);
+    printf("burst %s: %ld creates on %u threads in %.1f s (%.0f/s), %ld failed, private MB start %.0f peak %.0f end %.0f, %llu writes\n",
+           rec ? "rec" : "plain", n, threads, s, n / s, bad.load(), start, peak.load(), priv(), io1.WriteOperationCount - io0.WriteOperationCount);
+    return bad ? 1 : 0;
+}
+
 // `selftest dxcfill <count> <unroll> <seed> [hold s]`: grows the D3D12 driver cache under this exe's name (copy it to a
 // throwaway name first) with <count> distinct compute PSOs; on AMD, unroll 250 adds about 78 KB each. hold: keeps the
 // device, and so its cache files, open that long (-1: until Enter). System d3d12.dll, no proxy.
@@ -3092,16 +3639,319 @@ static HRESULT STDMETHODCALLTYPE ov_present1(IDXGISwapChain1* sc, UINT sync, UIN
 }
 
 // scskiller_frames.bin's frames after its last launch record; -1: no file.
-static long frames_in(const std::wstring& dir) {
+// chains: frames per swap chain index; game: the index a tagged record (0xF0000000 | index) marked as the game's frames
+// (-1 none).
+static long frames_in(const std::wstring& dir, std::vector<long>* chains = nullptr, long* game = nullptr) {
     FILE* fr = _wfopen((dir + L"scskiller_frames.bin").c_str(), L"rb");
     long frames = -1;
+    if (chains) chains->assign(15, 0);
+    if (game) *game = -1;
     for (uint32_t r; fr && fread(&r, 4, 1, fr) == 1;) {
         uint64_t head[4];
-        if (r == 0xFFFFFFFF) frames = fread(head, sizeof head, 1, fr) == 1 ? 0 : -1;
-        else if (r >> 28 != 15) ++frames;
+        if (r == 0xFFFFFFFF) {
+            frames = fread(head, sizeof head, 1, fr) == 1 ? 0 : -1;
+            if (chains) chains->assign(15, 0);
+            if (game) *game = -1;
+        } else if (r >> 28 == 15 && (r & 0x0FFFFFFF) < 15) { if (game) *game = r & 0x0FFFFFFF; }
+        else if (r >> 28 != 15) {
+            ++frames;
+            if (chains) ++(*chains)[r >> 28];
+        }
     }
     if (fr) fclose(fr);
     return frames;
+}
+// frames_in once it holds want frames (about 30 s at most), read again after one more of the writer's ticks so frames
+// past want show; want < 0: none are hooked, read after 2 ticks. The proxy writes once a second from its own thread,
+// which a loaded machine can run seconds late.
+static long frames_after(const std::wstring& dir, long want, std::vector<long>* chains = nullptr, long* game = nullptr) {
+    long n = frames_in(dir, chains, game);
+    for (int i = 0; want >= 0 && n < want && i < 600; ++i) Sleep(50), n = frames_in(dir, chains, game);
+    Sleep(want < 0 ? 2500 : 1500);
+    return frames_in(dir, chains, game);
+}
+
+// `selftest framescapture`: an overlay that hooks the factory's CreateSwapChainForHwnd before the proxy does and, in
+// each create, takes the swap chain vtable's Present as the original it would call (as Steam's overlay does at frame
+// generation's swap chain). A swap chain is made and presented, then a second one. Prints "captured ours <0|1>": the
+// second create's capture is the proxy's hook, and "after ours <0|1>": the vtable's Present after it. Then a third, whose
+// create first makes another swap chain through the factory's vtable (a wrapper's create calling the real one) and
+// captures after that returns: "nested ours <0|1>" and "nested after ours <0|1>".
+using PFN_ScHwnd = HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory2*, IUnknown*, HWND, const DXGI_SWAP_CHAIN_DESC1*, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*,
+                                               IDXGIOutput*, IDXGISwapChain1**);
+static PFN_ScHwnd g_cap_create;
+static void** g_cap_vt;
+static void* g_captured;
+static int g_cap_nest;  // 1: the next create makes another swap chain first; 2: that inner create, which captures nothing; -1: it failed
+static HWND cap_wnd() { return CreateWindowExW(0, L"STATIC", L"scskiller framescapture", WS_OVERLAPPEDWINDOW, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr); }
+static HRESULT STDMETHODCALLTYPE cap_create(IDXGIFactory2* f, IUnknown* q, HWND w, const DXGI_SWAP_CHAIN_DESC1* d, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fs,
+                                            IDXGIOutput* o, IDXGISwapChain1** pp) {
+    if (g_cap_nest == 2) return g_cap_create(f, q, w, d, fs, o, pp);
+    if (g_cap_nest == 1) {
+        IDXGISwapChain1* inner = nullptr;
+        g_cap_nest = 2;
+        HRESULT hr = f->CreateSwapChainForHwnd(q, cap_wnd(), d, nullptr, nullptr, &inner);
+        if (SUCCEEDED(hr)) inner->Release();
+        g_cap_nest = SUCCEEDED(hr) ? 0 : -1;
+    }
+    if (g_cap_vt) g_captured = g_cap_vt[8];
+    return g_cap_create(f, q, w, d, fs, o, pp);
+}
+static int frames_capture_rows(const std::wstring& dir) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    CHECK(SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+    void** fvt = *(void***)f;
+    DWORD old;
+    CHECK(VirtualProtect(&fvt[15], sizeof(void*), PAGE_READWRITE, &old));
+    g_cap_create = (PFN_ScHwnd)fvt[15], fvt[15] = (void*)cap_create;
+    VirtualProtect(&fvt[15], sizeof(void*), old, &old);
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    auto proxy_create = m ? (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice") : nullptr;
+    ID3D12Device* dev = nullptr;
+    CHECK(proxy_create && SUCCEEDED(proxy_create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+    auto ours = [&](void* p) {
+        HMODULE owner = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)p, &owner);
+        return owner == m;
+    };
+    D3D12_COMMAND_QUEUE_DESC qd = {};
+    ID3D12CommandQueue* q = nullptr;
+    DXGI_SWAP_CHAIN_DESC1 d = {64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2};
+    d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    IDXGISwapChain1 *sc = nullptr, *sc2 = nullptr, *sc3 = nullptr;
+    CHECK(SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q))) && SUCCEEDED(f->CreateSwapChainForHwnd(q, cap_wnd(), &d, nullptr, nullptr, &sc)));
+    sc->Present(0, 0);
+    g_cap_vt = *(void***)sc;
+    CHECK(SUCCEEDED(f->CreateSwapChainForHwnd(q, cap_wnd(), &d, nullptr, nullptr, &sc2)));
+    printf("captured ours %d\nafter ours %d\n", ours(g_captured), ours(g_cap_vt[8]));
+    g_captured = nullptr, g_cap_nest = 1;
+    CHECK(SUCCEEDED(f->CreateSwapChainForHwnd(q, cap_wnd(), &d, nullptr, nullptr, &sc3)) && g_captured && !g_cap_nest);
+    printf("nested ours %d\nnested after ours %d\n", ours(g_captured), ours(g_cap_vt[8]));
+    return 0;
+}
+
+// `selftest framesdummy`: a hooker that, after frame generation's swap chain (a queue named "AMD FSR PresentQueue"), makes
+// its own 2x2 swap chain with D3D11CreateDeviceAndSwapChain on a hidden window, takes that swap chain's Present slot after
+// the create returns as the one original it calls, and inline-detours dxgi's Present (as Steam's overlay does). Then each
+// swap chain presents once. Prints "dummy ours <0|1>" (the slot it took is the proxy's) and "recursed <0|1>" (its detour
+// was entered again from inside its own call, cut at 64 deep instead of overflowing the stack).
+using PFN_DdPresent = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
+static void* g_dd_target;       // dxgi's Present, detoured
+static void* g_dd_orig;         // what the hooker calls: the slot it read
+static uint8_t g_dd_saved[12];
+static thread_local int t_dd_depth;
+static bool g_dd_recursed;
+static void dd_patch(bool on);
+static HRESULT STDMETHODCALLTYPE dd_present(IDXGISwapChain* sc, UINT sync, UINT flags) {
+    if (t_dd_depth >= 64) return g_dd_recursed = true, E_FAIL;
+    ++t_dd_depth;
+    HRESULT hr;
+    if (g_dd_orig == g_dd_target) dd_patch(false), hr = ((PFN_DdPresent)g_dd_target)(sc, sync, flags), dd_patch(true);  // its trampoline
+    else hr = ((PFN_DdPresent)g_dd_orig)(sc, sync, flags);
+    --t_dd_depth;
+    return hr;
+}
+static void dd_patch(bool on) {
+    auto t = (uint8_t*)g_dd_target;
+    DWORD old;
+    VirtualProtect(t, 12, PAGE_EXECUTE_READWRITE, &old);
+    if (on) {
+        void* to = (void*)dd_present;
+        t[0] = 0x48, t[1] = 0xB8, memcpy(t + 2, &to, 8), t[10] = 0xFF, t[11] = 0xE0;  // mov rax, dd_present / jmp rax
+    } else memcpy(t, g_dd_saved, 12);
+    VirtualProtect(t, 12, old, &old);
+    FlushInstructionCache(GetCurrentProcess(), t, 12);
+}
+static int frames_dummy_rows(const std::wstring& dir) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    wchar_t sys[MAX_PATH];
+    GetSystemDirectoryW(sys, MAX_PATH);
+    HMODULE d3d11 = LoadLibraryW((std::wstring(sys) + L"\\d3d11.dll").c_str());
+    auto create11 = d3d11 ? (decltype(&D3D11CreateDeviceAndSwapChain))GetProcAddress(d3d11, "D3D11CreateDeviceAndSwapChain") : nullptr;
+    auto dummy = [&](IDXGISwapChain** sc) {
+        DXGI_SWAP_CHAIN_DESC d = {{2, 2, {0, 0}, DXGI_FORMAT_R8G8B8A8_UNORM}, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2, cap_wnd(), TRUE, DXGI_SWAP_EFFECT_FLIP_DISCARD};
+        ID3D11Device* dev = nullptr;
+        return create11 && SUCCEEDED(create11(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &d, sc, &dev, nullptr, nullptr));
+    };
+    IDXGISwapChain* before = nullptr;
+    CHECK(dummy(&before));  // dxgi's own Present, before the proxy is in
+    g_dd_target = (*(void***)before)[8];
+    memcpy(g_dd_saved, g_dd_target, 12);
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    CHECK(SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    auto proxy_create = m ? (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice") : nullptr;
+    ID3D12Device* dev = nullptr;
+    CHECK(proxy_create && SUCCEEDED(proxy_create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+    auto chain = [&](IDXGISwapChain1** sc, const wchar_t* name) {
+        D3D12_COMMAND_QUEUE_DESC qd = {};
+        ID3D12CommandQueue* q = nullptr;
+        DXGI_SWAP_CHAIN_DESC1 d = {64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2};
+        d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        return SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q))) && (!name || SUCCEEDED(q->SetName(name))) &&
+               SUCCEEDED(f->CreateSwapChainForHwnd(q, cap_wnd(), &d, nullptr, nullptr, sc));
+    };
+    IDXGISwapChain1 *game = nullptr, *fg = nullptr;
+    CHECK(chain(&game, nullptr));
+    game->Present(0, 0);
+    CHECK(chain(&fg, L"AMD FSR PresentQueue"));
+    IDXGISwapChain* sc11 = nullptr;
+    CHECK(dummy(&sc11));
+    g_dd_orig = (*(void***)sc11)[8];
+    HMODULE owner = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)g_dd_orig, &owner);
+    printf("dummy ours %d\n", owner == m);
+    dd_patch(true);
+    fg->Present(0, 0), game->Present(0, 0), sc11->Present(0, 0);
+    dd_patch(false);
+    printf("recursed %d\n", g_dd_recursed);
+    return 0;
+}
+
+// `selftest framesstorm`: swap chain creates through the proxy's factory hook. An overlay hooked the factory's
+// CreateSwapChainForHwnd before the proxy; inside the first create it makes another through the factory's vtable, 3 deep.
+// Then each of a set of descs, valid and not, made with dxgi's own create and through the factory: "same <n> of <m>",
+// those both gave the same result. Then 2000 creates on a window that already has a swap chain: "storm <failed> 0x<hr>",
+// and "creates <n> failed <m>", all the creates through the factory. Waits for the proxy's once-a-second summary.
+static int g_ov_reenter;
+static HRESULT STDMETHODCALLTYPE ov_create(IDXGIFactory2* f, IUnknown* q, HWND w, const DXGI_SWAP_CHAIN_DESC1* d, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fs,
+                                           IDXGIOutput* o, IDXGISwapChain1** pp) {
+    if (g_ov_reenter > 0) {
+        --g_ov_reenter;
+        IDXGISwapChain1* inner = nullptr;
+        if (SUCCEEDED(f->CreateSwapChainForHwnd(q, cap_wnd(), d, nullptr, nullptr, &inner))) inner->Release();
+    }
+    return g_cap_create(f, q, w, d, fs, o, pp);
+}
+static int frames_storm_rows(const std::wstring& dir) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    CHECK(SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+    void** fvt = *(void***)f;
+    DWORD old;
+    CHECK(VirtualProtect(&fvt[15], sizeof(void*), PAGE_READWRITE, &old));
+    g_cap_create = (PFN_ScHwnd)fvt[15], fvt[15] = (void*)ov_create;
+    VirtualProtect(&fvt[15], sizeof(void*), old, &old);
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    auto proxy_create = m ? (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice") : nullptr;
+    ID3D12Device* dev = nullptr;
+    CHECK(proxy_create && SUCCEEDED(proxy_create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+    CHECK(fvt[15] != (void*)ov_create);  // the proxy's hook went in over the overlay's
+    D3D12_COMMAND_QUEUE_DESC qd = {};
+    ID3D12CommandQueue* q = nullptr;
+    CHECK(SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q))));
+    q->SetName(L"C:\\Users\\someone\\queue");  // a debug name that is a path: the log reduces it
+    int creates = 0, failed = 0;
+    auto create = [&](HWND w, const DXGI_SWAP_CHAIN_DESC1& d, IDXGISwapChain1** sc) {
+        HRESULT hr = f->CreateSwapChainForHwnd(q, w, &d, nullptr, nullptr, sc);
+        ++creates, failed += FAILED(hr);
+        return hr;
+    };
+    DXGI_SWAP_CHAIN_DESC1 d = {64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2};
+    d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    IDXGISwapChain1* sc = nullptr;
+    g_ov_reenter = 3;
+    CHECK(SUCCEEDED(create(cap_wnd(), d, &sc)) && !g_ov_reenter);
+    creates += 3;
+    sc->Release();
+    std::vector<DXGI_SWAP_CHAIN_DESC1> descs(5, d);
+    descs[1].Format = DXGI_FORMAT_B8G8R8A8_UNORM, descs[1].BufferCount = 3, descs[1].SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+    descs[2].Width = descs[2].Height = 0;  // the window's size
+    descs[3].BufferCount = 1;  // flip model needs 2
+    descs[4].Format = DXGI_FORMAT_R32_FLOAT;
+    int same = 0;
+    for (auto& e : descs) {
+        IDXGISwapChain1 *a = nullptr, *b = nullptr;
+        HRESULT ha = g_cap_create(f, q, cap_wnd(), &e, nullptr, nullptr, &a), hb = create(cap_wnd(), e, &b);
+        same += ha == hb;
+        if (SUCCEEDED(ha)) a->Release();
+        if (SUCCEEDED(hb)) b->Release();
+    }
+    printf("same %d of %zu\n", same, descs.size());
+    HWND held = cap_wnd();
+    CHECK(SUCCEEDED(create(held, d, &sc)));
+    int storm = 0;
+    HRESULT first = S_OK;
+    for (int i = 0; i < 2000; ++i) {
+        IDXGISwapChain1* again = nullptr;
+        HRESULT hr = create(held, d, &again);
+        if (SUCCEEDED(hr)) again->Release();
+        else if (!storm++) first = hr;
+    }
+    printf("storm %d 0x%08x\ncreates %d failed %d\n", storm, (unsigned)first, creates, failed);
+    char want[64];
+    snprintf(want, sizeof want, "frames: %d swap chain creates, %d failed", creates, failed);
+    for (int i = 0; i < 300; ++i, Sleep(100)) {  // the proxy's summary is once a second, from its own thread
+        std::string log;
+        if (FILE* lf = _wfopen((dir + L"scskiller.log").c_str(), L"rb")) {
+            char b[4096];
+            for (size_t n; (n = fread(b, 1, sizeof b, lf));) log.append(b, n);
+            fclose(lf);
+        }
+        if (log.find(want) != std::string::npos) break;
+    }
+    return 0;
+}
+
+// `selftest framesfg ffx [late]`: fakenext.dll loaded as amd_fidelityfx_loader_dx12.dll before the first device (late:
+// after it), a swap chain presented 3 times, then frame generation's swap chain from its ffxCreateContext (FOR_HWND) presented 3 times, each
+// presenting its real swap chain once on this thread and twice from another. Prints "chains <frames of each>" and "game
+// <index>". play: a compute PSO first, and frame generation's swap chain presents until the log says the in-game panel's
+// play time is done or dxgi's Present went back (60 s at most).
+static HRESULT compute_pso(ID3D12Device* dev, ID3D12RootSignature* rs, int k);
+static int frames_ffx_rows(const std::wstring& dir, bool play, bool late) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    auto load_ffx = [&] { return LoadLibraryW((dir + L"amd_fidelityfx_loader_dx12.dll").c_str()); };
+    HMODULE ffx = late ? nullptr : load_ffx();
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    auto proxy_create = m ? (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice") : nullptr;
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    ID3D12Device* dev = nullptr;
+    CHECK(proxy_create && SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))) &&
+          SUCCEEDED(proxy_create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+    if (late) ffx = load_ffx();
+    auto ffx_create = ffx ? (uint32_t(*)(void**, void*, const void*))GetProcAddress(ffx, "ffxCreateContext") : nullptr;
+    CHECK(ffx_create);
+    D3D12_COMMAND_QUEUE_DESC qd = {};
+    ID3D12CommandQueue* q = nullptr;
+    DXGI_SWAP_CHAIN_DESC1 d = {64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2};
+    d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    auto wnd = [] { return CreateWindowExW(0, L"STATIC", L"scskiller framesfg", WS_OVERLAPPEDWINDOW, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr); };
+    IDXGISwapChain1* sc = nullptr;
+    CHECK(SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q))) && SUCCEEDED(f->CreateSwapChainForHwnd(q, wnd(), &d, nullptr, nullptr, &sc)));
+    for (int i = 0; i < 3; ++i) sc->Present(0, 0);
+    IDXGISwapChain* fg = nullptr;
+    struct { uint64_t type; void* next; IDXGISwapChain** swapchain; HWND hwnd; DXGI_SWAP_CHAIN_DESC1* desc; void* fullscreen; IDXGIFactory* factory; ID3D12CommandQueue* queue; }
+        fd = {0x30006, nullptr, &fg, wnd(), &d, nullptr, f, q};
+    void* ctx = nullptr;
+    CHECK(ffx_create(&ctx, &fd, nullptr) == 0 && fg);
+    for (int i = 0; i < 3; ++i) fg->Present(0, 0);
+    if (play) {
+        auto ser = (decltype(&D3D12SerializeRootSignature))GetProcAddress(m, "D3D12SerializeRootSignature");
+        D3D12_ROOT_PARAMETER up = {D3D12_ROOT_PARAMETER_TYPE_UAV};
+        D3D12_ROOT_SIGNATURE_DESC rd = {1, &up};
+        ID3DBlob *rb = nullptr, *err = nullptr;
+        ID3D12RootSignature* rs = nullptr;
+        CHECK(ser && SUCCEEDED(ser(&rd, D3D_ROOT_SIGNATURE_VERSION_1, &rb, &err)) &&
+              SUCCEEDED(dev->CreateRootSignature(0, rb->GetBufferPointer(), rb->GetBufferSize(), IID_PPV_ARGS(&rs))) && SUCCEEDED(compute_pso(dev, rs, (int)GetTickCount())));
+        for (ULONGLONG until = GetTickCount64() + 60000; GetTickCount64() < until;) {
+            for (int i = 0; i < 10; ++i) fg->Present(0, 0), Sleep(15);
+            std::string log = read_all(dir + L"scskiller.log");
+            if (log.find("s of play counted, done") != std::string::npos || log.find("dxgi's Present unhooked") != std::string::npos) break;
+        }
+    }
+    std::vector<long> chains;
+    long game;
+    frames_after(dir, 6, &chains, &game);  // 3 on the game's swap chain, 3 or more on frame generation's
+    printf("chains");
+    for (long n : chains) if (n) printf(" %ld", n);
+    printf("\ngame %ld\n", game);
+    return 0;
 }
 
 static int frames_rows(const std::wstring& dir, int n) {
@@ -3135,6 +3985,7 @@ static int frames_rows(const std::wstring& dir, int n) {
     VirtualProtect(&vt[8], 15 * sizeof(void*), old, &old);
     sc0->Release();
     CHECK(SUCCEEDED(proxy_create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))) && chain(dev, &sc));
+    bool hooked = module_of((*(void***)sc)[8]) == m;
     DXGI_PRESENT_PARAMETERS p = {};
     for (int i = 0; i < n; ++i) sc->Present(0, 0), sc->Present1(0, 0, &p);
     sc->Present(0, DXGI_PRESENT_TEST);
@@ -3167,9 +4018,9 @@ static int frames_rows(const std::wstring& dir, int n) {
     };
     pso(1);
     std::thread(pso, 2).join();
-    Sleep(2500);  // the proxy writes the frames once a second
+    long frames = frames_after(dir, hooked ? 2 * n + 3 : -1);  // the nested present and sc2's two count; the test and failed ones don't
     printf("overlay %d\nlate %d\n", g_overlay.load(), g_late.load());
-    printf("frames %ld\n", frames_in(dir));
+    printf("frames %ld\n", frames);
     return 0;
 }
 
@@ -3223,10 +4074,104 @@ static int frames_fg_rows(const std::wstring& dir, const wchar_t* queue, bool ov
         }
     }
     if (!overlay) printf("after %d\n", ours(sc));
-    for (int i = 0; i < 3; ++i) sc->Present(0, 0), sc->Present1(0, 0, &p);
-    Sleep(2500);  // the proxy writes the frames once a second
-    printf("frames %ld\n", frames_in(dir));
+    int failed = 0;
+    for (int i = 0; i < 3; ++i) failed += FAILED(sc->Present(0, 0)) + FAILED(sc->Present1(0, 0, &p));
+    printf("presents failed %d\nframes %ld\n", failed, frames_after(dir, ours(sc) ? (queue ? 9 : 6) : -1));
     return 0;
+}
+
+// `selftest nvqi`: NVAPI resolution through the proxy's nvapi_QueryInterface hook, fakenext as nvapi64.dll (loaded by full
+// path before the first device, as a game's driver is). 8 threads resolve each of 16 ids 2000 times before the hooks, then the
+// first devices come from 4 threads at once, then the 8 threads again, each id also nested in another resolution through the
+// hooked entry. Unknown ids must stay unresolved. Meanwhile a thread past the entry's first instruction waits there until
+// the hooks are in, then goes on. Three hooked ids resolve to entries the hook must refuse (a 1-byte first instruction, too
+// little padding, padding after a live byte), and one gets another hooker's jmp between the hook's read of it and its
+// exchange (SCSKILLER_TEST_HOOK_RACE, a build with test hooks). Prints "hooked <0|1>" (the entry is the hook's jmp),
+// "refused intact <0|1>" (those entries' bytes unchanged), "raced intact <0|1>" (the other jmp kept), "inside resolved <0|1>" (that thread's answer) and, for both phases, "<before|after>
+// resolved <n> wrong <n>"; exit code 1 when the entry isn't hooked or an answer is wrong.
+// at_exit: fakenext then resolves through the hook from its process detach, after the proxy's (FakeNext_NvAtExit).
+static int nvqi_rows(const std::wstring& dir, bool at_exit) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    HMODULE nv = LoadLibraryW((dir + L"nvapi64.dll").c_str());
+    auto qi = nv ? (void* (*)(uint32_t))GetProcAddress(nv, "nvapi_QueryInterface") : nullptr;
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    auto proxy_create = m ? (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice") : nullptr;
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    CHECK(qi && proxy_create && SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+    void* want[16];
+    for (uint32_t i = 0; i < 16; ++i) CHECK((want[i] = qi(0x5EE00000 | i)));
+    auto storm = [&](const char* phase, bool nested) {
+        std::atomic<int> n = 0, wrong = 0;
+        std::vector<std::thread> ts;
+        for (int t = 0; t < 8; ++t)
+            ts.emplace_back([&, t] {
+                for (int k = 0; k < 2000; ++k, ++n) {
+                    uint32_t i = (t + k) & 15;
+                    if (qi(0x5EE00000 | i) != want[i] || (nested && qi(0x5EE10000 | i) != want[i]) || qi(0x5EEF0000 | i)) ++wrong;
+                }
+            });
+        for (auto& th : ts) th.join();
+        printf("%s resolved %d wrong %d\n", phase, n.load(), wrong.load());
+        return wrong.load();
+    };
+    int bad = storm("before", false);
+    auto inside = (void* (*)(uint32_t))GetProcAddress(nv, "FakeNext_NvQiInside");
+    auto hold = (void(WINAPI*)(bool))GetProcAddress(nv, "FakeNext_NvQiHold");
+    CHECK(inside && hold);
+    void* got = nullptr;
+    std::thread held([&] { got = inside(0x5EE00003); });
+    hold(false);
+    // entries the hook must refuse: their first instruction and the 16 bytes before it stay as they were
+    uint8_t* refused[] = {(uint8_t*)qi(0xAC2DFEB5), (uint8_t*)qi(0x43D867C0), (uint8_t*)qi(0x2FC28856)};
+    uint8_t before[3][24];
+    for (int i = 0; i < 3; ++i) {
+        CHECK(refused[i]);
+        memcpy(before[i], refused[i] - 16, 24);
+    }
+    // another hooker's jmp lands on CreateComputePipelineState's entry while the proxy hooks it: that jmp must stay
+    static uint8_t* raced;
+    static uint64_t foreign;
+    CHECK((raced = (uint8_t*)qi(0x2762DEAC)));
+    memcpy(&foreign, raced, 8);
+    memcpy(&foreign, "\xE9\0\0\0\0", 5);  // jmp to the next instruction
+    void (*race)(void*) = [](void* t) {
+        DWORD old;
+        if (t == raced && VirtualProtect(t, 8, PAGE_EXECUTE_READWRITE, &old))
+            InterlockedExchange64((volatile LONG64*)t, (LONG64)foreign), VirtualProtect(t, 8, old, &old);
+    };
+    wchar_t race_at[20];
+    swprintf_s(race_at, L"%llx", (unsigned long long)race);
+    SetEnvironmentVariableW(L"SCSKILLER_TEST_HOOK_RACE", race_at);
+    std::atomic<int> made = 0;
+    std::vector<std::thread> ts;
+    for (int i = 0; i < 4; ++i)
+        ts.emplace_back([&] {
+            ID3D12Device* d = nullptr;
+            if (SUCCEEDED(proxy_create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&d)))) ++made, d->Release();
+        });
+    for (auto& th : ts) th.join();
+    CHECK(made == 4);
+    bool hooked = *(uint8_t*)qi == 0xE9 || *(uint8_t*)qi == 0xEB;
+    printf("hooked %d\n", hooked);
+    bool intact = true;
+    for (int i = 0; i < 3; ++i) intact &= !memcmp(before[i], refused[i] - 16, 24);
+    printf("refused intact %d\n", intact);
+    bad += !intact;
+    bool kept = !memcmp(raced, &foreign, 8);
+    printf("raced intact %d\n", kept);
+    bad += !kept;
+    hold(true);
+    held.join();
+    printf("inside resolved %d\n", got == want[3]);
+    bad += got != want[3];
+    bad += storm("after", true);
+    auto nv_at_exit = (void(WINAPI*)())GetProcAddress(nv, "FakeNext_NvAtExit");
+    if (at_exit) {
+        CHECK(nv_at_exit);
+        nv_at_exit();
+    }
+    return bad || !hooked;
 }
 
 // `selftest sysdxgi` (no proxy): sys_dxgi.h against a copy of System32's dxgi.dll mapped from another folder, as a game
@@ -3258,15 +4203,20 @@ static int sys_dxgi_rows() {
 // factory's CreateSwapChainForHwnd is hooked before the proxy's device: it makes the real swap chain through the
 // factory's vtable (the proxy's hook, nested) and returns a wrapper of it whose vtable is this exe's. n Presents and n
 // Present1s through the wrapper. Prints "wrapper ours <0|1>" (its Present is the proxy's), "real ours <0|1>" (the real
-// swap chain's is) and "frames <n>".
+// swap chain's is) and "frames <n>". sl: Streamline's proxy instead: the real swap chain made by dxgi's original
+// function, not through the vtable, and the wrapper answering Streamline's IID with it.
+// fwd: ReShade 6.5's proxy, made as sl's, answering no unwrap but passing the interfaces it doesn't have to the real one.
 struct Wrap { void** vt; IDXGISwapChain1* real; LONG ref; };
 static void* g_wrap_vt[23];
 static void* g_wrap_create;
 static thread_local bool t_wrapping;
+static bool g_wrap_sl, g_wrap_fwd;
+static const GUID kSlBase = {0xadec44e2, 0x61f0, 0x45c3, {0xad, 0x9f, 0x1b, 0x37, 0x37, 0x92, 0x84, 0xff}};
 static HRESULT STDMETHODCALLTYPE wrap_qi(Wrap* w, REFIID riid, void** pp) {
+    if (g_wrap_sl && riid == kSlBase) return w->real->AddRef(), *pp = w->real, S_OK;
     for (const IID& i : {__uuidof(IUnknown), __uuidof(IDXGIObject), __uuidof(IDXGIDeviceSubObject), __uuidof(IDXGISwapChain), __uuidof(IDXGISwapChain1)})
         if (riid == i) return InterlockedIncrement(&w->ref), *pp = w, S_OK;
-    return *pp = nullptr, E_NOINTERFACE;
+    return g_wrap_fwd ? w->real->QueryInterface(riid, pp) : (*pp = nullptr, E_NOINTERFACE);
 }
 static ULONG STDMETHODCALLTYPE wrap_addref(Wrap* w) { return InterlockedIncrement(&w->ref); }
 static ULONG STDMETHODCALLTYPE wrap_release(Wrap* w) {
@@ -3282,12 +4232,13 @@ static HRESULT STDMETHODCALLTYPE wrap_create(IDXGIFactory2* f, IUnknown* dev, HW
     if (t_wrapping) return ((decltype(&wrap_create))g_wrap_create)(f, dev, wnd, d, fs, o, pp);
     IDXGISwapChain1* real = nullptr;
     t_wrapping = true;
-    HRESULT hr = f->CreateSwapChainForHwnd(dev, wnd, d, fs, o, &real);
+    HRESULT hr = g_wrap_sl || g_wrap_fwd ? ((decltype(&wrap_create))g_wrap_create)(f, dev, wnd, d, fs, o, &real) : f->CreateSwapChainForHwnd(dev, wnd, d, fs, o, &real);
     t_wrapping = false;
     if (SUCCEEDED(hr)) *pp = (IDXGISwapChain1*)new Wrap{g_wrap_vt, real, 1};
     return hr;
 }
-static int frames_wrap_rows(const std::wstring& dir, int n) {
+static int frames_wrap_rows(const std::wstring& dir, int n, const wchar_t* how) {
+    g_wrap_sl = !wcscmp(how, L"sl"), g_wrap_fwd = !wcscmp(how, L"fwd");
     SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
     HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
     auto proxy_create = m ? (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice") : nullptr;
@@ -3316,8 +4267,36 @@ static int frames_wrap_rows(const std::wstring& dir, int n) {
     printf("real ours %d\n", module_of(rvt[8]) == m && module_of(rvt[22]) == m);
     DXGI_PRESENT_PARAMETERS p = {};
     for (int i = 0; i < n; ++i) sc->Present(0, 0), sc->Present1(0, 0, &p);
-    Sleep(2500);  // the proxy writes the frames once a second
-    printf("frames %ld\n", frames_in(dir));
+    printf("frames %ld\n", frames_after(dir, 2 * n));
+    return 0;
+}
+
+// `selftest framesmod <n>`: a mod's dxgi.dll (fakenext copied as dxgi.dll beside this exe, as ReShade as dxgi.dll) whose
+// CreateDXGIFactory1 gives its own factory object around System32's. The proxy hooks System32's factory instead, and a
+// swap chain made through the mod's factory is System32's: n Presents and n Present1s on it. Prints "mod factory <0|1>"
+// (the factory's vtable isn't System32's) and "frames <n>".
+static int frames_mod_rows(const std::wstring& dir, int n) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    auto proxy_create = m ? (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice") : nullptr;
+    IDXGIFactory2* f = nullptr;
+    IDXGIFactory4* sys = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    CHECK(proxy_create && SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&f))) && SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&sys))) &&
+          SUCCEEDED(sys->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+    printf("mod factory %d\n", module_of(*(void**)f) != system_dxgi());
+    ID3D12Device* dev = nullptr;
+    ID3D12CommandQueue* q = nullptr;
+    D3D12_COMMAND_QUEUE_DESC qd = {};
+    CHECK(SUCCEEDED(proxy_create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))) && SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q))));
+    HWND wnd = CreateWindowExW(0, L"STATIC", L"scskiller framesmod", WS_OVERLAPPEDWINDOW, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr);
+    DXGI_SWAP_CHAIN_DESC1 d = {64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2};
+    d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    IDXGISwapChain1* sc = nullptr;
+    CHECK(wnd && SUCCEEDED(f->CreateSwapChainForHwnd(q, wnd, &d, nullptr, nullptr, &sc)));
+    DXGI_PRESENT_PARAMETERS p = {};
+    for (int i = 0; i < n; ++i) sc->Present(0, 0), sc->Present1(0, 0, &p);
+    printf("frames %ld\n", frames_after(dir, 2 * n));
     return 0;
 }
 
@@ -3349,17 +4328,22 @@ static int frames_held(const std::wstring& dir) {
     sc->Present(0, 0);
     LARGE_INTEGER at;
     QueryPerformanceCounter(&at);
-    Sleep(2500);
-    FILE* fr = _wfopen((dir + L"scskiller_frames.bin").c_str(), L"rb");
-    CHECK(fr);
-    uint64_t head[4] = {}, us = 0, last = 0;
-    for (uint32_t r; fread(&r, 4, 1, fr) == 1;)
-        if (r == 0xFFFFFFFF) us = last = 0, fread(head, sizeof head, 1, fr);
-        else if (r >> 28 == 15) us += (uint64_t)(r & 0x0FFFFFFF) * 1000;
-        else last = us += r & 0x0FFFFFFF;
-    fclose(fr);
+    uint64_t head[4] = {}, last = 0;
+    long long want = 0;
+    // until the last frame is the one just presented: the 10 before it are 2 s older, written late or not at all
+    for (int i = 0; i < 600 && !(head[3] && last && want - (long long)last < 1000000); ++i, Sleep(50)) {
+        FILE* fr = _wfopen((dir + L"scskiller_frames.bin").c_str(), L"rb");
+        CHECK(fr);
+        uint64_t us = 0;
+        head[3] = last = 0;
+        for (uint32_t r; fread(&r, 4, 1, fr) == 1;)
+            if (r == 0xFFFFFFFF) us = last = 0, head[3] = fread(head, sizeof head, 1, fr) == 1 ? head[3] : 0;
+            else if (r >> 28 == 15) us += (r & 0x0FFFFFFF) < (1u << 28) / 1000 ? 0 : (uint64_t)(r & 0x0FFFFFFF) * 1000;  // a tag: no gap
+            else last = us += r & 0x0FFFFFFF;
+        fclose(fr);
+        if (head[3]) want = (long long)((at.QuadPart - (long long)head[2]) * 1000000 / (long long)head[3]);
+    }
     CHECK(head[3]);
-    long long want = (long long)((at.QuadPart - (long long)head[2]) * 1000000 / (long long)head[3]);
     printf("drift_us %lld\n", want - (long long)last);
     return 0;
 }
@@ -3432,7 +4416,7 @@ static int anticheat_rows(const std::wstring& dir, const wchar_t* client, const 
     return 0;
 }
 
-// `selftest factoryrejected` (run unarmed): a device factory both through an SDK configuration the proxy got before its first
+// `selftest factoryrejected` (run unstamped): a device factory both through an SDK configuration the proxy got before its first
 // device (its CreateDeviceFactory hook) and straight from D3D12GetInterface, each after that first device was rejected.
 // Prints "config factory hooked <0|1>" (or "no config factory") and "factory hooked <0|1>": a rejected run hooks neither.
 static int factory_rejected_rows(const std::wstring& dir) {
@@ -3527,54 +4511,905 @@ static int unload_rows(const std::wstring& dir) {
     return SUCCEEDED(hr) ? 0 : 1;
 }
 
-// The app's attestation for this exe, as ScsKiller.WriteAttestation writes it: scskiller.armed here (its nonce kept when it
-// has one, so copies of this exe running from the same folder share it) and the ledger entry
-// <ledger_dir>\<the first of ledger_keys>, removed when this process exits.
-static std::wstring g_ledger;
+// What the app writes after a clean anti-cheat check (ScsKiller.IniText, ScsKiller.Signed): this exe's size and write time
+// in scskiller.ini here, root= (this folder) unless the ini names one, and sig= under the recorder folder's recorder.key
+// (SCSKILLER_TEST_RECORDER_DIR's, made there when missing; else the app's own, never made). Without a key: unsigned.
 static void arm_self(const std::wstring& dir, const std::wstring& exe) {
     WIN32_FILE_ATTRIBUTE_DATA self;
     if (!GetFileAttributesExW(exe.c_str(), GetFileExInfoStandard, &self)) return;
-    const std::wstring armed = dir + L"scskiller.armed";
-    wchar_t nonce[64] = {};
-    if (GetPrivateProfileStringW(L"scskiller", L"nonce", L"", nonce, 64, armed.c_str()) != 32) {
-        std::random_device rd;
-        for (int i = 0; i < 32; ++i) nonce[i] = L"0123456789abcdef"[rd() & 15];
-        nonce[32] = 0;
+    const std::wstring ini = dir + L"scskiller.ini";
+    const std::wstring size = std::to_wstring((uint64_t)self.nFileSizeHigh << 32 | self.nFileSizeLow);
+    const std::wstring time = std::to_wstring((uint64_t)self.ftLastWriteTime.dwHighDateTime << 32 | self.ftLastWriteTime.dwLowDateTime);
+    WritePrivateProfileStringW(L"scskiller", L"exe_size", size.c_str(), ini.c_str());
+    WritePrivateProfileStringW(L"scskiller", L"exe_time", time.c_str(), ini.c_str());
+    wchar_t root[1024];
+    if (!GetPrivateProfileStringW(L"scskiller", L"root", L"", root, 1024, ini.c_str())) {
+        WritePrivateProfileStringW(L"scskiller", L"root", L".", ini.c_str());
+        wcscpy_s(root, L".");
     }
-    WritePrivateProfileStringW(L"scskiller", L"armed", L"1", armed.c_str());
-    WritePrivateProfileStringW(L"scskiller", L"checked", L"selftest", armed.c_str());
-    WritePrivateProfileStringW(L"scskiller", L"nonce", nonce, armed.c_str());
-    WritePrivateProfileStringW(L"scskiller", L"exe_size", std::to_wstring((uint64_t)self.nFileSizeHigh << 32 | self.nFileSizeLow).c_str(), armed.c_str());
-    WritePrivateProfileStringW(L"scskiller", L"exe_time", std::to_wstring((uint64_t)self.ftLastWriteTime.dwHighDateTime << 32 | self.ftLastWriteTime.dwLowDateTime).c_str(), armed.c_str());
-    const std::wstring key = ledger_keys(exe).front(), ledger = ledger_dir();   // the one the proxy reads
-    if (key.empty() || ledger.empty()) return;
-    CreateDirectoryW(ledger.substr(0, ledger.find_last_of(L'\\')).c_str(), nullptr), CreateDirectoryW(ledger.c_str(), nullptr);
-    g_ledger = ledger + L"\\" + key;
-    WritePrivateProfileStringW(L"scskiller", L"nonce", nonce, g_ledger.c_str());
-    atexit([] { DeleteFileW(g_ledger.c_str()); });
+    const std::wstring rdir = recorder_dir(dir), key_file = rdir + L"\\recorder.key";
+    if (rdir.empty()) return;
+    char key[129] = {};
+    DWORD n = 0;
+    HANDLE h = CreateFileW(key_file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE && GetEnvironmentVariableW(L"SCSKILLER_TEST_RECORDER_DIR", nullptr, 0)) {
+        CreateDirectoryW(rdir.c_str(), nullptr);
+        std::random_device rd;
+        for (int i = 0; i < 64; ++i) key[i] = "0123456789abcdef"[rd() & 15];
+        // written whole under a temp name, then moved in: a run reading it meanwhile never sees half a key
+        const std::wstring temp = key_file + L"." + std::to_wstring(GetCurrentProcessId());
+        h = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+        if (h != INVALID_HANDLE_VALUE) WriteFile(h, key, 64, &n, nullptr), CloseHandle(h);
+        if (!MoveFileExW(temp.c_str(), key_file.c_str(), 0)) DeleteFileW(temp.c_str());  // another run's is there: that one
+        h = CreateFileW(key_file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    }
+    if (h == INVALID_HANDLE_VALUE) return;
+    if (!ReadFile(h, key, 128, &n, nullptr)) n = 0;
+    CloseHandle(h);
+    if (n < 32) return;
+    const std::wstring here = final_dir(dir);
+    wchar_t full[MAX_PATH];
+    if (here.empty() || !GetFullPathNameW((here + root).c_str(), MAX_PATH, full, nullptr)) return;
+    std::wstring root_dir = full;
+    if (root_dir.size() > 3 && root_dir.back() == L'\\') root_dir.pop_back();
+    const auto line = [&](const wchar_t* k) {
+        wchar_t v[64] = {};
+        GetPrivateProfileStringW(L"scskiller", k, L"", v, 64, ini.c_str());
+        return std::wstring(v);
+    };
+    const std::wstring stamp = signed_stamp(size, time, L"", L"", L"", line(L"vendor"), line(L"overlay"), line(L"ab_play_s"), line(L"ab_tag"));
+    const std::wstring sig = recorder_sig(std::string(key, n), file_key(exe), file_key(dir.substr(0, dir.size() - 1)), stamp, root, file_key(root_dir));
+    if (!sig.empty()) WritePrivateProfileStringW(L"scskiller", L"sig", sig.c_str(), ini.c_str());
+}
+
+// `selftest rec11 <client dll | ->`: on a WARP device made through the proxy d3d11.dll next to the exe, two input layouts
+// of one VS, then draws (other shaders, a GS, a HS+DS pair, a deferred context: none of them recorded). The client dll ("-":
+// none) is loaded before the device. Prints "drew <n>"; the test reads the 'D' records: one per layout, with the VS's bytes.
+// "ctx": the device is asked for only through its immediate context (D3D11CreateDevice's ppDevice null), as some games do.
+static int rec11_rows(const std::wstring& dir, const wchar_t* client, bool ctx_only = false) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    if (wcscmp(client, L"-")) CHECK(LoadLibraryW(client));
+    HMODULE m = LoadLibraryW((dir + L"d3d11.dll").c_str());
+    CHECK(m);
+    auto create = (decltype(&D3D11CreateDevice))GetProcAddress(m, "D3D11CreateDevice");
+    ID3D11Device* dev = nullptr;
+    ID3D11DeviceContext* c = nullptr;
+    D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_0;
+    CHECK(create && SUCCEEDED(create(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, &fl, 1, D3D11_SDK_VERSION, ctx_only ? nullptr : &dev, nullptr, &c)));
+    if (ctx_only) c->GetDevice(&dev);
+    unsigned k = GetTickCount();
+    std::string kc = std::to_string(k % 100000) + ".5";
+    ID3DBlob* vsa = compile("float4 main(float3 p:POSITION,float2 uv:TEXCOORD0):SV_Position{return float4(p*" + kc + ",uv.x);}", "vs_5_0");
+    ID3DBlob* vsc = compile("struct O{float4 p:SV_Position;float2 uv:TEXCOORD0;};O main(uint i:SV_VertexID){O o;o.uv=float2(i," + kc + ");o.p=float4(o.uv,0,1);return o;}", "vs_5_0");
+    ID3DBlob* gsb = compile("struct V{float4 p:SV_Position;float2 uv:TEXCOORD0;};[maxvertexcount(3)]void main(triangle V v[3],inout TriangleStream<V> s){"
+                            "for(int i=0;i<3;++i){V o=v[i];o.p.x+=" + kc + ";s.Append(o);}}", "gs_5_0");
+    const std::string cp = "struct CP{float3 p:POS;};struct PC{float e[3]:SV_TessFactor;float i:SV_InsideTessFactor;};";
+    ID3DBlob* vst = compile(cp + "CP main(uint i:SV_VertexID){CP o;o.p=float3(i," + kc + ",0);return o;}", "vs_5_0");
+    ID3DBlob* hsb = compile(cp + "PC pcf(InputPatch<CP,3> ip){PC o;o.e[0]=o.e[1]=o.e[2]=o.i=ip[0].p.x;return o;}[domain(\"tri\")][partitioning(\"integer\")]"
+                            "[outputtopology(\"triangle_cw\")][outputcontrolpoints(3)][patchconstantfunc(\"pcf\")]CP main(InputPatch<CP,3> ip,uint i:SV_OutputControlPointID){return ip[i];}", "hs_5_0");
+    ID3DBlob* dsb = compile(cp + "[domain(\"tri\")]float4 main(PC pc,float3 b:SV_DomainLocation,const OutputPatch<CP,3> p):SV_Position{return float4(p[0].p*b.x,1);}", "ds_5_0");
+    ID3DBlob* psb = compile("float4 main(float4 p:SV_Position):SV_Target{return p;}", "ps_5_0");
+    CHECK(vsa && vsc && gsb && vst && hsb && dsb && psb);
+    ID3D11VertexShader *va = nullptr, *vc = nullptr, *vt = nullptr;
+    ID3D11GeometryShader* gs = nullptr;
+    ID3D11HullShader* hs = nullptr;
+    ID3D11DomainShader* ds = nullptr;
+    ID3D11PixelShader* ps = nullptr;
+    CHECK(SUCCEEDED(dev->CreateVertexShader(vsa->GetBufferPointer(), vsa->GetBufferSize(), nullptr, &va)) &&
+          SUCCEEDED(dev->CreateVertexShader(vsc->GetBufferPointer(), vsc->GetBufferSize(), nullptr, &vc)) &&
+          SUCCEEDED(dev->CreateVertexShader(vst->GetBufferPointer(), vst->GetBufferSize(), nullptr, &vt)) &&
+          SUCCEEDED(dev->CreateGeometryShader(gsb->GetBufferPointer(), gsb->GetBufferSize(), nullptr, &gs)) &&
+          SUCCEEDED(dev->CreateHullShader(hsb->GetBufferPointer(), hsb->GetBufferSize(), nullptr, &hs)) &&
+          SUCCEEDED(dev->CreateDomainShader(dsb->GetBufferPointer(), dsb->GetBufferSize(), nullptr, &ds)) &&
+          SUCCEEDED(dev->CreatePixelShader(psb->GetBufferPointer(), psb->GetBufferSize(), nullptr, &ps)));
+    D3D11_INPUT_ELEMENT_DESC l1[] = {{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0}, {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT}};
+    D3D11_INPUT_ELEMENT_DESC l2[] = {{"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0}, {"TEXCOORD", 0, DXGI_FORMAT_R16G16_FLOAT, 1, 0}};
+    ID3D11InputLayout *il1 = nullptr, *il2 = nullptr;
+    CHECK(SUCCEEDED(dev->CreateInputLayout(l1, 2, vsa->GetBufferPointer(), vsa->GetBufferSize(), &il1)) &&
+          SUCCEEDED(dev->CreateInputLayout(l2, 2, vsa->GetBufferPointer(), vsa->GetBufferSize(), &il2)));
+    int drew = 0;
+    auto draw = [&](ID3D11DeviceContext* x, ID3D11InputLayout* il, ID3D11VertexShader* v, ID3D11GeometryShader* g, ID3D11HullShader* h,
+                    ID3D11DomainShader* d, ID3D11PixelShader* p, D3D11_PRIMITIVE_TOPOLOGY t) {
+        x->IASetInputLayout(il), x->IASetPrimitiveTopology(t), x->VSSetShader(v, nullptr, 0), x->GSSetShader(g, nullptr, 0);
+        x->HSSetShader(h, nullptr, 0), x->DSSetShader(d, nullptr, 0), x->PSSetShader(p, nullptr, 0);
+        x->Draw(3, 0), ++drew;
+    };
+    draw(c, il1, va, nullptr, nullptr, nullptr, ps, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);    // 1
+    draw(c, il1, va, nullptr, nullptr, nullptr, ps, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);    // the same: no record
+    draw(c, il1, va, nullptr, nullptr, nullptr, ps, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);   // a strip is a list: no record
+    draw(c, il2, va, nullptr, nullptr, nullptr, ps, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);    // 2: the other layout
+    draw(c, il1, va, nullptr, nullptr, nullptr, ps, D3D11_PRIMITIVE_TOPOLOGY_LINELIST);        // 3: lines
+    draw(c, nullptr, vc, gs, nullptr, nullptr, ps, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);     // 4: VS -> GS
+    draw(c, nullptr, vt, nullptr, hs, ds, nullptr, D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);  // 5: VS -> HS -> DS, no PS
+    ID3D11DeviceContext* def = nullptr;
+    CHECK(SUCCEEDED(dev->CreateDeferredContext(0, &def)));
+    draw(def, il1, va, nullptr, nullptr, nullptr, ps, D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);     // 6: points, on a deferred context
+    ID3D11CommandList* cl = nullptr;
+    CHECK(SUCCEEDED(def->FinishCommandList(FALSE, &cl)));
+    c->ExecuteCommandList(cl, FALSE);
+    c->ClearState();
+    c->Draw(3, 0);  // nothing bound: no record
+    c->Flush();
+    printf("drew %d\n", drew);
+    return 0;
+}
+
+// `selftest rec11frames <n>`: a WARP device and swap chain made by the proxy d3d11.dll's D3D11CreateDeviceAndSwapChain, one
+// input layout, then n presents. Prints "frames <n>" (scskiller_frames.bin's); the test reads what the ini let it record.
+static int rec11_frames(const std::wstring& dir, int n) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    HMODULE m = LoadLibraryW((dir + L"d3d11.dll").c_str());
+    auto create = m ? (decltype(&D3D11CreateDeviceAndSwapChain))GetProcAddress(m, "D3D11CreateDeviceAndSwapChain") : nullptr;
+    HWND wnd = CreateWindowExW(0, L"STATIC", L"scskiller frames", WS_OVERLAPPEDWINDOW, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr);
+    CHECK(create && wnd);
+    DXGI_SWAP_CHAIN_DESC d = {{64, 64, {}, DXGI_FORMAT_R8G8B8A8_UNORM}, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2, wnd, TRUE, DXGI_SWAP_EFFECT_FLIP_DISCARD};
+    D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_0;
+    IDXGISwapChain* sc = nullptr;
+    ID3D11Device* dev = nullptr;
+    ID3D11DeviceContext* c = nullptr;
+    CHECK(SUCCEEDED(create(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, &fl, 1, D3D11_SDK_VERSION, &d, &sc, &dev, nullptr, &c)));
+    ID3DBlob* vs = compile("float4 main(float3 p:POSITION):SV_Position{return float4(p*" + std::to_string(GetTickCount() % 100000) + ".5,1);}", "vs_5_0");
+    D3D11_INPUT_ELEMENT_DESC l[] = {{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0}};
+    ID3D11InputLayout* il = nullptr;
+    CHECK(vs && SUCCEEDED(dev->CreateInputLayout(l, 1, vs->GetBufferPointer(), vs->GetBufferSize(), &il)));
+    for (int i = 0; i < n; ++i) sc->Present(0, 0);
+    Sleep(2500);  // the proxy writes the frames once a second
+    printf("frames %ld\n", frames_in(dir));
+    return 0;
+}
+
+// `selftest overlayunit` (no device): the overlay's font, layout, painting, formats, graph, feed, stutter rule and play
+// clock (overlay.h). Prints "overlayunit ok".
+static int overlay_unit() {
+    for (auto [h, s] : {std::pair{480, 1}, {720, 1}, {1080, 2}, {1200, 2}, {1440, 3}, {2160, 4}, {4320, ov::kMaxScale}}) CHECK(ov::scale_for(h) == s);
+    CHECK(ov::countdown(false, 222) == "SCSKiller before 3:42");
+    CHECK(ov::countdown(true, 0.2) == "SCSKiller after 0:01");
+    CHECK(ov::countdown(true, -1) == "SCSKiller after 0:00");
+    CHECK(ov::countdown(false, 600) == "SCSKiller before 10:00");
+    for (int s = 1; s <= ov::kMaxScale; ++s) {
+        const auto& f = ov::font(s);
+        for (const char* t : {"SCSKiller before after 0123456789:", ov::kDone, ov::kStutter})
+            for (const char* c = t; *c; ++c) CHECK(*c == ' ' || ov::glyph(f, *c));
+        for (char d = '1'; d <= '9'; ++d) CHECK(ov::glyph(f, d)->adv == ov::glyph(f, '0')->adv);  // the countdown doesn't shift as it ticks
+        for (int i = 0; i < f.n; ++i) {  // every glyph inside its line and its pen step
+            const auto& g = f.glyphs[i];
+            CHECK(g.y >= 0 && g.y + g.h <= f.height && g.x + g.w <= g.adv + 2);
+        }
+        CHECK(ov::text_width("SCSKiller before 10:00", s) < ov::kMaxW && ov::text_width(ov::kStutter, s) <= ov::kMaxW - 8 * s);
+    }
+    ov::Layout L;
+    ov::layout(1920, 1080, "SCSKiller before 5:00", true, L);
+    CHECK(L.s == 2 && L.at.right == 1920 - 16 && L.at.top == 16 && L.at.right - L.at.left == L.w && L.at.bottom - L.at.top == L.h && !L.sx && !L.sy);
+    CHECK(L.w == ov::text_width(ov::kStutter, 2) + 16 && L.track_y > L.text_y + ov::font(2).height && L.graph_y > L.track_y && L.flash_y > L.graph_y + L.graph_h);
+    CHECK(L.w <= ov::kMaxW && L.h <= ov::kMaxH);
+    ov::Layout L4;
+    ov::layout(3840, 2160, "SCSKiller after 10:00", true, L4);
+    CHECK(L4.s == ov::kMaxScale && L4.w <= ov::kMaxW && L4.h == ov::kMaxH);
+    ov::Layout N;
+    ov::layout(1920, 1080, "SCSKiller before 5:00", false, N);  // D3D11: no flash line, as wide as its texts
+    CHECK(N.h == L.graph_y + L.graph_h + L.pad && N.w == ov::text_width(ov::kDone, 2) + 16);
+    ov::layout(64, 64, ov::kDone, true, L);  // wider than the buffer: clipped into it
+    CHECK(L.at.left == 0 && L.at.top == 8 && L.at.right == 64 - 8 && L.at.bottom == 64 && L.sx == L.w - 56);
+    {  // painted: the panel, the text's coverage, the bar to 40%, the graph's bars and 50 ms line, the flash
+        ov::Layout P;
+        ov::layout(1920, 1080, "SCSKiller after 5:00", true, P);
+        ov::Graph g;
+        g.frame(0, 16), g.frame(16, 400), g.frame(400, 416), g.mark(16, 400);
+        std::vector<uint32_t> img(P.w * P.h);
+        ov::paint(P, "SCSKiller after 1:23", 0.4, g, true, img.data(), P.w);
+        auto at = [&](long x, long y) { return img[y * P.w + x]; };
+        CHECK(at(0, 0) == ov::kPanel && at(P.w - 1, P.h - 1) == ov::kPanel);
+        long text = 0, mixed = 0, fill = 0, red = 0, slow = 0, line = 0;
+        for (long y = P.text_y; y < P.text_y + ov::font(2).height; ++y)
+            for (long x = 0; x < P.w; ++x) text += at(x, y) == ov::kText, mixed += at(x, y) != ov::kText && at(x, y) != ov::kPanel;
+        CHECK(text > 100 && mixed > 100);  // antialiased: edge pixels between the two
+        for (long x = 0; x < P.w; ++x) fill += at(x, P.track_y) == ov::kFill;
+        CHECK(fill == std::lround((P.w - 2 * P.pad) * 0.4));
+        for (long y = P.graph_y; y < P.graph_y + P.graph_h; ++y)
+            for (long x = 0; x < P.w; ++x) red += at(x, y) == ov::kShader, slow += at(x, y) == ov::kSlow, line += at(x, y) == ov::kLine;
+        CHECK(red > 0 && slow == 0 && line > 0);
+        long iw = P.w - 2 * P.pad, col = iw / ov::Graph::kCols;  // the newest at the right: the 384 ms frame's 5 columns reach the top
+        for (int i : {ov::Graph::kCols - 5, ov::Graph::kCols - 1}) CHECK(at(P.pad + iw * i / ov::Graph::kCols + col / 2, P.graph_y) == ov::kShader);
+        CHECK(at(P.pad + col / 2, P.graph_y + P.graph_h - 1) == ov::kGraphBg);
+        long flash = 0;
+        for (long y = P.flash_y; y < P.flash_y + ov::font(2).height; ++y)
+            for (long x = 0; x < P.w; ++x) flash += at(x, y) == ov::kShader;
+        CHECK(flash > 50);
+        wchar_t dir[MAX_PATH];
+        if (GetEnvironmentVariableW(L"SCSKILLER_OVERLAY_DUMP", dir, MAX_PATH))  // the panel as painted, for a look
+            if (FILE* o = _wfopen((std::wstring(dir) + L"\\panel.ppm").c_str(), L"wb")) {
+                fprintf(o, "P6\n%ld %ld\n255\n", P.w, P.h);
+                for (uint32_t p : img) fputc(p & 255, o), fputc(p >> 8 & 255, o), fputc(p >> 16 & 255, o);
+                fclose(o);
+            }
+        ov::paint(P, "SCSKiller after 1:23", 0.4, g, false, img.data(), P.w);
+        for (long y = P.flash_y; y < P.flash_y + ov::font(2).height; ++y)
+            for (long x = 0; x < P.w; ++x) CHECK(at(x, y) == ov::kPanel);
+    }
+    {  // the graph: 5 s of 100 ms columns, a long frame in each it overlaps, scrolled by the newest frame's end
+        ov::Graph g;
+        g.frame(0, 10);
+        CHECK(g.newest == 0 && g.ms[0] == 10);
+        g.frame(10, 260);
+        CHECK(g.newest == 2 && g.ms[0] == 250 && g.ms[1] == 250 && g.ms[2] == 250);
+        g.frame(260, 6000);  // longer than the graph: every column
+        CHECK(g.newest == 60 && std::all_of(g.ms, g.ms + ov::Graph::kCols, [](float m) { return m == 5740; }));
+        g.frame(6000, 6016);
+        CHECK(g.ms[60 % ov::Graph::kCols] == 5740);
+        g.frame(6016, 6110);  // a new column starts empty
+        CHECK(g.newest == 61 && g.ms[61 % ov::Graph::kCols] == 94 && !g.shader[61 % ov::Graph::kCols]);
+    }
+    {  // formats: SDR bytes as they are, 10-bit, HDR10 at BT.2408's white, scRGB at 203 / 80
+        const uint32_t px[3] = {ov::kText, ov::kFill, ov::kPanel};
+        uint32_t o4[3];
+        uint64_t o8[3];
+        ov::convert(px, 3, 3, 1, ov::kRgba8, (uint8_t*)o4, 12);
+        CHECK(o4[0] == ov::kText && o4[1] == ov::kFill);
+        ov::convert(px, 3, 3, 1, ov::kBgra8, (uint8_t*)o4, 12);
+        CHECK(o4[1] == (255u | 166u << 8 | 64u << 16 | 0xFF000000u));
+        ov::convert(px, 3, 3, 1, ov::kRgb10, (uint8_t*)o4, 12);
+        CHECK(o4[0] == 0xFFFFFFFFu && o4[1] == (257u | 666u << 10 | 1023u << 20 | 3u << 30));
+        ov::convert(px, 3, 3, 1, ov::kPq10, (uint8_t*)o4, 12);
+        uint32_t w = o4[0] & 1023;
+        CHECK(w > 570 && w < 600 && (o4[0] >> 10 & 1023) == w && (o4[0] >> 20 & 1023) == w && o4[0] >> 30 == 3);  // 203 nits: PQ 0.58
+        CHECK((o4[2] & 1023) < 120 && (o4[1] >> 20 & 1023) > (o4[1] & 1023));  // the panel near black; the fill stays blue
+        ov::convert(px, 3, 3, 1, ov::kScRgb, (uint8_t*)o8, 24);
+        CHECK(std::abs(DirectX::PackedVector::XMConvertHalfToFloat((uint16_t)o8[0]) - 203.0f / 80) < 0.01f && o8[0] >> 48 == 0x3C00);
+        CHECK(ov::out_of(DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, false) == ov::kNone);  // can't tell SDR from HDR10
+        CHECK(ov::out_of(DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, true) == ov::kRgb10);
+        CHECK(ov::out_of(DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, true) == ov::kPq10);
+        CHECK(ov::out_of(DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_LEFT_P2020, true) == ov::kNone);
+        CHECK(ov::out_of(DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709, false) == ov::kScRgb);
+        CHECK(ov::out_of(DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, false) == ov::kBgra8);
+        CHECK(!ov::drawn_format(DXGI_FORMAT_R11G11B10_FLOAT) && ov::drawn_format(DXGI_FORMAT_R16G16B16A16_FLOAT));
+    }
+    {  // the feed: in order; a writer that finds it full drops its frame, never waits
+        auto f = std::make_unique<ov::Feed>();
+        std::vector<double> got;
+        for (int i = 0; i < 3; ++i) f->push(i);
+        f->drain([&](double t) { got.push_back(t); });
+        CHECK(got == std::vector<double>({0, 1, 2}));
+        got.clear();
+        for (int i = 0; i < (int)ov::Feed::N + 5; ++i) f->push(i);
+        f->drain([&](double t) { got.push_back(t); });
+        CHECK(got.size() == ov::Feed::N && got.back() == ov::Feed::N - 1);  // full: the newest dropped, none overwritten
+    }
+    {  // FrameLog's cause of a slow frame from the creates that end in it
+        using C = ov::Creates;
+        auto c = std::make_unique<C>();
+        c->add(100, 5, 1, C::kCompile | C::kPresents);  // before the frame
+        CHECK(!c->shader_stutter(200, 300));
+        c->add(260, 40, 1, C::kCompile | C::kBlocks | C::kPresents);  // a compile that blocks inside it
+        CHECK(c->shader_stutter(200, 300) && !c->shader_stutter(400, 500));
+        auto hits = std::make_unique<C>();
+        hits->add(250, 5, 1, C::kPresents);  // a cache hit
+        CHECK(!hits->shader_stutter(200, 300));
+        auto load = std::make_unique<C>();  // 100 creates, one blocking compile among them: a load
+        for (int i = 0; i < 99; ++i) load->add(210 + i * 0.5, 1, 1, 0);
+        load->add(290, 20, 1, C::kCompile | C::kBlocks);
+        CHECK(!load->shader_stutter(200, 300));
+        load->add(399, 300, 1, C::kCompile | C::kBlocks);  // compiles of 100 ms or more for half the frame, inside it: a shader stutter
+        CHECK(load->shader_stutter(200, 400));
+        auto span = std::make_unique<C>();  // one compile across two slow frames: only the frame it ends in
+        span->add(350, 200, 1, C::kCompile | C::kBlocks | C::kPresents);
+        CHECK(!span->shader_stutter(200, 300) && span->shader_stutter(300, 400));
+        auto worker = std::make_unique<C>();  // a long compile on a worker thread overlapping a slow frame, ending later
+        worker->add(10500, 10500, 2, C::kCompile | C::kBlocks);
+        CHECK(!worker->shader_stutter(200, 300));
+        auto par = std::make_unique<C>();  // a compile on 8 threads, none the presenter's: a precache
+        for (uint32_t t = 1; t <= 8; ++t) par->add(250, 30, t, C::kCompile | C::kBlocks);
+        CHECK(!par->shader_stutter(200, 300));
+        par->add(260, 2, 9, C::kPresents);
+        CHECK(par->shader_stutter(200, 300));
+        ov::Slow slow;
+        ov::Graph g;
+        g.frame(0, 200), g.frame(200, 300);
+        slow.frame(0, 200), slow.frame(200, 300), slow.frame(300, 340);
+        CHECK(slow.n == 2);
+        slow.check(*c, 310, -1, g);
+        CHECK(slow.n == 2 && !slow.flashing(310));  // play's start not known yet
+        slow.check(*hits, 310, 250, g);
+        CHECK(slow.n == 1 && !slow.flashing(310));  // the one in startup gone; the other waits for a create still running
+        slow.check(*c, 380, 250, g);
+        CHECK(slow.n == 1);  // checked at most ten times a second
+        slow.check(*c, 420, 250, g);
+        CHECK(slow.n == 0 && slow.found == 1 && slow.flashing(420) && !slow.flashing(420 + ov::Slow::kFlashMs) && g.shader[2]);
+        slow.frame(200, 300);
+        slow.check(*hits, 300 + ov::Slow::kWaitMs + 1, 100, g);
+        CHECK(slow.n == 0 && slow.found == 1);
+        slow.frame(200, 300);
+        slow.check(*c, 300 + ov::Slow::kFlashMs + 300, 100, g);  // judged late (play's start known late): marked, no flash
+        CHECK(slow.found == 2 && !slow.flashing(300 + ov::Slow::kFlashMs + 300));
+        ov::Slow full;
+        for (int i = 0; i <= ov::Slow::kMax; ++i) full.frame(i * 100, i * 100 + 60);
+        CHECK(full.n == ov::Slow::kMax && full.f[0].s == 100);  // full: the oldest goes
+        const char dxil[] = "DXBC0123456789abcdef\1\0\0\0\x38\0\0\0\1\0\0\0\x24\0\0\0SFI0\x08\0\0\0\0\0\x10\0\0\0\0\0";
+        CHECK(ov::inline_rt(dxil, sizeof dxil - 1));
+        std::string plain(dxil, sizeof dxil - 1);
+        plain[0x24 + 10] = 0;
+        CHECK(!ov::inline_rt(plain.data(), plain.size()) && !ov::inline_rt("DXBC", 4));
+    }
+    CHECK(ov::fg_queue(L"AMD FSR PresentQueue") && ov::fg_queue(L"XefgInterpolationSwapChain::present_queue_"));
+    CHECK(!ov::fg_queue(L"Game Queue") && !ov::fg_queue(L""));
+    auto frames = [](ov::Clock& c, double from, double to) {
+        for (double t = from; t <= to; t += 100) c.frame(t);
+    };
+    {  // play is every frame from the first present
+        auto c = std::make_unique<ov::Clock>();
+        CHECK(c->frame(0) && c->startup == 0 && c->played == 0);
+        CHECK(!c->frame(100) && c->played == 100);
+        frames(*c, 200, 20000);
+        CHECK(c->startup == 0 && c->played == 20000);
+        // shown: what FrameLog counts if the launch ended now, without the frames starting in its last 10 s
+        CHECK(c->shown(20000) == 10000 && c->shown(20500) == 10000 && c->shown(21000) == 11000);
+    }
+    {  // a first frame of 8 s (the game's load after its first present) and a pause of 6 s are play too
+        auto c = std::make_unique<ov::Clock>();
+        CHECK(c->frame(1000) && c->startup == 1000);
+        CHECK(!c->frame(9000) && c->played == 8000);
+        frames(*c, 9100, 20000);
+        c->frame(26000);
+        CHECK(c->played == 25000);
+    }
+    {  // a 40 s frame: placed by its start, it is out of the quit window
+        auto c = std::make_unique<ov::Clock>();
+        c->frame(0);
+        CHECK(!c->frame(40000) && c->played == 40000 && c->shown(40000) == 40000);
+    }
+    printf("overlayunit ok\n");
+    return 0;
+}
+
+// `selftest overlay <draw|draw10|draw11|draw11_10|hdr|fp16|fg>`: the overlay through the proxy on WARP, with
+// scskiller.ini's overlay lines (the test writes them). A hook taken before the proxy's reads the back buffer back after the
+// overlay drew, before dxgi presents it. draw: a compute PSO, then a 1920x1080 R8G8B8A8 swap
+// chain presents until the log says the play time is done; prints "first <n>" (the first frame against the countdown at
+// full time), "done <n>" (against the done text, a full bar), then "resize 0x<hr>" and "small <n>" at 1280x720, "big <n>"
+// at 3840x2160: n is the panel's pixels that don't match overlay.h's layout (-1 nothing read). draw11: the same through the
+// proxy as d3d11.dll's D3D11CreateDeviceAndSwapChain. draw10, draw11_10: the same on R10G10B10A2. hdr: R10G10B10A2 set to
+// HDR10 (prints "setcs 0x<hr>"); fp16: R16G16B16A16_FLOAT; fg: on FSR 3's present queue; these present a few times.
+static void* g_spy_orig;
+static bool g_spy_want;
+static ID3D12Device* g_spy_dev;
+static ID3D12CommandQueue* g_spy_q;
+static ID3D11Device* g_spy_dev11;
+static std::vector<uint8_t> g_spy_px;  // the back buffer read last, g_spy_bpp bytes a pixel
+static UINT g_spy_bpp;
+static UINT g_spy_w, g_spy_h;
+static void spy_read(IDXGISwapChain* sc) {
+    g_spy_px.clear();
+    IDXGISwapChain3* s3 = nullptr;
+    ID3D12Resource *buf = nullptr, *rb = nullptr;
+    ID3D12CommandAllocator* a = nullptr;
+    ID3D12GraphicsCommandList* l = nullptr;
+    ID3D12Fence* f = nullptr;
+    if (SUCCEEDED(sc->QueryInterface(IID_PPV_ARGS(&s3))) && SUCCEEDED(s3->GetBuffer(s3->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&buf)))) {
+        D3D12_RESOURCE_DESC d = buf->GetDesc();
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp;
+        UINT64 total = 0;
+        g_spy_dev->GetCopyableFootprints(&d, 0, 1, 0, &fp, nullptr, nullptr, &total);
+        D3D12_HEAP_PROPERTIES hp = {D3D12_HEAP_TYPE_READBACK};
+        D3D12_RESOURCE_DESC bd = {D3D12_RESOURCE_DIMENSION_BUFFER, 0, total, 1, 1, 1, DXGI_FORMAT_UNKNOWN, {1, 0}, D3D12_TEXTURE_LAYOUT_ROW_MAJOR};
+        if (SUCCEEDED(g_spy_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&rb))) &&
+            SUCCEEDED(g_spy_dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&a))) &&
+            SUCCEEDED(g_spy_dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, a, nullptr, IID_PPV_ARGS(&l))) &&
+            SUCCEEDED(g_spy_dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&f)))) {
+            D3D12_RESOURCE_BARRIER b = {};
+            b.Transition = {buf, 0, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE};
+            l->ResourceBarrier(1, &b);
+            D3D12_TEXTURE_COPY_LOCATION dst = {rb, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT}, src = {buf, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+            dst.PlacedFootprint = fp, src.SubresourceIndex = 0;
+            l->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+            std::swap(b.Transition.StateBefore, b.Transition.StateAfter);
+            l->ResourceBarrier(1, &b);
+            ID3D12CommandList* cl = l;
+            void* p = nullptr;
+            HANDLE e = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            if (SUCCEEDED(l->Close()) && (g_spy_q->ExecuteCommandLists(1, &cl), SUCCEEDED(g_spy_q->Signal(f, 1))) && SUCCEEDED(f->SetEventOnCompletion(1, e)) &&
+                WaitForSingleObject(e, 10000) == WAIT_OBJECT_0 && SUCCEEDED(rb->Map(0, nullptr, &p))) {
+                g_spy_w = (UINT)d.Width, g_spy_h = d.Height;
+                g_spy_bpp = d.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8 : 4;
+                g_spy_px.resize((size_t)g_spy_w * g_spy_h * g_spy_bpp);
+                for (UINT y = 0; y < g_spy_h; ++y)
+                    memcpy(&g_spy_px[(size_t)y * g_spy_w * g_spy_bpp], (char*)p + fp.Offset + (size_t)y * fp.Footprint.RowPitch, g_spy_w * g_spy_bpp);
+                rb->Unmap(0, nullptr);
+            }
+            CloseHandle(e);
+        }
+    }
+    for (IUnknown* u : {(IUnknown*)f, (IUnknown*)l, (IUnknown*)a, (IUnknown*)rb, (IUnknown*)buf, (IUnknown*)s3})
+        if (u) u->Release();
+}
+static void spy_read11(IDXGISwapChain* sc) {
+    g_spy_px.clear();
+    ID3D11Texture2D *buf = nullptr, *st = nullptr;
+    ID3D11DeviceContext* c = nullptr;
+    D3D11_MAPPED_SUBRESOURCE m;
+    g_spy_dev11->GetImmediateContext(&c);
+    if (SUCCEEDED(sc->GetBuffer(0, IID_PPV_ARGS(&buf)))) {
+        D3D11_TEXTURE2D_DESC d;
+        buf->GetDesc(&d);
+        d.Usage = D3D11_USAGE_STAGING, d.BindFlags = 0, d.CPUAccessFlags = D3D11_CPU_ACCESS_READ, d.MiscFlags = 0;
+        if (SUCCEEDED(g_spy_dev11->CreateTexture2D(&d, nullptr, &st)) && (c->CopyResource(st, buf), SUCCEEDED(c->Map(st, 0, D3D11_MAP_READ, 0, &m)))) {
+            g_spy_w = d.Width, g_spy_h = d.Height;
+            g_spy_bpp = d.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8 : 4;
+            g_spy_px.resize((size_t)g_spy_w * g_spy_h * g_spy_bpp);
+            for (UINT y = 0; y < g_spy_h; ++y) memcpy(&g_spy_px[(size_t)y * g_spy_w * g_spy_bpp], (char*)m.pData + (size_t)y * m.RowPitch, g_spy_w * g_spy_bpp);
+            c->Unmap(st, 0);
+        }
+    }
+    for (IUnknown* u : {(IUnknown*)st, (IUnknown*)buf, (IUnknown*)c})
+        if (u) u->Release();
+}
+static HRESULT STDMETHODCALLTYPE spy_present(IDXGISwapChain* sc, UINT sync, UINT flags) {
+    if (g_spy_want) g_spy_want = false, g_spy_dev11 ? spy_read11(sc) : spy_read(sc);
+    return ((HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT))g_spy_orig)(sc, sync, flags);
+}
+static void spy_on(void* sc) {
+    void** vt = *(void***)sc;
+    DWORD old;
+    VirtualProtect(&vt[8], sizeof(void*), PAGE_READWRITE, &old);
+    g_spy_orig = vt[8], vt[8] = (void*)spy_present;
+    VirtualProtect(&vt[8], sizeof(void*), old, &old);
+}
+// With SCSKILLER_OVERLAY_DUMP=<folder>: the top right w x h of the back buffer read last, as <folder>\<name>.ppm, as an
+// SDR screen would show it (HDR10 and scRGB brought back to SDR white).
+static void spy_dump(const char* name, ov::Out o, long w, long h) {
+    wchar_t dir[MAX_PATH];
+    if (g_spy_px.empty() || !GetEnvironmentVariableW(L"SCSKILLER_OVERLAY_DUMP", dir, MAX_PATH)) return;
+    w = std::min<long>(w, g_spy_w), h = std::min<long>(h, g_spy_h);
+    FILE* f = _wfopen((std::wstring(dir) + L"\\" + std::wstring(name, name + strlen(name)) + L".ppm").c_str(), L"wb");
+    if (!f) return;
+    auto srgb = [](double v) { v = std::clamp(v, 0.0, 1.0); return (int)std::lround(255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * std::pow(v, 1 / 2.4) - 0.055)); };
+    auto unpq = [](uint32_t c) {  // a 10-bit PQ code as linear light, SDR white 1 (BT.2020 primaries left as they are)
+        double e = std::pow(c / 1023.0, 1 / 78.84375), y = std::pow(std::max(e - 0.8359375, 0.0) / (18.8515625 - 18.6875 * e), 1 / 0.1593017578125);
+        return y * 10000 / ov::kWhiteNits;
+    };
+    fprintf(f, "P6\n%ld %ld\n255\n", w, h);
+    for (long y = 0; y < h; ++y)
+        for (long x = g_spy_w - w; x < (long)g_spy_w; ++x) {
+            const uint8_t* p = &g_spy_px[((size_t)y * g_spy_w + x) * g_spy_bpp];
+            uint32_t v = *(const uint32_t*)p;
+            int rgb[3];
+            for (int c = 0; c < 3; ++c)
+                rgb[c] = o == ov::kBgra8 ? p[2 - c] : o == ov::kRgb10 ? (v >> (10 * c + 2) & 255) : o == ov::kPq10 ? srgb(unpq(v >> (10 * c) & 1023))
+                         : o == ov::kScRgb ? srgb(DirectX::PackedVector::XMConvertHalfToFloat(((const uint16_t*)p)[c]) * 80 / ov::kWhiteNits) : p[c];
+            fputc(rgb[0], f), fputc(rgb[1], f), fputc(rgb[2], f);
+        }
+    fclose(f);
+}
+// The panel's pixels the back buffer read last doesn't have as overlay.h paints them with no frames in the graph and no
+// flash (or with it), converted to o: the text, bar and flash rows exactly; the graph's pixels any of its colours.
+static long spy_mismatch(const char* text, const char* widest, double frac, ov::Out o, bool flash = false) {
+    if (g_spy_px.empty()) return -1;
+    ov::Layout L;
+    ov::layout(g_spy_w, g_spy_h, widest, o != ov::kNone && g_spy_dev11 == nullptr, L);
+    std::vector<uint32_t> img(L.w * L.h);
+    ov::paint(L, text, frac, ov::Graph{}, flash, img.data(), L.w);
+    long bpp = ov::bytes(o), aw = L.at.right - L.at.left, ah = L.at.bottom - L.at.top;
+    std::vector<uint8_t> want(aw * ah * bpp);
+    ov::convert(img.data() + L.sy * L.w + L.sx, L.w, aw, ah, o, want.data(), aw * bpp);
+    std::vector<std::vector<uint8_t>> graph;  // the graph's colours in o
+    for (uint32_t c : {ov::kGraphBg, ov::kFill, ov::kSlow, ov::kShader, ov::kLine}) {
+        graph.emplace_back(bpp);
+        ov::convert(&c, 1, 1, 1, o, graph.back().data(), bpp);
+    }
+    long bad = 0;
+    for (long y = 0; y < ah; ++y)
+        for (long x = 0; x < aw; ++x) {
+            const uint8_t* got = &g_spy_px[((size_t)(y + L.at.top) * g_spy_w + x + L.at.left) * bpp];
+            long py = y + L.sy, px = x + L.sx;
+            bool in_graph = py >= L.graph_y && py < L.graph_y + L.graph_h && px >= L.pad && px < L.w - L.pad;
+            if (!in_graph) bad += memcmp(got, &want[(y * aw + x) * bpp], bpp) != 0;
+            else bad += std::none_of(graph.begin(), graph.end(), [&](auto& c) { return !memcmp(got, c.data(), bpp); });
+        }
+    return bad;
+}
+// The flash row of the back buffer read last that doesn't have kStutter as overlay.h paints it (8-bit RGBA).
+static long spy_flash(ov::Out o, const char* widest) {
+    ov::Layout L;
+    ov::layout(g_spy_w, g_spy_h, widest, true, L);
+    std::vector<uint32_t> img(L.w * L.h);
+    ov::paint(L, "", 0, ov::Graph{}, true, img.data(), L.w);
+    long bad = 0, h = ov::font(L.s).height;
+    for (long y = L.flash_y; y < L.flash_y + h; ++y)
+        for (long x = 0; x < L.w; ++x) {
+            uint32_t want;
+            ov::convert(&img[y * L.w + x], 1, 1, 1, o, (uint8_t*)&want, 4);
+            bad += *(const uint32_t*)&g_spy_px[((size_t)(y + L.at.top) * g_spy_w + x + L.at.left) * 4] != want;
+        }
+    return bad;
+}
+static int overlay_rows(const std::wstring& dir, const std::wstring& mode) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    const std::wstring ini = dir + L"scskiller.ini";
+    int play_s = GetPrivateProfileIntW(L"scskiller", L"ab_play_s", 0, ini.c_str());
+    wchar_t tag[16], sys[MAX_PATH];
+    GetPrivateProfileStringW(L"scskiller", L"ab_tag", L"", tag, 16, ini.c_str());
+    GetSystemDirectoryW(sys, MAX_PATH);
+    auto wnd = [] { return CreateWindowExW(0, L"STATIC", L"scskiller overlay", WS_OVERLAPPEDWINDOW, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr); };
+    IDXGISwapChain* sc = nullptr;
+    const DXGI_FORMAT fmt = mode == L"draw10" || mode == L"draw11_10" || mode == L"hdr" ? DXGI_FORMAT_R10G10B10A2_UNORM
+                            : mode == L"fp16" ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
+    const ov::Out out = mode == L"hdr" ? ov::kPq10 : mode == L"fp16" ? ov::kScRgb : fmt == DXGI_FORMAT_R10G10B10A2_UNORM ? ov::kRgb10 : ov::kRgba8;
+    ID3D12Device* dev = nullptr;
+    ID3D12RootSignature* rs = nullptr;
+    if (mode.starts_with(L"draw11")) {
+        HMODULE m = LoadLibraryW((dir + L"d3d11.dll").c_str());
+        HMODULE real = GetModuleHandleW((std::wstring(sys) + L"\\d3d11.dll").c_str());
+        CHECK(m && real);
+        using Create = decltype(&D3D11CreateDeviceAndSwapChain);
+        auto chain = [&](Create create, IDXGISwapChain** sc, ID3D11Device** dev, DXGI_FORMAT f) {
+            DXGI_SWAP_CHAIN_DESC d = {{1920, 1080, {}, f}, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2, wnd(), TRUE, DXGI_SWAP_EFFECT_FLIP_DISCARD};
+            D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_0;
+            return create && d.OutputWindow && SUCCEEDED(create(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, &fl, 1, D3D11_SDK_VERSION, &d, sc, dev, nullptr, nullptr));
+        };
+        IDXGISwapChain* sc0 = nullptr;
+        ID3D11Device* dev0 = nullptr;
+        CHECK(chain((Create)GetProcAddress(real, "D3D11CreateDeviceAndSwapChain"), &sc0, &dev0, DXGI_FORMAT_R8G8B8A8_UNORM));
+        spy_on(sc0);
+        sc0->Release();
+        CHECK(chain((Create)GetProcAddress(m, "D3D11CreateDeviceAndSwapChain"), &sc, &g_spy_dev11, fmt));
+    } else {
+        HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+        HMODULE real = GetModuleHandleW((std::wstring(sys) + L"\\d3d12.dll").c_str());
+        CHECK(m && real);
+        auto proxy_create = (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice");
+        auto real_create = (decltype(&D3D12CreateDevice))GetProcAddress(real, "D3D12CreateDevice");
+        auto ser = (decltype(&D3D12SerializeRootSignature))GetProcAddress(m, "D3D12SerializeRootSignature");
+        IDXGIFactory4* f = nullptr;
+        IDXGIAdapter* warp = nullptr;
+        CHECK(proxy_create && real_create && ser && SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+        auto chain = [&](ID3D12Device* dev, DXGI_FORMAT fmt, const wchar_t* name, ID3D12CommandQueue** q, IDXGISwapChain1** sc) {
+            HWND w = wnd();
+            D3D12_COMMAND_QUEUE_DESC qd = {};
+            DXGI_SWAP_CHAIN_DESC1 d = {1920, 1080, fmt, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2};
+            d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+            return w && SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(q))) && (!name || SUCCEEDED((*q)->SetName(name))) &&
+                   SUCCEEDED(f->CreateSwapChainForHwnd(*q, w, &d, nullptr, nullptr, sc));
+        };
+        ID3D12Device* dev0 = nullptr;
+        ID3D12CommandQueue *q0 = nullptr, *q = nullptr;
+        IDXGISwapChain1 *sc0 = nullptr, *sc1 = nullptr;
+        // the D3D12 debug layer, when installed, checks the overlay's use of the queue: each error or warning is printed
+        auto get_debug = (decltype(&D3D12GetDebugInterface))GetProcAddress(real, "D3D12GetDebugInterface");
+        ID3D12Debug* dbg = nullptr;
+        if (get_debug && SUCCEEDED(get_debug(IID_PPV_ARGS(&dbg)))) dbg->EnableDebugLayer();
+        CHECK(SUCCEEDED(real_create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev0))) && chain(dev0, DXGI_FORMAT_R8G8B8A8_UNORM, nullptr, &q0, &sc0));
+        spy_on(sc0);
+        sc0->Release();
+        CHECK(SUCCEEDED(proxy_create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+        ID3D12InfoQueue1* iq = nullptr;
+        DWORD cookie;
+        if (dbg && SUCCEEDED(dev->QueryInterface(IID_PPV_ARGS(&iq))))
+            iq->RegisterMessageCallback([](D3D12_MESSAGE_CATEGORY, D3D12_MESSAGE_SEVERITY sev, D3D12_MESSAGE_ID, LPCSTR text, void*) {
+                if (sev <= D3D12_MESSAGE_SEVERITY_WARNING) printf("d3d12 debug: %s\n", text), fflush(stdout);
+            }, D3D12_MESSAGE_CALLBACK_FLAG_NONE, nullptr, &cookie);
+        D3D12_ROOT_PARAMETER up = {D3D12_ROOT_PARAMETER_TYPE_UAV};
+        D3D12_ROOT_SIGNATURE_DESC rd = {1, &up};
+        ID3DBlob *rb = nullptr, *err = nullptr;
+        CHECK(SUCCEEDED(ser(&rd, D3D_ROOT_SIGNATURE_VERSION_1, &rb, &err)) && SUCCEEDED(dev->CreateRootSignature(0, rb->GetBufferPointer(), rb->GetBufferSize(), IID_PPV_ARGS(&rs))));
+        CHECK(SUCCEEDED(compute_pso(dev, rs, (int)GetTickCount())));
+        CHECK(chain(dev, fmt, mode == L"fg" ? L"AMD FSR PresentQueue" : nullptr, &q, &sc1));
+        g_spy_dev = dev, g_spy_q = q, sc = sc1;
+        if (mode == L"hdr") {  // HDR10: a 10-bit swap chain is SDR until it says otherwise
+            IDXGISwapChain3* s3 = nullptr;
+            CHECK(SUCCEEDED(sc->QueryInterface(IID_PPV_ARGS(&s3))));
+            printf("setcs 0x%08lx\n", (unsigned long)s3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020));
+        }
+    }
+    const bool after = !wcscmp(tag, L"after");
+    const std::string widest = ov::countdown(after, play_s);
+    g_spy_want = true;
+    sc->Present(0, 0);
+    printf("first %ld\n", spy_mismatch(widest.c_str(), widest.c_str(), 0, out));
+    spy_dump("first", out, 640, 200);
+    bool stuttered = false;
+    for (ULONGLONG until = GetTickCount64() + 60000; GetTickCount64() < until;) {
+        for (int i = 0; i < 10; ++i) sc->Present(0, 0), Sleep(15);
+        std::string log = read_all(dir + L"scskiller.log");
+        if (mode == L"stutter" && !stuttered && log.find("play counted from") != std::string::npos) {
+            // a frame of 50 ms or more that a compile on the presenting thread blocks: the flash and the red columns, read
+            // while the flash shows; then presents until it is gone, so "done" is read without it
+            stuttered = true;
+            Sleep(60);
+            SetEnvironmentVariableW(L"SCSKILLER_TEST_CREATE_MS", L"40");
+            CHECK(SUCCEEDED(compute_pso(dev, rs, (int)GetTickCount() + 1)));
+            SetEnvironmentVariableW(L"SCSKILLER_TEST_CREATE_MS", nullptr);
+            for (int i = 0; i < 20; ++i) sc->Present(0, 0), Sleep(15);
+            g_spy_want = true;
+            sc->Present(0, 0);
+            long red = 0;
+            for (size_t i = 0; i + 4 <= g_spy_px.size(); i += 4) red += *(const uint32_t*)&g_spy_px[i] == ov::kShader;
+            printf("flash %ld red %ld\n", spy_flash(out, widest.c_str()), red);
+            spy_dump("stutter", out, 640, 200);
+            for (ULONGLONG gone = GetTickCount64() + 2500; GetTickCount64() < gone;) sc->Present(0, 0), Sleep(15);
+        }
+        if (log.find("s of play counted, done") != std::string::npos || log.find("not drawn: frame generation") != std::string::npos) break;
+    }
+    g_spy_want = true;
+    sc->Present(0, 0);
+    printf("done %ld\n", spy_mismatch(ov::kDone, widest.c_str(), 1, out));
+    spy_dump("done", out, 640, 200);
+    // as a D3D12 game must before ResizeBuffers: its queue (the presents, the overlay's copies) done
+    auto idle = [] {
+        ID3D12Fence* f = nullptr;
+        HANDLE e = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (g_spy_q && SUCCEEDED(g_spy_dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&f))) && SUCCEEDED(g_spy_q->Signal(f, 1)) && SUCCEEDED(f->SetEventOnCompletion(1, e)))
+            WaitForSingleObject(e, 10000);
+        if (f) f->Release();
+        CloseHandle(e);
+    };
+    idle();
+    HRESULT hr = sc->ResizeBuffers(0, 1280, 720, DXGI_FORMAT_UNKNOWN, 0);  // fails while anything holds a back buffer
+    printf("resize 0x%08lx\n", (unsigned long)hr);
+    g_spy_want = true;
+    sc->Present(0, 0);
+    printf("small %ld\n", spy_mismatch(ov::kDone, widest.c_str(), 1, out));
+    idle();
+    CHECK(SUCCEEDED(sc->ResizeBuffers(0, 3840, 2160, DXGI_FORMAT_UNKNOWN, 0)));
+    g_spy_want = true;
+    sc->Present(0, 0);
+    printf("big %ld\n", spy_mismatch(ov::kDone, widest.c_str(), 1, out));
+    spy_dump("big", out, 1280, 400);
+    Sleep(1500);  // the frames writer's second: the csv's #overlay line
+    return 0;
+}
+
+// `selftest overlaybench <seconds>` (GPU): the hook time per present through the proxy on the first hardware adapter, as
+// a game sees it: a 1920x1080 R8G8B8A8 swap chain on a hidden window, about 250 presents a second, the overlay on or off
+// as the test's scskiller.ini says. Prints the proxy's own "frames: ... hook" log line, written after a minute.
+static int overlay_bench(const std::wstring& dir, int seconds) {
+    if (gpu_lock("selftest overlaybench").empty()) return 1;
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    auto create = m ? (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice") : nullptr;
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter1* a = nullptr;
+    ID3D12Device* dev = nullptr;
+    ID3D12CommandQueue* q = nullptr;
+    IDXGISwapChain1* sc = nullptr;
+    D3D12_COMMAND_QUEUE_DESC qd = {};
+    DXGI_SWAP_CHAIN_DESC1 d = {1920, 1080, DXGI_FORMAT_R8G8B8A8_UNORM, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 3};
+    d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    HWND w = CreateWindowExW(0, L"STATIC", L"scskiller overlay bench", WS_OVERLAPPEDWINDOW, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr);
+    CHECK(create && w && SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumAdapters1(0, &a)));
+    CHECK(SUCCEEDED(create(a, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))) && SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q))));
+    CHECK(SUCCEEDED(f->CreateSwapChainForHwnd(q, w, &d, nullptr, nullptr, &sc)));
+    // the game's frame: each back buffer cleared on the same queue before its present
+    IDXGISwapChain3* sc3 = nullptr;
+    ID3D12DescriptorHeap* heap = nullptr;
+    D3D12_DESCRIPTOR_HEAP_DESC hd = {D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 3};
+    CHECK(SUCCEEDED(sc->QueryInterface(IID_PPV_ARGS(&sc3))) && SUCCEEDED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&heap))));
+    ID3D12GraphicsCommandList* frame[3] = {};
+    for (UINT i = 0; i < 3; ++i) {
+        ID3D12Resource* buf = nullptr;
+        ID3D12CommandAllocator* al = nullptr;
+        D3D12_CPU_DESCRIPTOR_HANDLE rtv = heap->GetCPUDescriptorHandleForHeapStart();
+        rtv.ptr += i * dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        CHECK(SUCCEEDED(sc3->GetBuffer(i, IID_PPV_ARGS(&buf))) && SUCCEEDED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&al))) &&
+              SUCCEEDED(dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, al, nullptr, IID_PPV_ARGS(&frame[i]))));
+        dev->CreateRenderTargetView(buf, nullptr, rtv);
+        D3D12_RESOURCE_BARRIER b = {};
+        b.Transition = {buf, 0, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET};
+        frame[i]->ResourceBarrier(1, &b);
+        const float grey[4] = {0.3f, 0.3f, 0.3f, 1};
+        frame[i]->ClearRenderTargetView(rtv, grey, 0, nullptr);
+        std::swap(b.Transition.StateBefore, b.Transition.StateAfter);
+        frame[i]->ResourceBarrier(1, &b);
+        CHECK(SUCCEEDED(frame[i]->Close()));
+        buf->Release();
+    }
+    HANDLE t = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    CHECK(t);
+    for (ULONGLONG until = GetTickCount64() + seconds * 1000ull; GetTickCount64() < until;) {
+        ID3D12CommandList* l = frame[sc3->GetCurrentBackBufferIndex()];
+        q->ExecuteCommandLists(1, &l);
+        sc->Present(0, 0);
+        LARGE_INTEGER due{.QuadPart = -40000};  // 4 ms
+        SetWaitableTimer(t, &due, 0, nullptr, nullptr, FALSE);
+        WaitForSingleObject(t, INFINITE);
+    }
+    std::string log = read_all(dir + L"scskiller.log");
+    size_t at = log.rfind(" presents, hook ");
+    if (at != std::string::npos) at = log.rfind("frames: ", at);
+    printf("%s\n", at == std::string::npos ? "no hook line" : log.substr(at, log.find('\n', at) - at).c_str());
+    printf("drawn %d\n", log.find("overlay: first frame drawn") != std::string::npos);
+    return 0;
+}
+
+// `selftest nvopts` (WARP, no GPU driver): NVAPI's pipeline creation flags are global (nvapi.h), so the recorder gives a
+// state object the flags last set by any thread, and the warm creates each under its own. fakenext.dll, copied as
+// nvapi64.dll next to the exe, stands in for NVAPI and keeps the flags of every set it accepts. p1 (record) creates on
+// threads that never set flags, while other threads set them: R1 a collection and R2 a pipeline under none, 0x11 set, A1
+// an addition to R2 and C1 a compute PSO, 0 set, R3 a collection, 0x11 set, R4 a collection. Their flags must be 0, 0,
+// 0x11, 0 (a PSO's are never recorded), 0, 0x11, each state object's 'N' with scope bit 0x100. p2 (warm, one thread) replays them: the flags it sets, in order, must be
+// 0x11 (A1), 0 (R3), 0x11 (R4).
+static Hash20 sha1_raw(const std::string& p) {
+    Hash20 h{};
+    BCryptHash(BCRYPT_SHA1_ALG_HANDLE, nullptr, 0, (PUCHAR)p.data(), (ULONG)p.size(), h.data(), 20);
+    return h;
+}
+static std::string hex(const Hash20& h) {
+    char b[41];
+    for (int i = 0; i < 20; ++i) snprintf(b + 2 * i, 3, "%02x", h[i]);
+    return b;
+}
+
+static int nvopts_child(int proc, unsigned seed, const std::wstring& dir, const std::wstring& out) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", proc == 2 ? L"warm" : L"record");
+    SetEnvironmentVariableW(L"SCSKILLER_THREADS", L"1");
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    CHECK(m);
+    auto create_device = (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice");
+    auto ser = (decltype(&D3D12SerializeRootSignature))GetProcAddress(m, "D3D12SerializeRootSignature");
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    CHECK(create_device && ser && SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+    ID3D12Device* dev = nullptr;
+    CHECK(SUCCEEDED(create_device(warp, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&dev))));
+    HMODULE nvm = GetModuleHandleW(L"nvapi64.dll");  // the proxy loaded it at the device
+    auto sets = nvm ? (int(WINAPI*)(uint32_t*, int))GetProcAddress(nvm, "FakeNv_Opts") : nullptr;
+    CHECK(sets);
+    FILE* o = _wfopen(out.c_str(), L"w");
+    CHECK(o);
+    if (proc == 2) {
+        auto start = (void(WINAPI*)(IUnknown*))GetProcAddress(m, "SCSKiller_StartWarm");
+        auto stats = (void(WINAPI*)(uint64_t*))GetProcAddress(m, "SCSKiller_Stats");
+        CHECK(start && stats);
+        uint64_t st[7];
+        start(dev), stats(st);
+        CHECK(st[2] == 6 && !st[3]);  // created, failed
+        uint32_t v[64];
+        for (int i = 0, n = sets(v, 64); i < n; ++i) fprintf(o, "%x\n", v[i]);
+        return fclose(o), 0;
+    }
+    ID3D12Device5* dev5 = nullptr;
+    ID3D12Device7* dev7 = nullptr;
+    CHECK(SUCCEEDED(dev->QueryInterface(IID_PPV_ARGS(&dev5))) && SUCCEEDED(dev->QueryInterface(IID_PPV_ARGS(&dev7))));
+    auto qi = (void* (*)(uint32_t))GetProcAddress(nvm, "nvapi_QueryInterface");
+    auto opts = qi ? (int (*)(ID3D12Device5*, const uint32_t*))qi(0x5C607A27) : nullptr;
+    IDxcCompiler3* comp = dxc_compiler();
+    CHECK(opts && comp);
+    D3D12_ROOT_PARAMETER cbv = {D3D12_ROOT_PARAMETER_TYPE_CBV};
+    cbv.Descriptor = {0, 1};
+    D3D12_ROOT_SIGNATURE_DESC rd = {1, &cbv, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    ID3DBlob *rb = nullptr, *err = nullptr;
+    ID3D12RootSignature* grs = nullptr;
+    CHECK(SUCCEEDED(ser(&rd, D3D_ROOT_SIGNATURE_VERSION_1, &rb, &err)) && SUCCEEDED(dev->CreateRootSignature(0, rb->GetBufferPointer(), rb->GetBufferSize(), IID_PPV_ARGS(&grs))));
+
+    auto flags = [&](uint32_t v) {
+        int st = -1;
+        std::thread([&] { uint32_t p[2] = {8 | 1 << 16, v}; st = opts(dev5, p); }).join();
+        return st == 0;
+    };
+    ID3D12StateObject* r2 = nullptr;
+    auto so = [&](const char* name, unsigned k, D3D12_STATE_OBJECT_TYPE type, uint32_t want, ID3D12StateObject* to) {
+        SoOne s(comp, k, grs, type);
+        HRESULT hr = E_FAIL;
+        ID3D12StateObject* obj = nullptr;
+        if (!s.lib.empty()) std::thread([&] { hr = to ? dev7->AddToStateObject(&s.d, to, IID_PPV_ARGS(&obj)) : dev5->CreateStateObject(&s.d, IID_PPV_ARGS(&obj)); }).join();
+        if (FAILED(hr)) return printf("  %s: hr=0x%08x\n", name, (unsigned)hr), false;
+        if (!to && type != D3D12_STATE_OBJECT_TYPE_COLLECTION) r2 = obj;
+        else obj->Release();
+        fprintf(o, "%s %s %x\n", name, hex(sha1_raw(s.lib)).c_str(), want);
+        return true;
+    };
+    CHECK(so("R1", seed, D3D12_STATE_OBJECT_TYPE_COLLECTION, 0, nullptr));
+    CHECK(so("R2", seed + 1, D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE, 0, nullptr));
+    CHECK(flags(0x11));
+    CHECK(so("A1", seed + 2, D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE, 0x11, r2));
+    ID3DBlob* cs = compile("[numthreads(1, 1, 1)] void main() {}", "cs_5_0");
+    CHECK(cs);
+    D3D12_COMPUTE_PIPELINE_STATE_DESC cd = {grs, {cs->GetBufferPointer(), cs->GetBufferSize()}};
+    HRESULT hr = E_FAIL;
+    ID3D12PipelineState* pso = nullptr;
+    std::thread([&] { hr = dev->CreateComputePipelineState(&cd, IID_PPV_ARGS(&pso)); }).join();
+    CHECK(SUCCEEDED(hr));
+    pso->Release();
+    fprintf(o, "C1 %s 0\n", hex(sha1_raw(std::string((const char*)cs->GetBufferPointer(), cs->GetBufferSize()))).c_str());
+    CHECK(flags(0));
+    CHECK(so("R3", seed + 3, D3D12_STATE_OBJECT_TYPE_COLLECTION, 0, nullptr));
+    CHECK(flags(0x11));
+    CHECK(so("R4", seed + 4, D3D12_STATE_OBJECT_TYPE_COLLECTION, 0x11, nullptr));
+    r2->Release();
+    return fclose(o), 0;
+}
+
+static int nvopts_parent(const std::wstring& a, const std::wstring& bin, const std::wstring& d) {
+    CHECK(CopyFileW(a.c_str(), (d + L"selftest.exe").c_str(), TRUE) && CopyFileW((bin + L"d3d12.dll").c_str(), (d + L"d3d12.dll").c_str(), TRUE) &&
+          CopyFileW((bin + L"fakenext.dll").c_str(), (d + L"nvapi64.dll").c_str(), TRUE));
+    std::wstring seed = std::to_wstring(GetTickCount() % 1000000), out = d + L"nvopts.txt";
+    CHECK(!run(d + L"selftest.exe", L"nvoptschild 1 " + seed + L" \"" + out + L"\""));
+    struct Row { std::string name, hash; uint32_t want; };
+    std::vector<Row> rows;
+    FILE* f = _wfopen(out.c_str(), L"r");
+    CHECK(f);
+    char name[16], h[48];
+    for (uint32_t w; fscanf(f, "%15s %47s %x", name, h, &w) == 3;) rows.push_back({name, h, w});
+    fclose(f);
+    CHECK(rows.size() == 6);
+    std::string db = read_all(d + L"scskiller.db");
+    std::map<std::string, std::string> key_of;  // the hash a row names -> the key of the record naming it
+    std::map<std::string, std::pair<uint32_t, uint32_t>> nv;  // record key -> its last 'N''s scope and flags
+    for (size_t i = 0; i + 5 <= db.size();) {
+        uint32_t n;
+        memcpy(&n, &db[i + 1], 4);
+        if (i + 5 + n > db.size()) break;
+        char tag = db[i];
+        std::string p = db.substr(i + 5, n);
+        if (tag == 'N' && n == 36) nv[hex(*(const Hash20*)p.data())] = {*(const uint32_t*)(p.data() + 28), *(const uint32_t*)(p.data() + 32)};
+        else if (tag == 'R' || tag == 'A' || tag == 'C')
+            for (auto& r : rows) {
+                std::string raw(20, '\0');
+                for (int b = 0; b < 20; ++b) raw[b] = (char)std::stoi(r.hash.substr(2 * b, 2), nullptr, 16);
+                if (p.find(raw) != std::string::npos) key_of[r.hash] = hex(sha1_of(tag, p));
+            }
+        i += 5 + n;
+    }
+    int bad = 0;
+    for (auto& r : rows) {
+        auto k = key_of.find(r.hash);
+        auto [scope, got] = k == key_of.end() ? std::pair{0u, ~0u} : nv.count(k->second) ? nv[k->second] : std::pair{0u, 0u};
+        bool global = (scope & 0x100) != 0, so = r.name[0] != 'C';  // a state object's 'N' says its flags are the process's
+        if (got == ~0u) printf("  %s: not recorded\n", r.name.c_str());
+        else printf("  %s: recorded flags 0x%x%s, want 0x%x\n", r.name.c_str(), got, global ? " (global)" : "", r.want);
+        bad += got != r.want || global != so;
+    }
+    CHECK(!run(d + L"selftest.exe", L"nvoptschild 2 " + seed + L" \"" + out + L"\""));
+    std::string warm;
+    for (char c : read_all(out))
+        if (c != '\r') warm += c == '\n' ? ' ' : c;
+    printf("  warm: flags set %s(want 11 0 11)\n", warm.c_str());
+    bad += warm != "11 0 11 ";
+    printf(bad ? "nvopts FAILED\n" : "nvopts OK\n");
+    return bad ? 1 : 0;
 }
 
 int wmain(int argc, wchar_t** argv) {
-    wchar_t p[MAX_PATH];
-    GetModuleFileNameW(nullptr, p, MAX_PATH);
-    std::wstring a = p, dir = a.substr(0, a.find_last_of(L'\\') + 1);
-    if (argc > 1 && !wcscmp(argv[1], L"sysdxgi")) return sys_dxgi_rows();  // no proxy: never armed
-    // The proxy records only under the app's attestation (ScsKiller.ArmedFile); here the selftest is the app. Kept when
-    // there already, none with SCSKILLER_SELFTEST_UNARMED set.
+    std::wstring a(32768, L'\0');  // a run from a path past MAX_PATH (\\?\) loads the proxy beside it
+    a.resize(GetModuleFileNameW(nullptr, a.data(), (DWORD)a.size()));
+    std::wstring dir = a.substr(0, a.find_last_of(L'\\') + 1);
+    if (argc > 1 && !wcscmp(argv[1], L"sysdxgi")) return sys_dxgi_rows();  // no proxy: never stamped
+    if (argc > 1 && !wcscmp(argv[1], L"load")) return LoadLibraryW((dir + L"d3d12.dll").c_str()) ? 0 : 1;  // the proxy beside it, no device: never stamped
+    if (argc > 1 && !wcscmp(argv[1], L"admission")) return admission_rules();  // no proxy: values only
+    if (argc > 1 && !wcscmp(argv[1], L"warmmemory")) return warm_memory_rules();  // no proxy: values only
+    // The proxy records only for the exe the app checked (its stamp in scskiller.ini); here the selftest is the app. None
+    // with SCSKILLER_SELFTEST_UNARMED set.
+    // run by hand, outside the tests: its recorder key and the proxy's refusals go to a temp folder, never the user's
+    if (wchar_t tmp[MAX_PATH]; !GetEnvironmentVariableW(L"SCSKILLER_TEST_RECORDER_DIR", nullptr, 0) && GetTempPathW(MAX_PATH, tmp))
+        SetEnvironmentVariableW(L"SCSKILLER_TEST_RECORDER_DIR", (std::wstring(tmp) + L"scskiller-selftest-recorder").c_str());
     if (!GetEnvironmentVariableW(L"SCSKILLER_SELFTEST_UNARMED", nullptr, 0)) arm_self(dir, a);
-    if (argc > 2 && !wcscmp(argv[1], L"frameswrap")) return frames_wrap_rows(dir, _wtoi(argv[2]));
+    if (argc > 2 && !wcscmp(argv[1], L"frameswrap")) return frames_wrap_rows(dir, _wtoi(argv[2]), argc > 3 ? argv[3] : L"");
     if (argc > 1 && !wcscmp(argv[1], L"layoutrules")) return layout_rules();
+    if (argc > 1 && !wcscmp(argv[1], L"overlayunit")) return overlay_unit();
+    if (argc > 2 && !wcscmp(argv[1], L"overlay")) return overlay_rows(dir, argv[2]);
+    if (argc > 2 && !wcscmp(argv[1], L"overlaybench")) return overlay_bench(dir, _wtoi(argv[2]));
     if (argc > 2 && !wcscmp(argv[1], L"so")) return so_rows(dir, (unsigned)_wtoi(argv[2]));
+    if (argc > 4 && !wcscmp(argv[1], L"burst"))
+        return burst_rows(dir, _wtol(argv[2]), std::max(1, _wtoi(argv[3])), !wcscmp(argv[4], L"rec"), argc > 5 ? std::max(1, _wtoi(argv[5])) : 256,
+                          argc > 6 && !wcscmp(argv[6], L"compute"));
     if (argc > 2 && !wcscmp(argv[1], L"frames")) return frames_rows(dir, _wtoi(argv[2]));
     if (argc > 1 && !wcscmp(argv[1], L"unload")) return unload_rows(dir);
     if (argc > 1 && !wcscmp(argv[1], L"framesheld")) return frames_held(dir);
+    if (argc > 2 && !wcscmp(argv[1], L"framesmod")) return frames_mod_rows(dir, _wtoi(argv[2]));
+    if (argc > 2 && !wcscmp(argv[1], L"framesfg") && !wcscmp(argv[2], L"ffx"))
+        return frames_ffx_rows(dir, argc > 3 && !wcscmp(argv[3], L"play"), argc > 3 && !wcscmp(argv[3], L"late"));
+    if (argc > 1 && !wcscmp(argv[1], L"framescapture")) return frames_capture_rows(dir);
+    if (argc > 1 && !wcscmp(argv[1], L"framesstorm")) return frames_storm_rows(dir);
+    if (argc > 1 && !wcscmp(argv[1], L"framesdummy")) return frames_dummy_rows(dir);
+    if (argc > 1 && !wcscmp(argv[1], L"nvqi")) return nvqi_rows(dir, argc > 2 && !wcscmp(argv[2], L"exit"));
     if (argc > 2 && !wcscmp(argv[1], L"framesfg")) return frames_fg_rows(dir, wcscmp(argv[2], L"plain") ? argv[2] : nullptr, argc > 3 && !wcscmp(argv[3], L"overlay"));
     if (argc > 1 && !wcscmp(argv[1], L"factory")) return factory_rows(dir, argc > 2 ? argv[2] : nullptr);
     if (argc > 2 && !wcscmp(argv[1], L"anticheat")) return anticheat_rows(dir, argv[2], argc > 3 ? argv[3] + std::wstring(L"\\") : L"");
     if (argc > 1 && !wcscmp(argv[1], L"factoryrejected")) return factory_rejected_rows(dir);
+    if (argc > 2 && !wcscmp(argv[1], L"rec11frames")) return rec11_frames(dir, _wtoi(argv[2]));
+    if (argc > 2 && !wcscmp(argv[1], L"rec11")) return rec11_rows(dir, argv[2], argc > 3 && !wcscmp(argv[3], L"ctx"));
     if (argc > 2 && !wcscmp(argv[1], L"chain")) return chain_rows(dir, (unsigned)_wtoi(argv[2]), argc > 3 && !wcscmp(argv[3], L"swap"));
     if (argc > 2 && !wcscmp(argv[1], L"layer")) return layer_rows(dir, (unsigned)_wtoi(argv[2]), argc > 3 && !wcscmp(argv[3], L"old"));
     if (argc > 2 && !wcscmp(argv[1], L"layerwarm")) return layerwarm_parent(a, dir, argv[2], argc > 3 ? std::max(1, _wtoi(argv[3])) : 24);
+    if (argc > 1 && !wcscmp(argv[1], L"amwarm")) return amwarm_parent(a, dir, argc > 2 ? std::max(1, _wtoi(argv[2])) : 24);
+    if (argc > 4 && !wcscmp(argv[1], L"amwarmchild")) return amwarm_child(dir, (unsigned)_wtoi(argv[2]), _wtoi(argv[3]), (uint32_t)_wtoi(argv[4]), argc > 5);
     if (argc > 3 && !wcscmp(argv[1], L"layerwarmchild")) return layerwarm_child(dir, (unsigned)_wtoi(argv[2]), _wtoi(argv[3]));
     if (argc > 1 && !wcscmp(argv[1], L"warpluid")) {  // for scskiller_warm --adapter-luid: WARP (the runtime's checks, no GPU cache)
         IDXGIFactory4* f = nullptr;
@@ -3596,6 +5431,8 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 1 && !wcscmp(argv[1], L"bindless")) return in_run(L"bindless", false, [&](const std::wstring& dir) { return bindless_parent(a, dir, argc > 2 ? std::max(1, _wtoi(argv[2])) : 1, argc > 3 ? argv[3] : L""); });
     if (argc > 6 && !wcscmp(argv[1], L"bindlesschild")) return bindless_child(_wtoi(argv[2]), (unsigned)_wtoi(argv[3]), (char)argv[4][0], (UINT)_wtoi(argv[5]), argv[6], argc <= 7);
     if (argc > 1 && !wcscmp(argv[1], L"nvext")) return in_run(L"nvext", false, [&](const std::wstring& dir) { return nvext_parent(a, dir, argc > 2 ? std::max(1, _wtoi(argv[2])) : 1); });
+    if (argc > 1 && !wcscmp(argv[1], L"nvopts")) return in_run(L"nvopts", false, [&](const std::wstring& d) { return nvopts_parent(a, dir, d); });
+    if (argc > 4 && !wcscmp(argv[1], L"nvoptschild")) return nvopts_child(_wtoi(argv[2]), (unsigned)_wtoi(argv[3]), dir, argv[4]);
     if (argc > 4 && !wcscmp(argv[1], L"nvextchild")) return nvext_child(_wtoi(argv[2]), (unsigned)_wtoi(argv[3]), dir, argv[4]);
     if (argc > 1 && !wcscmp(argv[1], L"dxr")) return in_run(L"dxr", false, [&](const std::wstring& dir) { return dxr_parent(a, dir, argc > 2 ? std::max(1, _wtoi(argv[2])) : 1); });
     if (argc > 3 && !wcscmp(argv[1], L"dxrblobs")) {
@@ -3609,23 +5446,84 @@ int wmain(int argc, wchar_t** argv) {
         return in_run(L"fields", false, [&](const std::wstring& dir) { return fields_main(a, dir, argc > 2 ? std::max(1, _wtoi(argv[2])) : 1, argc > 3 && !wcscmp(argv[3], L"dxil")); });
     if (argc > 3 && !wcsncmp(argv[1], L"fields", 6)) return fields_child(argv[1][6] - L'0', (unsigned)_wtoi(argv[2]), argv[3]);
     if (argc > 1 && !wcscmp(argv[1], L"gpulock")) return gpu_lock_rules();
+    if (argc > 1 && !wcscmp(argv[1], L"ledgerdir")) return ledger_dir_rules();
     if (argc > 2) return child(dir, argv[1], (unsigned)_wtoi(argv[2]));
     int r = in_run(L"selftest", false, [&](const std::wstring& d) {  // the proxy writes its db and log next to itself: in there
         if (!CopyFileW(a.c_str(), (d + L"selftest.exe").c_str(), TRUE) || !CopyFileW((dir + L"d3d12.dll").c_str(), (d + L"d3d12.dll").c_str(), TRUE)) return 1;
         std::wstring seed = L" " + std::to_wstring(GetTickCount() % 1000000);
         int rc = run(d + L"selftest.exe", L"record" + seed);
-        // SELFTEST_AFTERMATH=<a game's GFSDK_Aftermath_Lib.x64.dll, 2.23>: in a folder of its own, as a second device makes
-        // the runtime create pipelines of its own, which would be recorded next to the phases' three
-        if (!rc && GetEnvironmentVariableW(L"SELFTEST_AFTERMATH", nullptr, 0)) {
-            std::wstring sub = d + L"aftermath\\";
-            CreateDirectoryW(sub.c_str(), nullptr);
-            if (!CopyFileW((d + L"selftest.exe").c_str(), (sub + L"selftest.exe").c_str(), FALSE) || !CopyFileW((d + L"d3d12.dll").c_str(), (sub + L"d3d12.dll").c_str(), FALSE)) return 1;
-            if (int arc = run(sub + L"selftest.exe", L"aftermath" + seed)) return arc;
-            std::string log = read_all(sub + L"scskiller.log");
-            size_t once = log.find("aftermath: EnableGpuCrashDumps hooked, DX12_Initialize hooked");
-            if (once == std::string::npos || log.find("aftermath: EnableGpuCrashDumps", once + 1) != std::string::npos ||
-                log.find("DX12_Initialize(version 0x217, feature flags 0x8)") == std::string::npos)
-                return printf("FAIL: the recorder didn't hook Aftermath once or didn't log its feature flags\n"), 1;
+        // SELFTEST_AFTERMATH=<games' GFSDK_Aftermath_Lib.x64.dll, ';'-separated>, run with 2.10, 2.11, 2.18, 2.23, 2.24, 2.25,
+        // 2.26 and 2.27 (1.3 has no EnableGpuCrashDumps). Each in a folder of its own, as a second device makes the runtime
+        // create pipelines of its own, which would be recorded next to the phases' three
+        if (DWORD n = rc ? 0 : GetEnvironmentVariableW(L"SELFTEST_AFTERMATH", nullptr, 0)) {
+            std::wstring all(n, L'\0');
+            all.resize(GetEnvironmentVariableW(L"SELFTEST_AFTERMATH", all.data(), n));
+            int i = 0;
+            for (size_t at = 0, semi; at <= all.size(); at = semi + 1, ++i) {
+                semi = std::min(all.find(L';', at), all.size());
+                SetEnvironmentVariableW(L"SELFTEST_AFTERMATH", all.substr(at, semi - at).c_str());   // the child loads this one
+                std::wstring sub = d + L"aftermath" + std::to_wstring(i) + L"\\";
+                CreateDirectoryW(sub.c_str(), nullptr);
+                if (!CopyFileW((d + L"selftest.exe").c_str(), (sub + L"selftest.exe").c_str(), FALSE) || !CopyFileW((d + L"d3d12.dll").c_str(), (sub + L"d3d12.dll").c_str(), FALSE)) return 1;
+                if (int arc = run(sub + L"selftest.exe", L"aftermath" + seed)) return arc;
+                std::string log = read_all(sub + L"scskiller.log");
+                size_t once = log.find("aftermath: EnableGpuCrashDumps hooked, DX12_Initialize hooked");
+                if (once == std::string::npos || log.find("aftermath: EnableGpuCrashDumps", once + 1) != std::string::npos ||
+                    log.find("DX12_Initialize(version 0x217, feature flags 0x8)") == std::string::npos || log.find("feature flags 0x4") != std::string::npos)
+                    return printf("FAIL: the recorder didn't hook Aftermath once or didn't log its feature flags (%ls)\n", all.substr(at, semi - at).c_str()), 1;
+                size_t line = log.find("aftermath: DX12_Initialize(");
+                printf("%ls: %s\n", all.substr(at, semi - at).c_str(), log.substr(line, log.find('\n', line) - line).c_str());
+            }
+            SetEnvironmentVariableW(L"SELFTEST_AFTERMATH", all.c_str());
+        }
+        // SELFTEST_AGS=<a game's amd_ags_x64.dll, AGS 6>: the app name it registers reaches the csv as the app reads it
+        // Another vendor in the app's ini (games ship the DLL on any GPU): no hook, no line. An attestation revoked before the
+        // first device: admission refuses, and the hook, in place by then, writes nothing. vendor=amd present only while AGS
+        // loads, outside the signed ini: admission takes the hook out.
+        if (!rc && GetEnvironmentVariableW(L"SELFTEST_AGS", nullptr, 0)) {
+            const char* const hooked = "ags: amd_ags_x64.dll agsDriverExtensionsDX12_CreateDevice hooked";
+            using V = std::tuple<const wchar_t*, const wchar_t*, const char*>;
+            for (auto [name, mode, vendor] : {V{L"ags", L"ags", "amd"}, V{L"agsnvidia", L"ags", "nvidia"}, V{L"agsrevoked", L"agsrevoked", "amd"},
+                                              V{L"agsnoldr", L"agsnoldr", "amd"}, V{L"agsdisarmed", L"agsdisarmed", "amd"}, V{L"agsunsigned", L"agsunsigned", ""}}) {
+                std::wstring sub = d + name + L"\\";
+                CreateDirectoryW(sub.c_str(), nullptr);
+                if (!CopyFileW((d + L"selftest.exe").c_str(), (sub + L"selftest.exe").c_str(), FALSE) || !CopyFileW((d + L"d3d12.dll").c_str(), (sub + L"d3d12.dll").c_str(), FALSE)) return 1;
+                if (FILE* f = _wfopen((sub + L"scskiller.ini").c_str(), L"w")) fprintf(f, "[scskiller]\nmode=record\n%s%s%s", *vendor ? "vendor=" : "", vendor, *vendor ? "\n" : ""), fclose(f);
+                // agsnoldr: the child inherits this, and its proxy's load-time registration "fails", so nothing is installed
+                SetEnvironmentVariableW(L"SCSKILLER_TEST_NO_LDR", wcscmp(name, L"agsnoldr") ? nullptr : L"1");
+                int arc = run(sub + L"selftest.exe", std::wstring(mode) + seed);
+                SetEnvironmentVariableW(L"SCSKILLER_TEST_NO_LDR", nullptr);
+                if (arc) return arc;
+                std::string log = read_all(sub + L"scskiller.log"), csv = read_all(sub + L"scskiller_creates.csv");
+                if (!wcscmp(name, L"agsunsigned")) {
+                    if (GetFileAttributesW((sub + L"no-ags-device").c_str()) != INVALID_FILE_ATTRIBUTES) {
+                        printf("ags: agsunsigned: no AGS device (no AMD driver): not checked\n");
+                        continue;
+                    }
+                    if (log.find("hook: device") == std::string::npos || log.find("ags: unhooked (vendor=amd isn't in the signed ini)") == std::string::npos
+                        || csv.find("#ags,") != std::string::npos)
+                        return printf("FAIL: %ls: the recorder kept the AGS hook of an unsigned vendor=amd or wrote its line\n", name), 1;
+                    continue;
+                }
+                if (wcscmp(name, L"ags")) {
+                    if (log.find("ags: ") != std::string::npos || csv.find("#ags,") != std::string::npos)
+                        return printf("FAIL: %ls: the recorder hooked AGS or wrote its line\n", name), 1;
+                    if (!wcscmp(name, L"agsnvidia") && log.find("hook: device") == std::string::npos)
+                        return printf("FAIL: %ls: the recorder wasn't admitted, so the check proves nothing\n", name), 1;
+                    continue;
+                }
+                if (log.find(hooked) == std::string::npos)
+                    return printf("FAIL: the recorder didn't hook the AGS DLL's agsDriverExtensionsDX12_CreateDevice\n"), 1;
+                if (log.find("ags: DX12_CreateDevice(app \"SelftestAgsApp\"") == std::string::npos)
+                    printf("ags: no AGS device (no AMD driver): the csv line isn't checked\n");
+                else {
+                    if (csv.find(",10203,40506,SelftestAgsApp,Selftest%002CEngine%0025") == std::string::npos || csv.find("#ags,") < csv.find("#session,"))
+                        return printf("FAIL: the csv has no #ags line after its #session\n"), 1;
+                    size_t lines = 0;
+                    for (size_t at = 0; (at = csv.find("#ags,", at)) != std::string::npos; at += 5) ++lines;
+                    if (lines != 3) return printf("FAIL: X,Y,X registrations gave %zu #ags lines, not 3 (consecutive-only dedup)\n", lines), 1;
+                }
+            }
         }
         if (!rc) rc = run(d + L"selftest.exe", L"warm" + seed);
         if (rc) return rc;

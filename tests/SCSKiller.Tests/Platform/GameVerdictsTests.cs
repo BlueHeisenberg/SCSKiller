@@ -36,17 +36,23 @@ public class GameVerdictsTests : IDisposable
     static string Signed(string body, string seed, string name = GameVerdicts.Name) => ContentTrust.Sign(Convert.FromBase64String(seed), "rules-a", name, body, T);
 
     [Fact]
-    public void Embedded_list_matches_by_store_id_only_and_shares_no_game_with_the_known_stutter_list()
+    public void Embedded_list_is_valid_and_shares_no_game_with_the_known_stutter_list()
     {
         var list = GameVerdicts.Embedded;
-        Assert.Equal(new GameVerdicts.Verdict(GameVerdicts.UnsupportedYetVerdict, "An app update is needed for support"),
-            list.Unsupported(G("steam:4078430"), null));   // STAR WARS: Galactic Racer
-        Assert.Null(list.NoStutter(G("steam:4078430"), null));
-        Assert.Null(list.Unsupported(new Game("epic:x", "STAR WARS: Galactic Racer", Store.Other, @"X:\none", @"X:\none\game.exe"), null));
         var games = System.Text.Json.JsonDocument.Parse(ContentFile.Embedded("SCSKiller.Core.Games.game-verdicts.json")).RootElement.GetProperty("games");
         Assert.Equal(list.Count, games.GetArrayLength());
         foreach (var id in games.EnumerateArray().SelectMany(g => g.GetProperty("ids").EnumerateArray().Select(i => i.GetString()!)))
             Assert.Null(StutterList.Embedded.Find(G(id)));
+    }
+
+    [Fact]
+    public void A_verdict_matches_by_store_id_only()
+    {
+        var list = GameVerdicts.TryParse(Doc(Entry(GameVerdicts.UnsupportedYetVerdict, "steam:999999901", GameVerdicts.OtherReason).Also(e => e["note"] = "An app update is needed for support")))!;
+        Assert.Equal(new GameVerdicts.Verdict(GameVerdicts.UnsupportedYetVerdict, "An app update is needed for support"),
+            list.Unsupported(G("steam:999999901"), null));
+        Assert.Null(list.NoStutter(G("steam:999999901"), null));
+        Assert.Null(list.Unsupported(new Game("epic:x", "Some Game", Store.Other, @"X:\none", @"X:\none\game.exe"), null));
     }
 
     /// <summary>1.2.3 reads only known-stutter.json, strictly: the verdicts live in their own file, which it never asks for and

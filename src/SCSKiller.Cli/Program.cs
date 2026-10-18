@@ -10,6 +10,7 @@ using SCSKiller.Core.Vendors;
 const string Usage = """
     usage: scskiller <command>
       scan [--rescan]                             discover games and show their status (--rescan: redo engine detection)
+      add <exe> [<install folder>]                add a game no store lists, by its exe (with its folder: the recorder may go there)
       status [game]                               all games, or one in detail
       compile <game|--all-ready> [--threads N] [--idle | --when-idle] [--careful | --fast]
                                                   --idle: background priority; --when-idle: also only while nobody uses the PC;
@@ -21,8 +22,10 @@ const string Usage = """
       rewarm-stale [--if-driver-changed]          what the scheduled task runs; follows the driver-update setting
       cache get | cache set <GB|unlimited|default>
       cache clear <game> [--game-precache]        delete the game's shader caches: driver, Windows (D3DSCache) (asks first);
-                                                  --game-precache: also the caches the game writes itself (Unreal's user pipeline
-                                                  cache, *.ushaderprecache), which it rebuilds at its next start
+                                                  --game-precache: also the caches the game writes itself (*.ushaderprecache,
+                                                  Dawn's bin\pipelineLibrary.cache, RE Engine's shader.cache2 and
+                                                  piplinelist.bin, GTA V Enhanced's and HELLDIVERS 2's pipeline libraries),
+                                                  which it rebuilds at its next start
       nvidia-snapshot                             read-only: every global DRS setting, Auto Shader Compilation, its idle task
       nvidia-auto-shader off|low|medium|high      switch NVIDIA's Auto Shader Compilation (admin, asks first)
         (cache set / nvidia-auto-shader, as the app runs them elevated: --yes skips the question, --result <file>
@@ -38,17 +41,20 @@ const string Usage = """
                                                   the index's shaders and those this PC's recording saw (default <game id>.reference.json)
       task register|unregister                    the logon/idle "re-warm after a driver update" task
       fetch-codecs <dir>                          packaging: the pinned Oodle/zlib DLLs in <dir>, downloaded if missing
+      --version                                   the CLI's version
     <game> is an id (steam:2909400) or a case-insensitive part of the name.
     """;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;  // game names carry ™ and ®
 RouteFailover.Product = "SCSKiller-CLI";
 if (args.Length == 0 || args[0] is "-h" or "--help" or "help") { Console.WriteLine(Usage); return 0; }
+// before anything reads the data folder: a portable copy's first read copies the installed one's
+if (args[0] is "-v" or "--version" or "version") { Console.WriteLine(AppVersion.Current); return 0; }
 // The app is handing over to Update.exe, which replaces this folder: start nothing (the scheduled task runs again later).
 // Packaging never reads the app's data folder.
 if (args[0] != "fetch-codecs" && Busy.Applying(AppStore.DefaultDir, DateTimeOffset.UtcNow))
 {
-    const string busy = "an update is being installed; try again in a minute";
+    const string busy = "an update is being installed, try again in a minute";
     Console.Error.WriteLine(busy);
     // run elevated by the app, the exit code alone (0, for the scheduled task) would read as done
     try { if (Opt(Elevated.ResultArg) is { } file) Elevated.WriteResult(file, false, busy); }
@@ -62,6 +68,7 @@ try
     {
         "scan" => await Scan(args.Contains("--rescan")),
         "status" => await Status(args.Length > 1 ? args[1] : null),
+        "add" => await AddGame(),
         "compile" => await Compile(),
         "queue" => await QueueShell(),
         "rewarm-stale" => await RewarmStale(args.Contains("--if-driver-changed")),
@@ -72,6 +79,7 @@ try
         "reference" when args.ElementAtOrDefault(1) == "export" => await ReferenceExport(),
         "key" => await Key(),
         "task" => TaskCommand(),
+        "proton-env" => await ProtonEnv(),
         "nvidia-snapshot" => NvidiaSnapshot(),
         "nvidia-auto-shader" => NvidiaAutoShader(),
         "fetch-codecs" => FetchCodecs(args.ElementAtOrDefault(1) ?? throw new ArgumentException("usage: scskiller fetch-codecs <dir>")),
@@ -112,6 +120,8 @@ static async Task<ScsKiller> Open(bool rescan = false)
 {
     var k = ScsKiller.CreateDefault();
     k.Log = new StderrLog();   // synchronous: a message logged just before exit still prints
+    var account = new Account(AppStore.DefaultDir);
+    k.DbEntitled = () => account.SignedIn;   // entitlements are never read here: signed in counts as entitled
     await (rescan ? k.RescanAsync(CancellationToken.None) : k.ScanAsync(CancellationToken.None));
     return k;
 }
@@ -145,6 +155,16 @@ static GameState Match(IReadOnlyList<GameState> games, string query)
         0 => throw new ArgumentException($"no game matches '{query}'"),
         _ => throw new ArgumentException($"'{query}' matches several games: {string.Join(", ", many.Select(s => $"{s.Game.Name} ({s.Game.Id})"))}"),
     };
+}
+
+// --adapter-luid: the adapter the app that asked runs on, which a pick since then (Settings.Gpu) only changes at its restart
+IGpuVendorBackend RunningGpu()
+{
+    if (Opt(ScsKiller.AdapterArg) is not { } hex) return ScsKiller.DetectGpu();
+    return long.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out var luid)
+        && GpuBackends.Adapters().FirstOrDefault(a => a.Gpu.AdapterLuid == luid) is { } running
+        ? ScsKiller.DetectGpu(GpuBackends.ChoiceOf(running))
+        : throw new InvalidOperationException("the GPU SCSKiller runs on isn't listed any more (a driver reload): restart SCSKiller and try again");
 }
 
 string? Opt(string name)
@@ -191,25 +211,27 @@ async Task<int> Status(string? query)
           status     {StatusName(g)}: {g.StatusReason}
           anti-cheat {g.AntiCheat}
           shaders    {g.ShaderCount?.ToString() ?? "-"}
-          plan       {(g.Plan is { } p ? $"{p.Recorded} recorded + {p.Generated} generated + {p.D3D11Shaders} DirectX 11 shaders + {p.MiddlewareItems} middleware, {p.RootSignatures} root sigs, rule verified: {p.RootSigRuleVerified}" : "-")}
+          plan       {(g.Plan is { } p ? $"{p.Recorded} recorded + {p.Generated} generated + {p.D3D11Shaders} DirectX 11 shaders{(p.D3D11Draws > 0 ? $" ({p.D3D11Draws} vertex shaders with recorded layouts)" : "")} + {p.MiddlewareItems} middleware, {p.RootSignatures} root sigs, rule verified: {p.RootSigRuleVerified}" : "-")}
           stutter    {(g.KnownStutter is { } st ? $"known, {st.Severity.ToString().ToLowerInvariant()}: {st.Reason} ({st.Source}, checked {st.Date})" : g.NoStutter is { } ns ? $"none: {ns}" : "-")}
           middleware {(g.Middleware is { Count: > 0 } mw ? MiddlewareLine(mw, true) : "-")}
           estimate   {(g.EstimatedCacheBytes is { } est ? Format.Bytes(est) : "-")} of cache, {Hms(g.EstimatedWarmTime)}
-          careful    {CarefulLine(g.Careful)}
-          warmed     {(g.WarmedAt is { } w ? $"{w:yyyy-MM-dd HH:mm} for driver {g.WarmedDriverVersion} in {Hms(g.LastWarmTime)}" + (ScsKiller.WarmCounts(g.LastWarmFailed ?? 0, g.LastWarmSkipped ?? 0, g.LastWarmCrashed ?? 0) is { } counts ? $"; {counts}" : "") : "never")}
+          careful    {CarefulLine(g.Careful, g.Plan)}
+          warmed     {(g.WarmedAt is { } w ? $"{w:yyyy-MM-dd HH:mm} for driver {g.WarmedDriverVersion} in {Hms(g.LastWarmTime)}" + (ScsKiller.WarmCounts(g.LastWarmFailed ?? 0, g.LastWarmSkipped ?? 0, g.LastWarmCrashed ?? 0, g.LastWarmDriverSkipped ?? 0, g.LastWarmUnbuilt ?? 0) is { } counts ? $"; {counts}" : "") : "never")}
           cache      {(g.CacheOnDisk is { } c ? $"{Format.Bytes(c)} on disk (driver-cache files its warms or the game had open)" : "-")}
           keys       {(rec.CacheKeys.Count > 0 ? string.Join(", ", rec.CacheKeys.Order()) : "-")}{(k.WarmAgs(g.Game.Id) is { } ags ? $" (compiles register its AGS app name {ags.App}, key {k.AgsKey(g.Game.Id)}: the exe name's case doesn't matter)" : AmdAppCache.IsNameHashed(rec.CacheKeys, ScsKiller.WarmExeName(g.Game, rec)) == false ? " (an app profile's key, not the exe name's hash: the name's case doesn't matter)" : "")}
           recorder   {(g.RecorderInstalled ? "installed" : "not installed")}{(g.RecorderRefused is { } why ? $"; {(ScsKiller.NeverRecorded(g) ? ScsKiller.NothingRecordedTitle + ". " : "")}{why}" : "")}
-          recording  {(g.RecordingBytes > 0 ? $"{Format.Bytes(g.RecordingBytes)} (the game folder's files and SCSKiller's copy)" : "-")}, limit {ScsKiller.LimitText(k.Settings.RecordingLimitMB)} per game{(g.RecordingPaused ? $"; {ScsKiller.PausedNote(k.Settings)}" : "")}
+          recording  {(g.RecordingBytes > 0 ? $"{(g.RecordingBytes < 1 << 20 ? $"{Math.Max(1, g.RecordingBytes >> 10)} KB" : Format.Bytes(g.RecordingBytes))} (the game folder's files and SCSKiller's copy)" : "-")}, limit {ScsKiller.LimitText(k.Settings.RecordingLimitMB)} per game{(g.RecordingPaused ? $"; {ScsKiller.PausedNote(k.Settings)}" : "")}
           last play  {(g.LastSession is { } l ? $"{Hms(l.Duration)}, {l.Requests} pipelines: {l.FromGameLibrary} from the game's library, {l.CacheHits} cache hits, {l.Compiles} compiles (worst {l.WorstCompileMs:0.0} ms){(l.StartupCompiles > 0 ? $", {l.StartupCompiles} compiles while the game started or loaded" : "")}{(l.RayQueryRecompiles > 0 ? $", {l.RayQueryRecompiles} ray-traced pipelines the driver partly recompiles every launch" : "")}{(l.StateObjectsReady + l.StateObjectsCompiled + l.StateObjectsStartupCompiled > 0 ? $"; ray tracing state objects: {l.StateObjectsReady} ready, {l.StateObjectsCompiled} compiled{(l.StateObjectsStartupCompiled > 0 ? $", {l.StateObjectsStartupCompiled} compiled while the game started or loaded" : "")}" : "")}" : "-")}
           1st launch {(rec.FirstLaunch is { } fl ? $"{fl.At.LocalDateTime:yyyy-MM-dd HH:mm}, after the last compile: {fl.Hits} cache hits, {fl.Compiles} compiles ({fl.Compiled * 100:0.0}% compiled)" : "-")}
         """);
     return 0;
 }
 
-static string CarefulLine(CarefulCompile? c) => c is not { } x ? "- (AMD only)"
+static string CarefulLine(CarefulCompile? c, PlanStats? plan) => c is not { } x ? "- (AMD only)"
     : (x.On ? $"on: the recorded pipelines compile in passes on at most {ScsKiller.AmdCarefulThreads} threads, the rest at full speed" : "off (compile <game> --careful turns it on)")
-      + (x.Recorded == 0 ? "; no recording yet, so nothing compiles carefully" : x.Estimate is { } t ? $"; a careful compile takes about {ScsKiller.Duration(t)}" : "");
+      + (x.Recorded == 0 && plan is { D3D11Shaders: > 0, Recorded: 0 } ? "; only for DirectX 12: this game's DirectX 11 shaders always compile at full speed"
+         : x.Recorded == 0 ? "; no recorded DirectX 12 pipelines, so nothing compiles carefully"
+         : x.Estimate is { } t ? $"; a careful compile takes about {ScsKiller.Duration(t)}" : "");
 
 static void PrintQueueChanges(ScsKiller k)
 {
@@ -335,7 +357,7 @@ async Task<int> Compile()
         foreach (var g in targets)
         {
             k.SetCarefulCompile(g.Game.Id, args.Contains("--careful"));
-            Console.WriteLine($"{g.Game.Name}: {CarefulLine(k.Games.Single(s => s.Game.Id == g.Game.Id).Careful)}");
+            Console.WriteLine($"{g.Game.Name}: {(k.Games.Single(s => s.Game.Id == g.Game.Id) is var gs ? CarefulLine(gs.Careful, gs.Plan) : "")}");
         }
     return await RunQueue(k, targets, whenIdle);
 }
@@ -364,13 +386,13 @@ async Task<int> RewarmStale(bool ifDriverChanged)
             return 0;
         default:
             BackgroundPriority();
-            return await RunQueue(k, stale, whenIdle: true);
+            return await RunQueue(k, ifDriverChanged ? k.IdleRewarmGames() : stale, whenIdle: true);
     }
 }
 
 int Cache()
 {
-    var v = GpuBackends.Detect();
+    var v = RunningGpu();
     Console.WriteLine($"GPU: {v.Gpu.Name} ({v.Vendor}), driver {v.Gpu.DriverVersion}, profile {v.Caps.Profile}");
     if (args.Length > 1 && args[1] == "set")
     {
@@ -432,6 +454,30 @@ async Task<int> Record()
     }
     if (args[1] == "install") k.InstallRecorder(g.Game.Id); else k.UninstallRecorder(g.Game.Id);
     Console.WriteLine($"recorder {args[1]}ed: {Path.GetDirectoryName(g.Game.ExePath)}");
+    return 0;
+}
+
+async Task<int> AddGame()
+{
+    if (args.Length < 2) return Fail("add <exe> [<install folder>]");
+    var k = await Open();
+    var (game, existed) = k.AddManualGame(args[1], args.ElementAtOrDefault(2));
+    await k.ScanAsync(CancellationToken.None);
+    Console.WriteLine($"{(existed ? "already listed" : "added")}: {game.Id}  {game.Name}  {game.ExePath}");
+    return 0;
+}
+
+async Task<int> ProtonEnv()
+{
+    if (args.Length < 2) return Fail("proton-env <game> [--warm]");
+    if (!Wine.Running) return Fail("proton-env is for games under Wine (Proton)");
+    var k = await Open();
+    var g = Match(k.Games, args[1]);
+    var root = Directory.CreateDirectory(Path.Combine(k.Store.GameDir(g.Game.Id), "proton-cache"));
+    foreach (var d in new[] { "nvidia", "vkd3d" }) root.CreateSubdirectory(d);   // NVIDIA's driver keeps no cache in a folder that doesn't exist
+    if (Wine.UnixPath(root.FullName) is not { } unix) return Fail($"no Linux path for {root.FullName}");
+    var (warm, game) = Wine.CacheEnvironment(unix, Path.GetFileName(g.Game.ExePath));
+    foreach (var (name, value) in args.Contains("--warm") ? warm : game) Console.WriteLine($"{name}={value}");
     return 0;
 }
 
@@ -503,7 +549,7 @@ async Task<int> ReferenceExport()
 // Read-only. Run it before and after switching something in the NVIDIA App and diff the two outputs.
 static int NvidiaSnapshot()
 {
-    if (GpuBackends.Detect() is not NvidiaBackend nv) return Fail("no NVIDIA GPU");
+    if (ScsKiller.DetectGpu() is not NvidiaBackend nv) return Fail("no NVIDIA GPU");
     Console.WriteLine($"driver {nv.Gpu.DriverVersion}");
     Console.WriteLine($"Auto Shader Compilation: {nv.GetAutoShaderCompilation()?.ToString() ?? "not readable"} (setting 0x{NvidiaBackend.AutoShaderCompilationId:X8})");
     Console.WriteLine($"NvOSC.exe: {NvidiaBackend.NvOscPath() ?? "not found"}");
@@ -528,7 +574,7 @@ int NvidiaAutoShader()
 {
     if (!Enum.TryParse<AutoShaderCompilation>(args.ElementAtOrDefault(1), true, out var level) || !Enum.IsDefined(level) || int.TryParse(args[1], out _))
         return Fail("nvidia-auto-shader off|low|medium|high");
-    if (GpuBackends.Detect() is not NvidiaBackend nv) return Fail("no NVIDIA GPU");
+    if (RunningGpu() is not NvidiaBackend nv) return Fail("no NVIDIA GPU");
     if (!Elevated.IsAdmin) return Fail("switching NVIDIA Auto Shader Compilation needs an elevated (administrator) prompt");
     // NvOSC.exe -register registers the idle task for the account running it: refuse when UAC elevated a different
     // administrator (over-the-shoulder), whose DXCache it would compile into. Same account + elevated token is fine.
@@ -537,9 +583,8 @@ int NvidiaAutoShader()
                     "not for you. Sign in to Windows with an administrator account, or ask an administrator to add yours to Administrators.");
     if (!args.Contains(Elevated.YesArg) && !Confirm($"Set NVIDIA Auto Shader Compilation to {level}? This changes a global driver setting and the driver's idle task."))
         return 1;
-    nv.SetAutoShaderCompilation(level);
-    Console.WriteLine($"now: {nv.GetAutoShaderCompilation()?.ToString() ?? "not readable"}");
-    Outcome.Message = level == AutoShaderCompilation.Off ? "Auto Shader Compilation turned off." : $"Auto Shader Compilation turned on ({level}).";
+    Outcome.Message = nv.SetAutoShaderCompilation(level);
+    Console.WriteLine($"{Outcome.Message} now: {nv.GetAutoShaderCompilation()?.ToString() ?? "not readable"}");
     return 0;
 }
 
@@ -567,10 +612,10 @@ static int FetchCodecs(string dir)
     try
     {
         Console.WriteLine(Codecs.Ensure(OodleHelper.OodleFileName, Codecs.DownloadOodle, dir));
-        Console.WriteLine(Codecs.Ensure(ZlibHelper.DllName, p => ZlibHelper.DownloadDll(p, null!), dir));
+        Console.WriteLine(Codecs.Ensure(ZlibHelper.DllName, Codecs.DownloadZlib, dir));
         return 0;
     }
-    catch (InvalidDataException e) { return Fail(e.Message); }
+    catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) { return Fail(e.Message); }
 }
 
 /// <summary>What the command's last word was (its success line or the error), for <see cref="Elevated.ResultArg"/>.</summary>

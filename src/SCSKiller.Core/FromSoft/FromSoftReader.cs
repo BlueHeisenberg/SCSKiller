@@ -17,12 +17,12 @@ namespace SCSKiller.Core.FromSoft;
 /// version 1.0 (<see cref="RootSig.AsVersion10"/>), so each shader's root signature is that blob, served by ReadShaders.
 /// EngineInfo: Family "FromSoftware", Version "&lt;title&gt; DXBC|DXIL[+RTS0]" once indexed ("&lt;title&gt;" at Detect).</summary>
 /// <param name="dataDir">the app's data folder: the archive keys found in each game's exe are kept there (local only)</param>
-/// <param name="download">see <see cref="SoulsKeys"/> (tests pass a fake)</param>
-public sealed class FromSoftReader(string dataDir, Func<string, string?>? download = null) : IEngineReader
+/// <param name="download">see <see cref="SoulsKeys"/> (tests pass a fake, and its <paramref name="uxmSha256"/>)</param>
+public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? download = null, string uxmSha256 = SoulsKeys.UxmSha256) : IEngineReader
 {
     public const string Family = "FromSoftware";
 
-    readonly SoulsKeys keys = new(dataDir, download);
+    readonly SoulsKeys keys = new(dataDir, download, uxmSha256);
 
     /// <param name="Exe">the process that creates the device (the Steam exe, not start_protected_game.exe)</param>
     /// <param name="Hash64">64-bit archive name hashes (Elden Ring and later)</param>
@@ -37,7 +37,7 @@ public sealed class FromSoftReader(string dataDir, Func<string, string?>? downlo
     [
         new("DarkSoulsIII.exe", "Dark Souls III", "D3D11", false, ["Data1", "Data2", "Data3", "Data4", "Data5", "DLC1", "DLC2"], "DarkSouls3Keys"),
         new("DarkSoulsRemastered.exe", "Dark Souls: Remastered", "D3D11", false, []),
-        new("eldenring.exe", "Elden Ring", "D3D12", true, ["Data0", "Data1", "Data2", "Data3", "DLC"]),
+        new("eldenring.exe", "Elden Ring", "D3D12", true, ["Data0", "Data1", "Data2", "Data3", "DLC"], "EldenRingKeys"),
         new("nightreign.exe", "Elden Ring Nightreign", "D3D12", true, ["Data0", "Data1", "Data2", "Data3"]),
     ];
 
@@ -54,6 +54,8 @@ public sealed class FromSoftReader(string dataDir, Func<string, string?>? downlo
     public static Title? TitleOf(Game game) =>
         Titles.FirstOrDefault(t => t.Exe.Equals(Path.GetFileName(game.ExePath), StringComparison.OrdinalIgnoreCase));
 
+    public int ReaderVersion(EngineInfo engine) => 2;
+
     public EngineInfo? Detect(Game game)
     {
         var dir = Path.GetDirectoryName(game.ExePath);
@@ -63,7 +65,7 @@ public sealed class FromSoftReader(string dataDir, Func<string, string?>? downlo
             return Directory.EnumerateFiles(dir, "*.bhd").Any(b => File.Exists(Path.ChangeExtension(b, ".bdt")) && IsEncryptedBhd(b))
                 ? new EngineInfo(Family, "-", null, UnrealRhi.Ambiguous, false, "FromSoftware archives SCSKiller has no key for (a title it doesn't know yet)") // not Encrypted: no user key opens them
                 : null;
-        if (Archives(game, dir, title, out var why) is not { } archives) return new EngineInfo(Family, "-", title.Name, title.Api, false, why);
+        if (Archives(game, dir, title, null, out var why) is not { } archives) return new EngineInfo(Family, "-", title.Name, title.Api, false, why);
         // Planner.Check runs on this, before any index: a sample (the smallest shader file) says DXBC or DXIL, and whether
         // the shaders carry their root signatures
         int programs = 0, dxil = 0, rts0 = 0;
@@ -80,8 +82,15 @@ public sealed class FromSoftReader(string dataDir, Func<string, string?>? downlo
         }
         var version = programs == 0 ? "-"
             : (dxil == programs ? "DXIL" : dxil == 0 ? "DXBC" : "DXIL+DXBC") + (rts0 >= 0.9 * programs ? CarvedReader.EmbeddedRootSignatures : "");
-        return new EngineInfo(Family, version, title.Name, title.Api, false, programs == 0 ? "no shaders found in its shader files" : null);
+        return new EngineInfo(Family, version, title.Name, title.Api, false, programs == 0 ? "no shaders found in its shader files" : null, Note: why);
     }
+
+    /// <summary>The archives present with no key stored: a key that turns up later (downloaded, or added by hand) redoes
+    /// Detect and makes a warm stale, so the next compile indexes that archive too.</summary>
+    public string DetectStamp(Game game, EngineInfo? engine) => IndexStamp(game);
+
+    public string IndexStamp(Game game) => TitleOf(game) is { Archives.Length: > 0 } title && Path.GetDirectoryName(game.ExePath) is { } dir
+        ? string.Join(',', keys.Unstored(game, SourceFiles(dir, title).Select(f => Path.GetFileNameWithoutExtension(f.Name)))) : "";
 
     /// <summary>A BHD5 header is RSA-encrypted when it doesn't start with the magic in the clear.</summary>
     static bool IsEncryptedBhd(string path)
@@ -112,7 +121,7 @@ public sealed class FromSoftReader(string dataDir, Func<string, string?>? downlo
         var title = TitleOf(game) ?? throw new NotSupportedException($"{game.ExePath}: not a FromSoftware title this reader knows");
         var sw = Stopwatch.StartNew();
         var dir = Path.GetDirectoryName(game.ExePath)!;
-        var archives = Archives(game, dir, title, out var why) ?? throw new InvalidDataException(why);
+        var archives = Archives(game, dir, title, log, out var why) ?? throw new InvalidDataException(why);
         var fileOf = new Dictionary<string, string>();          // container -> its top-level shader file
         var shaders = new Dictionary<string, ShaderInfo>();
         var pools = new Dictionary<string, List<string>>();     // innermost binder -> its shaders, file order
@@ -164,7 +173,7 @@ public sealed class FromSoftReader(string dataDir, Func<string, string?>? downlo
 
         using var content = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
         content.AppendData(Encoding.UTF8.GetBytes($"{Family} {IndexVersion}\n"));
-        foreach (var f in SourceFiles(dir, title))
+        foreach (var f in title.Archives.Length == 0 ? SourceFiles(dir, title) : archives.Select(a => a.Bhd)) // a key found later changes it
             content.AppendData(Encoding.UTF8.GetBytes($"{Path.GetRelativePath(dir, f.FullName)}|{f.Length}|{f.LastWriteTimeUtc.Ticks}\n"));
         var platforms = shaders.Keys.Select(s => platformOf[s]).Distinct()
             .OrderBy(p => p is CarvedReader.Platform or D3D11 ? 0 : 1).ThenBy(p => p, StringComparer.Ordinal).ToList();
@@ -172,7 +181,7 @@ public sealed class FromSoftReader(string dataDir, Func<string, string?>? downlo
             + string.Join(", ", shaders.Values.GroupBy(s => s.Stage).OrderByDescending(g => g.Count()).Select(g => $"{g.Count()} {g.Key}"))
             + $"){(bad > 0 ? $", {bad} unparseable" : "")}, {shaders.Values.Select(s => s.RootSignature).OfType<string>().Distinct().Count()} embedded root signatures, "
             + $"{maps.Count} maps ({string.Join(", ", platforms)}) ({sw.Elapsed.TotalSeconds:F1}s)");
-        return new ShaderIndex(Convert.ToHexStringLower(content.GetHashAndReset()), platforms, shaders, maps);
+        return new ShaderIndex(Convert.ToHexStringLower(content.GetHashAndReset()), platforms, shaders, maps, created[game.Id]);
     }
 
     public void ReadShaders(Game game, EngineInfo engine, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct)
@@ -188,7 +197,7 @@ public sealed class FromSoftReader(string dataDir, Func<string, string?>? downlo
         foreach (var h in sha1s)
             if (created[game.Id].TryGetValue(h, out var rs) && sent.Add(h)) sink(h, rs);
         var dir = Path.GetDirectoryName(game.ExePath)!;
-        var archives = Archives(game, dir, title, out var why) ?? throw new InvalidDataException(why);
+        var archives = Archives(game, dir, title, null, out var why, fetch: false) ?? throw new InvalidDataException(why);
         foreach (var (name, bytes) in ShaderFilesOf(dir, title, archives, sample: false, want, ct))
             Visit(name, bytes, (_, c) =>
             {
@@ -210,19 +219,28 @@ public sealed class FromSoftReader(string dataDir, Func<string, string?>? downlo
         ? new DirectoryInfo(Path.Combine(dir, "shader")).EnumerateFiles("*.dcx").OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
         : title.Archives.Select(a => new FileInfo(Path.Combine(dir, a + ".bhd"))).Where(f => f.Exists && File.Exists(Path.ChangeExtension(f.FullName, ".bdt")));
 
-    /// <summary>The title's archives present (a .bhd with its .bdt), in <see cref="Title.Archives"/> order, each with the
-    /// key that opens it; null when one has none (<paramref name="why"/> says which, and where a user can put them).</summary>
-    List<(FileInfo Bhd, string Key)>? Archives(Game game, string dir, Title title, out string? why)
+    /// <summary>The title's archives present (a .bhd with its .bdt) that a key opens, in <see cref="Title.Archives"/> order,
+    /// each with its key; the others are left out. <paramref name="why"/>, a line for the user: which shaders are left out,
+    /// or, null returned, why none can be read. Where a user can put the keys goes to <paramref name="log"/> only.
+    /// <paramref name="fetch"/>: may download them (<see cref="Title.Uxm"/>).</summary>
+    List<(FileInfo Bhd, string Key)>? Archives(Game game, string dir, Title title, IProgress<string>? log, out string? why, bool fetch = true)
     {
         why = null;
         if (title.Archives.Length == 0) return [];
         var present = SourceFiles(dir, title).ToList();
-        var found = keys.Get(game, present.ToDictionary(f => Path.GetFileNameWithoutExtension(f.Name), f => f.FullName), title.Uxm, out var missing);
-        if (missing.Count == 0) return present.Select(f => (f, found[Path.GetFileNameWithoutExtension(f.Name)])).ToList();
-        why = $"no key for its archives {string.Join(", ", missing)}: the game's exe doesn't carry them in the clear"
+        var found = keys.Get(game, present.ToDictionary(f => Path.GetFileNameWithoutExtension(f.Name), f => f.FullName), fetch ? title.Uxm : null, out var missing, log);
+        var opened = present.Where(f => found.ContainsKey(Path.GetFileNameWithoutExtension(f.Name))).Select(f => (f, found[Path.GetFileNameWithoutExtension(f.Name)])).ToList();
+        if (missing.Count == 0) return opened;
+        log?.Report($"{title.Name}: no key for its archives {string.Join(", ", missing)}: the game's exe doesn't carry them in the clear"
             + (title.Uxm != null ? " and none that opens them could be downloaded (UXM Selective Unpack's)" : "")
-            + $". Put one \"<archive> <key>\" line per archive (the body of its \"RSA PUBLIC KEY\" PEM) in {keys.KeyFile(game)}";
-        return null;
+            + $". Put one \"<archive> <key>\" line per archive (the body of its \"RSA PUBLIC KEY\" PEM) in {keys.KeyFile(game)}");
+        if (opened.Count == 0)
+        {
+            why = "no key found for its archives" + (title.Uxm != null ? ", and none could be downloaded" : "");
+            return null;
+        }
+        why = missing is ["DLC"] ? "Its DLC shaders are left out." : $"Shaders in {string.Join(", ", missing)} are left out.";
+        return opened;
     }
 
     /// <summary>The title's shader files (name, raw bytes). <paramref name="sample"/>: smallest archive and file first (the

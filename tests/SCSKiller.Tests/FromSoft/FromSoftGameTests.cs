@@ -14,7 +14,7 @@ namespace SCSKiller.Tests.FromSoft;
 /// plan offline (NVIDIA caps, a temp folder), and a sample of shaders read back by hash. Anti-cheat games (Elden Ring,
 /// Nightreign) are only read as files: never launched, nothing written next to them. The archive keys come from each exe
 /// at run time, into a fresh data folder every run; Dark Souls III's exe doesn't carry them in the clear, so they're
-/// downloaded (UXM's, pinned; offline, it checks that Detect says where a user can put them).</summary>
+/// downloaded (UXM's, pinned by commit and SHA-256; offline, Detect refuses without naming the key file).</summary>
 [Trait("Needs", "Game")]
 public class FromSoftGameTests(ITestOutputHelper output)
 {
@@ -49,7 +49,7 @@ public class FromSoftGameTests(ITestOutputHelper output)
         var keyFile = new SoulsKeys(data).KeyFile(game);
         if (!keysInExe && engine.Unsupported != null)
         {
-            Assert.Contains(keyFile, engine.Unsupported); // offline: Detect says where a user can put them
+            Assert.DoesNotContain(keyFile, engine.Unsupported); // offline: plain words, where a user can put them goes to the log
             output.WriteLine($"  not indexed: the archive keys couldn't be downloaded ({engine.Unsupported})");
             return;
         }

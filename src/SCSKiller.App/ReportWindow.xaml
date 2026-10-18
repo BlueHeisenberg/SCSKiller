@@ -1,0 +1,177 @@
+<Window
+    x:Class="SCSKiller.App.ReportWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:SCSKiller.App">
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+
+    <Grid x:Name="Root">
+        <!-- Screenshots only: RenderTargetBitmap can't capture Mica -->
+        <Border x:Name="ShotBackground" Visibility="Collapsed" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" />
+        <ScrollViewer x:Name="Scroller">
+            <StackPanel Padding="28,20,28,28" Spacing="16" MaxWidth="1240">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="Heading" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <Button Click="OnSave" AutomationProperties.Name="Save image">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE74E;" FontSize="14" />
+                                <TextBlock Text="Save image" />
+                            </StackPanel>
+                        </Button>
+                        <Button Click="OnCopy" AutomationProperties.Name="Copy image">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE8C8;" FontSize="14" />
+                                <TextBlock Text="Copy image" />
+                            </StackPanel>
+                        </Button>
+                        <DropDownButton Style="{StaticResource AccentButtonStyle}" AutomationProperties.Name="Share">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE72D;" FontSize="14" />
+                                <TextBlock Text="Share" />
+                            </StackPanel>
+                            <DropDownButton.Flyout>
+                                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                    <MenuFlyoutItem Text="Post on X" Click="OnX" />
+                                    <MenuFlyoutItem Text="Post on Reddit" Click="OnReddit" />
+                                    <MenuFlyoutItem Text="Copy for Discord" Click="OnDiscord" />
+                                    <MenuFlyoutItem Text="Copy text" Click="OnCopyText" />
+                                </MenuFlyout>
+                            </DropDownButton.Flyout>
+                        </DropDownButton>
+                    </StackPanel>
+                </Grid>
+
+                <InfoBar x:Name="Status" IsClosable="True" />
+
+                <!-- the share card: exported as the image (1200 × 675), dark whatever the app's theme -->
+                <Viewbox StretchDirection="DownOnly" HorizontalAlignment="Left">
+                    <Border x:Name="Card" Width="1200" Height="675" RequestedTheme="Dark"
+                            Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" Padding="48,34,48,30">
+                        <Grid RowSpacing="14">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid>
+                                <StackPanel Orientation="Horizontal" Spacing="16">
+                                    <Grid Width="56" Height="56" VerticalAlignment="Center">
+                                        <Border x:Name="CardTile" CornerRadius="10" Visibility="Collapsed">
+                                            <TextBlock x:Name="CardInitials" FontSize="20" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                        <Image x:Name="CardIcon" Width="56" Height="56" />
+                                    </Grid>
+                                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                                        <TextBlock x:Name="CardGame" FontSize="30" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="808" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="CardSub" FontSize="16" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Top">
+                                    <FontIcon Glyph="&#xE945;" FontSize="22" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                    <TextBlock Text="SCSKiller" FontSize="22" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- headline: shader compilation stutters, ready from the cache, worst stutter (DirectX 11: stutters, time frozen, worst stutter) -->
+                            <Grid Grid.Row="1" ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition />
+                                    <ColumnDefinition />
+                                    <ColumnDefinition />
+                                </Grid.ColumnDefinitions>
+                                <Border Style="{StaticResource Card}" Padding="20,12">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock x:Name="LabelStutters" Text="SHADER COMPILATION STUTTERS" Style="{StaticResource Caption}" CharacterSpacing="60" />
+                                        <TextBlock x:Name="TileStutters" FontSize="34" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Grid.Column="1" Style="{StaticResource Card}" Padding="20,12">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock x:Name="LabelReady" Text="READY FROM THE CACHE" Style="{StaticResource Caption}" CharacterSpacing="60" />
+                                        <TextBlock x:Name="TileReady" FontSize="34" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Grid.Column="2" Style="{StaticResource Card}" Padding="20,12">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock x:Name="LabelWorst" Text="WORST STUTTER" Style="{StaticResource Caption}" CharacterSpacing="60" />
+                                        <TextBlock x:Name="TileWorst" FontSize="34" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <!-- small multiples: each run its own play range, one seconds-per-pixel and one y scale -->
+                            <StackPanel Grid.Row="2" Spacing="6" VerticalAlignment="Center">
+                                <TextBlock Text="Before" Style="{StaticResource BodyStrongTextBlockStyle}" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                                <StackPanel HorizontalAlignment="Left" Spacing="2">
+                                    <local:FrameGraph x:Name="BeforeGraph" Height="104" />
+                                    <Grid x:Name="BeforeAxis">
+                                        <TextBlock Text="0:00" Style="{StaticResource Caption}" />
+                                        <TextBlock x:Name="BeforeEnd" Style="{StaticResource Caption}" HorizontalAlignment="Right" />
+                                    </Grid>
+                                </StackPanel>
+                                <TextBlock Text="After" Style="{StaticResource BodyStrongTextBlockStyle}" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Margin="0,4,0,0" />
+                                <StackPanel HorizontalAlignment="Left" Spacing="2">
+                                    <local:FrameGraph x:Name="AfterGraph" Height="104" />
+                                    <Grid x:Name="AfterAxis">
+                                        <TextBlock Text="0:00" Style="{StaticResource Caption}" />
+                                        <TextBlock x:Name="AfterEnd" Style="{StaticResource Caption}" HorizontalAlignment="Right" />
+                                    </Grid>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <Grid Grid.Row="3" ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="CardFooter" Style="{StaticResource Caption}" FontSize="14" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                                    <StackPanel x:Name="LegendShader" Orientation="Horizontal" Spacing="5">
+                                        <Ellipse Width="8" Height="8" Fill="{ThemeResource WarnBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="shader compilation stutter" Style="{StaticResource Caption}" FontSize="14" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="5">
+                                        <Ellipse Width="8" Height="8" Fill="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="LegendOther" Text="other hitch" Style="{StaticResource Caption}" FontSize="14" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <TextBlock Grid.Column="2" Text="scskiller.com" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Viewbox>
+
+                <CheckBox x:Name="ShowGpu" Content="Show my GPU on the image" Click="OnShowGpu" />
+
+                <Border Style="{StaticResource Card}" Padding="20,16">
+                    <StackPanel Spacing="12">
+                        <Grid x:Name="Details" ColumnSpacing="24" RowSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*" />
+                                <ColumnDefinition Width="Auto" MinWidth="110" />
+                                <ColumnDefinition Width="Auto" MinWidth="110" />
+                                <ColumnDefinition Width="3*" />
+                            </Grid.ColumnDefinitions>
+                        </Grid>
+                        <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
+                        <StackPanel x:Name="Notes" Spacing="6" />
+                    </StackPanel>
+                </Border>
+
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                    <Button x:Name="RecordAgain" Content="Record the after run again" Click="OnRecordAgain" />
+                    <Button Content="Start over" Click="OnStartOver" />
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>

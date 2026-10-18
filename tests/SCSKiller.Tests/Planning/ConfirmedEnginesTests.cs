@@ -29,7 +29,7 @@ public class ConfirmedEnginesTests : IDisposable
     [InlineData("4.26", "GAME_StarWarsJediSurvivor", true)] [InlineData("4.27", "GAME_HogwartsLegacy", true)]
     [InlineData("5.1", null, true)] [InlineData("5.6", null, true)] [InlineData("4.21", null, false)]
     [InlineData("4.26", "GAME_StellarBlade", false)] [InlineData("5.1", "GAME_Palworld", false)]
-    [InlineData("4.20", null, false)] [InlineData("4.25", null, false)] [InlineData("5.0", null, false)] [InlineData("5.2", null, false)]
+    [InlineData("4.20", null, false)] [InlineData("4.25", null, true)] [InlineData("5.0", null, false)] [InlineData("5.2", null, false)]
     [InlineData("5.3", null, false)] [InlineData("5.4", null, true)] [InlineData("5.5", null, false)] [InlineData("5.7", null, false)]
     public void Embedded_list_confirms_the_engines_a_game_has_shown(string version, string? fork, bool confirmed)
     {

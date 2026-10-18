@@ -22,14 +22,33 @@
             <TitleBar.IconSource>
                 <FontIconSource Glyph="&#xE945;" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
             </TitleBar.IconSource>
+            <TitleBar.Resources>
+                <!-- the template's default 48 px drag column leaves a gap between the bell and the caption buttons -->
+                <x:Double x:Key="TitleBarMinDragRegionWidth">0</x:Double>
+            </TitleBar.Resources>
             <!-- a downloaded update (Updater): quiet, never a dialog -->
             <TitleBar.RightHeader>
-                <Button x:Name="UpdateButton" Visibility="Collapsed" Click="OnRestartToUpdate" Margin="0,0,8,0" Padding="10,3">
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <FontIcon Glyph="&#xE777;" FontSize="13" />
-                        <TextBlock x:Name="UpdateText" Text="Restart to update" FontSize="13" />
-                    </StackPanel>
-                </Button>
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <Button x:Name="UpdateButton" Visibility="Collapsed" Click="OnRestartToUpdate" Padding="10,3">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE777;" FontSize="13" />
+                            <TextBlock x:Name="UpdateText" Text="Restart to update" FontSize="13" />
+                        </StackPanel>
+                    </Button>
+                    <!-- 46 px: the system caption-button width, so the bell sits flush against min/max/close -->
+                    <Button x:Name="BellButton" Background="Transparent" BorderThickness="0" Padding="0"
+                            Width="46" VerticalAlignment="Stretch"
+                            ToolTipService.ToolTip="Notifications" AutomationProperties.Name="Notifications">
+                        <!-- sized to hold the badge, which hangs off the glyph's top-right corner; negative margins would clip it -->
+                        <Grid Width="32" Height="32" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xEA8F;" FontSize="16" />
+                            <InfoBadge x:Name="BellBadge" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Top" />
+                        </Grid>
+                        <Button.Flyout>
+                            <Flyout x:Name="BellFlyout" Placement="BottomEdgeAlignedRight" Opening="OnBellOpening" />
+                        </Button.Flyout>
+                    </Button>
+                </StackPanel>
             </TitleBar.RightHeader>
         </TitleBar>
 
@@ -43,6 +62,9 @@
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="QueueItem" Content="Compile queue">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE8FD;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="CacheItem" Content="Cache">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xEDA2;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="SettingsItem" Content="Settings">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE713;" /></NavigationViewItem.Icon>

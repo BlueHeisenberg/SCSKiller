@@ -26,7 +26,7 @@ public sealed record RehydrateResult(int Referenced, int AlreadyPresent, int Fou
 /// (blobs before the PSOs that use them, as the proxy expects). Written to a temp file and moved into place.</summary>
 public static class Rehydrate
 {
-    /// <summary>Every non-zero blob hash the records reference (stages + root signatures of 'G'/'C'/'S', 'P' items, '1' / '2' D3D11 items,
+    /// <summary>Every non-zero blob hash the records reference (stages + root signatures of 'G'/'C'/'S', 'P' items, '1' / '2' / '3' D3D11 items, 'D' D3D11 draws,
     /// DXIL libraries + root signatures of 'R'/'A' state objects).</summary>
     public static HashSet<string> References(IEnumerable<Rec> records)
     {
@@ -38,6 +38,7 @@ public static class Rehydrate
                 case 'P': { var (_, rs, st) = ParseItem(r.Payload); refs.UnionWith(st.Values); refs.Add(rs); break; }
                 case '1': refs.Add(Hex(r.Payload.AsSpan(4, 20))); break;
                 case '2': refs.Add(Hex(r.Payload.AsSpan(0, 20))); refs.Add(Hex(r.Payload.AsSpan(20, 20))); break;
+                case 'D' or '3': { var d = ParseDraw11(r.Payload); refs.UnionWith([d.Vs, d.Gs, d.Hs, d.Ds]); break; }
                 case 'R' or 'A': { var so = ParseStateObject(r); refs.UnionWith(so.Libraries); refs.UnionWith(so.RootSignatures); break; } // not Depends: records, not blobs
                 case 'Y': { var y = RtCollections.ParseItem(r.Payload); refs.UnionWith([y.Library, y.Global, y.LocalRayGen, y.LocalOther]); break; }
                 case 'H': { var h = RedEngine.RedRayTracing.ParseItem(r.Payload); refs.UnionWith([h.ClosestHit, h.AnyHit ?? Zero, h.Shape.Global, h.Local]); break; }

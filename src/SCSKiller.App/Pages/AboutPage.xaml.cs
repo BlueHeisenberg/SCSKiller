@@ -20,6 +20,11 @@ public sealed partial class AboutPage : Page
 
     async void OnSource(object _, Microsoft.UI.Xaml.RoutedEventArgs __) => await Vm.GetSourceAsync();
 
+    async void OnWhatsNew(object _, Microsoft.UI.Xaml.RoutedEventArgs __)
+    {
+        if (WhatsNew.ForAbout(AppVersion.Current) is { } section) await App.ShowWhatsNewAsync(XamlRoot, section);
+    }
+
     /// <summary>--screenshots: the trademarks open, or the first component's licence (scrolled to it).</summary>
     public void ShowExpanded(bool licence)
     {
@@ -91,10 +96,11 @@ public sealed class AboutVm : Bindable
 
     // "Check for updates": every installed build (the design data shows it too); the state of the update next to it.
     public bool ShowsCheck { get; } = Updater.Installed || App.Core is Design.FakeScsKiller;
+    public bool ShowsAutoInstall => ShowsCheck && Updater.Channel != UpdateChannels.Internal;
     public bool CanCheck => !Updater.Checking && !Updater.Restarting;
     public string UpdateNote => Updater.Downloading is { } d ? $"Downloading SCSKiller {d}…"
         : Updater.Checking ? "Checking for updates…"
-        : Updater.Ready is { } v ? AutoInstall.ReadyNote(v, App.Core.Settings)
+        : Updater.Ready is { } v ? AutoInstall.ReadyNote(v, Updater.InstallsAutomatically)
         : Updater.UpToDate ? "SCSKiller is up to date." : "";
     public string? UpdateProblem => Updater.Problem;
     public bool HasUpdateProblem => Updater.Problem != null;

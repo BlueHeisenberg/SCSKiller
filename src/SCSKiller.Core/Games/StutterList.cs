@@ -14,7 +14,7 @@ public sealed class StutterList
     /// <summary>The source of an entry SCSKiller measured itself; any other source is an https URL.</summary>
     public const string OwnMeasurement = "SCSKiller measurement";
     public const int MaxBytes = ContentFile.MaxBytes, MaxGames = 200;
-    static readonly string[] Stores = ["steam", "xbox", "epic", "ea", "gog", "ubisoft", "battlenet", "purple"];
+    static readonly string[] Stores = ["steam", "xbox", "epic", "ea", "gog", "ubisoft", "battlenet", "purple", "hoyoplay", "gaijin", "riot"];
 
     sealed record Entry(string Name, string[] Ids, string Severity, string Reason, string Source, string Date);
     sealed record ListFile(Entry[] Games, string? About = null);
@@ -50,12 +50,12 @@ public sealed class StutterList
 
     static bool Text(string? s, int max) => ContentFile.Text(s, max);
 
-    static bool IsId(string? id) =>
+    internal static bool IsId(string? id) =>
         id is { Length: <= 120 } && id.IndexOf(':') is var c and > 0 && Stores.Contains(id[..c]) && id.Length > c + 1
         && id[(c + 1)..].All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '.' or '_' or '-')
         && (id[..c] != "steam" || id[(c + 1)..].All(char.IsAsciiDigit));
 
-    static bool IsHttps(string url) =>
+    internal static bool IsHttps(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps && u.IsDefaultPort && u.UserInfo.Length == 0;
 
     public static StutterList Embedded { get => field ??= TryParse(ContentFile.Embedded("SCSKiller.Core.Games.known-stutter.json"))!; }

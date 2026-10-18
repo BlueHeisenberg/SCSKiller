@@ -1,4 +1,5 @@
-; Raw jmp forwarders to the system d3d12.dll; pointers are resolved in DllMain (proxy.cpp).
+; Raw jmp forwarders to the system d3d12.dll, or d3d11.dll when this dll is loaded as d3d11.dll (the D3D11 recorder);
+; pointers are resolved in DllMain (proxy.cpp).
 STUB MACRO name
     EXTERN real_&name:QWORD
     stub_&name PROC
@@ -24,4 +25,53 @@ STUB D3D12SerializeVersionedRootSignature
 STUB GetBehaviorValue
 STUB SetAppCompatStringPointer
 STUB Ordinal99
+STUB CreateDirect3D11DeviceFromDXGIDevice
+STUB CreateDirect3D11SurfaceFromDXGISurface
+STUB D3D11CoreCreateDevice
+STUB D3D11CoreCreateLayeredDevice
+STUB D3D11CoreGetLayeredDeviceSize
+STUB D3D11CoreRegisterLayers
+STUB D3D11CreateDeviceForD3D12
+STUB D3D11On12CreateDevice
+STUB D3DKMTCloseAdapter
+STUB D3DKMTCreateAllocation
+STUB D3DKMTCreateContext
+STUB D3DKMTCreateDevice
+STUB D3DKMTCreateSynchronizationObject
+STUB D3DKMTDestroyAllocation
+STUB D3DKMTDestroyContext
+STUB D3DKMTDestroyDevice
+STUB D3DKMTDestroySynchronizationObject
+STUB D3DKMTEscape
+STUB D3DKMTGetContextSchedulingPriority
+STUB D3DKMTGetDeviceState
+STUB D3DKMTGetDisplayModeList
+STUB D3DKMTGetMultisampleMethodList
+STUB D3DKMTGetRuntimeData
+STUB D3DKMTGetSharedPrimaryHandle
+STUB D3DKMTLock
+STUB D3DKMTOpenAdapterFromHdc
+STUB D3DKMTOpenResource
+STUB D3DKMTPresent
+STUB D3DKMTQueryAdapterInfo
+STUB D3DKMTQueryAllocationResidency
+STUB D3DKMTQueryResourceInfo
+STUB D3DKMTRender
+STUB D3DKMTSetAllocationPriority
+STUB D3DKMTSetContextSchedulingPriority
+STUB D3DKMTSetDisplayMode
+STUB D3DKMTSetDisplayPrivateDriverFormat
+STUB D3DKMTSetGammaRamp
+STUB D3DKMTSetVidPnSourceOwner
+STUB D3DKMTSignalSynchronizationObject
+STUB D3DKMTUnlock
+STUB D3DKMTWaitForSynchronizationObject
+STUB D3DKMTWaitForVerticalBlankEvent
+STUB D3DPerformance_BeginEvent
+STUB D3DPerformance_EndEvent
+STUB D3DPerformance_GetStatus
+STUB D3DPerformance_SetMarker
+STUB EnableFeatureLevelUpgrade
+STUB OpenAdapter10
+STUB OpenAdapter10_2
 END

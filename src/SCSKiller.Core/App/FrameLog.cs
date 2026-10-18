@@ -1,6 +1,6 @@
 namespace SCSKiller.Core.App;
 
-/// <summary>Reads the recorder's scskiller_frames.bin (ARCHITECTURE.md "scskiller_frames.bin") with its
+/// <summary>Reads the recorder's scskiller_frames.bin (written by the frame writer in proxy.cpp) with its
 /// scskiller_creates.csv and says which slow frames were shader compiles. Both files count in the recorder's own clock
 /// (ms since it loaded: a launch record's microseconds, the csv's t_ms), so a create and a frame line up without any
 /// alignment step.</summary>
@@ -13,32 +13,36 @@ public static class FrameLog
     const int LoadCreates = 100;         // measured: loads and precompiles overlap 130-1,700 creates, play stutters 11-36
     const int StartupQuietCreates = 30;  // startup ends at the first 3 s with fewer creates
     const double PauseMs = 5000;         // a play frame this long without a create: the game paused or minimized
-    const double QuitMs = 10_000;        // measured: an Unreal game's quit freeze starts 6-7 s before its last frame
+    public const double QuitMs = 10_000;  // measured: an Unreal game's quit freeze starts 6-7 s before its last frame
     const int BurstCreates = 100;        // a second with this many creates is a precompile or a load
     const double BurstGapMs = 10_000;    // measured: a title screen's second burst 5 s after the first; a level load 100 s and more
     const double ColdCompileMs = 100;    // measured: a compiled run's load creates stay under 100 ms, cold compiles' median is 159 ms
     const int LoadThreads = 8;           // a draw-time miss blocks the render thread or a few; a parallel precache or load spans 21-47
 
-    sealed record Launch(long UnixMs, List<double> Ends);
+    sealed record Launch(long UnixMs, List<double> Ends, List<double>? Displayed = null);
     sealed record Create(double End, double Ms, char Kind, string Key, long? Tid, bool Presents);
 
     /// <summary>The report of the last launch with frames, or of the last whose csv launch names
     /// <paramref name="exeFileName"/>; null without frames. <paramref name="rayQuery"/>: RayQuery PSO keys, whose creates
     /// up to <see cref="SessionLog.RayQueryFloorMs"/> are the driver's floor, never a stutter. <paramref name="played"/>:
-    /// the game's last watched run, for the launch's end (<see cref="SessionEnd"/>).</summary>
+    /// the game's last watched run, for the launch's end (<see cref="SessionEnd"/>). <paramref name="playCapMs"/>: a before and
+    /// after run's length: play counts from the launch's first present, loading and pauses included, and the report ends at
+    /// the frame where this much play was reached.</summary>
     public static FrameReport? Read(string framesPath, string csvPath, string? exeFileName = null, IReadOnlySet<string>? rayQuery = null,
-        PlayWindow? played = null)
+        PlayWindow? played = null, double? playCapMs = null)
     {
         if (!File.Exists(framesPath)) return null;
         var launches = ReadFrames(framesPath);
-        var sessions = SessionLog.Launches(csvPath).Where(x => x.Start != null).ToList();
+        // the csv's last launch first: a running game's, read again at every poll, without the whole csv
+        var last = SessionLog.Launches(csvPath, SessionLog.LastSessionAt(csvPath)).Where(x => x.StartT != null).ToList();
+        List<SessionLog.CsvLaunch>? sessions = null;
         for (int i = launches.Count - 1; i >= 0; i--)
         {
             var l = launches[i];
             if (l.Ends.Count < 2) continue;
-            var s = OwnerOf(sessions, l.UnixMs);
+            var s = last.FirstOrDefault(x => x.Start == l.UnixMs) ?? OwnerOf(sessions ??= SessionLog.Launches(csvPath).Where(x => x.Start != null).ToList(), l.UnixMs);
             if (s != null && SessionLog.OtherExe(s.Exe, exeFileName)) continue;
-            return Report(l, s, rayQuery, played);
+            return Report(l, s, rayQuery, played, playCapMs);
         }
         return null;
     }
@@ -68,11 +72,10 @@ public static class FrameLog
         return near.FirstOrDefault(l => l.StartT != null && l.Start == launchUnix) ?? (near is [{ StartT: null } only] ? only : null);
     }
 
-    static FrameReport Report(Launch l, SessionLog.CsvLaunch? session, IReadOnlySet<string>? rayQuery, PlayWindow? played)
+    static FrameReport Report(Launch l, SessionLog.CsvLaunch? session, IReadOnlySet<string>? rayQuery, PlayWindow? played, double? playCapMs)
     {
         var creates = session?.Creates.Select(c => new Create(c.T, c.Ms, c.Kind, c.Key ?? "", c.Tid, c.Presents)).ToList() ?? [];
         creates.Sort((a, b) => a.End.CompareTo(b.End));
-        double longest = creates.Count > 0 ? creates.Max(c => c.Ms) : 0;
         double end = SessionEnd(session, l.Ends[^1], played);
         double startup = StartupEnd(creates.Select(c => (c.End, c.Kind, c.Ms, (string?)c.Key)), rayQuery, end, out var firstQuiet), shared = startup;
         // the slow-frame extension below never moves startup over a compile the last session counts as play
@@ -88,18 +91,19 @@ public static class FrameLog
             bool compile = false, shader = false, presenter = false;
             double cold = 0;
             var threads = new HashSet<long>();
-            // creates ending inside the frame or up to the longest create after it; the ones that started by its end overlap
-            for (int j = LowerBound(ends, s); j < creates.Count && creates[j].End <= s + ms + longest; j++)
+            // only the creates that end in the frame, so each counts for one frame at most: a long one on a worker thread
+            // overlaps slow frames it didn't cause
+            for (int j = LowerBound(ends, s); j < creates.Count && creates[j].End <= s + ms; j++)
             {
                 var c = creates[j];
-                if (c.End - c.Ms > s + ms) continue;
+                if (c.End <= s) continue;
                 n++;
                 if (c.Tid is { } tid) threads.Add(tid);
                 presenter |= c.Presents;
                 if (!SessionLog.IsCompile(c.Kind, c.Ms, c.Key, rayQuery)) continue;   // a library load, a cache hit or the RayQuery floor
                 compile = true;
                 shader |= Blocks(c.Kind, c.Ms);
-                if (c.Ms >= ColdCompileMs) cold += c.Ms;
+                if (c.Ms >= ColdCompileMs) cold += c.End - Math.Max(c.End - c.Ms, s);   // its time in the frame
             }
             slow.Add((s, ms, n, compile, shader, cold, Parallel(threads.Count, presenter)));
         }
@@ -108,6 +112,7 @@ public static class FrameLog
         foreach (var f in slow)
             if (f.N == 0 && f.S < shared && !InStartup(f.S + f.Ms, shared) && InStartup(f.S + f.Ms, Allowance(firstQuiet)) && f.S + f.Ms < firstPlay)
                 startup = Math.Max(startup, f.S + f.Ms);
+        if (playCapMs != null) startup = l.Ends[0];
         var hitches = new List<Hitch>();
         var paused = new HashSet<double>();
         foreach (var (s, ms, n, compile, shader, cold, parallel) in slow)
@@ -118,11 +123,27 @@ public static class FrameLog
                 : compile && parallel ? HitchCause.Loading   // a precache or load on many threads, none the one that presents
                 : compiles ? HitchCause.Shader   // a load in play that compiles: the shader cost the player feels
                 : n >= LoadCreates ? HitchCause.Loading : shader ? HitchCause.Shader : HitchCause.Other;
-            if (cause == HitchCause.Other && ms >= PauseMs && !compile) { paused.Add(s); continue; }   // a pause: nothing compiled
+            if (playCapMs == null && cause == HitchCause.Other && ms >= PauseMs && !compile) { paused.Add(s); continue; }   // a pause: nothing compiled
             hitches.Add(new Hitch(TimeSpan.FromMilliseconds(s), ms, cause));
         }
         // a pause isn't play; a long shader freeze is
-        var play = frames.Where(f => InPlay(f.Start, f.Ms, startup) && f.Start < quit && !paused.Contains(f.Start)).Select(f => f.Ms).OrderDescending().ToList();
+        var inPlay = frames.Where(f => InPlay(f.Start, f.Ms, startup) && f.Start < quit && !paused.Contains(f.Start)).ToList();
+        double cut = double.PositiveInfinity, sum = 0;
+        if (playCapMs is { } cap)
+            foreach (var f in inPlay)
+            {
+                if (sum >= cap) { cut = f.Start; break; }
+                sum += f.Ms;
+            }
+        if (cut < end)
+        {
+            // FrameData.Play ends QuitMs before Duration: there, at the cut
+            end = cut + QuitMs;
+            frames = [.. frames.Where(f => f.Start < cut)];
+            hitches.RemoveAll(h => h.At >= TimeSpan.FromMilliseconds(cut));
+        }
+        var play = inPlay.Where(f => f.Start < cut).Select(f => f.Ms).OrderDescending().ToList();
+        double playSeconds = play.Sum() / 1000;
         var slowest = play.Take(Math.Max(1, play.Count / 100)).ToList();
         double low = slowest.Count > 0 ? 1000 * slowest.Count / slowest.Sum() : 0;
         var peaks = new float[GraphColumns];
@@ -131,9 +152,23 @@ public static class FrameLog
             int c = Math.Clamp((int)(s / end * GraphColumns), 0, GraphColumns - 1);
             peaks[c] = Math.Max(peaks[c], (float)ms);
         }
-        return new FrameReport(TimeSpan.FromMilliseconds(end), TimeSpan.FromMilliseconds(Math.Min(startup, end)),
-            frames.Count, low, hitches, peaks, l.UnixMs);
+        var report = new FrameReport(TimeSpan.FromMilliseconds(end), TimeSpan.FromMilliseconds(Math.Min(startup, end)),
+            frames.Count, low, hitches, peaks, l.UnixMs,
+            PlaySeconds: playSeconds, AvgFps: playSeconds > 0 ? play.Count / playSeconds : 0,
+            Creates: session != null ? SessionLog.CreatesOf(session, rayQuery, Math.Min(startup, end), cut) : null,
+            DisplayedFrames: l.Displayed?.Count ?? 0, Displayed: l.Displayed);
+        if (session != null) Contexts.AddOrUpdate(report, new LaunchContext(session.SwapChain, session.Overlay, session.End != null, session.D3D11, session.FrameGen));
+        return report;
     }
+
+    /// <summary>What a report's csv launch said beyond its creates, for its session snapshot.</summary>
+    internal sealed record LaunchContext(string? SwapChain, bool Overlay, bool Ended, bool D3D11, bool FrameGen);
+
+    // kept beside the report rather than in it: FrameReport stays the game page's, and the csv isn't parsed twice
+    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<FrameReport, LaunchContext> Contexts = new();
+
+    /// <summary>The csv launch's context of a report <see cref="Read"/> made; null without a csv launch.</summary>
+    internal static LaunchContext? ContextOf(FrameReport r) => Contexts.TryGetValue(r, out var c) ? c : null;
 
     /// <summary>A create or frame ending at <paramref name="end"/> is startup's: the one comparison both reports use.</summary>
     internal static bool InStartup(double end, double startup) => end <= startup;
@@ -233,7 +268,14 @@ public static class FrameLog
 
     /// <summary>u32 records: 0xFFFFFFFF + u64 unix_ms (the csv's #session stamp), u64 us since the recorder loaded, u64 QPC, u64 QPC frequency opens a
     /// launch; top 4 bits 0-14 = a frame of that swap chain, the low 28 bits the microseconds since the previous record;
-    /// top 4 bits 15 = no frame for the low 28 bits' milliseconds. Frames of the launch's busiest swap chain only.</summary>
+    /// top 4 bits 15 = no frame for the low 28 bits' milliseconds, or with those under <see cref="TagEnd"/> a tagged record:
+    /// tags 0-14 = that swap chain is frame generation's, its frames the ones the game renders; any other tag is skipped.
+    /// Frames of the launch's busiest swap chain; with frame generation, the busiest other one's until its first frame, then
+    /// those of every tagged one, and every other one's frames are the displayed ones (generated ones too).</summary>
+    /// <summary>A gap record is written only for 2^28 us or more: its milliseconds are never under this, so those values
+    /// are tags (ARCHITECTURE.md "scskiller_frames.bin"), which a reader from before them takes for a gap of under 268 s.</summary>
+    internal const uint TagEnd = (1u << 28) / 1000;
+
     static List<Launch> ReadFrames(string path)
     {
         var launches = new List<Launch>();
@@ -246,7 +288,20 @@ public static class FrameLog
         long unix = 0, t = 0;
         double start = 0;
         Dictionary<uint, List<double>>? chains = null;
-        void Close() { if (chains != null) launches.Add(new Launch(unix, chains.Values.MaxBy(c => c.Count) ?? [])); }
+        HashSet<uint> games = [];   // a launch that made frame generation's swap chain again (a resize) has one tag per swap chain
+        void Close()
+        {
+            if (chains == null) return;
+            var own = chains.Where(c => games.Contains(c.Key)).SelectMany(c => c.Value).Order().ToList();
+            if (own.Count == 0)
+            {
+                launches.Add(new Launch(unix, chains.Values.MaxBy(c => c.Count) ?? []));
+                return;
+            }
+            var others = chains.Where(c => !games.Contains(c.Key)).Select(c => c.Value).ToList();
+            var before = others.Select(c => c.Where(t => t < own[0]).ToList()).MaxBy(c => c.Count) ?? [];
+            launches.Add(new Launch(unix, [.. before, .. own], [.. others.SelectMany(c => c).Order()]));
+        }
         for (int i = 0; i + 4 <= data.Length; i += 4)
         {
             uint r = BitConverter.ToUInt32(data, i);
@@ -256,10 +311,14 @@ public static class FrameLog
                 Close();
                 unix = BitConverter.ToInt64(data, i + 4);
                 start = BitConverter.ToInt64(data, i + 12) / 1000.0;
-                (t, chains) = (0, []);
+                (t, chains, games) = (0, [], []);
                 i += 32;
             }
             else if (chains == null) continue;
+            else if (r >> 28 == 15 && (r & 0x0FFFFFFF) < TagEnd)
+            {
+                if ((r & 0x0FFFFFFF) < 15) games.Add(r & 0x0FFFFFFF);
+            }
             else if (r >> 28 == 15) t += (r & 0x0FFFFFFF) * 1000L;
             else
             {

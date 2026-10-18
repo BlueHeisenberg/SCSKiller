@@ -51,7 +51,7 @@ public sealed class WarmJob : IDisposable
 
     public bool Contains(int pid)
     {
-        var h = OpenProcess(0x1000, false, pid);
+        var h = OpenProcess(0x0400 /* PROCESS_QUERY_INFORMATION: Wine's IsProcessInJob needs it */ | 0x1000, false, pid);
         if (h == 0) return false;
         try { return IsProcessInJob(h, _job, out var inJob) && inJob; }
         finally { CloseHandle(h); }

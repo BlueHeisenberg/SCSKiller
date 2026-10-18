@@ -3,7 +3,7 @@
   "paragraphs": [
     "SCSKiller is free and open source. Everything it does on your PC is free, with no account needed.",
     "Patreon supporters get access to the community shader hash database and to beta and alpha builds. Patreon pays for the servers that run it.",
-    "Once a day the app tells our server that an install is active, with its version and GPU vendor and no identifier; you can turn that off in Settings."
+    "Once a day the app can tell our server that an install is active, with its version and GPU vendor and no identifier. This helps us count active installs so we can size our servers. You can turn this on or off in Settings."
   ],
   "link": { "text": "About supporting SCSKiller", "url": "https://scskiller.com/support" },
   "share": "Help improve the community shader hash database (shared anonymously)",

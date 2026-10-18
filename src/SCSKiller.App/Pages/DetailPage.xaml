@@ -53,10 +53,11 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button Content="Rename…" Click="OnRename" Visibility="{x:Bind Vm.IsManual, Mode=OneWay}"
+                            ToolTipService.ToolTip="The name SCSKiller shows for this game" />
                     <Button Content="Game folder…" Click="OnGameFolder" Visibility="{x:Bind Vm.IsManual, Mode=OneWay}"
                             ToolTipService.ToolTip="The folder SCSKiller checks for anti-cheat before it records this game" />
-                    <Button Content="Remove from library" Click="OnRemoveGame" Visibility="{x:Bind Vm.IsManual, Mode=OneWay}"
-                            ToolTipService.ToolTip="Forget this game. Its recorder leaves the game folder; the game's own files stay." />
+                    <Button Content="Remove from library" Click="OnRemoveGame" ToolTipService.ToolTip="{x:Bind Vm.RemoveTip, Mode=OneWay}" />
                     <Grid Background="Transparent" ToolTipService.ToolTip="{x:Bind Vm.PlayTip, Mode=OneWay}" Visibility="{x:Bind Vm.ShowPlay, Mode=OneWay}">
                         <Button Content="{x:Bind Vm.PlayText, Mode=OneWay}" Click="{x:Bind Vm.Play}" IsEnabled="{x:Bind Vm.CanPlay, Mode=OneWay}" />
                     </Grid>
@@ -76,43 +77,79 @@
                 </StackPanel>
             </Grid>
 
-            <!-- status: the game's state and why, with the actions beside it -->
+            <!-- status: the game's state and why; under it every action on one row, right-aligned (wrapping only on a narrow
+                 window), then the before and after recording's note on its own line -->
             <Border Style="{StaticResource Card}" Padding="20,16">
-                <Grid ColumnSpacing="16">
+                <Grid ColumnSpacing="16" RowSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition />
-                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
                     <TextBlock Text="{x:Bind Vm.StatusGlyph, Mode=OneWay}" Style="{x:Bind Vm.Row.StatusStyle, Mode=OneWay}"
                                FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="24" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
                     <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                         <TextBlock Text="{x:Bind Vm.StatusTitle, Mode=OneWay}" Style="{x:Bind Vm.Row.StatusStyle, Mode=OneWay}" FontSize="20" TextWrapping="Wrap" />
                         <TextBlock Text="{x:Bind Vm.StatusReason, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                         <TextBlock Text="{x:Bind Vm.GuessNote, Mode=OneWay}" Visibility="{x:Bind Vm.HasGuessNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind Vm.HasKeptCache, Mode=OneWay}">
+                            <TextBlock Text="{x:Bind Vm.KeptCacheNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            <HyperlinkButton Content="Clear it" Padding="0" Click="OnClearCache" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <StackPanel Spacing="2" Margin="0,4,0,0" Visibility="{x:Bind Vm.HasMaximumLine, Mode=OneWay}">
+                            <TextBlock Text="{x:Bind Vm.MaximumLine, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                            <TextBlock Text="{x:Bind Vm.MaximumNote, Mode=OneWay}" Visibility="{x:Bind Vm.HasMaximumNote, Mode=OneWay}" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                            <HyperlinkButton Content="{x:Bind Vm.MaximumAction, Mode=OneWay}" Padding="0" Click="OnGameMaximum" IsEnabled="{x:Bind Vm.CanSetMaximum, Mode=OneWay}" />
+                        </StackPanel>
+                        <ProgressBar Margin="0,6,0,0" Value="{x:Bind Vm.Percent, Mode=OneWay}" IsIndeterminate="{x:Bind Vm.Indeterminate, Mode=OneWay}"
+                                     Visibility="{x:Bind Vm.IsCompiling, Mode=OneWay}" AutomationProperties.Name="Compile progress" />
                     </StackPanel>
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <local:WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Spacing="8" LineAlignment="Right">
                         <Button Content="Why?" Click="OnPartlyWhy" Visibility="{x:Bind Vm.IsPartlyCompiled, Mode=OneWay}" />
+                        <Button Content="Set AES key" Click="OnSetAesKey" Visibility="{x:Bind Vm.NeedsAesKey, Mode=OneWay}" Style="{StaticResource AccentButtonStyle}" />
                         <Button Click="{x:Bind Vm.RefreshGame}" IsEnabled="{x:Bind Vm.CanRefresh, Mode=OneWay}" AutomationProperties.Name="Refresh"
-                                ToolTipService.ToolTip="Re-read this game's cache size, recording and last session">
+                                ToolTipService.ToolTip="Re-read this game's cache size, recording and last session" VerticalAlignment="Stretch">
                             <FontIcon Glyph="&#xE72C;" FontSize="14" />
                         </Button>
                         <!-- tooltip on a hit-testable wrapper: a disabled button shows none -->
-                        <Grid Background="Transparent" ToolTipService.ToolTip="{x:Bind Vm.ClearCacheTip, Mode=OneWay}" Visibility="{x:Bind Vm.ShowClearCache, Mode=OneWay}">
-                            <Button Content="{x:Bind Vm.ClearCacheText, Mode=OneWay}" Click="OnClearCache" IsEnabled="{x:Bind Vm.HasCache, Mode=OneWay}" />
+                        <Grid Background="Transparent" ToolTipService.ToolTip="{x:Bind Vm.ReportTip, Mode=OneWay}">
+                            <Button Content="Rate this compile" Click="OnSendReport" IsEnabled="{x:Bind Vm.CanReport, Mode=OneWay}" />
                         </Grid>
-                        <Button Style="{x:Bind Vm.CompileStyle, Mode=OneWay}" Click="OnCompile"
-                                Visibility="{x:Bind Vm.CanCompile, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanAdd, Mode=OneWay}">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE945;" FontSize="14" />
-                                <TextBlock Text="{x:Bind Vm.AddText, Mode=OneWay}" />
-                            </StackPanel>
-                        </Button>
-                    </StackPanel>
+                        <Button Content="Report a problem" Click="OnReportProblem" ToolTipService.ToolTip="Send the SCSKiller team what went wrong with this game" />
+                        <Grid Background="Transparent" ToolTipService.ToolTip="{x:Bind Vm.ClearCacheTip, Mode=OneWay}" Visibility="{x:Bind Vm.ShowClearCache, Mode=OneWay}">
+                            <Button Content="{x:Bind Vm.ClearCacheText, Mode=OneWay}" Click="OnClearCache" IsEnabled="{x:Bind Vm.CanClearCache, Mode=OneWay}" />
+                        </Grid>
+                        <Button Content="Max compile" Click="OnMaxCompile" Visibility="{x:Bind Vm.CanCompile, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanAdd, Mode=OneWay}"
+                                ToolTipService.ToolTip="Compiles every combination of this game's shaders, once" />
+                        <Grid Background="Transparent" ToolTipService.ToolTip="{x:Bind Vm.CompileTip, Mode=OneWay}" Visibility="{x:Bind Vm.CanCompile, Mode=OneWay}">
+                            <Button Style="{x:Bind Vm.CompileStyle, Mode=OneWay}" Click="OnCompile" IsEnabled="{x:Bind Vm.CanAdd, Mode=OneWay}">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE945;" FontSize="14" />
+                                    <TextBlock Text="{x:Bind Vm.AddText, Mode=OneWay}" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                        <!-- before and after recording: its button, then the actions of its stage -->
+                        <Grid Background="Transparent" ToolTipService.ToolTip="{x:Bind Vm.BaTip, Mode=OneWay}" Visibility="{x:Bind Vm.ShowBa, Mode=OneWay}">
+                            <Button Content="{x:Bind Vm.BaText, Mode=OneWay}" Style="{x:Bind Vm.BaStyle, Mode=OneWay}" IsEnabled="{x:Bind Vm.BaEnabled, Mode=OneWay}" Click="OnBeforeAfter"
+                                    AutomationProperties.HelpText="{x:Bind Vm.BaTip, Mode=OneWay}" />
+                        </Grid>
+                        <Button Content="Compile again" Click="OnBaCompileAgain" Visibility="{x:Bind Vm.BaCompileAgain, Mode=OneWay}" />
+                        <Button Content="Record the after run again" Click="OnBaRecordAgain" Visibility="{x:Bind Vm.BaDone, Mode=OneWay}" />
+                        <Button Content="Start over" Click="OnBaStartOver" Visibility="{x:Bind Vm.BaDone, Mode=OneWay}" />
+                        <Button Content="How it works" Click="OnBaHowItWorks" Visibility="{x:Bind Vm.BaHasMenu, Mode=OneWay}" />
+                        <Button Content="Cancel the before and after recording" Click="OnBaCancel" Visibility="{x:Bind Vm.BaInProgress, Mode=OneWay}" />
+                    </local:WrapPanel>
+                    <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="{x:Bind Vm.BaNote, Mode=OneWay}" Visibility="{x:Bind Vm.HasBaNote, Mode=OneWay}"
+                               Style="{StaticResource Caption}" TextWrapping="Wrap" TextAlignment="Right" />
                 </Grid>
             </Border>
 
-            <!-- known to stutter: a slim full-width strip under the status, the reason and its source inline -->
+            <!-- stutters without a compile: a slim full-width strip under the status, the reason and its source inline -->
             <Border Style="{StaticResource Card}" Padding="20,10" Visibility="{x:Bind Vm.IsKnownStutter, Mode=OneWay}">
                 <Grid ColumnSpacing="12">
                     <Grid.ColumnDefinitions>
@@ -121,7 +158,7 @@
                     </Grid.ColumnDefinitions>
                     <FontIcon Glyph="&#xE7BA;" FontSize="16" Foreground="{ThemeResource WarnBrush}" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1" TextWrapping="Wrap" VerticalAlignment="Center">
-                        <Run Text="Known to stutter" Foreground="{ThemeResource WarnBrush}" FontWeight="SemiBold" /><Run Text=" · " /><Run Text="{x:Bind Vm.StutterReason, Mode=OneWay}" /><Run Text="  " /><Run Text="{x:Bind Vm.StutterCitation, Mode=OneWay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><Hyperlink NavigateUri="{x:Bind Vm.StutterUri, Mode=OneWay}"><Run Text="{x:Bind Vm.StutterLinkText, Mode=OneWay}" /></Hyperlink>
+                        <Run Text="Stutters without a compile" Foreground="{ThemeResource WarnBrush}" FontWeight="SemiBold" /><Run Text=" · " /><Run Text="{x:Bind Vm.StutterReason, Mode=OneWay}" /><Run Text="  " /><Run Text="{x:Bind Vm.StutterCitation, Mode=OneWay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /><Hyperlink NavigateUri="{x:Bind Vm.StutterUri, Mode=OneWay}"><Run Text="{x:Bind Vm.StutterLinkText, Mode=OneWay}" /></Hyperlink>
                     </TextBlock>
                 </Grid>
             </Border>
@@ -139,6 +176,28 @@
                 </Grid>
             </Border>
 
+            <!-- what players with a similar system reported (the public compat aggregate) -->
+            <Border Style="{StaticResource Card}" Padding="20,10" Visibility="{x:Bind Vm.HasSimilar, Mode=OneWay}">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE716;" FontSize="16" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{x:Bind Vm.SimilarText, Mode=OneWay}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource Card}" Padding="20,10" Visibility="{x:Bind Vm.HasSimilarWarning, Mode=OneWay}">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE7BA;" FontSize="16" Foreground="{ThemeResource WarnBrush}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{x:Bind Vm.SimilarText, Mode=OneWay}" Foreground="{ThemeResource WarnBrush}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+
             <!-- tags: wrap to new lines instead of clipping -->
             <local:WrapPanel Spacing="8">
                 <Border Style="{StaticResource Chip}">
@@ -147,13 +206,20 @@
                 <Border Style="{StaticResource Chip}" Visibility="{x:Bind Vm.HasApi, Mode=OneWay}">
                     <TextBlock Text="{x:Bind Vm.ApiChip, Mode=OneWay}" Style="{StaticResource ChipText}" />
                 </Border>
+                <ComboBox ItemsSource="{x:Bind Vm.ApiItems, Mode=OneWay}" SelectedIndex="{x:Bind Vm.ApiIndex, Mode=OneWay}" SelectionChanged="OnApiPicked"
+                          Visibility="{x:Bind Vm.ShowApiPicker, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanPickApi, Mode=OneWay}" FontSize="12" MinHeight="0" Padding="10,2,0,3"
+                          AutomationProperties.Name="DirectX" ToolTipService.ToolTip="The DirectX SCSKiller compiles for. Auto uses the detected one." />
                 <Border Style="{StaticResource Chip}" Visibility="{x:Bind Vm.HasMiddleware, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind Vm.MiddlewareTip, Mode=OneWay}">
                     <TextBlock Text="{x:Bind Vm.MiddlewareChip, Mode=OneWay}" Style="{StaticResource ChipText}" />
+                </Border>
+                <Border Style="{StaticResource Chip}" Visibility="{x:Bind Vm.HasModChip, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind Vm.ModTip, Mode=OneWay}">
+                    <TextBlock Text="{x:Bind Vm.ModChip, Mode=OneWay}" Style="{StaticResource ChipText}" />
                 </Border>
                 <Border Style="{StaticResource Chip}" ToolTipService.ToolTip="{x:Bind Vm.AntiCheatTip, Mode=OneWay}">
                     <TextBlock Text="{x:Bind Vm.AntiCheatChip, Mode=OneWay}" Style="{StaticResource ChipText}" />
                 </Border>
             </local:WrapPanel>
+            <TextBlock Text="{x:Bind Vm.ApiOverruled, Mode=OneWay}" Visibility="{x:Bind Vm.HasApiOverruled, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" Margin="0,-8,0,0" />
 
             <InfoBar Severity="Error" IsOpen="{x:Bind Vm.HasError, Mode=OneWay}" Visibility="{x:Bind Vm.HasError, Mode=OneWay}" Message="{x:Bind Vm.Error, Mode=OneWay}" IsClosable="False" />
 
@@ -172,7 +238,7 @@
             <InfoBar Severity="Warning" IsClosable="False" IsOpen="{x:Bind Vm.ShowLeftCallout, Mode=OneWay}" Visibility="{x:Bind Vm.ShowLeftCallout, Mode=OneWay}"
                      Title="{x:Bind Vm.LeftTitle, Mode=OneWay}" Message="{x:Bind Vm.LeftText, Mode=OneWay}">
                 <InfoBar.ActionButton>
-                    <Button Content="Turn on recording" Click="OnRecordTip" HorizontalAlignment="Right" />
+                    <Button Content="Turn on recording" Click="OnRecordTip" HorizontalAlignment="Right" Visibility="{x:Bind Vm.ShowRecordAction, Mode=OneWay}" />
                 </InfoBar.ActionButton>
             </InfoBar>
 
@@ -206,7 +272,7 @@
                                     <TextBlock Text="{x:Bind Vm.DiskLabel, Mode=OneWay}" Style="{StaticResource Secondary}" />
                                     <TextBlock Text="{x:Bind Vm.DiskValue, Mode=OneWay}" Style="{StaticResource StatValue}" />
                                 </StackPanel>
-                                <StackPanel Spacing="2" Visibility="{x:Bind Vm.HasSession, Mode=OneWay}">
+                                <StackPanel Spacing="2" Visibility="{x:Bind Vm.HasStutterTile, Mode=OneWay}">
                                     <TextBlock Text="{x:Bind Vm.StuttersLabel, Mode=OneWay}" Style="{StaticResource Secondary}" />
                                     <TextBlock Text="{x:Bind Vm.StuttersValue, Mode=OneWay}" Style="{StaticResource StatValue}" Visibility="{x:Bind Vm.NoStutters, Mode=OneWay}" />
                                     <TextBlock Text="{x:Bind Vm.StuttersValue, Mode=OneWay}" Style="{StaticResource StatValue}" Foreground="{ThemeResource WarnBrush}" Visibility="{x:Bind Vm.HasStutters, Mode=OneWay}" />
@@ -234,26 +300,14 @@
             </Border>
 
             <!-- frame times of the last session, full width: the graph gets the room -->
-            <Border x:Name="FramesCard" Style="{StaticResource Card}" Padding="20,18" Visibility="{x:Bind Vm.HasFrames, Mode=OneWay}">
+            <Border x:Name="FramesCard" Style="{StaticResource Card}" Padding="20,18" Visibility="{x:Bind Vm.HasFramesCard, Mode=OneWay}">
                 <StackPanel Spacing="12">
-                    <StackPanel Spacing="2">
+                    <StackPanel Spacing="2" Visibility="{x:Bind Vm.HasFrames, Mode=OneWay}">
                         <TextBlock Text="Frame times last time you played" Style="{StaticResource Section}" />
                         <TextBlock Text="{x:Bind Vm.FramesVerdict, Mode=OneWay}" TextWrapping="Wrap" />
                     </StackPanel>
-                    <!-- frame time over the session: drawn in code (DrawFrames), the brushes here follow the theme -->
-                    <StackPanel Spacing="4">
-                        <Grid x:Name="FrameGraph" Height="140" SizeChanged="OnFrameGraphSize" AutomationProperties.Name="{x:Bind Vm.FramesVerdict, Mode=OneWay}"
-                              Background="Transparent">
-                            <Path x:Name="GraphLoading" Fill="{ThemeResource ControlStrongFillColorDisabledBrush}" Opacity="0.45" />
-                            <Path x:Name="GraphCompiling" Fill="{ThemeResource WarnBrush}" Opacity="0.3" />
-                            <Line x:Name="GraphLine50" Stroke="{ThemeResource TextFillColorTertiaryBrush}" StrokeThickness="1" StrokeDashArray="4,3" />
-                            <TextBlock x:Name="GraphLabel50" Text="50 ms" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                       HorizontalAlignment="Left" VerticalAlignment="Top" />
-                            <Polyline x:Name="GraphTimes" Stroke="{ThemeResource AccentFillColorDefaultBrush}" StrokeThickness="1" />
-                            <Path x:Name="GraphOther" Fill="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <Path x:Name="GraphShader" Fill="{ThemeResource WarnBrush}" />
-                            <Canvas x:Name="GraphTips" />
-                        </Grid>
+                    <StackPanel Spacing="4" Visibility="{x:Bind Vm.HasFrames, Mode=OneWay}">
+                        <local:FrameGraph x:Name="Graph" Height="140" AutomationProperties.Name="{x:Bind Vm.FramesVerdict, Mode=OneWay}" />
                         <Grid ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
@@ -282,7 +336,14 @@
                             <TextBlock Grid.Column="2" Text="{x:Bind Vm.GraphEnd, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                         </Grid>
                     </StackPanel>
-                    <Expander x:Name="SlowFramesExpander" Header="Slow frames" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                    <Expander x:Name="EarlierExpander" Header="Earlier sessions" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                              Visibility="{x:Bind Vm.HasEarlierSessions, Mode=OneWay}">
+                        <ItemsRepeater ItemsSource="{x:Bind Vm.EarlierSessions, Mode=OneWay}" ItemTemplate="{StaticResource DetailRow}" MaxWidth="620" HorizontalAlignment="Left">
+                            <ItemsRepeater.Layout><StackLayout Spacing="6" /></ItemsRepeater.Layout>
+                        </ItemsRepeater>
+                    </Expander>
+                    <Expander x:Name="SlowFramesExpander" Header="Slow frames" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                              Visibility="{x:Bind Vm.HasFrames, Mode=OneWay}">
                         <StackPanel Spacing="8" MaxWidth="620" HorizontalAlignment="Left">
                             <TextBlock Text="{x:Bind Vm.FramesSummary, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                             <ItemsRepeater ItemsSource="{x:Bind Vm.HitchRows, Mode=OneWay}" ItemTemplate="{StaticResource DetailRow}" Visibility="{x:Bind Vm.HasHitchRows, Mode=OneWay}">
@@ -316,6 +377,30 @@
                                           IsOn="{x:Bind Vm.CarefulOn, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanToggleCareful, Mode=OneWay}" Toggled="OnCarefulToggled"
                                           AutomationProperties.Name="Careful compile" AutomationProperties.HelpText="{x:Bind Vm.CarefulNote, Mode=OneWay}" />
                         </Grid>
+                        <StackPanel x:Name="KeptPanel" Spacing="2" Visibility="{x:Bind Vm.HasKept, Mode=OneWay}">
+                            <TextBlock Text="Kept aside" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <TextBlock Text="{x:Bind Vm.KeptSize, Mode=OneWay}" TextWrapping="Wrap" />
+                            <TextBlock Text="{x:Bind Vm.KeptState, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="When this game has new shaders" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <ComboBox x:Name="NewShadersBox" ItemsSource="{x:Bind Vm.NewShadersChoices, Mode=OneWay}" SelectedIndex="{x:Bind Vm.NewShadersIndex, Mode=OneWay}"
+                                      SelectionChanged="OnNewShadersChanged" AutomationProperties.Name="When this game has new shaders" />
+                        </StackPanel>
+                        <StackPanel Spacing="4" Visibility="{x:Bind Vm.ShowRayTracing, Mode=OneWay}">
+                            <TextBlock Text="Ray tracing shaders" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <ComboBox x:Name="RayTracingBox" ItemsSource="{x:Bind Vm.RayTracingChoices, Mode=OneWay}" SelectedIndex="{x:Bind Vm.RayTracingIndex, Mode=OneWay}"
+                                      SelectionChanged="OnRayTracingChanged" AutomationProperties.Name="Ray tracing shaders" />
+                        </StackPanel>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Leave out of Add all ready" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                            <ToggleSwitch x:Name="LeftOutSwitch" Grid.Column="1" MinWidth="0" VerticalAlignment="Top" OnContent="" OffContent=""
+                                          IsOn="{x:Bind Vm.LeftOutOn, Mode=OneWay}" Toggled="OnLeftOutToggled" AutomationProperties.Name="Leave out of Add all ready" />
+                        </Grid>
                     </StackPanel>
                 </Border>
 
@@ -337,8 +422,11 @@
                                           AutomationProperties.Name="Record while I play" AutomationProperties.HelpText="{x:Bind Vm.RecordNote, Mode=OneWay}" />
                         </Grid>
                         <StackPanel Spacing="14" Visibility="{x:Bind Vm.ShowOfflineOn, Mode=OneWay}">
-                            <InfoBar IsOpen="True" IsClosable="False" Severity="Error" Title="Ban risk" Message="{x:Bind Vm.OfflineRiskText}" />
-                            <Button HorizontalAlignment="Right" Content="{x:Bind Vm.OfflineButtonText, Mode=OneWay}" Click="OnRecordOffline" IsEnabled="{x:Bind Vm.CanStartOffline, Mode=OneWay}" />
+                            <InfoBar IsOpen="True" IsClosable="False" Severity="Error" Title="Ban risk" Message="{x:Bind Vm.OfflineRiskText, Mode=OneWay}" />
+                            <InfoBar Severity="Informational" IsClosable="False" IsOpen="{x:Bind Vm.HasSessionNote, Mode=OneWay}" Visibility="{x:Bind Vm.HasSessionNote, Mode=OneWay}"
+                                     Message="{x:Bind Vm.SessionNote, Mode=OneWay}" />
+                            <Button HorizontalAlignment="Right" Content="{x:Bind Vm.OfflineButtonText, Mode=OneWay}" Click="OnRecordOffline" IsEnabled="{x:Bind Vm.CanStartOffline, Mode=OneWay}"
+                                    AutomationProperties.Name="{x:Bind Vm.OfflineButtonText, Mode=OneWay}" />
                         </StackPanel>
                         <Grid ColumnSpacing="12" Visibility="{x:Bind Vm.HasMod, Mode=OneWay}">
                             <Grid.ColumnDefinitions>

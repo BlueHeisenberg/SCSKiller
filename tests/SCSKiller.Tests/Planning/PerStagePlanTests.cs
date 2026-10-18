@@ -31,7 +31,7 @@ public class PerStagePlanTests(ITestOutputHelper output)
     /// <summary>The root signature the planner builds for a stage set (FF7's rule), as the recording would carry it.</summary>
     static (string Sha, byte[] Blob) Rs(params ShaderInfo[] stages)
     {
-        var b = RootSig.Serialize(RootSig.Build(RootSig.Rule.Ff7, stages.ToDictionary(s => s.Stage), true), RootSig.StaticSamplers(RootSig.Rule.Ff7));
+        var b = RootSig.Serialize(RootSig.Build(Rules.Ff7, stages.ToDictionary(s => s.Stage), true), RootSig.StaticSamplers(Rules.Ff7));
         return (Hex(System.Security.Cryptography.SHA1.HashData(b)), b);
     }
 
@@ -46,6 +46,37 @@ public class PerStagePlanTests(ITestOutputHelper output)
         Write(f, 'S', Gfx(rsA, Vs1, Ps1, Layout1, [R16G16B16A16Float]).Payload);
         Write(f, 'S', Gfx(rsB, Vs1, Ps3, Layout1, [41, 41], [0xF, 0]).Payload); // R32_FLOAT x2, RT 1 masked off
         return path;
+    }
+
+    /// <summary>The planner holds a recording's root signatures and reads its other blobs back from the file when it needs
+    /// them: a plan from a proxy db is, byte for byte, the plan from a compact copy, whose blobs it holds whole.</summary>
+    [Fact]
+    public void A_plan_from_a_proxy_db_is_the_plan_from_its_blobs_held_whole()
+    {
+        var dir = Ff7.TempDir("perstage-blobs");
+        var raw = Recording(dir);
+        var big = new byte[(64 << 10) + 1000];
+        new Random(1).NextBytes(big);
+        var runtime = Shader("runtime ps", Stage.Pixel, [PosOut, UvOut], [Target(0)]);   // in no file of the install
+        using (var f = new FileStream(raw, FileMode.Append))
+        {
+            WriteBlob(f, Vs1.Sha1, [.. "DXBC"u8, .. big]);   // over what is held
+            WriteBlob(f, Ps1.Sha1, "DXBC ps1"u8);
+            WriteBlob(f, Ps1.Sha1, "DXBC ps1"u8);   // twice
+            WriteBlob(f, Ps2.Sha1, []);   // a hash only, then its bytes
+            WriteBlob(f, Ps2.Sha1, "DXBC ps2"u8);
+            WriteBlob(f, runtime.Sha1, "DXBC runtime"u8);
+            Write(f, 'S', Gfx(Rs(Vs1, Ps1).Sha, Vs1, runtime, Layout1, [R16G16B16A16Float]).Payload);
+            f.Write([(byte)'S', 9, 0]);   // a torn tail
+        }
+        var compact = Path.Combine(dir, "compact.db");
+        WriteCompact(compact, Read(raw));
+        foreach (var caps in new[] { Ff7.Nvidia, Ff7.Amd })
+        {
+            var plans = new[] { raw, compact }.Select(db => new Planner().Build(Ff7.Game, Ue426, Index(), new Recording(db), caps, Path.Combine(dir, caps.Profile + Path.GetFileName(db)), null, CancellationToken.None)).ToList();
+            Assert.Equal(plans[0].Stats, plans[1].Stats);
+            Assert.Equal(PlanFile.Read(plans[0].FilePath).Records.Select(r => r.Key), PlanFile.Read(plans[1].FilePath).Records.Select(r => r.Key));
+        }
     }
 
     static List<(Rec Rec, PsoState State)> Psos(Plan plan) =>
@@ -96,6 +127,93 @@ public class PerStagePlanTests(ITestOutputHelper output)
         Assert.Equal(3 + 2 + 1 + 1, plan.Stats.ExactUnits + plan.Stats.InferredUnits + plan.Stats.GuessedUnits); // VS alone x3, VS2/VS3 before a PS, PS2, CS
         Assert.Contains(log, l => l.StartsWith("warning: only 67%"));
         Assert.Contains(log, l => l.StartsWith("per-stage (amd): "));
+    }
+
+    /// <summary>Maximum on AMD adds at most as many pairings as the plan replays otherwise; NVIDIA's cache doesn't grow with them.</summary>
+    [Fact]
+    public void MaximumOnAmdAddsAtMostThePlansOwnSize()
+    {
+        var vss = Enumerable.Range(0, 6).Select(i => Vs($"vs-many{i}", In("POSITION", 0, 0, 7), In("TEXCOORD", 0, 1, 3))).ToList();
+        var pss = Enumerable.Range(0, 6).Select(i => Ps($"ps-many{i}", Target(0))).ToList();
+        var all = new[] { Vs1, Ps1, Ps3 }.Concat(vss).Concat(pss).ToList();
+        var index = new ShaderIndex("synthetic", ["PCD3D_SM6"], all.ToDictionary(s => s.Sha1), [new ShaderMap("m", "Game", "PCD3D_SM6", all.Select(s => s.Sha1).ToList())]);
+        var dir = Ff7.TempDir("perstage-maxcap");
+        var rec = new Recording(Recording(dir));
+        var log = new List<string>();
+        Plan Build(VendorCaps caps, bool maximum) => new Planner().Build(Ff7.Game, Ue426, index, rec, caps, Path.Combine(dir, $"{caps.Profile}-{maximum}"),
+            new SyncLog(log.Add), CancellationToken.None, maximum);
+        var nvidia = Ff7.Nvidia with { PerStageCache = true };
+        var (amd, amdMax, nvMax) = (Build(Ff7.Amd, false), Build(Ff7.Amd, true), Build(nvidia, true));
+        var planned = (int)(amd.Stats.Generated + amd.Stats.Recorded);
+        Assert.Equal(planned, PlanBuilder.MaximumExtras(Ff7.Amd, planned));
+        Assert.Equal(amd.Stats.Generated + planned, amdMax.Stats.Generated);   // 7 x 9 stage sets: the cap binds
+        Assert.Contains(log, l => l.StartsWith("per-stage (amd)") && l.Contains($"more left out, at most {planned} for this game"));
+        Assert.DoesNotContain(log, l => l.StartsWith("per-stage (nvidia)") && l.Contains("left out"));
+        var nv = Build(nvidia, false);
+        Assert.True(nvMax.Stats.Generated - nv.Stats.Generated > nv.Stats.Generated + nv.Stats.Recorded);   // not capped
+        Assert.Equal((int)(PlanBuilder.ExtraBudget / PlanBuilder.ExtraBytes), PlanBuilder.MaximumExtras(Ff7.Amd, int.MaxValue));
+        Assert.Equal(int.MaxValue, PlanBuilder.MaximumExtras(nvidia, 10));
+    }
+
+    /// <summary>An AMD plan over its cache budget keeps the recorded PSOs, then a unit of every shader, then the VS units of
+    /// the read keys most pixel shaders share; at or under it, it is the plan the default budget builds. NVIDIA has no budget.</summary>
+    [Fact]
+    public void An_amd_plan_over_its_cache_budget_keeps_the_likeliest_psos()
+    {
+        static ShaderInfo Reads(string name, byte mask) => Shader(name, Stage.Pixel, [PosOut, UvOut with { ReadMask = mask }], [Target(0)]);
+        var vss = Enumerable.Range(0, 4).Select(i => Vs($"vs-budget{i}", In("POSITION", 0, 0, 7), In("TEXCOORD", 0, 1, 3))).ToList();
+        var common = Enumerable.Range(0, 5).Select(i => Reads($"ps-common{i}", 3)).ToList();
+        ShaderInfo[] rare = [Reads("ps-rare1", 1), Reads("ps-rare2", 2)];
+        var all = new[] { Vs1, Ps1, Ps3 }.Concat(vss).Concat(rare).Concat(common).ToList();   // rare first: the walk order would keep them
+        var index = new ShaderIndex("synthetic", ["PCD3D_SM6"], all.ToDictionary(s => s.Sha1), [new ShaderMap("m", "Game", "PCD3D_SM6", all.Select(s => s.Sha1).ToList())]);
+        var dir = Ff7.TempDir("perstage-budget");
+        var rec = new Recording(Recording(dir));
+        var log = new List<string>();
+        Plan Build(VendorCaps caps, long psos, bool maximum = false) => new Planner { CacheBudget = psos * PlanBuilder.PsoBytes }.Build(Ff7.Game, Ue426, index, rec, caps,
+            Path.Combine(dir, $"{caps.Profile}-{caps.StateIndependentCache}-{psos}-{maximum}"), new SyncLog(log.Add), CancellationToken.None, maximum);
+        List<string> Keys(Plan p) => PlanFile.Read(p.FilePath).Records.Select(r => r.Key).Order(StringComparer.Ordinal).ToList();
+
+        var full = new Planner().Build(Ff7.Game, Ue426, index, rec, Ff7.Amd, Path.Combine(dir, "default"), new SyncLog(log.Add), CancellationToken.None);
+        var planned = full.Stats.Recorded + full.Stats.Generated;
+        var exact = Build(Ff7.Amd, planned);
+        Assert.Equal(full.Stats, exact.Stats);
+        Assert.Equal(Keys(full), Keys(exact));
+        Assert.Equal(0, full.Stats.CacheBudgetLeftOut);
+        Assert.DoesNotContain(log, l => l.StartsWith("cache budget"));
+
+        const int drop = 4;
+        var capped = Build(Ff7.Amd, planned - drop);
+        Assert.Equal((full.Stats.Recorded, full.Stats.Generated - drop, (long?)drop), (capped.Stats.Recorded, capped.Stats.Generated, capped.Stats.CacheBudgetLeftOut));
+        Assert.Contains(log, l => l.StartsWith("cache budget (amd-1)") && l.Contains($"{drop} left out"));
+        var kept = Psos(capped);
+        Assert.Equal(Psos(full).SelectMany(p => p.State.Stages.Values).ToHashSet(), kept.SelectMany(p => p.State.Stages.Values).ToHashSet());   // every shader compiles
+        var dropped = Psos(full).Where(p => !Keys(capped).Contains(p.Rec.Key)).ToList();
+        Assert.Equal(drop, dropped.Count);
+        Assert.All(dropped, p => Assert.Contains(p.State.Stages[(int)Stage.Pixel], rare.Select(r => r.Sha1)));   // the read keys one PS has
+        Assert.Equal(capped.Stats.Generated, Build(Ff7.Amd, planned - drop, maximum: true).Stats.Generated);   // no room for Maximum's pairings
+        Assert.Equal(full.Stats.Generated + 2, Build(Ff7.Amd, planned + 2, maximum: true).Stats.Generated);   // they fill what is left under it
+        Assert.Equal(PlanBuilder.CacheBudget, Core.Vendors.AmdAppCache.DxcCacheCap);
+        var perGame = new Planner().Build(Ff7.Game, Ue426, index, rec, Ff7.Amd with { PerGameCacheCap = (planned - drop) * PlanBuilder.PsoBytes },
+            Path.Combine(dir, "per-game"), null, CancellationToken.None);
+        Assert.Equal((long?)drop, perGame.Stats.CacheBudgetLeftOut);   // a per-game cap (Intel) is the budget
+
+        var nvidia = Ff7.Nvidia with { PerStageCache = true };
+        Assert.Equal(new Planner().Build(Ff7.Game, Ue426, index, rec, nvidia, Path.Combine(dir, "nv"), null, CancellationToken.None).Stats, Build(nvidia, 1).Stats);
+        Assert.Null(Build(nvidia, 1).Stats.CacheBudgetLeftOut);
+    }
+
+    /// <summary>An AMD plan from before the budget is built again only when it is over it, counting its filtering copies.</summary>
+    [Fact]
+    public void Only_an_amd_plan_from_before_the_cache_budget_and_over_it_is_built_again()
+    {
+        PlanStats Plan(long generated, long variants = 0, long? leftOut = null) => new(1, generated, 0, 0, true, Variants: variants, CacheBudgetLeftOut: leftOut);
+        var over = PlanBuilder.CachePsos;   // with the one recorded PSO
+        Assert.True(Core.App.ScsKiller.OverCacheBudget(Ff7.Amd, Plan(over)));
+        Assert.True(Core.App.ScsKiller.OverCacheBudget(Ff7.Amd, Plan(over - 10, variants: 10)));
+        Assert.False(Core.App.ScsKiller.OverCacheBudget(Ff7.Amd, Plan(over - 1)));
+        Assert.False(Core.App.ScsKiller.OverCacheBudget(Ff7.Amd, Plan(over, leftOut: 0)));   // built with the budget: Maximum's pairings on top
+        Assert.False(Core.App.ScsKiller.OverCacheBudget(Ff7.Nvidia with { PerStageCache = true }, Plan(over)));
+        Assert.False(Core.App.ScsKiller.OverCacheBudget(Ff7.Amd, null));
     }
 
     [Fact]
@@ -379,7 +497,8 @@ public class PerStagePlanTests(ITestOutputHelper output)
     [Fact]
     public void AnUnfedPixelShaderGetsOneVsFromAnotherMap()
     {
-        var rs = Hash("rs");
+        var blob = Rts0(0);
+        var rs = Hex(System.Security.Cryptography.SHA1.HashData(blob));
         var col = new SigElement("COLOR", 0, 1, 0xF, 0, 3);
         ShaderInfo orphan = Ps("ps-orphan", Target(0)) with { RootSignature = rs }, bare = Ps("ps-bare", Target(0)) with { Inputs = [PosOut, UvOut, col] };
         ShaderInfo own = Shader("vs-own", Stage.Vertex, [], [PosOut, col]) with { RootSignature = rs };
@@ -387,7 +506,7 @@ public class PerStagePlanTests(ITestOutputHelper output)
         ShaderInfo other = Shader("vs-other", Stage.Vertex, [], [PosOut, UvOut, col]) with { RootSignature = rs };
         var engine = new EngineInfo("FromSoftware", "DXIL+RTS0", "Elden Ring", "D3D12", false, null);
         var index = new ShaderIndex("synthetic", ["D3D12"], new[] { orphan, bare, own, first, second, other }.ToDictionary(s => s.Sha1),
-            [new ShaderMap("flver", "flver", "D3D12", [orphan.Sha1, bare.Sha1, own.Sha1]), new ShaderMap("bdle", "bdle", "D3D12", [first.Sha1, second.Sha1, other.Sha1])]);
+            [new ShaderMap("flver", "flver", "D3D12", [orphan.Sha1, bare.Sha1, own.Sha1]), new ShaderMap("bdle", "bdle", "D3D12", [first.Sha1, second.Sha1, other.Sha1])], new Dictionary<string, byte[]> { [rs] = blob });
         var dir = Ff7.TempDir("perstage-orphan");
         var log = new List<string>();
         var plan = new Planner().Build(Ff7.Game, engine, index, null, Ff7.Nvidia with { PerStageCache = true }, dir, new SyncLog(log.Add), CancellationToken.None);

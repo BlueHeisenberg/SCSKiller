@@ -40,6 +40,74 @@ public class RootSigGuardTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>A stage set the recording has replays as recorded: the game created it with that root signature, so it counts
+    /// as "already_recorded", not "rs_uncovered", even when the guard says the root signature doesn't cover it (here the
+    /// rule's rebuild, recorded for a PS with a bindless range in space 3 the rule doesn't know). On both NVIDIA paths.</summary>
+    [Fact]
+    public void ARecordedStageSetIsNotLeftOutAsUncovered()
+    {
+        var vs = Shader("rec-vs", Stage.Vertex, [In("POSITION", 0, 0, 7)], [PosOut, UvOut]) with { Counts = new(1, 0, 0, 0), Bindings = [new("cbv", 0, 0, 1)] };
+        var ps = Shader("rec-ps", Stage.Pixel, [PosOut, UvOut], [Target(0)]) with { Counts = new(1, 1, 0, 1), Bindings = [new("cbv", 0, 0, 1), new("srv", 0, 0, 1), new("sampler", 0, 0, 1)] };
+        var psBindless = ps with { Sha1 = Hash("rec-psB"), Bindings = [.. ps.Bindings, new("srv", 3, 0, -1)] };
+        var all = new[] { vs, ps, psBindless };
+        var index = new ShaderIndex("synthetic", ["PCD3D_SM5"], all.ToDictionary(s => s.Sha1), [new ShaderMap("m", "Game", "PCD3D_SM5", all.Select(s => s.Sha1).ToList())]);
+        var dir = Ff7.TempDir("rs-recorded");
+        var cold = PlanFile.Read(new Planner().Build(Ff7.Game, Ue427, index, null, Ff7.Nvidia, Path.Combine(dir, "cold"), null, CancellationToken.None).FilePath).Records.ToList();
+        var rs = PsoDb.Parse(cold.Single(r => r.Tag == 'S' && PsoDb.Parse(r).Stages.ContainsValue(ps.Sha1))).Rs;   // the rule's, same counts as psBindless's
+        var recording = Path.Combine(dir, "recording.db");
+        using (var f = File.Create(recording))
+        {
+            PsoDb.WriteBlob(f, rs, cold.Single(r => r.Tag == 'B' && PsoDb.Hex(r.Payload.AsSpan(0, 20)) == rs).Payload[20..]);
+            var g = Gfx(rs, vs, psBindless, [], [PsoDb.R16G16B16A16Float]);
+            PsoDb.Write(f, g.Tag, g.Payload);
+        }
+        foreach (var caps in new[] { Ff7.Nvidia, Ff7.Nvidia with { PerStageCache = true } })
+        {
+            var log = new List<string>();
+            var plan = new Planner().Build(Ff7.Game, Ue427, index, new Recording(recording), caps, Path.Combine(dir, caps.PerStageCache.ToString()), new SyncLog(log.Add), CancellationToken.None);
+            Assert.Contains(log, l => l.Contains("root sigs rebuilt from shader counts: 1/1 exact -> building"));
+            Assert.Equal((0L, 0L, 1L), (plan.Stats.Uncovered, plan.Stats.LeftOut, plan.Stats.Recorded));
+            Assert.DoesNotContain(log, l => l.Contains("rs_uncovered"));
+            if (!caps.PerStageCache) Assert.Contains(log, l => l.StartsWith("plan:") && l.Contains("already_recorded 1"));
+        }
+    }
+
+    /// <summary>The root signature a game ships with its shaders (<see cref="ShaderIndex.RootSignatures"/>) is checked like the
+    /// rule's: a VS drawn with its PS's (Naughty Dog's VSs carry none) whose b0 that root signature shows the pixel stage only
+    /// is left out ("own_rs_uncovered"), not counted as a slot SCSKiller can't rebuild; a root signature whose bytes nothing
+    /// has is never taken as covering ("rs_unknown").</summary>
+    [Fact]
+    public void TheGamesOwnRootSignatureMustCoverEveryStageAndAnUnknownOneCoversNothing()
+    {
+        var blob = RootSig.Serialize(new RootSig.Desc(0, [[2, 5, 0, 0, 0]]), []);   // root CBV b0, pixel only
+        var rs = PsoDb.Hex(System.Security.Cryptography.SHA1.HashData(blob));
+        var unknown = Hash("own-rs-unknown");
+        var vs = Shader("own-vs", Stage.Vertex, [In("POSITION", 0, 0, 7)], [PosOut, UvOut]) with { Bindings = [new("cbv", 0, 0, 1)] };
+        var bare = Shader("own-vs-bare", Stage.Vertex, [In("POSITION", 0, 0, 7)], [PosOut, UvOut]);
+        var ps = Shader("own-ps", Stage.Pixel, [PosOut, UvOut], [Target(0)]) with { Bindings = [new("cbv", 0, 0, 1)], RootSignature = rs };
+        var orphan = ps with { Sha1 = Hash("own-ps-unknown"), RootSignature = unknown };
+        var all = new[] { vs, bare, ps, orphan };
+        var index = new ShaderIndex("synthetic", ["D3D12"], all.ToDictionary(s => s.Sha1), [new ShaderMap("m", "pak", "D3D12", all.Select(s => s.Sha1).ToList())],
+            new Dictionary<string, byte[]> { [rs] = blob });
+        var engine = new EngineInfo(SCSKiller.Core.NaughtyDog.NaughtyDogReader.Family, SCSKiller.Core.NaughtyDog.NaughtyDogReader.Version, null, "D3D12", false, null);
+        var dir = Ff7.TempDir("rs-own");
+        foreach (var caps in new[] { Ff7.Nvidia, Ff7.Nvidia with { PerStageCache = true } })
+        {
+            var log = new List<string>();
+            var plan = new Planner().Build(Ff7.Game, engine, index, null, caps, Path.Combine(dir, caps.PerStageCache.ToString()), new SyncLog(log.Add), CancellationToken.None);
+            var body = PlanFile.Read(plan.FilePath).Records.ToList();
+            var planned = body.Where(r => r.Tag == 'S').Select(r => PsoDb.Parse(r).Stages.Values.ToHashSet())
+                .Concat(body.Where(r => r.Tag == 'P').Select(r => PsoDb.ParseItem(r.Payload).Stages.Values.ToHashSet())).ToList();
+            Assert.Contains(planned, s => s.SetEquals([bare.Sha1, ps.Sha1]));
+            Assert.DoesNotContain(planned, s => s.Contains(vs.Sha1) && s.Contains(ps.Sha1) || s.Contains(orphan.Sha1));
+            Assert.Contains(log, l => l.StartsWith("plan:") && l.Contains("own_rs_uncovered 1") && l.Contains("rs_unknown 2"));
+            Assert.Contains($"1 stage sets left out: the root signature the game ships with them doesn't cover their shaders (Vertex cbv space 0, e.g. {vs.Sha1[..12]})", log);
+            Assert.Contains($"warning: 2 stage sets left out: no readable bytes for their root signature in the rules, the recording or the game's index (e.g. {unknown[..12]})", log);
+            Assert.Equal((6L, 5L, 0L), (plan.Stats.StageSets, plan.Stats.LeftOut, plan.Stats.Uncovered)); // each VS alone (no_rs), VS+PS, VS+PS(unknown) x2
+            output.WriteLine($"{caps.PerStageCache}: {string.Join(" | ", log.Where(l => l.StartsWith("plan:") || l.Contains("stage sets left out")))}; {plan.Stats}");
+        }
+    }
+
     /// <summary>Learned root signatures (the rule doesn't rebuild the recording's): compute shaders A (t0 space 0) and B (t0
     /// space 1) have the same counts and their own root signatures; C, unrecorded with A's bindings, gets the one that covers
     /// it, A's, whichever was recorded last.</summary>
@@ -167,24 +235,96 @@ public class RootSigGuardTests(ITestOutputHelper output)
         if (game == null || !File.Exists(game.ExePath)) return;
         var reader = new UnrealReader(Ff7.TempDir("wonderlands-rec-data"));
         var engine = reader.Detect(game)!;
-        Assert.Equal((RootSig.Rule.Ue421, null), (RootSig.RuleFor(engine), engine.Fork));
+        Assert.Equal((Rules.Ue421, null), (RootSig.RuleFor(engine), engine.Fork));
         if (Ff7.Recording(game, engine, reader, "wonderlands-rec") is not { } db) return;
         var bc = reader.Index(game, engine, null, CancellationToken.None).Shaders;
         var recs = PsoDb.Read(db).ToList();
         var blobs = recs.Where(r => r.Tag == 'B').GroupBy(r => PsoDb.Hex(r.Payload.AsSpan(0, 20))).ToDictionary(g => g.Key, g => g.First().Payload[20..]);
-        var maxSrvs = RootSig.MaxSrvsFor(RootSig.Rule.Ue421, bc.Values);
+        var maxSrvs = RootSig.MaxSrvsFor(Rules.Ue421, bc.Values);
         var psos = recs.Where(r => r.Tag is 'G' or 'C' or 'S').DistinctBy(r => r.Key).Select(PsoDb.Parse)
             .Where(p => p.Stages.Values.All(bc.ContainsKey) && blobs.ContainsKey(p.Rs)).ToList();
         bool Rebuilds(PsoDb.Pso p, uint flag)
         {
-            var desc = RootSig.Build(RootSig.Rule.Ue421, p.Stages.ToDictionary(s => (Stage)s.Key, s => bc[s.Value]), false, maxSrvs);
-            return RootSig.Serialize(desc with { Flags = desc.Flags | flag }, RootSig.StaticSamplers(RootSig.Rule.Ue421)).AsSpan().SequenceEqual(blobs[p.Rs]);
+            var desc = RootSig.Build(Rules.Ue421, p.Stages.ToDictionary(s => (Stage)s.Key, s => bc[s.Value]), false, maxSrvs);
+            return RootSig.Serialize(desc with { Flags = desc.Flags | flag }, RootSig.StaticSamplers(Rules.Ue421)).AsSpan().SequenceEqual(blobs[p.Rs]);
         }
         var bad = psos.Where(p => !Rebuilds(p, 0)).ToList();
         output.WriteLine($"root signatures rebuilt byte-exact: {psos.Count - bad.Count}/{psos.Count} recorded PSOs (SRV tables of {maxSrvs}); mismatches by stages: "
             + string.Join(", ", bad.GroupBy(p => string.Join('+', p.Stages.Keys.Select(k => (Stage)k))).Select(g => $"{g.Key} {g.Count()}")));
         Assert.True(psos.Count > 1000, $"only {psos.Count} recorded PSOs of index shaders");
         Assert.All(bad, p => Assert.True(Rebuilds(p, 1)));   // ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT
+    }
+
+    static readonly EngineInfo SantaMonica = new(SCSKiller.Core.SantaMonica.SantaMonicaReader.Family, SCSKiller.Core.SantaMonica.SantaMonicaReader.Version, null, "D3D12", false, null);
+
+    static (string Sha, byte[] Blob) Root(params uint[][] rows)
+    {
+        var b = RootSig.Serialize(new RootSig.Desc(1, [.. rows]), []);
+        return (PsoDb.Hex(System.Security.Cryptography.SHA1.HashData(b)), b);
+    }
+
+    /// <summary>The plan's PSOs (synthesized templates and items) as (root signature, stages).</summary>
+    internal static List<(string Rs, string Stages)> Psos(Plan plan)
+    {
+        var body = PlanFile.Read(plan.FilePath).Records.ToList();
+        return [.. body.Where(r => r.Tag is 'S' or 'G' or 'C').Select(r => PsoDb.Parse(r)).Select(p => (p.Rs, string.Join(',', p.Stages.Values.Order())))
+            .Concat(body.Where(r => r.Tag == 'P').Select(r => PsoDb.ParseItem(r.Payload)).Select(p => (p.Rs, string.Join(',', p.Stages.Values.Order()))))];
+    }
+
+    static readonly VendorCaps[] AllPaths = [Ff7.Nvidia, Ff7.Nvidia with { PerStageCache = true }, Ff7.Amd];
+
+    /// <summary>A program names its root signature (God of War Ragnarök's, Dawn's records): its VS and PS, each drawn with
+    /// several, carry none, and the program's PSO takes the map's. The same shaders in two programs with two root signatures
+    /// are two PSOs; a program whose root signature doesn't cover its VS's b0 (pixel only) is left out as the game's own
+    /// ("own_rs_uncovered"), on every path (whole pipelines, NVIDIA and AMD per stage).</summary>
+    [Fact]
+    public void APipelineMapTakesTheRootSignatureItNames()
+    {
+        var (a, b, pixelOnly) = (Root([2, 0, 0, 0, 0]), Root([2, 0, 0, 0, 0], [2, 0, 1, 0, 0]), Root([2, 5, 0, 0, 0]));
+        var vs = Shader("map-vs", Stage.Vertex, [In("POSITION", 0, 0, 7)], [PosOut, UvOut]) with { Bindings = [new("cbv", 0, 0, 1)] };
+        var ps = Shader("map-ps", Stage.Pixel, [PosOut, UvOut], [Target(0)]) with { Bindings = [new("cbv", 0, 0, 1)] };
+        var ps2 = ps with { Sha1 = Hash("map-ps2") };
+        var index = new ShaderIndex("synthetic", ["D3D12"], new[] { vs, ps, ps2 }.ToDictionary(s => s.Sha1),
+            [new ShaderMap("1", "pack", "D3D12", [vs.Sha1, ps.Sha1], true, a.Sha), new ShaderMap("1", "pack", "D3D12", [vs.Sha1, ps.Sha1], true, b.Sha),
+             new ShaderMap("2", "pack", "D3D12", [vs.Sha1, ps2.Sha1], true, pixelOnly.Sha)],
+            new Dictionary<string, byte[]> { [a.Sha] = a.Blob, [b.Sha] = b.Blob, [pixelOnly.Sha] = pixelOnly.Blob });
+        var dir = Ff7.TempDir("map-root");
+        var pair = string.Join(',', new[] { vs.Sha1, ps.Sha1 }.Order());
+        foreach (var caps in AllPaths)
+        {
+            var log = new List<string>();
+            var plan = new Planner().Build(Ff7.Game, SantaMonica, index, null, caps, Path.Combine(dir, $"{caps.Profile}-{caps.PerStageCache}"), new SyncLog(log.Add), CancellationToken.None);
+            output.WriteLine($"{caps.Profile} {caps.PerStageCache}: {log.Last(l => l.StartsWith("plan:"))}");
+            Assert.Equal(new[] { (a.Sha, pair), (b.Sha, pair) }.Order(), Psos(plan).Distinct().Order());
+            Assert.Contains(log, l => l.StartsWith("plan:") && l.Contains("own_rs_uncovered 1") && !l.Contains("no_rs"));
+            Assert.Equal((3L, 1L, 0L), (plan.Stats.StageSets, plan.Stats.LeftOut, plan.Stats.Uncovered));
+        }
+    }
+
+    /// <summary>Shaders with one root signature, as the reader gives it them, plan the same PSOs whether their maps name it
+    /// too or not, on every path; so do pooled maps beside them.</summary>
+    [Fact]
+    public void AMapNamingItsShadersOwnRootSignatureChangesNothing()
+    {
+        var a = Root([2, 0, 0, 0, 0]);
+        var vs = Shader("same-vs", Stage.Vertex, [In("POSITION", 0, 0, 7)], [PosOut, UvOut]) with { Bindings = [new("cbv", 0, 0, 1)], RootSignature = a.Sha };
+        var ps = Shader("same-ps", Stage.Pixel, [PosOut, UvOut], [Target(0)]) with { Bindings = [new("cbv", 0, 0, 1)], RootSignature = a.Sha };
+        var cs = Shader("same-cs", Stage.Compute, []) with { Bindings = [new("cbv", 0, 0, 1)], RootSignature = a.Sha };
+        var shaders = new[] { vs, ps, cs }.ToDictionary(s => s.Sha1);
+        ShaderIndex Index(string? root) => new("synthetic", ["D3D12"], shaders,
+            [new ShaderMap("1", "pack", "D3D12", [vs.Sha1, ps.Sha1], true, root), new ShaderMap("2", "pack", "D3D12", [cs.Sha1], true, root),
+             new ShaderMap("3", "pool", "D3D12", [vs.Sha1, ps.Sha1, cs.Sha1])],
+            new Dictionary<string, byte[]> { [a.Sha] = a.Blob });
+        var dir = Ff7.TempDir("map-root-same");
+        foreach (var caps in AllPaths)
+        {
+            var (with, without) = (Index(a.Sha), Index(null));
+            Plan Build(ShaderIndex i, string name) => new Planner().Build(Ff7.Game, SantaMonica, i, null, caps, Path.Combine(dir, $"{name}-{caps.Profile}-{caps.PerStageCache}"), null, CancellationToken.None);
+            var (p1, p0) = (Build(with, "with"), Build(without, "without"));
+            Assert.Equal(PlanFile.Read(p0.FilePath).Records.Select(r => r.Key).Order(), PlanFile.Read(p1.FilePath).Records.Select(r => r.Key).Order());
+            Assert.Equal(p0.Stats, p1.Stats);
+            Assert.NotEmpty(Psos(p1));
+        }
     }
 
     sealed class SyncLog(Action<string> a) : IProgress<string> { public void Report(string value) => a(value); }

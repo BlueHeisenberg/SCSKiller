@@ -35,5 +35,5 @@ public static class UpdateHooks
             () => Busy.ClearApplying(DataDir)))   // the swap is done: the CLI may run again
         // Kept: the data dir (recordings, settings).
         .OnBeforeUninstallFastCallback(_ => HookSteps.Uninstall(new AppStore(DataDir), Log, ScheduledTask.Unregister,
-            () => { if (Environment.ProcessPath is { } app) WindowsStartup.Apply(false, app); }));
+            () => { if (Environment.ProcessPath is { } app) WindowsStartup.Set(false, app, WindowsStartup.ReadRegistry, WindowsStartup.WriteRegistry); }));
 }

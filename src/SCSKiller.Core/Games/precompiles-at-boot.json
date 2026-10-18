@@ -1,0 +1,17 @@
+{
+  "about": "Games that build all their shaders and pipelines at the main menu or a loading screen, so their in-game stutter isn't shader compilation and SCSKiller can't help: they show as Unsupported. Only entries with a real source (an https link). ids are Game.Id values (steam:<appid>, xbox:<package family>, epic:<app name>, ea:<content id>), the only match; name is for people. date = when the entry was last checked. Embedded in the app and served at /v1/content/precompiles-at-boot.json, the same file; the app uses the served copy when it passes BootPrecompiles.TryParse.",
+  "games": [
+    {
+      "name": "Horizon Forbidden West Complete Edition",
+      "ids": ["steam:2420110"],
+      "source": "https://www.dsogaming.com/articles/can-an-amd-ryzen-9-7950x3d-with-an-nvidia-rtx-4090-run-horizon-forbidden-west-with-60fps-at-native-4k-max-settings/",
+      "date": "2026-10-05"
+    },
+    {
+      "name": "Detroit: Become Human",
+      "ids": ["steam:1222140"],
+      "source": "https://steamcommunity.com/app/1222140/discussions/0/3824158683379289653",
+      "date": "2026-10-05"
+    }
+  ]
+}

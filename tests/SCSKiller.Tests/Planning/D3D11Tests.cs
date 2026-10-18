@@ -26,17 +26,22 @@ public class D3D11Tests(ITestOutputHelper output)
         Assert.Equal(new PlanCheck(Readiness.Ready, All11 + " (user setting)"), C("D3D11 (user setting)"));
         Assert.Equal(new PlanCheck(Readiness.Ready, All11), C("D3D11", "5.1")); // no root signatures: any engine version
         const string FromSource = Planner.Untested; // RootSig.RuleFor, RootSig.Verified
-        Assert.Equal(new PlanCheck(Readiness.Ready, FromSource), C("D3D12", "4.25"));
+        Assert.Equal(new PlanCheck(Readiness.Ready, FromSource), C("D3D12", "4.24"));
         Assert.Equal(new PlanCheck(Readiness.Ready, "no recording needed"), C("D3D12")); // 4.26: confirmed by two forks' recordings
         Assert.Equal(new PlanCheck(Readiness.Ready, FromSource), C("D3D12", "5.8")); // newer than any rule: the newest, not tested
         Assert.Equal(new PlanCheck(Readiness.Unsupported, "runs on Vulkan"), C("Vulkan"));
-        Assert.Equal(new PlanCheck(Readiness.Ready, $"{FromSource}; also {All11} (the game may run on either)"), C(UnrealRhi.Ambiguous, "4.25"));
+        Assert.Equal(new PlanCheck(Readiness.Ready, $"{FromSource}; also {All11} (the game may run on either)"), C(UnrealRhi.Ambiguous, "4.24"));
         Assert.Equal(new PlanCheck(Readiness.Ready, $"{All11} (the game may run on either); for DirectX 12, {Planner.Record}"),
             C(UnrealRhi.Ambiguous, "4.19"));
+        // AMD: the PS and CS only (a VS needs the game's input layouts)
+        const string Amd11 = All11 + " but the vertex shaders";
+        Assert.Equal(new PlanCheck(Readiness.Ready, $"{Amd11}; {Planner.D3D11VsRecord}"), C("D3D11", caps: Ff7.Amd));
+        Assert.Equal(new PlanCheck(Readiness.Ready, $"{Amd11} (user setting); {Planner.D3D11VsRecord}"), C("D3D11 (user setting)", caps: Ff7.Amd));
+        Assert.Equal(new PlanCheck(Readiness.Ready, $"{Amd11} (the game may run on either); for DirectX 12, {Planner.Record}"), C(UnrealRhi.Ambiguous, "4.19", Ff7.Amd));
         // a vendor whose D3D11 cache isn't measured
         var other = Ff7.Nvidia with { Profile = "unmeasured" };
         Assert.Equal(new PlanCheck(Readiness.Unsupported, "runs on DirectX 11"), C("D3D11", caps: other));
-        Assert.Equal(new PlanCheck(Readiness.Ready, $"{FromSource}; helps only when played on DirectX 12 (the game may run on DirectX 11)"), C(UnrealRhi.Ambiguous, "4.25", other));
+        Assert.Equal(new PlanCheck(Readiness.Ready, $"{FromSource}; helps only when played on DirectX 12 (the game may run on DirectX 11)"), C(UnrealRhi.Ambiguous, "4.24", other));
     }
 
     static readonly SigElement Pos = new("SV_Position", 0, 0, 0xF, 1, 3), Uv = new("TEXCOORD", 0, 1, 0x3, 0, 3), Target = new("SV_Target", 0, 0, 0xF, 64, 3);
@@ -59,9 +64,10 @@ public class D3D11Tests(ITestOutputHelper output)
             new("m5b", "Game", "PCD3D_SM5", [sm5[1].Sha1]), // shared across maps: still once
         ]);
         var dir = Ff7.TempDir("d3d11-both");
-        (List<PsoDb.Rec> Body, Plan Plan) Build(string api)
+        (List<PsoDb.Rec> Body, Plan Plan) Build(string api, VendorCaps? caps = null)
         {
-            var plan = new Planner().Build(Ff7.Game, Ue426 with { GraphicsApi = api }, index, null, Ff7.Nvidia, Path.Combine(dir, api.Replace(' ', '_')), new Progress<string>(output.WriteLine), CancellationToken.None);
+            caps ??= Ff7.Nvidia;
+            var plan = new Planner().Build(Ff7.Game, Ue426 with { GraphicsApi = api }, index, null, caps, Path.Combine(dir, caps.Profile + api.Replace(' ', '_')), new Progress<string>(output.WriteLine), CancellationToken.None);
             return (PlanFile.Read(plan.FilePath).Records.ToList(), plan);
         }
         static HashSet<string> Psos(List<PsoDb.Rec> body) => body.Where(r => r.Tag is 'S' or 'P').SelectMany(r => r.Tag == 'P' ? PsoDb.ParseItem(r.Payload).Stages.Values : PsoDb.Parse(r).Stages.Values).ToHashSet();
@@ -80,6 +86,8 @@ public class D3D11Tests(ITestOutputHelper output)
         Assert.All(dx11, r => Assert.Contains(r.Tag, "12"));
         Assert.Equal("D3D11 PCD3D_SM5", plan11.Platform);
         Assert.Empty(Items(Build("D3D12").Body));
+        // AMD: the PS and CS items, and the VS without vertex input (no layout to need)
+        Assert.Equal(sm5.Where(s => s.Stage is Stage.Pixel or Stage.Compute or Stage.Vertex).Select(s => (s.Stage, s.Sha1)).ToList(), Items(Build("D3D11", Ff7.Amd).Body));
 
         // materialized: each D3D11 item's blob in gen.db, pulled through the reader
         var work = Path.Combine(dir, "work");

@@ -102,7 +102,7 @@ public class UnrealRootSigSweep(ITestOutputHelper output)
         static ShaderInfo S(Stage st, ResourceCounts c, params Binding[] b) => new("", st, "", 0, c, b, [], []);
         var vs = S(Stage.Vertex, new(1, 0, 0, 0), new Binding("cbv", 0, 0, 1));
         var ps = S(Stage.Pixel, new(1, 1, 0, 0), new Binding("cbv", 0, 0, 1), new Binding("srv", 0, 3, 1), new Binding("sampler", 1000, 2, 1));
-        var rs = Rts0(RootSig.Serialize(RootSig.Build(RootSig.Rule.Ue51, new Dictionary<Stage, ShaderInfo> { [Stage.Vertex] = vs, [Stage.Pixel] = ps }, false), RootSig.Ue426Samplers));
+        var rs = Rts0(RootSig.Serialize(RootSig.Build(Rules.Ue51, new Dictionary<Stage, ShaderInfo> { [Stage.Vertex] = vs, [Stage.Pixel] = ps }, false), RootSig.Ue426Samplers));
         Assert.Null(Mismatch(vs, Stage.Vertex, rs));
         Assert.Null(Mismatch(ps, Stage.Pixel, rs));                                                   // t3 in the 64-SRV table, s2 space 1000 static
         Assert.Equal("Pixel uav space 0", Mismatch(ps with { Bindings = [.. ps.Bindings, new Binding("uav", 0, 0, 1)] }, Stage.Pixel, rs));

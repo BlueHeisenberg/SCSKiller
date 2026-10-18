@@ -6,9 +6,10 @@
 //   scskiller_warm <workdir> <game exe file name> [--threads N] [--priority below|idle] [--start N]
 //                  [--stop-event <name>] [--adapter-luid <hex>] [--rt-threads N] [--skip i,j,...]
 //                  [--memory-mb N] [--package <app user model id>] [--stage-path <install folder>\<dir>\<exe>]
-//                  [--skip-keys <sha1 hex>,...] [--isolate i,j,...]
+//                  [--skip-keys <sha1 hex>,...|@<file>] [--isolate i,j,...]
 //                  [--ags <amd_ags_x64.dll> --ags-app <name> --ags-engine <name>] [--pass K] [--layer <folder>]
-//                  [--d3d12 <the game's Agility SDK folder>]
+//                  [--d3d12 <the game's Agility SDK folder>] [--d3d11 <the game's d3d11.dll>]
+//                  [--aftermath <the game's GFSDK_Aftermath_Lib.x64.dll> --aftermath-init <version>,<features>,<apis>,<dump flags>]
 //
 // Protocol (JSON lines on stdout, exit codes): ARCHITECTURE.md. Stages <workdir>\stage-<pid>-<n>\<exe name> (a new folder
 // of this run's) + d3d12.dll (the proxy) + the dbs and runs that copy (the child), which prints the JSON. The caller only
@@ -24,13 +25,19 @@
 // Agility SDK DLLs are staged in D3D12\ next to the exe and the child asks the D3D12 loader for that runtime (the exports
 // below), as the game does, so a recording made on it replays where the system's runtime is older (Windows 10's has no
 // SM 6.6 and none of the newer pipeline subobjects). The loader takes the system's when that one is as new. A failed
-// staging runs on the system's, and so does a child whose device the game's runtime didn't make (run again).
+// staging runs on the system's, and so does a child whose device the game's runtime didn't make (run again). --d3d11: the
+// game's DXVK d3d11.dll, staged next to the exe, so the D3D11 items compile through it into NVIDIA's Vulkan cache, which
+// is keyed on the exe file name too. --aftermath (hex values, as the game passes them): the child starts NVIDIA Aftermath
+// as the game does, crash dumps (apis 0: none) before its device and DX12_Initialize on it, since with crash dumps on its
+// GenerateShaderDebugInfo (0x8) puts every pipeline under another driver cache key; if that fails it says why on stderr
+// and compiles without it.
 #define NOMINMAX
 #include <windows.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <fcntl.h>
 #include <io.h>
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <filesystem>
@@ -38,6 +45,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "warm_items.h"
 
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "ole32.lib")
@@ -82,6 +90,9 @@ struct Opts {
     std::wstring ags, ags_app, ags_engine;
     std::wstring layer;          // a copy of the game's layer (ReShade's dll, its ini, add-ons), staged next to the exe
     std::wstring d3d12;          // the game's Agility SDK folder (its D3D12Core.dll)
+    std::wstring d3d11;          // the game's d3d11.dll (DXVK)
+    std::wstring aftermath;      // the game's GFSDK_Aftermath_Lib.x64.dll
+    uint32_t am[4] = {};         // version, feature flags, crash dump apis, crash dump flags
     UINT sdk = 0;                // set by the parent for its child: the staged D3D12Core.dll's SDK version
     int pass = -1;
 };
@@ -105,7 +116,17 @@ static bool parse(int argc, wchar_t** argv, int i, Opts& o) {
         else if (k == L"--pass") o.pass = (int)wcstol(v.c_str(), &end, 10);
         else if (k == L"--layer") o.layer = v;
         else if (k == L"--d3d12") o.d3d12 = v;
+        else if (k == L"--d3d11") o.d3d11 = v;
         else if (k == L"--sdk") o.sdk = wcstoul(v.c_str(), &end, 10);
+        else if (k == L"--aftermath") o.aftermath = v;
+        else if (k == L"--aftermath-init") {
+            const wchar_t* c = v.c_str();
+            for (int j = 0; j < 4; ++j, c = end + 1) {
+                o.am[j] = wcstoul(c, &end, 16);
+                if (end == c || *end != (j < 3 ? L',' : L'\0')) return false;
+            }
+            end = nullptr;
+        }
         else if (k == L"--skip" || k == L"--isolate") {
             for (const wchar_t* c = v.c_str(); *c;) {
                 (k == L"--skip" ? o.skip : o.isolate).push_back(_wcstoui64(c, &end, 10));
@@ -114,6 +135,16 @@ static bool parse(int argc, wchar_t** argv, int i, Opts& o) {
             }
             end = nullptr;
         } else if (k == L"--skip-keys") {
+            if (v.size() > 1 && v[0] == L'@') {  // @<file>: the same list, too long for a command line
+                FILE* f = _wfopen(v.c_str() + 1, L"rb");
+                if (!f) return false;
+                std::string s;
+                char buf[4096];
+                for (size_t n; (n = fread(buf, 1, sizeof buf, f)) > 0;) s.append(buf, n);
+                fclose(f);
+                while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back();
+                v.assign(s.begin(), s.end());
+            }
             for (size_t b = 0; b < v.size(); b += 41) {
                 if (v.size() - b < 40 || (b + 40 < v.size() && v[b + 40] != L',')) return false;
                 for (size_t c = b; c < b + 40; c += 2) {
@@ -150,6 +181,50 @@ static void emit(const char* fmt, ...) {
 }
 
 static int fail(const std::wstring& msg) { return emit("{\"event\":\"error\",\"message\":%s}", json(msg).c_str()), 1; }
+
+// The child died without a last line: the retry it couldn't print, from its item states (warm_items.h). The items in flight
+// are created alone first; one that dies again alone is skipped for this compile (never a crash key: the death may not be
+// its own). False: no states to go by (it died before its items).
+static bool retry_after_death(const std::wstring& file, DWORD pid, const Opts& o, const wchar_t* code, double seconds) {
+    HANDLE f = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    LARGE_INTEGER size{};
+    bool sized = f != INVALID_HANDLE_VALUE && GetFileSizeEx(f, &size) && size.QuadPart >= (LONGLONG)sizeof(ItemsHeader);
+    // mapped, as the child wrote it: ReadFile isn't guaranteed to see a view's writes
+    HANDLE m = sized ? CreateFileMappingW(f, nullptr, PAGE_READONLY, 0, 0, nullptr) : nullptr;
+    auto* v = m ? (const uint8_t*)MapViewOfFile(m, FILE_MAP_READ, 0, 0, 0) : nullptr;
+    if (m) CloseHandle(m);
+    if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
+    if (!v) return false;
+    struct Unmap {
+        const void* v;
+        ~Unmap() { UnmapViewOfFile(v); }
+    } unmap{v};
+    const ItemsHeader h = *(const ItemsHeader*)v;
+    if (h.magic != kItemsMagic || h.pid != pid || (uint64_t)size.QuadPart != sizeof h + h.n12 || h.first > h.n12) return false;
+    const uint8_t* s = v + sizeof h;
+    uint64_t from = h.first, failed = 0, skipped = 0;
+    for (; from < h.n12 && item_finished(s[from]); ++from) failed += s[from] == 2, skipped += s[from] == 5;
+    std::vector<uint64_t> flight, isolate, skip;
+    for (uint64_t j = from; j < h.n12; ++j)
+        if (s[j] == kItemInFlight || s[j] == 4) flight.push_back(j);
+    // one in flight that was created alone (--isolate): the death is its own; any other is created alone first
+    bool alone = flight.size() == 1 && std::find(o.isolate.begin(), o.isolate.end(), flight[0]) != o.isolate.end();
+    if (alone) skip = flight;
+    else isolate = flight;
+    for (uint64_t k : o.isolate)  // the ones the dead process didn't get to
+        if (k >= from && k < h.n12 && !item_finished(s[k]) && std::find(flight.begin(), flight.end(), k) == flight.end()) isolate.push_back(k);
+    auto list = [](const std::vector<uint64_t>& v) {
+        std::string r;
+        for (uint64_t k : v) r += (r.empty() ? "" : ",") + std::to_string(k);
+        return r;
+    };
+    fwprintf(stderr, L"the warm process died (exit code %ls): a new process goes on from item %llu, %zu item%ls in flight %ls\n", code,
+             (unsigned long long)from, flight.size(), flight.size() == 1 ? L"" : L"s", alone ? L"skipped (it died alone)" : L"created alone first");
+    emit("{\"event\":\"retry\",\"from\":%llu,\"rtThreads\":%d,\"failedItem\":-1,\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"driverSkipped\":%llu,"
+         "\"seconds\":%.1f,\"reason\":\"died\",\"crashed\":[],\"isolate\":[%s],\"skip\":[%s]}",
+         from, o.rt_threads, from, h.total, failed, skipped, seconds, list(isolate).c_str(), list(skip).c_str());
+    return true;
+}
 
 // One argument as CommandLineToArgvW reads it back: backslashes are literal except in a run before a quote, which doubles.
 static std::wstring quoted(const std::wstring& a) {
@@ -190,6 +265,33 @@ static std::wstring ags_device(const Opts& o, IDXGIAdapter* adapter, ID3D12Devic
     return rp.extensions & AGS_APP_REGISTRATION ? L"" : L"the driver doesn't support AGS app registration";
 }
 
+// NVIDIA Aftermath (GFSDK_Aftermath.h, GFSDK_Aftermath_GpuCrashDump.h): the callbacks drop what the driver hands over,
+// so nothing is written anywhere
+static void am_drop(const void*, uint32_t, void*) {}
+static HMODULE g_am;
+
+static std::wstring am_result(const char* call, int r) {   // 1: GFSDK_Aftermath_Result_Success
+    wchar_t b[96];
+    swprintf_s(b, L"GFSDK_Aftermath_%hs returned 0x%x", call, (unsigned)r);
+    return r == 1 ? L"" : b;
+}
+
+// crash dumps on, before the device, as the game starts them; on failure the reason
+static std::wstring aftermath_dumps(const Opts& o) {
+    // by path, its own imports from System32 only, as --ags
+    g_am = LoadLibraryExW(o.aftermath.c_str(), nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!g_am) return L"loading " + o.aftermath + L" failed (error " + std::to_wstring(GetLastError()) + L")";
+    if (!o.am[2]) return L"";
+    auto dumps = (int (*)(uint32_t, uint32_t, uint32_t, void*, void*, void*, void*, void*))GetProcAddress(g_am, "GFSDK_Aftermath_EnableGpuCrashDumps");
+    if (!dumps) return o.aftermath + L" has no GFSDK_Aftermath_EnableGpuCrashDumps";
+    return am_result("EnableGpuCrashDumps", dumps(o.am[0], o.am[2], o.am[3], (void*)am_drop, (void*)am_drop, nullptr, nullptr, nullptr));
+}
+
+static std::wstring aftermath_init(const Opts& o, ID3D12Device* dev) {
+    auto init = (int (*)(uint32_t, uint32_t, ID3D12Device*))GetProcAddress(g_am, "GFSDK_Aftermath_DX12_Initialize");
+    return init ? am_result("DX12_Initialize", init(o.am[0], o.am[1], dev)) : o.aftermath + L" has no GFSDK_Aftermath_DX12_Initialize";
+}
+
 // runs as <game exe name>; exit 0 = done printed, 1 = error printed, 3 = retry printed (a new process goes on from there)
 static int child(DWORD parent_pid, const Opts& o) {
     for (int fd : {1, 2}) {  // a packaged child's output goes through the parent's pipes
@@ -219,7 +321,10 @@ static int child(DWORD parent_pid, const Opts& o) {
     auto warm_crash = (void(WINAPI*)(const uint8_t*, uint32_t, const uint64_t*, uint32_t))proc("SCSKiller_WarmCrash");
     auto crashes = (BOOL(WINAPI*)(const char**, const char**))proc("SCSKiller_Crashes");
     auto warm_pass = (void(WINAPI*)(const uint8_t*, uint64_t, uint32_t))proc("SCSKiller_WarmPass");
-    if (!create_device || !options || !start || !progress || !control || !warm_rt || !retry || !memory || !warm_crash || !crashes || (o.pass >= 0 && !warm_pass))
+    auto workers = (void(WINAPI*)(uint32_t*))proc("SCSKiller_Workers");  // optional: the progress line then has no worker counts
+    auto skipped = (void(WINAPI*)(uint64_t*))proc("SCSKiller_Skipped");
+    auto hung = (BOOL(WINAPI*)(const char**))proc("SCSKiller_Hung");
+    if (!create_device || !options || !start || !progress || !control || !warm_rt || !retry || !memory || !warm_crash || !crashes || !skipped || !hung || (o.pass >= 0 && !warm_pass))
         return fail(L"proxy d3d12.dll missing or too old");
     std::vector<uint8_t> pass_of;
     if (o.pass >= 0) {
@@ -249,6 +354,7 @@ static int child(DWORD parent_pid, const Opts& o) {
     warm_rt(o.rt_threads, o.skip.data(), (uint32_t)o.skip.size());
     memory(o.memory_mb);
     warm_crash(o.skip_keys.data(), (uint32_t)(o.skip_keys.size() / 20), o.isolate.data(), (uint32_t)o.isolate.size());
+    std::wstring am_why = o.aftermath.empty() ? L"" : aftermath_dumps(o);
     if (!o.ags.empty()) {
         std::wstring why = ags_device(o, best, &dev);
         if (!why.empty()) fwprintf(stderr, L"AGS app %ls: %ls%ls\n", o.ags_app.c_str(), why.c_str(), dev ? L"" : L": a plain device (the exe name's cache)");
@@ -262,6 +368,12 @@ static int child(DWORD parent_pid, const Opts& o) {
         wchar_t why[16];
         swprintf_s(why, L" (0x%08X)", (unsigned)hr);
         return fail(L"D3D12 device creation failed on " + std::wstring(bd.Description) + why);
+    }
+
+    if (!o.aftermath.empty()) {
+        if (am_why.empty()) am_why = aftermath_init(o, dev);
+        if (am_why.empty()) fwprintf(stderr, L"NVIDIA Aftermath started as the game starts it (version 0x%x, feature flags 0x%x)\n", o.am[0], o.am[1]);
+        else fwprintf(stderr, L"NVIDIA Aftermath: %ls, compiling without it\n", am_why.c_str());
     }
 
     uint64_t p[4];  // done, total, failed, finished
@@ -279,6 +391,7 @@ static int child(DWORD parent_pid, const Opts& o) {
     ULONGLONG t0 = GetTickCount64(), seen = t0, printed = t0;
     LONG last = beat ? *beat : 0;
     bool stopping = false;
+    uint64_t s[2];  // skipped for this compile, those before the retry's first item
     for (;; Sleep(100)) {
         progress(p);
         if (p[3]) break;
@@ -288,25 +401,33 @@ static int child(DWORD parent_pid, const Opts& o) {
         control(stopping ? STOP : beat && now - seen > 1000 ? PAUSE : RUN);
         if (now - printed < 500) continue;
         printed = now;
-        emit("{\"event\":\"progress\",\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"rate\":%.1f}", p[0], p[1], p[2], (p[0] - first) * 1000.0 / (now - t0));
+        uint32_t w[2] = {0, 0};
+        if (workers) workers(w);
+        skipped(s);
+        emit("{\"event\":\"progress\",\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"driverSkipped\":%llu,\"rate\":%.1f,\"workers\":%u,\"threads\":%u}", p[0], p[1], p[2],
+             s[0], (p[0] - first) * 1000.0 / (now - t0), w[0], w[1]);
     }
     uint64_t r[5];  // needed, from, ray tracing threads, failed before from, the item that failed alone (~0: none)
     retry(r);
+    skipped(s);
     const char *crashed, *isolate;  // JSON array bodies
-    bool removed = crashes(&crashed, &isolate);
+    BOOL removed = crashes(&crashed, &isolate);  // 2: a replay faulted
+    const char* hung_skip;  // JSON array body
+    BOOL hang = hung(&hung_skip);
     HANDLE final_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, final_name(parent_pid).c_str());
     if (r[0] && !stopping) {
-        emit("{\"event\":\"retry\",\"from\":%llu,\"rtThreads\":%llu,\"failedItem\":%lld,\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"seconds\":%.1f,"
-             "\"reason\":\"%s\",\"crashed\":[%s],\"isolate\":[%s]}",
-             r[1], r[2], r[4] == ~0ull ? -1ll : (long long)r[4], r[1], p[1], r[3], (GetTickCount64() - t0) / 1000.0, removed ? "removed" : "rt", crashed, isolate);
+        emit("{\"event\":\"retry\",\"from\":%llu,\"rtThreads\":%llu,\"failedItem\":%lld,\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"driverSkipped\":%llu,\"seconds\":%.1f,"
+             "\"reason\":\"%s\",\"crashed\":[%s],\"isolate\":[%s],\"skip\":[%s]}",
+             r[1], r[2], r[4] == ~0ull ? -1ll : (long long)r[4], r[1], p[1], r[3], s[1], (GetTickCount64() - t0) / 1000.0,
+             removed == 2 ? "fault" : removed ? "removed" : hang ? "hang" : "rt", crashed, isolate, hung_skip);
         if (final_event) SetEvent(final_event);
         return 3;
     }
     if (p[0] < p[1] && !stopping) return fail(L"replay aborted after repeated faults, see stage\\scskiller.log");
     // stopped poisoned: items after the first unfinished one may be done, so it resumes from that one, not from the count
-    const uint64_t done = r[0] ? r[1] : p[0], failed = r[0] ? r[3] : p[2];
-    emit("{\"event\":\"done\",\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"seconds\":%.1f,\"stopped\":%s,\"crashed\":[%s]}", done, p[1], failed,
-         (GetTickCount64() - t0) / 1000.0, done < p[1] ? "true" : "false", crashed);
+    const uint64_t done = r[0] ? r[1] : p[0], failed = r[0] ? r[3] : p[2], skips = r[0] ? s[1] : s[0];
+    emit("{\"event\":\"done\",\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"driverSkipped\":%llu,\"seconds\":%.1f,\"stopped\":%s,\"crashed\":[%s]}", done, p[1], failed,
+         skips, (GetTickCount64() - t0) / 1000.0, done < p[1] ? "true" : "false", crashed);
     if (final_event) SetEvent(final_event);
     return 0;  // a normal exit: the driver writes its cache now
 }
@@ -319,9 +440,10 @@ int wmain(int argc, wchar_t** argv) {
         fputs("usage: scskiller_warm <workdir> <game exe file name> [--threads N] [--priority below|idle] [--start N]\n"
               "                      [--stop-event <name>] [--adapter-luid <hex>] [--rt-threads N] [--skip i,j,...] [--memory-mb N]\n"
               "                      [--package <app user model id>] [--stage-path <install folder>\\<dir>\\<exe>]\n"
-              "                      [--skip-keys <sha1 hex>,...] [--isolate i,j,...]\n"
+              "                      [--skip-keys <sha1 hex>,...|@<file>] [--isolate i,j,...]\n"
               "                      [--ags <amd_ags_x64.dll> --ags-app <name> --ags-engine <name>] [--pass K]\n"
-              "                      [--layer <folder>] [--d3d12 <folder>]\n", stderr);
+              "                      [--layer <folder>] [--d3d12 <folder>] [--d3d11 <dll>]\n"
+              "                      [--aftermath <dll> --aftermath-init <version>,<features>,<apis>,<dump flags>]\n", stderr);
         return fail(L"bad arguments");
     }
     std::wstring work = argv[1], exe = argv[2];
@@ -379,8 +501,10 @@ int wmain(int argc, wchar_t** argv) {
             unput(n);
         for (auto& n : layer) unput(n);
         for (auto& n : agility) unput(n);
+        if (!o.d3d11.empty()) unput(L"d3d11.dll");
         if (!o.d3d12.empty() && !RemoveDirectoryW((stage + L"D3D12").c_str()))
             fwprintf(stderr, L"removing the staged %lsD3D12 failed (error %lu)\n", stage.c_str(), GetLastError());
+        DeleteFileW((stage + kItemsFile).c_str());
         if (stage == flat) return;
         for (auto n : {L"scskiller.log", L"scskiller_creates.csv", L"scskiller_warm_times.csv", L"scskiller_failed.keys"})
             MoveFileExW((stage + n).c_str(), (flat + n).c_str(), 0);
@@ -414,6 +538,8 @@ int wmain(int argc, wchar_t** argv) {
         }
         if (ec) return fail(L"--layer " + o.layer + L" can't be listed");
     }
+    if (!o.d3d11.empty() && !put(o.d3d11, L"d3d11.dll", false))
+        return fail(L"staging the game's d3d11.dll failed (error " + std::to_wstring(GetLastError()) + L")");
     UINT sdk = 0;
     if (!o.d3d12.empty()) {
         CreateDirectoryW((stage + L"D3D12").c_str(), nullptr);
@@ -458,6 +584,7 @@ int wmain(int argc, wchar_t** argv) {
         std::wstring args = L"--child " + std::to_wstring(me);
         for (int i = 3; i < argc; ++i) args += L" " + quoted(argv[i]);
         if (sdk) args += L" --sdk " + std::to_wstring(sdk);
+        DeleteFileW((stage + kItemsFile).c_str());  // a child that dies before its items leaves none to go by
         fflush(stdout);
         // joined on every return: a joinable std::thread's destructor calls std::terminate, which fails fast (0xC0000409)
         struct Relays : std::vector<std::thread> {
@@ -551,7 +678,10 @@ int wmain(int argc, wchar_t** argv) {
         swprintf_s(hex, L"0x%08X", code);
         // 3 is a retry only after the child's last line: abort() exits with 3 too
         bool last_line = final_event && WaitForSingleObject(final_event, 0) == WAIT_OBJECT_0;
-        if (code > 1 && (code != 3 || !last_line)) return fail(L"the warm process died (exit code " + std::wstring(hex) + L")");  // it printed no error line
+        if (code > 1 && (code != 3 || !last_line)) {  // it printed no error line
+            if (retry_after_death(stage + kItemsFile, pi.dwProcessId, o, hex, turns / 10.0)) return 3;
+            return fail(L"the warm process died (exit code " + std::wstring(hex) + L")");
+        }
         return (int)code;
     }
 }

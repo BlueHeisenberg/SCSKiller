@@ -2,6 +2,11 @@
   "about": "Unreal versions and engine forks whose root-signature rule (RootSig) a real game has confirmed, so a game on one of them needs no recording and shows no 'not tested' note. version is EngineInfo.Version; fork is EngineInfo.Fork ('GAME_...'), left out for stock Unreal; game and evidence say what confirmed it. Embedded in the app and served at /v1/content/confirmed-engines.json, the same file; the app uses the embedded entries plus the served copy's when it passes ConfirmedEngines.TryParse.",
   "engines": [
     {
+      "version": "4.25",
+      "game": "Returnal",
+      "evidence": "Its recording: 8,977 of 8,977 root signatures rebuilt byte for byte (79 distinct)."
+    },
+    {
       "version": "4.26",
       "fork": "GAME_FinalFantasy7Rebirth",
       "game": "FINAL FANTASY VII REBIRTH",

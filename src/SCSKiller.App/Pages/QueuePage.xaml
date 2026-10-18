@@ -55,7 +55,7 @@
             <InfoBar Severity="Warning" IsClosable="False" IsOpen="{x:Bind Vm.CacheWarn, Mode=OneWay}" Visibility="{x:Bind Vm.CacheWarn, Mode=OneWay}"
                      Message="{x:Bind Vm.CacheWarnText, Mode=OneWay}">
                 <InfoBar.ActionButton>
-                    <HyperlinkButton Content="Raise the limit" Click="OnSettings" Visibility="{x:Bind Vm.CanRaiseLimit}" />
+                    <HyperlinkButton Content="Raise the limit" Click="OnSettings" Visibility="{x:Bind Vm.CanRaiseLimit, Mode=OneWay}" />
                 </InfoBar.ActionButton>
             </InfoBar>
 
@@ -74,6 +74,13 @@
                         <TextBlock Grid.Column="1" Grid.ColumnSpan="3" Text="Game (in run order)" Style="{StaticResource Caption}" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="4" Text="Time" Style="{StaticResource Caption}" TextAlignment="Right" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="5" Text="Cache" Style="{StaticResource Caption}" TextAlignment="Right" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="6" Orientation="Horizontal" HorizontalAlignment="Right" Visibility="{x:Bind Vm.CanClear, Mode=OneWay}">
+                            <!-- tooltip on a hit-testable wrapper: a disabled button shows none -->
+                            <Grid Background="Transparent" ToolTipService.ToolTip="Ctrl+click or Shift+click to select several games">
+                                <HyperlinkButton x:Name="RemoveSelected" Content="Remove selected" FontSize="12" IsEnabled="False" Click="OnRemoveSelected" />
+                            </Grid>
+                            <HyperlinkButton Content="Clear queue" FontSize="12" Click="OnClearQueue" ToolTipService.ToolTip="Removes every game but the one compiling" />
+                        </StackPanel>
                     </Grid>
                     <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
 
@@ -124,7 +131,8 @@
                                      IsIndeterminate="{x:Bind Vm.Indeterminate, Mode=OneWay}" AutomationProperties.Name="Compile progress" />
                     </Grid>
 
-                    <ListView ItemsSource="{x:Bind Vm.Waiting}" SelectionMode="None" CanDragItems="True" CanReorderItems="True" AllowDrop="True"
+                    <ListView x:Name="WaitingList" ItemsSource="{x:Bind Vm.Waiting}" SelectionMode="Extended" SelectionChanged="OnSelection"
+                              CanDragItems="True" CanReorderItems="True" AllowDrop="True"
                               DragItemsStarting="OnDragStarting" DragItemsCompleted="OnDragCompleted" AutomationProperties.Name="Waiting games"
                               ItemContainerStyle="{StaticResource RowItem}">
                         <ListView.ItemTemplate>

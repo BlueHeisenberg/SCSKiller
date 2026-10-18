@@ -86,9 +86,34 @@ public class CoverAllTests(ITestOutputHelper output)
         Assert.Contains(units, u => u.Stage == Stage.Amplification && u.Shader == As.Sha1);
     }
 
-    /// <summary>A DXIL container: the program header's version (kind &lt;&lt; 16 | major &lt;&lt; 4 | minor) and 32-byte
-    /// signature parts (OSG1, PSG1, ...) of (name, index, system value, component type, register, mask).</summary>
-    static byte[] Dxil(uint version, params (string Part, (string Name, int Index, int Sys, int Comp, int Reg, byte Mask)[] Elems)[] sigs)
+    /// <summary>An AS pairs only with mesh shaders that take its payload (PSV0's ASInfo / MSInfo payload size): the runtime
+    /// rejects any other pair. A mesh shader taking none still rasterizes without it.</summary>
+    [Fact]
+    public void AmplificationShaderPairsWithMeshShadersTakingItsPayload()
+    {
+        static byte[] Psv(int at, int payload) { var p = new byte[4 + 24 + 4]; p[0] = 24; BinaryPrimitives.WriteInt32LittleEndian(p.AsSpan(4 + at), payload); return p; }
+        var parsedAs = ShaderContainer.Parse(Dxil(14 << 16 | 6 << 4 | 6, Psv(0, 128)), Hash("p-as"), new(0, 0, 0, 0))!;
+        var parsedMs = ShaderContainer.Parse(Dxil(Ms65, Psv(8, 128), ("OSG1", [("SV_Position", 0, 1, 3, 0, 0xF)])), Hash("p-ms"), new(0, 0, 0, 0))!;
+        Assert.Equal((Stage.Amplification, 128, Stage.Mesh, 128), (parsedAs.Stage, parsedAs.Payload, parsedMs.Stage, parsedMs.Payload));
+
+        var sender = As with { Payload = 128 };
+        var takes = Ms with { Sha1 = Hash("p-ms-takes"), Payload = 128 };
+        var takesNone = Ms with { Sha1 = Hash("p-ms-none") };
+        ShaderInfo[] all = [sender, takes, takesNone, MsPs];
+        var index = new ShaderIndex("payload", ["PCD3D_SM6"], all.ToDictionary(s => s.Sha1), [new ShaderMap("m", "Game", "PCD3D_SM6", all.Select(s => s.Sha1).ToList())]);
+        foreach (var caps in AllCaps)
+        {
+            var sets = Psos(new Planner().Build(Ff7.Game, Ue51, index, null, caps, Ff7.TempDir("cover-payload-" + caps.Profile + caps.PerStageCache), null, CancellationToken.None)).Select(Set).ToHashSet();
+            Assert.Contains(Set(sender, takes), sets);
+            Assert.Contains(Set(sender, takes, MsPs), sets);
+            Assert.DoesNotContain(sets, s => s.Contains(sender.Sha1[..6]) && s.Contains(takesNone.Sha1[..6]));
+            Assert.Contains(Set(takesNone), sets);
+        }
+    }
+
+    /// <summary>A DXIL container: the program header's version (kind &lt;&lt; 16 | major &lt;&lt; 4 | minor), a PSV0 part when
+    /// given, and 32-byte signature parts (OSG1, PSG1, ...) of (name, index, system value, component type, register, mask).</summary>
+    static byte[] Dxil(uint version, byte[]? psv0, params (string Part, (string Name, int Index, int Sys, int Comp, int Reg, byte Mask)[] Elems)[] sigs)
     {
         var parts = new List<(string Fourcc, byte[] Data)>();
         foreach (var (part, elems) in sigs)
@@ -111,6 +136,7 @@ public class CoverAllTests(ITestOutputHelper output)
             }
             parts.Add((part, [.. d, .. names]));
         }
+        if (psv0 != null) parts.Add(("PSV0", psv0));
         parts.Add(("DXIL", BitConverter.GetBytes(version)));
         var offs = new int[parts.Count];
         var pos = 32 + 4 * parts.Count;
@@ -140,7 +166,7 @@ public class CoverAllTests(ITestOutputHelper output)
     public void MeshShaderPerPrimitiveOutputs()
     {
         // Nanite's raster MS: SV_Position per vertex, a uint4 per primitive
-        var nanite = ShaderContainer.Parse(Dxil(Ms65, ("OSG1", [("SV_Position", 0, 1, 3, 0, 0xF)]), ("PSG1", [("TEXCOORD", 1, 0, 1, 0, 0xF)])), Hash("c-nanite-ms"), new(0, 0, 0, 0))!;
+        var nanite = ShaderContainer.Parse(Dxil(Ms65, null, ("OSG1", [("SV_Position", 0, 1, 3, 0, 0xF)]), ("PSG1", [("TEXCOORD", 1, 0, 1, 0, 0xF)])), Hash("c-nanite-ms"), new(0, 0, 0, 0))!;
         Assert.Equal((Stage.Mesh, "ms_6_5"), (nanite.Stage, nanite.ShaderModel));
         Assert.Equal([("SV_Position", 0), ("TEXCOORD", PrimitiveRow)], nanite.Outputs.Select(o => (o.Semantic, o.Register)));
         var ms = Shader("c-ms-prim", Stage.Mesh, [], [In("TEXCOORD", 0, 0, 3), In("SV_Position", 0, 1, 0xF, 3, 1), In("TEXCOORD", 7, PrimitiveRow, 0xF, 1)]) with { ShaderModel = "ms_6_5" };
@@ -203,8 +229,8 @@ public class CoverAllTests(ITestOutputHelper output)
         var mesh = psos.Count(p => p.Stages.ContainsKey((int)Stage.Mesh));
         var blobs = recs.Where(r => r.Tag == 'B').GroupBy(r => Hex(r.Payload.AsSpan(0, 20))).ToDictionary(g => g.Key, g => g.First().Payload[20..]);
         var withRs = psos.Where(p => blobs.ContainsKey(p.Rs)).ToList();
-        var rebuilt = withRs.Count(p => RootSig.Serialize(RootSig.Build(RootSig.RuleFor(engine)!.Value, p.Stages.ToDictionary(s => (Stage)s.Key, s => index.Shaders[s.Value]), true),
-            RootSig.StaticSamplers(RootSig.RuleFor(engine)!.Value)).AsSpan().SequenceEqual(blobs[p.Rs]));
+        var rebuilt = withRs.Count(p => RootSig.Serialize(RootSig.Build(RootSig.RuleFor(engine)!, p.Stages.ToDictionary(s => (Stage)s.Key, s => index.Shaders[s.Value]), true),
+            RootSig.StaticSamplers(RootSig.RuleFor(engine)!)).AsSpan().SequenceEqual(blobs[p.Rs]));
         output.WriteLine($"root signatures rebuilt byte-exact: {rebuilt}/{withRs.Count} recorded PSOs ({RootSig.RuleFor(engine)})");
         output.WriteLine($"plan {plan.Stats.Generated} PSOs; recorded PSOs of shaders in the files whose units it compiles: {psos.Count - missed.Count}/{psos.Count}, {mesh} with a mesh shader; missed: "
             + string.Join(", ", missed.GroupBy(p => string.Join('+', p.Stages.Keys.Select(k => (Stage)k))).Select(g => $"{g.Key} {g.Count()}")));
@@ -214,66 +240,42 @@ public class CoverAllTests(ITestOutputHelper output)
         Assert.True(missed.Count * 1000 <= psos.Count, $"{missed.Count} missed");
     }
 
-    /// <summary>SILENT HILL: Townfall's recording (rehydrated from the install) and its recorder's timings, read only: its
-    /// RayQuery PSOs are compute PSOs; the launch before any compile (the csv's first) still counts every create of one as a
-    /// compile, and each later launch counts most of them apart, at NVIDIA's floor.</summary>
-    [Trait("Needs", "Game")]
-    [Fact]
+    static string Townfall(string file) => Path.Combine(AppContext.BaseDirectory, "Fixtures", "Townfall", file);
+
+    /// <summary>SILENT HILL: Townfall's recorder csv (its launch before any compile) and the keys of its RayQuery PSOs created
+    /// over 3 ms: those up to NVIDIA's floor count apart, from the compiles and the startup's alike, and none over it.</summary>
+    [FixtureFact("Townfall")]
     public void TownfallRayQueryCreatesCountApart()
     {
-        var game = new SCSKiller.Core.Games.SteamSource().Discover().FirstOrDefault(g => g.Id == "steam:1636440");
-        var csv = game == null ? "" : Path.Combine(Path.GetDirectoryName(game.ExePath)!, "scskiller_creates.csv");
-        if (!File.Exists(csv)) return;
-        var reader = new UnrealReader(Ff7.TempDir("rq-townfall-data"));
-        var engine = reader.Detect(game!)!;
-        if (Ff7.Recording(game!, engine, reader, "rq-townfall-rec") is not { } db) return;
-        var keys = Path.Combine(Ff7.TempDir("rq-townfall-keys"), "rayquery.keys");
-        SCSKiller.Core.App.SessionLog.WriteRayQueryKeys([db], keys);
-        var rq = SCSKiller.Core.App.SessionLog.ReadRayQueryKeys(keys)!;
-        Assert.NotEmpty(rq);
-        Assert.All(Read(db).Where(r => rq.Contains(r.Key)), r => Assert.True(r.Tag == 'C' || Parse(r).Stages.ContainsKey((int)Stage.Compute)));
-        var launches = new List<List<string>>();
-        foreach (var line in File.ReadLines(csv))
-            if (line.StartsWith("#session")) launches.Add([line]);
-            else launches.LastOrDefault()?.Add(line);
-        long apart = 0;
-        for (var i = 0; i < launches.Count; i++)
-        {
-            var one = Path.Combine(Ff7.TempDir("rq-townfall-launch"), "creates.csv");
-            File.WriteAllLines(one, launches[i]);
-            var (before, after) = (SCSKiller.Core.App.SessionLog.Read(one).Last!, SCSKiller.Core.App.SessionLog.Read(one, rayQuery: rq).Last!);
-            var cold = launches[i].All(l => l.StartsWith('#') || l.Split(',')[2] == "0");   // nothing recorded before it
-            output.WriteLine($"launch {i + 1}{(cold ? " (cold)" : "")}: {before.Compiles} compiles (worst {before.WorstCompileMs:0.0} ms) -> "
-                + $"{after.Compiles} (worst {after.WorstCompileMs:0.0} ms) + {after.RayQueryRecompiles} RayQuery PSOs at the floor");
-            Assert.Equal(before.Compiles, after.Compiles + after.RayQueryRecompiles);
-            if (cold) Assert.Equal(0, after.RayQueryRecompiles);
-            apart += after.RayQueryRecompiles;
-        }
-        Assert.True(apart > 0);
+        var csv = Townfall("scskiller_creates.csv");
+        var rq = SCSKiller.Core.App.SessionLog.ReadRayQueryKeys(Townfall("rayquery.keys"))!;
+        var (before, after) = (SCSKiller.Core.App.SessionLog.Read(csv).Last!, SCSKiller.Core.App.SessionLog.Read(csv, rayQuery: rq).Last!);
+        output.WriteLine($"{before.Compiles} + {before.StartupCompiles} at startup compiles -> {after.Compiles} + {after.StartupCompiles} at startup"
+            + $" + {after.RayQueryRecompiles} RayQuery PSOs at the floor");
+        Assert.Equal(before.Compiles + before.StartupCompiles, after.Compiles + after.StartupCompiles + after.RayQueryRecompiles);
+        var floor = File.ReadLines(csv).Select(l => l.Split(',')).Count(f => f.Length > 5 && rq.Contains(f[5])
+            && double.Parse(f[4], System.Globalization.CultureInfo.InvariantCulture) is > 3 and <= SCSKiller.Core.App.SessionLog.RayQueryFloorMs);
+        Assert.Equal(floor, after.RayQueryRecompiles);
+        Assert.True(after.RayQueryRecompiles > 0);
     }
 
-    /// <summary>SILENT HILL: Townfall terminates itself, so none of its launches has an #end: the last one lasts until the
-    /// exit the app watched, not until its last create (its pipelines are all created in the first seconds). The csv is a
-    /// copy in SCSKILLER_TEST_APP_DATA's game folder when there is one, else the recorder's own (read shared: the game may run).</summary>
-    [Trait("Needs", "Game")]
-    [Fact]
+    /// <summary>SILENT HILL: Townfall terminates itself, so its launch has no #end: it lasts until the exit the app watched,
+    /// not until its last create, on the recorder's clock (from the #session stamp's #clock).</summary>
+    [FixtureFact("Townfall")]
     public void TownfallSessionLastsUntilTheWatchedExit()
     {
-        var game = new SCSKiller.Core.Games.SteamSource().Discover().FirstOrDefault(g => g.Id == "steam:1636440");
-        if (game == null) return;
-        var copy = Environment.GetEnvironmentVariable("SCSKILLER_TEST_APP_DATA") is { Length: > 0 } d
-            ? Path.Combine(new SCSKiller.Core.App.AppStore(d).GameDir(game.Id), "scskiller_creates.csv") : "";
-        var csv = File.Exists(copy) ? copy : Path.Combine(Path.GetDirectoryName(game.ExePath)!, "scskiller_creates.csv");
-        if (!File.Exists(csv)) return;
-        using var shared = new StreamReader(new FileStream(csv, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
-        var lines = shared.ReadToEnd().Split('\n');
-        if (lines.Any(l => l.StartsWith("#end"))) return;
-        var start = DateTimeOffset.FromUnixTimeMilliseconds(long.Parse(lines.Last(l => l.StartsWith("#session")).Split(',')[1]));
+        var csv = Townfall("scskiller_creates.csv");
+        var lines = File.ReadAllLines(csv);
+        Assert.DoesNotContain(lines, l => l.StartsWith("#end"));
+        var session = Array.FindLastIndex(lines, l => l.StartsWith("#session"));
+        var start = DateTimeOffset.FromUnixTimeMilliseconds(long.Parse(lines[session].Split(',')[1]));
+        var clock = lines.Skip(session + 1).TakeWhile(l => l.StartsWith('#')).FirstOrDefault(l => l.StartsWith("#clock,")) is { } c
+            ? double.Parse(c.Split(',')[1], System.Globalization.CultureInfo.InvariantCulture) : 0;
         var byCreates = SCSKiller.Core.App.SessionLog.Read(csv).Last!.Duration;
         var watched = SCSKiller.Core.App.SessionLog.Read(csv, played: new(start.AddSeconds(-3), start.AddMinutes(25))).Last!.Duration;
         output.WriteLine($"last launch: {byCreates} by its last create, {watched} by the watched exit");
         Assert.True(byCreates < TimeSpan.FromMinutes(25));
-        Assert.Equal(TimeSpan.FromMinutes(25), watched);
+        Assert.Equal(TimeSpan.FromMinutes(25) + TimeSpan.FromMilliseconds(clock), watched);
     }
 
     /// <summary>A stream output declaration in a record: a stream's subobject 0x10007 and a 'G' desc's tail are skipped by

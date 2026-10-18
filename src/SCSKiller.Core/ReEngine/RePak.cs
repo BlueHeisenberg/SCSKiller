@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Numerics;
 using Microsoft.Win32.SafeHandles;
 using ZstdSharp;
+using ZstdSharp.Unsafe;
 
 namespace SCSKiller.Core.ReEngine;
 
@@ -12,13 +13,15 @@ namespace SCSKiller.Core.ReEngine;
 ///   - header, 16 bytes: "KPKA", u8 major, u8 minor, u16 features, u32 entry count, u32 fingerprint;
 ///   - entries: v4 48 bytes (u32 name hash lower, upper, u64 offset, u64 packed size, u64 size, u64 attributes, u64
 ///     checksum); v2.0 24 bytes (u64 offset, u64 size, u32 hash lower, upper; stored);
-///   - then, by feature bit: 0x10 a u32, 0x04 9 bytes, 0x08 128 bytes the table key is made from (the entry table is
-///     XOR-encrypted, see <see cref="Key"/>), 0x20 a chunk table (u32 block size, u32 count, count x (u32 start low, u32 meta = packed
-///     length &lt;&lt; 10 | flags));
+///   - then, by feature bit: 0x10 a u32, 0x04 9 bytes, 0x40 a remap table (u32 count, u32 unused, count x 16 bytes;
+///     skipped, as REE.PAK.Tool and ree-pak-rs's unmerged remap patch do: entries index the 0x20 table, not this one),
+///     0x08 128 bytes the table key is made from (the entry table is XOR-encrypted, see <see cref="Key"/>), 0x20 a chunk
+///     table (u32 block size, u32 count, count x (u32 start low, u32 meta = packed length &lt;&lt; 10 | flags));
 ///   - attributes: bits 0-3 compression (0 stored, 1 raw deflate, 2 zstd), 16-23 resource encryption, 24 the offset is
 ///     the first chunk's index (fixed-size chunks, each zstd or stored when its packed length is the block size).
 /// Names are murmur3 hashes of paths; nothing here needs them. Verified on PRAGMATA (v4.2, features 0x28 and 0x08);
-/// v2.0 and resource encryption (other titles) are not verified: the latter is refused per entry.</summary>
+/// v2.0, 0x40 (Dragon's Dogma 2: 0x68) and resource encryption (other titles) are not verified: the latter is refused
+/// per entry.</summary>
 public sealed class RePak : IDisposable
 {
     public readonly record struct Entry(ulong Hash, long Offset, long Packed, long Size, ulong Attr)
@@ -28,7 +31,15 @@ public sealed class RePak : IDisposable
         public bool Chunked => (Attr & 1UL << 24) != 0;
     }
 
-    public const ushort ExtraU32 = 0x10, ExtraData = 0x04, EncryptedTable = 0x08, ChunkTable = 0x20;
+    public const ushort ExtraU32 = 0x10, ExtraData = 0x04, EncryptedTable = 0x08, ChunkTable = 0x20, RemapTable = 0x40;
+
+    /// <summary>The most bytes the entry and chunk tables may claim, checked before they're read. PRAGMATA's largest: 3.9 MB
+    /// of entries (81,661), 0.5 MB of chunks (65,322 of 512 KB).</summary>
+    public const int MaxTable = 64 << 20, MaxChunkTable = 32 << 20, MaxBlock = 16 << 20;
+
+    /// <summary>The most bytes one read may return, and the largest zstd window it decodes with. PRAGMATA's largest: a 57 MB
+    /// shader file, a 4 MB window (2^22).</summary>
+    public const int MaxEntry = 256 << 20, MaxWindowLog = 25;
 
     public string Path { get; }
     public int Major { get; }
@@ -37,6 +48,7 @@ public sealed class RePak : IDisposable
     public IReadOnlyList<Entry> Entries { get; }
 
     readonly SafeFileHandle h;
+    readonly long length;
     readonly int blockSize;
     readonly (long Start, int Packed)[] chunks = [];
 
@@ -46,18 +58,26 @@ public sealed class RePak : IDisposable
         h = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         try
         {
-            var len = RandomAccess.GetLength(h);
+            var len = length = RandomAccess.GetLength(h);
             var hd = Bytes(0, 16);
             if (!hd.AsSpan(0, 4).SequenceEqual("KPKA"u8)) throw new InvalidDataException("not a KPKA package");
             (Major, Minor, Features) = (hd[4], hd[5], BinaryPrimitives.ReadUInt16LittleEndian(hd.AsSpan(6)));
             var count = BinaryPrimitives.ReadInt32LittleEndian(hd.AsSpan(8));
             if (Major is not (2 or 4) || Minor > 2) throw new InvalidDataException($"package version {Major}.{Minor} is not supported");
-            if ((Features & ~(ExtraU32 | ExtraData | EncryptedTable | ChunkTable)) != 0) throw new InvalidDataException($"unknown package features 0x{Features:x}");
+            if ((Features & ~(ExtraU32 | ExtraData | EncryptedTable | ChunkTable | RemapTable)) != 0) throw new InvalidDataException($"unknown package features 0x{Features:x}");
             var size = Major == 2 && Minor == 0 ? 24 : 48;
-            if (count < 0 || 16L + (long)count * size > len) throw new InvalidDataException("entry table past the end of the file");
+            if ((uint)count * (long)size > MaxTable) throw new InvalidDataException($"entry table over {MaxTable >> 20} MB");
+            if (count * size > len - 16) throw new InvalidDataException("entry table past the end of the file");
             var stored = Bytes(16, count * size);
             var table = stored;
             long at = 16 + stored.Length + ((Features & ExtraU32) != 0 ? 4 : 0) + ((Features & ExtraData) != 0 ? 9 : 0);
+            if ((Features & RemapTable) != 0)
+            {
+                // the second u32: a block size to REE.PAK.Tool, the count's high half to ree-pak-rs; neither tool uses it
+                var n = BinaryPrimitives.ReadUInt32LittleEndian(Bytes(at, 8));
+                if (n > (len - at - 8) / 16) throw new InvalidDataException("bad remap table");
+                at += 8 + 16L * n;
+            }
             if ((Features & EncryptedTable) != 0)
             {
                 var raw = Bytes(at, 128);
@@ -73,7 +93,8 @@ public sealed class RePak : IDisposable
                 var ct = Bytes(at, 8);
                 blockSize = BinaryPrimitives.ReadInt32LittleEndian(ct);
                 var n = BinaryPrimitives.ReadInt32LittleEndian(ct.AsSpan(4));
-                if (blockSize is <= 0 or > 64 << 20 || n < 0 || at + 8 + 8L * n > len) throw new InvalidDataException("bad chunk table");
+                if ((uint)n * 8L > MaxChunkTable) throw new InvalidDataException($"chunk table over {MaxChunkTable >> 20} MB");
+                if (blockSize is <= 0 or > MaxBlock || 8L * n > len - at - 8) throw new InvalidDataException("bad chunk table");
                 var raw = Bytes(at + 8, n * 8);
                 chunks = new (long, int)[n];
                 long high = 0;
@@ -124,41 +145,38 @@ public sealed class RePak : IDisposable
     }
 
     /// <summary>The entry's bytes, decompressed, at most <paramref name="max"/> of them (a prefix decodes only what it
-    /// needs). InvalidDataException for a resource-encrypted entry or an unknown compression.</summary>
+    /// needs). InvalidDataException for a resource-encrypted entry, an unknown compression or more than <see cref="MaxEntry"/>
+    /// bytes asked for.</summary>
     public byte[] Read(Entry e, int max = int.MaxValue)
     {
         if (e.Encryption != 0) throw new InvalidDataException($"resource-encrypted entry (type {e.Encryption})");
         var total = e.Chunked && e.Size == 0 ? e.Packed : e.Size;
-        if (total > Array.MaxLength) throw new InvalidDataException("entry too large");
-        var b = new byte[(int)Math.Min(total, max)];
-        if (e.Chunked) { ReadChunks(e, b); return b; }
-        using Stream s = e.Compression switch
+        if (e.Offset < 0 || e.Packed < 0 || total < 0 || !e.Chunked && e.Packed > length - e.Offset) throw new InvalidDataException("entry outside the file");
+        if (total > Array.MaxLength || e.Chunked && total > Math.Max(chunks.Length - e.Offset, 0) * (long)blockSize) throw new InvalidDataException("entry too large");
+        var stored = e.Compression == 0 && !e.Chunked;
+        // a stored entry is never longer than its stored bytes, whatever its size says
+        var want = (int)Math.Min(Math.Min(total, max), stored ? e.Packed : total);
+        if (want > MaxEntry) throw new InvalidDataException($"entry over {MaxEntry >> 20} MB");
+        using Stream s = e.Chunked ? new Chunks(this, e.Offset) : e.Compression switch
         {
             0 => new Region(h, e.Offset, e.Packed),
             1 => new DeflateStream(new Region(h, e.Offset, e.Packed), CompressionMode.Decompress),
-            2 => new DecompressionStream(new Region(h, e.Offset, e.Packed)),
+            2 => Zstd(new Region(h, e.Offset, e.Packed)),
             var c => throw new InvalidDataException($"unknown compression {c}"),
         };
-        var n = s.ReadAtLeast(b, b.Length, throwOnEndOfStream: false);
+        // decoded bytes grow the buffer, not the size field: a few bytes claiming 256 MB allocate 1 MB
+        var b = new byte[stored ? want : Math.Min(want, 1 << 20)];
+        var n = 0;
+        while ((n += s.ReadAtLeast(b.AsSpan(n), b.Length - n, throwOnEndOfStream: false)) == b.Length && n < want)
+            Array.Resize(ref b, (int)Math.Min(want, 2L * b.Length));
         return n == b.Length ? b : b[..n];
     }
 
-    void ReadChunks(Entry e, Span<byte> dst)
+    static DecompressionStream Zstd(Stream s)
     {
-        byte[]? block = null;
-        using var zstd = new Decompressor();
-        for (long i = e.Offset; dst.Length > 0; i++)
-        {
-            if (i >= chunks.Length) throw new InvalidDataException($"chunk {i} past the chunk table");
-            block ??= new byte[blockSize];
-            var (start, packed) = chunks[i];
-            var src = Bytes(start, packed);
-            if (packed == blockSize) src.CopyTo(block, 0);
-            else if (zstd.Unwrap(src, block) != blockSize) throw new InvalidDataException($"chunk {i} doesn't decode to the block size");
-            var n = Math.Min(dst.Length, blockSize);
-            block.AsSpan(0, n).CopyTo(dst);
-            dst = dst[n..];
-        }
+        var z = new DecompressionStream(s);
+        z.SetParameter(ZSTD_dParameter.ZSTD_d_windowLogMax, MaxWindowLog);
+        return z;
     }
 
     byte[] Bytes(long at, int n)
@@ -169,7 +187,7 @@ public sealed class RePak : IDisposable
     }
 
     /// <summary>A read-only window of the file; the handle is shared, so readers on other threads don't interfere.</summary>
-    sealed class Region(SafeFileHandle h, long start, long length) : Stream
+    sealed class Region(SafeFileHandle h, long start, long length) : Source
     {
         long pos;
         public override int Read(Span<byte> buffer)
@@ -180,12 +198,49 @@ public sealed class RePak : IDisposable
             pos += n;
             return n;
         }
+    }
+
+    /// <summary>A chunked entry's bytes from chunk <paramref name="next"/> on, a block at a time; past the chunk table, an error.</summary>
+    sealed class Chunks(RePak pak, long next) : Source
+    {
+        readonly Decompressor zstd = new();
+        byte[] block = [];
+        int pos;
+
+        public override int Read(Span<byte> buffer)
+        {
+            if (buffer.IsEmpty) return 0;
+            if (pos == block.Length)
+            {
+                if (next >= pak.chunks.Length) throw new InvalidDataException($"chunk {next} past the chunk table");
+                if (block.Length == 0) block = new byte[pak.blockSize];
+                var (start, packed) = pak.chunks[next];
+                var src = pak.Bytes(start, packed);
+                if (packed == pak.blockSize) src.CopyTo(block, 0);
+                else if (zstd.Unwrap(src, block) != pak.blockSize) throw new InvalidDataException($"chunk {next} doesn't decode to the block size");
+                (next, pos) = (next + 1, 0);
+            }
+            var n = Math.Min(buffer.Length, block.Length - pos);
+            block.AsSpan(pos, n).CopyTo(buffer);
+            pos += n;
+            return n;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) zstd.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+
+    abstract class Source : Stream
+    {
         public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
-        public override long Length => length;
-        public override long Position { get => pos; set => throw new NotSupportedException(); }
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
         public override void Flush() { }
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();

@@ -1,5 +1,5 @@
 {
-  "about": "Games with documented shader-compilation stutter. Only entries with a real source: an https link, or \"SCSKiller measurement\" for SCSKiller's own. ids are Game.Id values (steam:<appid>, xbox:<package family>, epic:<app name>, ea:<content id>); name is the fallback, compared letters and digits only, case-insensitive. date = when the entry was last checked. Embedded in the app and served at /v1/content/known-stutter.json, the same file; the app uses the served copy when it passes StutterList.TryParse.",
+  "about": "Games with documented shader-compilation stutter. Only entries with a real source: an https link, or \"SCSKiller measurement\" for SCSKiller's own. ids are Game.Id values (steam:<appid>, xbox:<package family>, epic:<app name>, ea:<content id>, gaijin:<launcher project>, hoyoplay:<game biz>); name is the fallback, compared letters and digits only, case-insensitive. date = when the entry was last checked. Embedded in the app and served at /v1/content/known-stutter.json, the same file; the app uses the served copy when it passes StutterList.TryParse.",
   "games": [
     {
       "name": "STAR WARS Jedi: Survivor",
@@ -168,6 +168,14 @@
       "reason": "Shader-compilation stutter remains during play; SCSKiller measured 38 shader stutters (worst 4.6 s) on a cold run and 1 after one compile",
       "source": "https://www.dsogaming.com/news/sand-land-still-suffers-from-shader-compilation-traversal-stutters-on-pc/",
       "date": "2026-10-03"
+    },
+    {
+      "name": "War Thunder",
+      "ids": ["steam:236390", "gaijin:warthunder"],
+      "severity": "moderate",
+      "reason": "On DirectX 12 the first matches after each update stutter while it compiles its shaders again",
+      "source": "https://forum.warthunder.com/t/less-fps-and-drops/269202/41",
+      "date": "2026-10-05"
     },
     {
       "name": "The Witcher 3: Wild Hunt",

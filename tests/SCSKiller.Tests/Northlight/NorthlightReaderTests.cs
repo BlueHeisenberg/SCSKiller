@@ -67,7 +67,7 @@ public class NorthlightReaderTests
     }
 
     /// <summary>A DXIL library container: a program header (lib_6_3) and an RDAT function table.</summary>
-    static byte[] Library(params (int Kind, string Name, int Payload)[] fns)
+    internal static byte[] Library(params (int Kind, string Name, int Payload)[] fns)
     {
         var rdatOnly = RtCollectionTests.Library(fns);
         var rdat = rdatOnly[36..];
@@ -151,6 +151,19 @@ public class NorthlightReaderTests
         Assert.Null(reader.Detect(d.Game with { InstallDir = Path.Combine(d.Dir, "missing") }));
     }
 
+    /// <summary>A Northlight 2 install (its .rmdtoc archives) isn't Control's engine, even with Control's effect files.</summary>
+    [Fact]
+    public void Northlight2IsNotClaimed()
+    {
+        var dir = Ff7.TempDir("northlight2-synthetic");
+        Directory.CreateDirectory(Path.Combine(dir, @"data\shaders\build\pc_dxil"));
+        File.Copy(Path.Combine(Data.Value.Effects, "standardmaterial.obj"), Path.Combine(dir, @"data\shaders\build\pc_dxil\standardmaterial.obj"));
+        var game = Data.Value.Game with { InstallDir = dir };
+        Assert.NotNull(new NorthlightReader().Detect(game));
+        File.WriteAllBytes(Path.Combine(dir, "data", "base-generic.rmdtoc"), [1]);
+        Assert.Null(new NorthlightReader().Detect(game));
+    }
+
     /// <summary>pc_dx11, Control's DX11 set (SM 5.0, the same layout): the game may run on either API, so on NVIDIA every
     /// DX11 shader becomes a D3D11 item, and none of them a D3D12 pipeline.</summary>
     [Fact]
@@ -201,13 +214,13 @@ public class NorthlightReaderTests
         var engine = reader.Detect(d.Game)!;
         var index = reader.Index(d.Game, engine, null, CancellationToken.None);
         Assert.Contains(new Binding("srv", 1, 0, -1), index.Shaders[Sha(d.Ps[0])].Bindings);
-        var gfx = RootSig.Serialize(RootSig.Build(RootSig.Rule.Northlight, new Dictionary<Stage, ShaderInfo> { [Stage.Vertex] = index.Shaders[Sha(d.Vs[0])] }, false), []);
-        var cs = RootSig.Serialize(RootSig.NorthlightCompute, []);
+        var gfx = RootSig.Serialize(RootSig.Build(SCSKiller.Tests.Planning.Rules.Northlight, new Dictionary<Stage, ShaderInfo> { [Stage.Vertex] = index.Shaders[Sha(d.Vs[0])] }, false), []);
+        var cs = RootSig.Serialize(SCSKiller.Tests.Planning.Rules.NorthlightCompute, []);
         uint U(byte[] blob, int at) => BitConverter.ToUInt32(SCSKiller.Core.Carved.Dxbc.Part(blob, "RTS0"u8)[at..]);
         Assert.Equal((1u, 18u, 0x11u), (U(gfx, 0), U(gfx, 4), RootSig.Parse(gfx).Flags)); // version 1.0, parameters, flags
         Assert.Equal((1u, 8u, 0u), (U(cs, 0), U(cs, 4), RootSig.Parse(cs).Flags));
         Assert.Null(RootSig.Uncovered(RootSig.Parse(gfx), Stage.Pixel, index.Shaders[Sha(d.Ps[0])]));
-        Assert.Throws<RootSig.SerializeException>(() => RootSig.Build(RootSig.Rule.Northlight, new Dictionary<Stage, ShaderInfo> { [Stage.Geometry] = index.Shaders[Sha(d.Vs[0])] }, false));
+        Assert.Throws<RootSig.SerializeException>(() => RootSig.Build(SCSKiller.Tests.Planning.Rules.Northlight, new Dictionary<Stage, ShaderInfo> { [Stage.Geometry] = index.Shaders[Sha(d.Vs[0])] }, false));
         Assert.False(RootSig.Verified(engine));
 
         var dir = Ff7.TempDir("northlight-plan");
@@ -215,7 +228,7 @@ public class NorthlightReaderTests
         var plan = planner.Build(d.Game, engine, index, null, Ff7.Nvidia, dir, null, CancellationToken.None);
         var body = PlanFile.Read(plan.FilePath).Records.ToList();
         string Hash(byte[] b) => PsoDb.Hex(SHA1.HashData(b));
-        var local = RtCollections.Serialize(RtCollections.NorthlightLocal, []).Hash;
+        var local = RtCollections.Serialize(SCSKiller.Tests.Planning.Rules.NorthlightLocal, []).Hash;
         Assert.Equal(new[] { Hash(gfx), Hash(cs), local }.Order(), body.Where(r => r.Tag == 'B').Select(r => PsoDb.Hex(r.Payload.AsSpan(0, 20))).Order());
         var psos = body.Where(r => r.Tag == 'S').Select(r => PsoDb.Tuple(PsoDb.Parse(r).Rs, PsoDb.Parse(r).Stages))
             .Concat(body.Where(r => r.Tag == 'P').Select(r => PsoDb.ParseItem(r.Payload)).Select(i => PsoDb.Tuple(i.Rs, i.Stages))).ToHashSet();

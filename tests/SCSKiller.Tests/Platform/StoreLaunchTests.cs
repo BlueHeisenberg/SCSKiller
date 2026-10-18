@@ -44,6 +44,18 @@ public sealed class StoreLaunchTests : IDisposable
     }
 
     [Fact]
+    public void Epic_takes_the_catalog_ids_of_a_game_only_the_new_launcher_lists()
+    {
+        var launcher = Directory.CreateDirectory(Path.Combine(_dir, "eglv2")).FullName;
+        File.WriteAllText(Path.Combine(launcher, "installations.jsonl"), """
+            {"version":1,"writtenAt":"2026-10-14T12:00:00Z","entries":1}
+            {"installationId":"A","complete":true,"namespace":"columbine","itemId":"6d2dcb9ed0bd42dea4b2f23cc43ba92f","artifactId":"Columbine","dir":"X:\\Games\\Some Game"}
+            """);
+        var c = StoreLaunch.Command(G("epic:Columbine", Store.Epic), epicManifests: Path.Combine(_dir, "missing"), epicLauncher: launcher)!;
+        Assert.Equal("com.epicgames.launcher://apps/columbine%3A6d2dcb9ed0bd42dea4b2f23cc43ba92f%3AColumbine?action=launch&silent=true", c.FileName);
+    }
+
+    [Fact]
     public void Xbox_opens_the_package_app_through_the_shell()
     {
         File.WriteAllText(Path.Combine(_dir, "appxmanifest.xml"), """
@@ -106,6 +118,15 @@ public sealed class StoreLaunchTests : IDisposable
         Assert.True(StoreLaunch.Supported(g));
         var c = StoreLaunch.Command(g)!;
         Assert.Equal((@"X:\Games\Some Game\game.exe", @"X:\Games\Some Game", ""), (c.FileName, c.WorkingDirectory, c.Arguments));
+    }
+
+    [Fact]
+    public void A_game_the_user_added_with_anti_cheat_is_started_from_its_own_launcher()
+    {
+        static GameState S(Game g, AntiCheat ac) => new(g, null, ac, GameStatus.Ready, "", null, null, null, null, null, null, null, false, null);
+        Assert.True(StoreLaunch.OwnLauncherOnly(S(G("manual:0123456789abcdef", Store.Manual), AntiCheat.BattlEye)));
+        Assert.False(StoreLaunch.OwnLauncherOnly(S(G("manual:0123456789abcdef", Store.Manual), AntiCheat.None)));
+        Assert.False(StoreLaunch.OwnLauncherOnly(S(G("steam:2909400", Store.Steam), AntiCheat.BattlEye)));   // its store's launch starts the launcher
     }
 
     [Fact]

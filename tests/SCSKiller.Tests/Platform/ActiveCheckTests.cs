@@ -124,12 +124,44 @@ public class ActiveCheckTests : IDisposable
     }
 
     [Fact]
-    public void The_check_is_on_by_default_also_for_settings_saved_before_it_existed()
+    public void The_check_is_off_by_default_and_a_saved_value_is_read_back()
     {
-        Assert.True(AppStore.DefaultSettings.ActiveCheck);
-        var saved = System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(AppStore.DefaultSettings with { ActiveCheck = false }, AppStore.Json))!.AsObject();
-        Assert.False(System.Text.Json.JsonSerializer.Deserialize<Settings>(saved, AppStore.Json)!.ActiveCheck);
-        Assert.True(saved.Remove("ActiveCheck"));
-        Assert.True(System.Text.Json.JsonSerializer.Deserialize<Settings>(saved, AppStore.Json)!.ActiveCheck);
+        Assert.False(AppStore.DefaultSettings.ActiveCheck);
+        foreach (var on in new[] { true, false })
+        {
+            var saved = System.Text.Json.JsonSerializer.Serialize(AppStore.DefaultSettings with { WelcomeSeen = true, ActiveCheck = on }, AppStore.Json);
+            Assert.Equal(on, System.Text.Json.JsonSerializer.Deserialize<Settings>(saved, AppStore.Json)!.ActiveCheck);
+        }
+        // only settings from before the welcome existed lack it: the welcome shows again and asks
+        var old = System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(AppStore.DefaultSettings, AppStore.Json))!.AsObject();
+        Assert.True(old.Remove("ActiveCheck") && old.Remove("WelcomeSeen"));
+        Assert.False(System.Text.Json.JsonSerializer.Deserialize<Settings>(old, AppStore.Json)! is { ActiveCheck: true } or { WelcomeSeen: true });
+    }
+
+    [Fact]
+    public void Only_a_choice_allows_it_and_an_update_asks_once()
+    {
+        var fresh = AppStore.DefaultSettings;
+        Assert.False(ActiveCheck.Allowed(fresh) || ActiveCheck.Asks(fresh));   // the welcome asks
+        foreach (var on in new[] { true, false })
+        {
+            var welcomed = ActiveCheck.Answered(fresh, on) with { WelcomeSeen = true };
+            Assert.Equal(on, ActiveCheck.Allowed(welcomed));
+            Assert.False(ActiveCheck.Asks(welcomed));   // a new install never sees the question
+        }
+
+        // a settings.json from before the choice, with the check on: asked, and off until then
+        var saved = System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(fresh with { WelcomeSeen = true, ActiveCheck = true }, AppStore.Json))!.AsObject();
+        Assert.True(saved.Remove("ActiveCheckAsked"));
+        var updated = System.Text.Json.JsonSerializer.Deserialize<Settings>(saved, AppStore.Json)!;
+        Assert.True(ActiveCheck.Asks(updated));
+        Assert.False(ActiveCheck.Allowed(updated));
+        Assert.True(ActiveCheck.Asks(updated with { ActiveCheck = false }));
+        var kept = ActiveCheck.Answered(updated, false);   // Keep it off, Esc or closing
+        Assert.False(ActiveCheck.Allowed(kept) || ActiveCheck.Asks(kept));
+        var on2 = ActiveCheck.Answered(updated, true);   // Turn it on
+        Assert.True(ActiveCheck.Allowed(on2) && !ActiveCheck.Asks(on2));
+        var reloaded = System.Text.Json.JsonSerializer.Deserialize<Settings>(System.Text.Json.JsonSerializer.Serialize(kept, AppStore.Json), AppStore.Json)!;
+        Assert.False(ActiveCheck.Asks(reloaded));   // never shown again
     }
 }

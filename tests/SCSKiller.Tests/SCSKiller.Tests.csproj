@@ -19,6 +19,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="Fixtures\**" Exclude="Fixtures\.gitattributes" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\SCSKiller.Core\SCSKiller.Core.csproj" />
   </ItemGroup>
 

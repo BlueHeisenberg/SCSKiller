@@ -13,13 +13,17 @@ namespace SCSKiller.Core.FromSoft;
 /// shared: "exe &lt;SHA-256&gt; &lt;size:write time&gt;" (the exe last scanned: once per exe build), then one
 /// "&lt;archive&gt; &lt;key&gt;" line per archive (PKCS#1 DER, base64: a PEM body). A user may add archive lines by hand for
 /// a game whose exe doesn't carry its keys in the clear; failing both, a title that names a <see cref="Uxm"/> section
-/// (Dark Souls III) downloads them from there, to this file only. Every key is checked before it's used or kept.</summary>
-/// <param name="download">fetches a URL's text (null on failure): <see cref="Download.Text"/>, a fake in tests</param>
-public sealed class SoulsKeys(string dataDir, Func<string, string?>? download = null)
+/// (Dark Souls III, Elden Ring) downloads them from there, to this file only. Every key is checked before it's used or kept.</summary>
+/// <param name="download">fetches a URL's bytes (null on failure): <see cref="Download.Bytes"/>, a fake in tests</param>
+/// <param name="uxmSha256">the download's expected SHA-256 (tests pass their fake's)</param>
+public sealed class SoulsKeys(string dataDir, Func<string, byte[]?>? download = null, string uxmSha256 = SoulsKeys.UxmSha256)
 {
     /// <summary>The community's published keys: UXM Selective Unpack's UXM/ArchiveKeys.cs, pinned to commit 9501be87
     /// (2026-02-15) so an upstream edit can't change what is fetched. One C# dictionary per game (DarkSouls3Keys, ...).</summary>
     public const string Uxm = "https://raw.githubusercontent.com/Nordgaren/UXM-Selective-Unpack/9501be87e272b6dae55e60a13c3f4753ca6fb3bb/UXM/ArchiveKeys.cs";
+
+    /// <summary>SHA-256 of <see cref="Uxm"/> as served (14,588 bytes): a download that differs is not used.</summary>
+    public const string UxmSha256 = "e016cb66fed930d70a60d982b25fab9ec3729bd7fb1f48bb35c6bf059ca23441";
 
     public string KeyFile(Game g) => Path.Combine(new AppStore(dataDir).GameDir(g.Id), "archive.keys");
 
@@ -27,8 +31,8 @@ public sealed class SoulsKeys(string dataDir, Func<string, string?>? download = 
 
     /// <summary>The key of each archive (name -> .bhd path) some key opens; <paramref name="missing"/>: the archives none
     /// opens. <paramref name="uxm"/>: the title's dictionary in <see cref="Uxm"/>, downloaded when the file and the exe
-    /// leave some archive without a key (null: never).</summary>
-    public Dictionary<string, string> Get(Game game, IReadOnlyDictionary<string, string> archives, string? uxm, out List<string> missing)
+    /// leave some archive without a key (null: never). <paramref name="log"/>: a download that isn't the pinned file.</summary>
+    public Dictionary<string, string> Get(Game game, IReadOnlyDictionary<string, string> archives, string? uxm, out List<string> missing, IProgress<string>? log = null)
     {
         var file = KeyFile(game);
         var lines = File.Exists(file) ? File.ReadAllLines(file) : [];
@@ -64,12 +68,23 @@ public sealed class SoulsKeys(string dataDir, Func<string, string?>? download = 
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         // last, the published keys (tried every Detect until they open the archives: a failure isn't remembered)
-        if (keys.Count < archives.Count && uxm != null && (download ?? Download.Text)(Uxm) is { } source) Match(UxmKeys(source, uxm));
+        if (keys.Count < archives.Count && uxm != null && (download ?? Download.Bytes)(Uxm) is { } got)
+            if (Convert.ToHexStringLower(SHA256.HashData(got)) is var sha && sha == uxmSha256) Match(UxmKeys(Encoding.UTF8.GetString(got), uxm));
+            else log?.Report($"{Uxm}: SHA-256 {sha}, not the pinned {uxmSha256}: not used");
         missing = Missing();
         if (!write) return keys;
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         File.WriteAllLines(file, stored.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase).Select(p => $"{p.Key} {p.Value}").Prepend(exeLine).OfType<string>());
         return keys;
+    }
+
+    /// <summary>The <paramref name="archives"/> with no key line in the file (checked or not: a cheap stamp).</summary>
+    public IEnumerable<string> Unstored(Game game, IEnumerable<string> archives)
+    {
+        var file = KeyFile(game);
+        var stored = (File.Exists(file) ? File.ReadAllLines(file) : []).Where(l => !l.StartsWith("exe "))
+            .Select(l => l.Trim().Split(' ', 2, StringSplitOptions.TrimEntries)).Where(p => p.Length == 2).Select(p => p[0]).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return archives.Where(a => !stored.Contains(a));
     }
 
     /// <summary>The PEM keys of one game's dictionary (<paramref name="section"/>, e.g. "DarkSouls3Keys") in UXM's C#

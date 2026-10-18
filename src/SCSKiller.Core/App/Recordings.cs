@@ -27,8 +27,9 @@ public static class Recordings
     /// the sorted keys of the pipelines and state objects it created, then the sorted (stages + root signature) tuple hashes
     /// of every pipeline it created, a plan item's from its template with the item's shaders and root signature, as the
     /// proxy's rec_tuple does. What the materialize skipped isn't in the dbs; an item one of <paramref name="failed"/>
-    /// (<see cref="FailedFile"/>s) names, by its record's key, wasn't created and counts for nothing.</summary>
-    public static byte[] Warmed(IEnumerable<string> dbs, IEnumerable<string> failed)
+    /// (<see cref="FailedFile"/>s) names, by its record's key, wasn't created and counts for nothing. <paramref name="previous"/>:
+    /// an earlier warm's file whose keys and tuples still hold (a warm that left out what it created, CompiledItems).</summary>
+    public static byte[] Warmed(IEnumerable<string> dbs, IEnumerable<string> failed, byte[]? previous = null)
     {
         var notCreated = new HashSet<string>(StringComparer.Ordinal);
         foreach (var f in failed.Where(File.Exists))
@@ -37,6 +38,12 @@ public static class Recordings
         var tuples = new SortedSet<string>(StringComparer.Ordinal);
         var templates = new Dictionary<string, Rec>();
         var items = new List<byte[]>();
+        if (previous is { Length: >= 12 } p0 && p0.AsSpan(0, 8).SequenceEqual(WarmedMagic) && BitConverter.ToUInt32(p0, 8) is var pn && 12 + 20L * pn <= p0.Length)
+        {
+            var hashes = p0[12..].Chunk(20).Where(c => c.Length == 20).Select(Convert.ToHexStringLower).ToList();
+            keys.UnionWith(hashes.Take((int)pn));
+            tuples.UnionWith(hashes.Skip((int)pn));
+        }
         foreach (var db in dbs.Where(File.Exists))
             foreach (var r in Read(db))
             {
@@ -59,17 +66,37 @@ public static class Recordings
                 if (h != Zero && (merged.ContainsKey(s) || t.Tag == 'G' && s is >= 1 and <= 5)) merged[s] = h;
             tuples.Add(TupleHash(rs != Zero ? rs : p.Rs, merged));
         }
-        using var m = new MemoryStream();
-        m.Write(WarmedMagic);
-        m.Write(BitConverter.GetBytes((uint)keys.Count));
-        foreach (var k in keys.Concat(tuples)) m.Write(Convert.FromHexString(k));
-        return m.ToArray();
+        return WarmedBytes(keys, tuples);
 
         static Pso? TryParse(Rec r)
         {
             try { return Parse(r); }
             catch (Exception e) when (e is InvalidDataException or ArgumentException or KeyNotFoundException or IndexOutOfRangeException or OverflowException) { return null; }
         }
+    }
+
+    static byte[] WarmedBytes(SortedSet<string> keys, SortedSet<string> tuples)
+    {
+        using var m = new MemoryStream();
+        m.Write(WarmedMagic);
+        m.Write(BitConverter.GetBytes((uint)keys.Count));
+        foreach (var k in keys.Concat(tuples)) m.Write(Convert.FromHexString(k));
+        return m.ToArray();
+    }
+
+    /// <summary>One <see cref="WarmedFile"/> naming what any of <paramref name="files"/> names (a malformed one: nothing).</summary>
+    public static byte[] UnionWarmed(IEnumerable<string> files)
+    {
+        var keys = new SortedSet<string>(StringComparer.Ordinal);
+        var tuples = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var f in files)
+        {
+            var b = File.ReadAllBytes(f);
+            if (b.Length < 12 || !b.AsSpan(0, 8).SequenceEqual(WarmedMagic) || (b.Length - 12) % 20 != 0 || BitConverter.ToUInt32(b, 8) > (b.Length - 12) / 20) continue;
+            var n = BitConverter.ToUInt32(b, 8);
+            for (var i = 0; 12 + 20 * i < b.Length; i++) (i < n ? keys : tuples).Add(Hex(b.AsSpan(12 + 20 * i, 20)));
+        }
+        return WarmedBytes(keys, tuples);
     }
 
     /// <summary>proxy.cpp tuple_hash: SHA-1 of the root signature hash, then per stage (by subobject type) its type byte and

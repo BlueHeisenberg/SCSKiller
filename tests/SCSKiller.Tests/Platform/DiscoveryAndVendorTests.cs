@@ -91,6 +91,88 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         finally { Directory.Delete(root, true); }
     }
 
+    /// <summary>EA SPORTS WRC from the EA app: a larger WRC_Trial.exe beside WRC.exe. A trial alone is still the game.</summary>
+    [Fact]
+    public void FindExe_passes_over_a_trial_build_beside_the_game_only()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-trial-test-").FullName;
+        try
+        {
+            File.WriteAllBytes(Path.Combine(root, "WRC_Trial.exe"), new byte[8192]);
+            Assert.Equal("WRC_Trial.exe", Path.GetFileName(GameFiles.FindExe(root)));
+            File.WriteAllBytes(Path.Combine(root, "WRC.exe"), new byte[4096]);
+            Assert.Equal("WRC.exe", Path.GetFileName(GameFiles.FindExe(root)));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    /// <summary>Once Human's folder: its ffmpeg.exe is larger than the game's exe.</summary>
+    [Fact]
+    public void Steam_takes_the_games_exe_over_a_larger_ffmpeg_beside_it_also_over_a_listed_one()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-ffmpeg-test-").FullName;
+        try
+        {
+            var apps = Directory.CreateDirectory(Path.Combine(root, "steamapps")).FullName;
+            var install = Directory.CreateDirectory(Path.Combine(apps, "common", "Once Human")).FullName;
+            File.WriteAllBytes(Path.Combine(install, "ONCE_HUMAN.exe"), new byte[1024]);
+            File.WriteAllBytes(Path.Combine(install, "ffmpeg.exe"), new byte[4096]);
+            File.WriteAllBytes(Path.Combine(install, "SecureEngineSDK64.dll"), new byte[2048]);
+            File.WriteAllText(Path.Combine(apps, "appmanifest_2139460.acf"),
+                "\"AppState\"\n{\n\t\"appid\"\t\t\"2139460\"\n\t\"name\"\t\t\"Once Human\"\n\t\"StateFlags\"\t\t\"4\"\n\t\"installdir\"\t\t\"Once Human\"\n\t\"buildid\"\t\t\"100\"\n}\n");
+            var source = new SteamSource(root);
+            var game = Assert.Single(source.Discover());
+            Assert.Equal(Path.Combine(install, "ONCE_HUMAN.exe"), game.ExePath);
+
+            source.Known = new Dictionary<string, Game> { [game.Id] = game with { ExePath = Path.Combine(install, "ffmpeg.exe") } };   // an earlier scan's pick, same build
+            Assert.Equal(Path.Combine(install, "ONCE_HUMAN.exe"), Assert.Single(source.Discover()).ExePath);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    /// <summary>The Last of Us Part II Remastered's folder: Sony's crash reporter beside the game's exe.</summary>
+    [Fact]
+    public void Steam_takes_the_games_exe_over_a_larger_crash_reporter_beside_it_also_over_a_listed_one()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-crs-test-").FullName;
+        try
+        {
+            var apps = Directory.CreateDirectory(Path.Combine(root, "steamapps")).FullName;
+            var install = Directory.CreateDirectory(Path.Combine(apps, "common", "The Last of Us Part II")).FullName;
+            File.WriteAllBytes(Path.Combine(install, "tlou-ii.exe"), new byte[1024]);
+            foreach (var crs in new[] { "crs-handler.exe", "crs-uploader.exe", "crs-video.exe" }) File.WriteAllBytes(Path.Combine(install, crs), new byte[4096]);
+            File.WriteAllText(Path.Combine(apps, "appmanifest_2531310.acf"),
+                "\"AppState\"\n{\n\t\"appid\"\t\t\"2531310\"\n\t\"name\"\t\t\"The Last of Us Part II Remastered\"\n\t\"StateFlags\"\t\t\"4\"\n\t\"installdir\"\t\t\"The Last of Us Part II\"\n\t\"buildid\"\t\t\"100\"\n}\n");
+            var source = new SteamSource(root);
+            var game = Assert.Single(source.Discover());
+            Assert.Equal(Path.Combine(install, "tlou-ii.exe"), game.ExePath);
+
+            source.Known = new Dictionary<string, Game> { [game.Id] = game with { ExePath = Path.Combine(install, "crs-handler.exe") } };   // an earlier scan's pick, same build
+            Assert.Equal(Path.Combine(install, "tlou-ii.exe"), Assert.Single(source.Discover()).ExePath);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Xbox_takes_the_games_exe_over_a_larger_ffmpeg_beside_it_also_over_a_listed_one()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-xbox-ffmpeg-test-").FullName;
+        try
+        {
+            var content = Directory.CreateDirectory(Path.Combine(root, "XboxGames", "Once Human", "Content")).FullName;
+            File.WriteAllText(Path.Combine(content, "MicrosoftGame.config"), """<Game><Identity Name="Pub.OnceHuman" Version="1.0.0.0"/></Game>""");   // no ExecutableList: the fallback scan
+            File.WriteAllBytes(Path.Combine(content, "ONCE_HUMAN.exe"), new byte[1024]);
+            File.WriteAllBytes(Path.Combine(content, "ffmpeg.exe"), new byte[4096]);
+            var source = new XboxSource([root]);
+            var game = Assert.Single(source.Discover());
+            Assert.Equal(Path.Combine(content, "ONCE_HUMAN.exe"), game.ExePath);
+
+            source.Known = new Dictionary<string, Game> { [game.Id] = game with { ExePath = Path.Combine(content, "ffmpeg.exe") } };   // an earlier scan's pick, same version
+            Assert.Equal(Path.Combine(content, "ONCE_HUMAN.exe"), Assert.Single(source.Discover()).ExePath);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     /// <summary>appinfo.vdf v28: header, then per app id + size + 60 bytes of state/hashes + KeyValues, then app id 0.</summary>
     static byte[] AppInfoV28(params (uint Id, string Type)[] apps)
     {
@@ -131,6 +213,30 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         var vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t\t\"name\"\t\"a \\\"quoted\\\" b\"\n\t}\n}";
         Assert.Equal(@"C:\Program Files (x86)\Steam", SteamSource.Values(vdf, "path").Single());
         Assert.Equal("a \"quoted\" b", SteamSource.Values(vdf, "name").Single());
+    }
+
+    [Fact]
+    public void Experimental_intel_backend_has_the_measured_caps_and_plans_from_a_recording()
+    {
+        var gpu = new GpuInfo(GpuVendor.Intel, "Intel(R) Arc(TM) Graphics", "32.0.101.6979", 1, 12UL << 30);
+        Assert.IsType<UnsupportedVendor>(GpuBackends.For(gpu));   // Settings.ExperimentalIntel off
+        var intel = Assert.IsType<IntelBackend>(GpuBackends.For(gpu, intel: true));
+        Assert.Equal(("intel-1", true, false, true, RtCacheGranularity.WholeObject, (long?)(512L << 20)),
+            (intel.Caps.Profile, intel.Caps.CacheKeyedByExeName, intel.Caps.StateIndependentCache, intel.Caps.PerStageCache, intel.Caps.RtCacheGranularity,
+             intel.Caps.PerGameCacheCap));
+        Assert.Null(((IGpuVendorBackend)intel).AppCache);
+        Assert.Null(intel.GetCacheLimit());
+        Assert.Throws<NotSupportedException>(() => intel.SetCacheLimit(new(1L << 30, false)));
+        Assert.True(intel.Refresh(intel.Gpu with { DriverVersion = "32.0.101.7026" }));
+        Assert.Equal("32.0.101.7026", intel.Gpu.DriverVersion);
+
+        // shaders with embedded root signatures plan without a recording on NVIDIA's state-independent cache, never on Intel's
+        var game = new Game("test:intel", "intel", Store.Other, @"C:\nowhere", @"C:\nowhere\game.exe");
+        var engine = new EngineInfo(Core.Carved.CarvedReader.Family, "DXBC" + Core.Carved.CarvedReader.EmbeddedRootSignatures, null, "D3D12", false, null);
+        var planner = new Core.Planning.Planner();
+        Assert.Equal(Readiness.Ready, planner.Check(game, engine, null, new VendorCaps("nvidia-1", true, true, true)).Readiness);
+        Assert.Equal(Readiness.NeedsRecording, planner.Check(game, engine, null, intel.Caps).Readiness);
+        Assert.Equal(Readiness.Unsupported, planner.Check(game, engine, null, new UnsupportedVendor(intel.Gpu).Caps).Readiness);
     }
 
     [Trait("Needs", "Gpu")]
@@ -268,6 +374,41 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Under_wine_the_driver_version_is_the_host_drivers_from_Vulkan()
+    {
+        Assert.Equal("615.71.09", Wine.FormatDriverVersion(0x10de, 615u << 22 | 71u << 14 | 9u << 6));   // NVIDIA's own packing
+        Assert.Equal("580.105.08", Wine.FormatDriverVersion(0x10de, 580u << 22 | 105u << 14 | 8u << 6));
+        Assert.Equal("26.2.2", Wine.FormatDriverVersion(0x1002, 26u << 22 | 2u << 12 | 2u));   // Mesa: VK_MAKE_API_VERSION
+        Assert.Equal("615.71.09", NvidiaBackend.DriverVersionOf("615.71.09", wine: true));
+        // DXVK's own user-mode version when Vulkan had no match: read as before
+        Assert.Equal("999.99", NvidiaBackend.DriverVersionOf("35.0.19.9999", wine: true));
+        Assert.Equal("617.14", NvidiaBackend.DriverVersionOf("32.0.16.1714", wine: false));
+        Assert.Null(NvidiaBackend.DriverVersionOf("615.71.09", wine: false));
+    }
+
+    [Fact]
+    public void Under_wine_the_game_reads_every_file_of_its_warms_app_name_from_the_folder_they_share()
+    {
+        var (warm, game) = Wine.CacheEnvironment("/home/u/prefix/drive_c/SCSKiller/data/games/manual_1/proton-cache", "My Game-Win64-Shipping.exe");
+        Assert.Contains(("__GL_SHADER_DISK_CACHE_APP_NAME", "scskiller_My_Game-Win64-Shipping"), warm);
+        Assert.Contains(("__GL_SHADER_DISK_CACHE_APP_NAME", "My_Game-Win64-Shipping"), game);
+        Assert.Equal(Enumerable.Range(0, Wine.WarmFiles).Select(i => $"scskiller_My_Game-Win64-Shipping{i}"),
+            game.Single(e => e.Name == "__GL_SHADER_DISK_CACHE_READ_ONLY_APP_NAME").Value.Split(';'));
+        Assert.Contains(("__GL_SHADER_DISK_CACHE_PATH", "/home/u/prefix/drive_c/SCSKiller/data/games/manual_1/proton-cache/nvidia"), warm);
+        Assert.Contains(("VKD3D_SHADER_CACHE_PATH", "/home/u/prefix/drive_c/SCSKiller/data/games/manual_1/proton-cache/vkd3d"), warm);
+        foreach (var name in new[] { "__GL_SHADER_DISK_CACHE_PATH", "__GL_SHADER_DISK_CACHE_SIZE", "VKD3D_SHADER_CACHE_PATH" })
+            Assert.Equal(warm.Single(e => e.Name == name), game.Single(e => e.Name == name));
+    }
+
+    [Fact]
+    public void Outside_wine_no_host_driver_version_or_Linux_path_is_read()
+    {
+        if (Wine.Running) return;
+        Assert.Empty(Wine.HostDriverVersions());
+        Assert.Null(Wine.UnixPath(@"C:\Windows"));
+    }
+
+    [Fact]
     public void Amd_an_AGS_app_name_keys_the_cache_by_its_FNV_1a()
     {
         Assert.Equal("dxc:dc72f790", AmdAppCache.AppNameKey("Townfall"));   // SILENT HILL: Townfall's own process, handle-verified
@@ -279,6 +420,7 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         Assert.Equal("dxc:d32786a7", AmdAppCache.AgsKey("HogwartsLegacy.exe", "Phoenix"));
         Assert.Equal("dxc:f2f80824", AmdAppCache.AgsKey("Wonderlands.exe", "OakGame"));
         Assert.Equal("dxc:f2f80824", AmdAppCache.AgsKey("agsprobe.exe", "OakGame"));
+        Assert.Equal("dxc:38810766", AmdAppCache.AgsKey("SWGR-Win64-Shipping.exe", "Griffin"));
         Assert.Equal("dxc:85c2b2e5", AmdAppCache.AgsKey("Wonderlands.exe", "scskAgsA"));
         Assert.Equal("dxc:6b2fcd83", AmdAppCache.AgsKey("ff7rebirth_.exe", "scskAgsA"));
         Assert.Equal("dxc:9832c88a", AmdAppCache.AgsKey("agsprobe.exe", "End"));
@@ -401,6 +543,25 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         return pe;
     }
 
+    /// <summary>An exe importing sl.interposer.dll and <c>agsDriverExtensionsDX12_CreateDevice</c> from amd_ags_x64.dll by name
+    /// (Cyberpunk 2077's).</summary>
+    internal static byte[] ExeWithAgs()
+    {
+        var pe = Planning.MiddlewarePackTests.Pe(null);
+        void U32(int at, uint v) => System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(pe.AsSpan(at), v);
+        U32(0x58 + 120, 0x1100);                                    // import directory: two descriptors and the terminator
+        U32(0x58 + 124, 60);
+        U32(0x300 + 12, 0x1140);                                    // 1st: sl.interposer.dll, no functions
+        U32(0x300 + 20, 0x1180);                                    // 2nd: amd_ags_x64.dll, its thunks
+        U32(0x300 + 20 + 12, 0x1160);
+        U32(0x300 + 20 + 16, 0x1180);
+        U32(0x380, 0x1190);                                         // one thunk: the hint/name entry's RVA
+        System.Text.Encoding.ASCII.GetBytes("sl.interposer.dll").CopyTo(pe, 0x340);
+        System.Text.Encoding.ASCII.GetBytes("amd_ags_x64.dll").CopyTo(pe, 0x360);
+        System.Text.Encoding.ASCII.GetBytes("agsDriverExtensionsDX12_CreateDevice").CopyTo(pe, 0x392);   // past the 2-byte hint
+        return pe;
+    }
+
     /// <summary>launcher-configuration.json as CD PROJEKT RED's launcher ships it with The Witcher 3 (Steam).</summary>
     internal static string RedConfig(string fallback = "DirectX 12", params (string Description, string Dir)[] entries) =>
         $$"""
@@ -408,6 +569,67 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
             $$"""{ "description": "{{e.Description}}", "executable": { "directoryPath": "{{e.Dir}}", "fileName": "witcher3.exe" } }"""))}}],
           "gameId": "witcher3", "platform": "steam", "fallback": "{{fallback}}", "editions": [{ "name": "remasteredEdition" }] }
         """;
+
+    /// <summary>Cyberpunk 2077's launcher-configuration.json names the game in one executablePath (GOG's copy:
+    /// "bin\x64\Cyberpunk2077.exe"); Steam's launch target is REDprelauncher.exe. A larger exe whose imports can't be read
+    /// (a mod's tool) keeps the import check on the launcher, so only the config names the game.</summary>
+    [Fact]
+    public void Steam_finds_cyberpunk_2077_by_its_launcher_configuration_executable_path()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-steam-test-").FullName;
+        try
+        {
+            var apps = Directory.CreateDirectory(Path.Combine(root, "steamapps")).FullName;
+            var install = Path.Combine(apps, "common", "Cyberpunk 2077");
+            void Put(string rel, byte[] bytes) { Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(install, rel))!); File.WriteAllBytes(Path.Combine(install, rel), bytes); }
+            Put("REDprelauncher.exe", Exe("Qt5Core.dll", 1600));
+            Put(@"bin\x64\Cyberpunk2077.exe", Exe("sl.interposer.dll", 6000));
+            Put(@"engine\tools\modtool.exe", new byte[3000]);
+            Put(@"..\Other\Cyberpunk2077.exe", Exe("d3d12.dll", 100));
+            File.WriteAllText(Path.Combine(apps, "appmanifest_1091500.acf"),
+                "\"AppState\"\n{\n\t\"appid\"\t\t\"1091500\"\n\t\"name\"\t\t\"Cyberpunk 2077\"\n\t\"StateFlags\"\t\t\"4\"\n\t\"installdir\"\t\t\"Cyberpunk 2077\"\n}\n");
+            File.WriteAllBytes(Path.Combine(Directory.CreateDirectory(Path.Combine(root, "appcache")).FullName, "appinfo.vdf"), AppInfoV28((1091500, "Game")));
+            var config = Path.Combine(install, "launcher-configuration.json");
+            string Found() => new SteamSource(root).Discover().Single().ExePath;
+            static string Config(string path) => $$"""{ "platform": "steam", "executablePath": "{{path}}", "gameId": "cyberpunk2077" }""";
+            var launcher = Path.Combine(install, "REDprelauncher.exe");
+
+            Assert.Equal(launcher, Found());   // no config
+            foreach (var path in new[] { @"bin\\x64\\Cyberpunk2077.exe", "bin/x64/Cyberpunk2077.exe" })
+            {
+                File.WriteAllText(config, Config(path));
+                Assert.Equal(Path.Combine(install, @"bin\x64\Cyberpunk2077.exe"), Found());
+            }
+            Put(@"bin\x64\unins000.exe", Exe("kernel32.dll", 100));
+            File.WriteAllText(Path.Combine(install, @"bin\x64\notes.txt"), "");
+            // not an exe, missing, outside the install, rooted, a share, a stream, an uninstaller, a name that isn't a string
+            foreach (var text in new[] { Config("bin/x64/Cyberpunk2077"), Config("launcher-configuration.json"), Config("bin/x64/gone.exe"),
+                Config("../Other/Cyberpunk2077.exe"), Config(Path.Combine(apps, "common", "Other", "Cyberpunk2077.exe").Replace(@"\", @"\\")),
+                Config(@"\\bin\\x64\\Cyberpunk2077.exe"), Config(@"\\\\server\\share\\Cyberpunk2077.exe"), Config("bin/x64/notes.txt:s.exe"),
+                Config("bin/x64/unins000.exe"), """{ "executablePath": 7 }""" })
+            {
+                File.WriteAllText(config, text);
+                Assert.Equal(launcher, Found());
+            }
+            File.WriteAllText(config, Config("bin/x64/Cyberpunk2077.exe") + new string(' ', 64 * 1024));   // over 64 KiB: not read
+            Assert.Equal(launcher, Found());
+            foreach (var bad in new[] { "bin/x64/gone.exe", @"..\\OTHER~1\\Cyberpunk2077.exe", @"bin/x64/Cyberpunk2077\u0000.exe" })   // a path that doesn't do: the list still counts
+            {
+                File.WriteAllText(config, $$"""{ "executablePath": "{{bad}}", "executables": [{ "executable": { "directoryPath": "bin\\x64", "fileName": "Cyberpunk2077.exe" } }] }""");
+                Assert.Equal(Path.Combine(install, @"bin\x64\Cyberpunk2077.exe"), Found());
+            }
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Trait("Needs", "Game")]
+    [Fact]
+    public void Exe_discovery_finds_cyberpunk_2077_s_own_exe_in_its_install()
+    {
+        var install = TestEnv.GameDir("Cyberpunk 2077");
+        if (!File.Exists(Path.Combine(install, "REDprelauncher.exe"))) return;   // not installed here
+        Assert.Equal(Path.Combine(install, @"bin\x64\Cyberpunk2077.exe"), GameFiles.FindExe(install), ignoreCase: true);
+    }
 
     [Trait("Needs", "Game")]
     [Fact]
@@ -495,6 +717,87 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
             Put(@"PatchData\game.exe", 9000);
             Put(@"backup\big.exe", 9000);
             Assert.Equal(Path.Combine(root, "game.exe"), GameFiles.FindExe(root));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    /// <summary>Neverness to Everness: the game three levels down in Client\WindowsNoEditor, a larger launcher at the root.
+    /// Other projects that deep (a plugin's Binaries) stay unread.</summary>
+    [Fact]
+    public void FindExe_finds_the_game_three_levels_down_only_through_a_WindowsNoEditor_folder()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-noeditor-test-").FullName;
+        try
+        {
+            void Put(string rel, int size) { Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(root, rel))!); File.WriteAllBytes(Path.Combine(root, rel), Exe("d3d12.dll", size)); }
+            Put("NTEGlobalLauncher.exe", 9000);
+            Put(@"Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe", 4000);
+            Put(@"Client\WindowsNoEditor\Engine\Binaries\Win64\CrashReportClient.exe", 5000);
+            Assert.Equal(Path.Combine(root, @"Client\WindowsNoEditor\HT\Binaries\Win64\HTGame.exe"), GameFiles.FindExe(root));
+        }
+        finally { Directory.Delete(root, true); }
+
+        root = Directory.CreateTempSubdirectory("scskiller-noeditor-test-").FullName;
+        try
+        {
+            void Put(string rel, int size) { Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(root, rel))!); File.WriteAllBytes(Path.Combine(root, rel), Exe("d3d12.dll", size)); }
+            Put(@"Game\Binaries\Win64\Game.exe", 4000);
+            Put(@"Game\Plugins\Tool\Binaries\Win64\Tool.exe", 9000);
+            Assert.Equal(Path.Combine(root, @"Game\Binaries\Win64\Game.exe"), GameFiles.FindExe(root));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    /// <summary>Immortals of Aveum (EA): a stub at x64\Windows, the Unreal build three levels down beside x64\Windows\Engine,
+    /// its Agility SDK in D3D12 beside the Shipping exe. Engine's exes, a patcher's copy and a runtime beside the stub stay unpicked.</summary>
+    [Fact]
+    public void Unreal_project_beside_an_Engine_folder_two_levels_down_wins_over_the_stub()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-deepue-test-").FullName;
+        try
+        {
+            string Put(string rel, int size) { var p = Path.Combine(root, rel); Directory.CreateDirectory(Path.GetDirectoryName(p)!); File.WriteAllBytes(p, Exe("d3d12.dll", size)); return p; }
+            var stub = Put(@"x64\Windows\ImmortalsOfAveum.exe", 9000);
+            Put(@"x64\Windows\Engine\Binaries\Win64\CrashReportClient.exe", 8000);
+            Put(@"x64\Windows\Engine\Binaries\Win64\Big-Win64-Shipping.exe", 8000);
+            var game = Put(@"x64\Windows\P3\Binaries\Win64\P3-Win64-Shipping.exe", 4000);
+            var d3d12 = Path.Combine(root, @"x64\Windows\P3\Binaries\Win64\D3D12");
+            Directory.CreateDirectory(d3d12);
+            File.WriteAllBytes(Path.Combine(d3d12, "D3D12Core.dll"), new byte[64]);
+            Put(@"x64\PatchData\Engine\Binaries\Win64\CrashReportClient.exe", 100);
+            Put(@"x64\PatchData\P3\Binaries\Win64\P3-Win64-Shipping.exe", 9500);
+            // a runtime beside the stub, loose and in a D3D12 folder, changes neither the pick nor its runtime
+            File.WriteAllBytes(Path.Combine(root, @"x64\Windows\D3D12Core.dll"), new byte[64]);
+            Directory.CreateDirectory(Path.Combine(root, @"x64\Windows\D3D12"));
+            File.WriteAllBytes(Path.Combine(root, @"x64\Windows\D3D12\D3D12Core.dll"), new byte[64]);
+
+            Assert.Equal(game, GameFiles.FindExe(root));
+            Assert.Equal(game, GameFiles.FindExe(root, @"x64\Windows\ImmortalsOfAveum.exe"));   // EA's launch exe
+            Assert.Equal(game, GameFiles.ShippingExe(root, stub));
+            Assert.Equal(game, GameFiles.GameExe(root, stub));
+            Assert.Equal(d3d12, SCSKiller.Core.Warming.Warmer.AgilityDir(game));
+        }
+        finally { Directory.Delete(root, true); }
+
+        // that deep, a server build is never the game, and a second project never makes a nearer one ambiguous
+        root = Directory.CreateTempSubdirectory("scskiller-deepue-test-").FullName;
+        try
+        {
+            string Put(string rel, int size) { var p = Path.Combine(root, rel); Directory.CreateDirectory(Path.GetDirectoryName(p)!); File.WriteAllBytes(p, Exe("d3d12.dll", size)); return p; }
+            var server = Path.Combine(root, "Server");
+            var game = Put(@"Server\ActualGame.exe", 1000);
+            Directory.CreateDirectory(Path.Combine(server, @"Extras\Windows\Engine"));
+            Put(@"Server\Extras\Windows\Dedicated\Binaries\Win64\DedicatedServer-Win64-Shipping.exe", 9000);
+            Assert.Equal(game, GameFiles.FindExe(server, "ActualGame.exe"));
+
+            var collection = Path.Combine(root, "Collection");
+            var start = Put(@"Collection\Start.exe", 1000);
+            Directory.CreateDirectory(Path.Combine(collection, "Engine"));
+            var alpha = Put(@"Collection\Main\Binaries\Win64\Alpha-Win64-Shipping.exe", 4000);
+            Directory.CreateDirectory(Path.Combine(collection, @"Bonus\Windows\Engine"));
+            Put(@"Collection\Bonus\Windows\Extra\Binaries\Win64\Beta-Win64-Shipping.exe", 9000);
+            Assert.Equal(alpha, GameFiles.GameExe(collection, start));
+            Assert.Equal(alpha, GameFiles.FindExe(collection));
         }
         finally { Directory.Delete(root, true); }
     }
@@ -768,6 +1071,107 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         finally { Directory.Delete(root, true); }
     }
 
+    /// <summary>An EasyAntiCheat bootstrap a store names gives way to the exe its EasyAntiCheat\Settings.json starts, and the
+    /// Unreal rule then applies to that exe. A missing or broken file keeps the named exe.</summary>
+    [Fact]
+    public void An_EasyAntiCheat_bootstrap_gives_way_to_the_exe_its_settings_start()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-eac-exe-test-").FullName;
+        try
+        {
+            string Put(string dir, string f, int size = 100)
+            {
+                var path = Path.Combine(root, dir, f);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllBytes(path, new byte[size]);
+                return path;
+            }
+            void Settings(string dir, string json, string folder = "EasyAntiCheat", string file = "Settings.json") =>
+                File.WriteAllText(Path.Combine(Directory.CreateDirectory(Path.Combine(root, dir, folder)).FullName, file), json);
+            string Unreal(string dir) => Directory.CreateDirectory(Path.Combine(root, dir, "Engine")).Parent!.FullName;
+
+            // Gears of War: E-Day from the Xbox app: the config names the bootstrap, the game ships no Shipping exe
+            var content = Unreal(@"XboxGames\EDay\Content");
+            File.WriteAllText(Path.Combine(content, "MicrosoftGame.config"),
+                """<Game><Identity Name="Microsoft.EDay" Version="1.0.0.0"/><ExecutableList><Executable Name="start_protected_game.exe" TargetDeviceFamily="PC"/></ExecutableList></Game>""");
+            var stub = Put(@"XboxGames\EDay\Content", "start_protected_game.exe");
+            var game = Put(@"XboxGames\EDay\Content\Fairlight\Binaries\WinGDK", "GoWEDay.exe", 4096);
+            Settings(@"XboxGames\EDay\Content", """{ "title": "E-Day", "executable": "Fairlight\\Binaries\\WinGDK\\GoWEDay.exe", "hide_gui": "false" }""");
+            var xbox = new XboxSource([root]).Discover().Single();
+            Assert.Equal(stub, xbox.ExePath);
+            Assert.Equal(game, GameFiles.GameExe(xbox.InstallDir, xbox.ExePath));
+            Assert.Equal(AntiCheat.EasyAntiCheat, GameFiles.DetectAntiCheat(xbox with { ExePath = game }, quick: true));
+            Assert.Equal(AntiCheat.EasyAntiCheat, GameFiles.DetectAntiCheat(xbox with { ExePath = game }));
+
+            // a Shipping exe still wins, whichever exe the settings name; their exe ties one of several
+            var proj = Unreal("Proj");
+            var bootstrap = Put("Proj", "start_protected_game.exe");
+            Put(@"Proj\Proj\Binaries\Win64", "Proj.exe");
+            var shipping = Put(@"Proj\Proj\Binaries\Win64", "Proj-Win64-Shipping.exe", 4096);
+            Settings("Proj", """{ "executable": "Proj/Binaries/Win64/Proj.exe" }""");
+            Assert.Equal(shipping, GameFiles.GameExe(proj, bootstrap));
+            Settings("Proj", """{ "executable": "Proj/Binaries/Win64/Proj-Win64-Shipping.exe" }""");
+            Assert.Equal(shipping, GameFiles.GameExe(proj, bootstrap));
+            var two = Unreal("Two");
+            var twoStub = Put("Two", "start_protected_game.exe");
+            var real = Put(@"Two\Hemingway\Binaries\Win64", "Hemingway-Win64-Shipping.exe", 4096);
+            Put(@"Two\Hemingway\Binaries\Win64", "Hemingway.exe");
+            Put(@"Two\Other\Binaries\Win64", "Other-Win64-Shipping.exe", 4096);
+            Assert.Equal(twoStub, GameFiles.GameExe(two, twoStub));   // none tied to the bootstrap
+            Settings("Two", """{ "executable": "Hemingway\\Binaries\\Win64\\Hemingway.exe" }""");
+            Assert.Equal(real, GameFiles.GameExe(two, twoStub));
+
+            // Elden Ring Nightreign's shape: the bootstrap in a subfolder, a lower-case folder, a BOM; the file's own spelling
+            var nr = Put(@"Nightreign\Game", "nightreign.exe", 4096);
+            var nrStub = Put(@"Nightreign\Game", "start_protected_game.exe");
+            Settings(@"Nightreign\Game", "\uFEFF{\n\t\"executable\"\t: \"NightReign.exe\",\n}", "easyanticheat", "settings.json");
+            Assert.Equal(nr, GameFiles.GameExe(Path.Combine(root, "Nightreign"), nrStub));
+            Assert.Equal(nr, GameFiles.GameExe(Path.Combine(root, "Nightreign"), nr));
+            Assert.Equal(nr, GameFiles.FindExe(Path.Combine(root, "Nightreign")));
+            // its Artbook/OST DLC: a Unity app (exe + _Data + UnityPlayer.dll) in its own folder, which discovery took for the game
+            var artbook = Put(@"Nightreign\ArtbookOST", "ELDEN RING NIGHTREIGN DIGITAL ARTBOOK & MINI SOUNDTRACK.exe");
+            Put(@"Nightreign\ArtbookOST", "UnityPlayer.dll");
+            Put(@"Nightreign\ArtbookOST\ELDEN RING NIGHTREIGN DIGITAL ARTBOOK & MINI SOUNDTRACK_Data", "globalgamemanagers");
+            Assert.Equal(nr, GameFiles.FindExe(Path.Combine(root, "Nightreign")));
+            // a second bootstrap naming another exe: neither is trusted, discovery guesses as before
+            Put(@"Nightreign\Mods", "start_protected_game.exe");
+            Put(@"Nightreign\Mods", "Other.exe");
+            Settings(@"Nightreign\Mods", """{ "executable": "Other.exe" }""");
+            Assert.Equal(artbook, GameFiles.FindExe(Path.Combine(root, "Nightreign")));
+            Directory.Delete(Path.Combine(root, @"Nightreign\Mods"), true);
+            // settings naming an uninstaller, a launcher or a backup copy: not the game, here or through GameExe
+            foreach (var (dir, exe) in new[] { ("", "unins000.exe"), ("", "Launcher.exe"), ("Backup", "nightreign.exe") })
+            {
+                Put(Path.Combine(@"Nightreign\Game", dir), exe);
+                Settings(@"Nightreign\Game", $$"""{ "executable": "{{Path.Combine(dir, exe).Replace(@"\", @"\\")}}" }""", "easyanticheat", "settings.json");
+                Assert.Equal(artbook, GameFiles.FindExe(Path.Combine(root, "Nightreign")));
+                Assert.Equal(nrStub, GameFiles.GameExe(Path.Combine(root, "Nightreign"), nrStub));
+            }
+            Settings(@"Nightreign\Game", """{ "executable": "nightreign.exe" }""", "easyanticheat", "settings.json");
+            Assert.Equal(nr, GameFiles.FindExe(Path.Combine(root, "Nightreign")));
+
+            // another exe beside the one the settings start is a variant the user picked, not a bootstrap
+            var dx12 = Put("Variant", "GameDX12.exe", 4096);
+            Put("Variant", "Game.exe", 4096);
+            Settings("Variant", """{ "executable": "Game.exe" }""");
+            Assert.Equal(dx12, GameFiles.GameExe(Path.Combine(root, "Variant"), dx12));
+
+            // nothing to go by: the named exe, no throw
+            var bare = Put("Bare", "start_protected_game.exe");
+            Put("Bare", "Game.exe", 4096);
+            Put("", "Outside.exe");
+            Assert.Equal(bare, GameFiles.GameExe(Path.Combine(root, "Bare"), bare));   // no settings
+            foreach (var broken in new[] { "{ \"executable\": ", "[\"Game.exe\"]", "{ \"executable\": 5 }", "{ \"title\": \"Game\" }", "{ \"executable\": \"\" }",
+                         "{ \"executable\": \"Missing.exe\" }", "{ \"executable\": \"..\\\\Outside.exe\" }", "{ \"executable\": \"Game*.exe\" }",
+                         "{ \"executable\": \"Game.txt\" }", "{ \"executable\": \"Game\\u0000.exe\" }", "{ \"executable\": \"Game\\uD800.exe\" }", "" })
+            {
+                Settings("Bare", broken);
+                Assert.Equal(bare, GameFiles.GameExe(Path.Combine(root, "Bare"), bare));
+            }
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [Trait("Needs", "Game")]
     [Fact]
     public void Gog_finds_cyberpunk_with_the_real_exe_not_the_prelauncher()
@@ -822,7 +1226,8 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         finally { Directory.Delete(root, true); }
     }
 
-    /// <summary>A walk that runs out of time is not known to be clean; a missing install is.</summary>
+    /// <summary>A walk that runs out of time is not known to be clean, and says it ran out of time; a missing install is
+    /// clean. A finding, or an Other no clock gave, never says so.</summary>
     [Fact]
     public void An_anti_cheat_check_out_of_time_is_other()
     {
@@ -831,8 +1236,15 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
         {
             File.WriteAllBytes(Path.Combine(dir, "Game.exe"), new byte[100]);
             var game = new Game("test:budget", "Budget", Store.Other, dir, Path.Combine(dir, "Game.exe"));
-            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(game));
-            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(game, budget: TimeSpan.Zero));
+            var late = 0;
+            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(game, late: () => late++));
+            Assert.Equal(0, late);
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(game, budget: TimeSpan.Zero, late: () => late++));
+            Assert.Equal(1, late);
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(game with { Id = "battlenet:budget" }, budget: TimeSpan.Zero, late: () => late++));
+            Directory.CreateDirectory(Path.Combine(dir, "EasyAntiCheat"));
+            Assert.Equal(AntiCheat.EasyAntiCheat, GameFiles.DetectAntiCheat(game, late: () => late++));
+            Assert.Equal(1, late);
             var gone = game with { InstallDir = Path.Combine(dir, "gone"), ExePath = Path.Combine(dir, "gone", "Game.exe") };
             Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(gone));
         }
@@ -910,15 +1322,77 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
             Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(Install("aniimo-cleaner", "NEPCleaner.exe")));
             Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(Install("halo", "arbiter.dll")));
             Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(Install("not-arbiter", "arbiter.dll.bak", @"Game\myarbiter.dll", "nep2.txt")));
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(Install("once-human", "ONCE_HUMAN.exe")));
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(Install("wardogs", @"Elytra\Elytra-Setup.exe"), quick: true));
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(Install("elytra-exe", @"Game\Binaries\Win64\Elytra.exe")));
+            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(Install("not-elytra", "ElytraWings.pak", @"Game\Content\Elytra.uasset")));
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(Install("forza-horizon-6", "ForzaHorizon6.exe")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    /// <summary>NetEase's, Elytra's and Playground's anti-cheat leave no file in the install: these titles count by store id,
+    /// with nothing else in their folder.</summary>
+    [Theory]
+    [InlineData("steam:2139460")]   // Once Human
+    [InlineData("steam:2767030")]   // Marvel Rivals
+    [InlineData("steam:2943650")]   // FragPunk
+    [InlineData("steam:2782500")]   // Sword of Justice
+    [InlineData("steam:1203220")]   // NARAKA: BLADEPOINT
+    [InlineData("steam:2073850")]   // THE FINALS (Elytra)
+    [InlineData("steam:2483190")]   // Forza Horizon 6
+    [InlineData("steam:2016590")]   // Dark and Darker (IronShield)
+    [InlineData("xbox:Microsoft.ForteBaseGame_8wekyb3d8bbwe")]   // Forza Horizon 6
+    [InlineData("xbox:microsoft.fortebasegame_8WEKYB3D8BBWE")]   // the same, in another casing
+    public void A_title_whose_anti_cheat_leaves_no_file_counts_by_its_store_id(string id)
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-anticheat-test-").FullName;
+        try
+        {
+            File.WriteAllBytes(Path.Combine(root, "Game.exe"), [0]);
+            var clean = new Game("steam:1", "clean", Store.Steam, root, Path.Combine(root, "Game.exe"));
+            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(clean));
+            Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(clean with { Id = id }));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    /// <summary>TruckersMP leaves nothing in the game's folder: its folders or its uninstall entry make ETS2 and ATS anti-cheat games.</summary>
+    [Fact]
+    public void TruckersMp_marks_the_truck_simulators_by_its_folders_or_its_uninstall_entry()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-truckersmp-test-").FullName;
+        try
+        {
+            var mp = Path.Combine(root, "TruckersMP");
+            Assert.False(GameFiles.TruckersMp([mp], ["Steam", "Euro Truck Simulator 2"]));
+            Assert.True(GameFiles.TruckersMp([mp], ["TruckersMP Launcher 1.3.19"]));
+            Directory.CreateDirectory(Path.Combine(mp, "installation"));
+            Assert.True(GameFiles.TruckersMp([mp], []));
+
+            Game Install(string name, string exe)
+            {
+                var dir = Path.Combine(root, name);
+                Directory.CreateDirectory(Path.Combine(dir, @"bin\win_x64"));
+                File.WriteAllBytes(Path.Combine(dir, "effect.scs"), [0]);
+                File.WriteAllBytes(Path.Combine(dir, @"bin\win_x64", exe), [0]);
+                return new Game($"steam:{name}", name, Store.Steam, dir, Path.Combine(dir, @"bin\win_x64", exe));
+            }
+            var here = GameFiles.TruckersMpHere() ? AntiCheat.Other : AntiCheat.None;
+            Assert.Equal(here, GameFiles.DetectAntiCheat(Install("227300", "eurotrucks2.exe")));
+            Assert.Equal(here, GameFiles.DetectAntiCheat(Install("270880", "amtrucks.exe"), quick: true));
+            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(Install("other", "game.exe")));
         }
         finally { Directory.Delete(root, true); }
     }
 
     /// <summary>A Blizzard game installed by Battle.net but listed by another store, or added by hand, has no battlenet: id:
-    /// Battle.net's own files in its folder mark it.</summary>
+    /// Battle.net's own files in its folder mark it, and so does the static container a Steam install carries (Overwatch:
+    /// data\.build.config, no Battle.net file anywhere).</summary>
     [Theory]
     [InlineData(".build.info")]
     [InlineData(".product.db")]
+    [InlineData(@"data\.build.config")]
     public void BattleNet_install_files_mark_a_game_listed_elsewhere(string marker)
     {
         var dir = Directory.CreateTempSubdirectory("scskiller-anticheat-test-").FullName;
@@ -929,10 +1403,47 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
             File.WriteAllBytes(exe, [0]);
             var game = new Game("steam:1", "Blizzard game", Store.Steam, dir, exe);
             Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(game));
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(dir, marker))!);
             File.WriteAllText(Path.Combine(dir, marker), "");
             Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(game));
         }
         finally { Directory.Delete(dir, true); }
+    }
+
+    /// <summary>Blizzard's static container counts only where Blizzard puts it, data\.build.config under a folder taken as the
+    /// install (Overwatch on Steam; a hand-added copy whose folder is a subfolder of the game's): anywhere else in another
+    /// game the file is just a name.</summary>
+    [Fact]
+    public void A_build_config_counts_only_in_the_install_roots_data_folder()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-anticheat-test-").FullName;
+        try
+        {
+            Game Install(string dir, string exe, Store store, params string[] files)
+            {
+                var path = Path.Combine(root, dir, exe);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllBytes(path, [0]);
+                foreach (var f in files)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(root, dir, f))!);
+                    File.WriteAllText(Path.Combine(root, dir, f), "");
+                }
+                return store == Store.Manual ? new Game(ManualSource.IdOf(path), dir, store, Path.GetDirectoryName(path)!, path)
+                    : new Game("steam:1", dir, store, Path.Combine(root, dir), path);
+            }
+            AntiCheat[] Both(Game g) => [GameFiles.DetectAntiCheat(g), GameFiles.DetectAntiCheat(g, quick: true)];
+
+            var stray = Install("Modded", "Game.exe", Store.Steam, @"Content\mods\x\.build.config", @"Content\data\.build.config", ".build.config");
+            Assert.Equal([AntiCheat.None, AntiCheat.None], Both(stray));
+            var overwatch = Install("Overwatch", "Overwatch.exe", Store.Steam, @"data\.build.config");
+            Assert.Equal([AntiCheat.Other, AntiCheat.Other], Both(overwatch));
+            var added = Install("Library", @"Overwatch\_retail_\Overwatch.exe", Store.Manual, @"Overwatch\data\.build.config");
+            Assert.Equal([AntiCheat.Other, AntiCheat.Other], Both(added));   // the folder above the one confirmed holds the container
+            var sibling = Install("Shelf", @"Game\bin\Game.exe", Store.Manual, @"Other\data\.build.config");
+            Assert.Equal([AntiCheat.None, AntiCheat.None], Both(sibling));   // another game's container beside it
+        }
+        finally { Directory.Delete(root, true); }
     }
 
     /// <summary>War Thunder's standalone layout: BattlEye sits in the root, the exe in win64, which is the folder suggested.</summary>
@@ -1034,6 +1545,30 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
             Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(new Game(ManualSource.IdOf(clean), "Other", Store.Manual, Path.GetDirectoryName(clean)!, clean)));
         }
         finally { Directory.Delete(root, true); }
+    }
+
+    /// <summary>The walk above a hand-added game stops at the temp folder: build tools leave Path.GetRandomFileName() folders
+    /// there, and one ending in .xem (XIGNCODE's marker) made every hand-added game under it anti-cheat.</summary>
+    [Fact]
+    public void A_hand_added_game_in_the_temp_folder_doesnt_read_the_temp_folder()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-anticheat-test-").FullName;
+        var leftover = Path.Combine(Path.GetTempPath(), $"scskiller-anticheat-test-{Guid.NewGuid():N}.xem");
+        try
+        {
+            var exe = Path.Combine(root, "Game", "Game.exe");
+            Directory.CreateDirectory(Path.GetDirectoryName(exe)!);
+            File.WriteAllBytes(exe, [0]);
+            var game = new Game(ManualSource.IdOf(exe), "Game", Store.Manual, Path.GetDirectoryName(exe)!, exe);
+            Directory.CreateDirectory(leftover);
+            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(game));
+            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(game, quick: true));
+        }
+        finally
+        {
+            Directory.Delete(leftover, false);
+            Directory.Delete(root, true);
+        }
     }
 
     [Fact]
@@ -1283,6 +1818,80 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Riot_lists_each_product_settings_install_with_the_game_exe_and_flags_every_one_anti_cheat()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-riot-test-").FullName;
+        try
+        {
+            void Put(string rel, int size = 0) { Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(root, rel))!); File.WriteAllBytes(Path.Combine(root, rel), new byte[size]); }
+            void Settings(string key) => Put($@"Metadata\{key}\{key}.product_settings.yaml");
+            void Yaml(string key, string text) => File.WriteAllText(Path.Combine(root, "Metadata", key, $"{key}.product_settings.yaml"), text);
+            string Fwd(string rel) => Path.Combine(root, rel).Replace('\\', '/');   // the client writes forward slashes
+            // the yaml as the client writes it, trimmed
+            string Of(string install) => "auto_patching_enabled_by_player: false\nlocale_data:\n    available_locales:\n    - en_US\n    default_locale: en_US\n" +
+                $"patching_policy: manual\nproduct_install_full_path: \"{Fwd(install)}\"\nproduct_install_root: \"{Fwd("")}\"\n" +
+                "settings:\n    create_shortcut: true\n    create_uninstall_key: true\n    locale: en_US\nshortcut_name: Game.lnk\nshould_repair: false\n";
+            void Product(string key, string install) { Settings(key); Yaml(key, Of(install)); }
+
+            Put(@"VALORANT\live\VALORANT.exe", 100);   // the launcher stub
+            Put(@"VALORANT\live\ShooterGame\Binaries\Win64\VALORANT-Win64-Shipping.exe", 1000);
+            Put(@"VALORANT\live\Engine\Binaries\Win64\CrashReportClient.exe", 2000);
+            Product("valorant.live", @"VALORANT\live");
+            Yaml("valorant.live", Of(@"VALORANT\live").ReplaceLineEndings("\r\n"));
+            foreach (var lol in new[] { "League of Legends", "League of Legends (PBE)" })
+            {
+                Put($@"{lol}\LeagueClient.exe", 5000);
+                Put($@"{lol}\LeagueClientUx.exe", 3000);
+                Put($@"{lol}\Game\League of Legends.exe", 1000);
+            }
+            Product("league_of_legends.live", "League of Legends");
+            Product("league_of_legends.pbe", "League of Legends (PBE)");
+            Put(@"LoR\live\Game\LoR.exe", 500);
+            Put(@"LoR\live\Game\LoR_Data\globalgamemanagers");
+            Put(@"LoR\live\Game\UnityCrashHandler64.exe", 900);
+            Product("bacon.live", @"LoR\live");
+            Put(@"2XKO\Lion\Binaries\Win64\Lion-Win64-Shipping.exe", 1000);   // the project folder's name here is the fixture's
+            Put(@"2XKO\2XKO.exe", 100);
+            Product("lion.live", "2XKO");
+            Put(@"New Game\live\NewGame.exe", 100);
+            Product("newgame.live", @"New Game\live");
+            Put(@"Installing\LeagueClient.exe", 5000);   // League's client is in, the game not yet
+            Product("league_of_legends.beta", "Installing");
+            Product("bacon.pbe", "Missing");
+            Put(@"Riot Client\RiotClientServices.exe", 100);
+            Product("riot_client.live", "Riot Client");
+            Settings("Riot Client");   // no patchline
+            Settings("valorant.empty");   // no install path
+            Settings("valorant.blank");
+            Yaml("valorant.blank", $"product_install_full_path:\nproduct_install_root: \"{Fwd(@"VALORANT\live")}\"\n");   // an empty value, not the next line's
+
+            var games = new RiotSource(Path.Combine(root, "Metadata"), entry => entry switch { "Riot Game newgame.live" => "New Game", "Riot Game bacon.live" => " ", _ => null })
+                .Discover()
+                .OrderBy(g => g.Id, StringComparer.Ordinal).ToList();
+
+            Assert.Equal([
+                @"riot:bacon.live Legends of Runeterra LoR\live\Game\LoR.exe",
+                @"riot:league_of_legends.live League of Legends League of Legends\Game\League of Legends.exe",
+                @"riot:league_of_legends.pbe League of Legends (PBE) League of Legends (PBE)\Game\League of Legends.exe",
+                @"riot:lion.live 2XKO 2XKO\Lion\Binaries\Win64\Lion-Win64-Shipping.exe",
+                @"riot:newgame.live New Game New Game\live\NewGame.exe",
+                @"riot:valorant.live VALORANT VALORANT\live\ShooterGame\Binaries\Win64\VALORANT-Win64-Shipping.exe"],
+                games.Select(g => $"{g.Id} {g.Name} {Path.GetRelativePath(root, g.ExePath)}"));
+            Assert.All(games, g => Assert.Equal((Store.Other, (string?)null), (g.Store, g.Version)));
+            Assert.Equal(Path.Combine(root, "VALORANT", "live"), games[^1].InstallDir);
+            foreach (var g in games)
+            {
+                Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(g));
+                Assert.Equal(AntiCheat.Other, GameFiles.DetectAntiCheat(g, quick: true));
+            }
+            // outside a "Riot Games" folder, with no Riot exe name: only its riot: id marks it
+            Assert.Equal(AntiCheat.None, GameFiles.DetectAntiCheat(games.Single(g => g.Id == "riot:newgame.live") with { Id = "test:newgame" }));
+            Assert.Empty(new RiotSource(Path.Combine(root, "None"), _ => null).Discover());
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void Nvidia_cache_size_encoding()
     {
         Assert.Equal(new CacheLimit(100L << 30, false), NvidiaBackend.Decode(0x19000, false));   // NVCP "100 GB"
@@ -1382,10 +1991,81 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
     public void Nvidia_auto_shader_task_counts_only_when_registered_and_enabled()
     {
         const string head = """<?xml version="1.0" encoding="UTF-16"?><Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">""";
-        Assert.False(NvidiaBackend.TaskEnabled(null));   // schtasks: not registered
-        Assert.True(NvidiaBackend.TaskEnabled(head + "<Settings><Priority>4</Priority></Settings></Task>"));   // Enabled absent = true
-        Assert.True(NvidiaBackend.TaskEnabled(head + "<Settings><Enabled>true</Enabled></Settings></Task>"));
-        Assert.False(NvidiaBackend.TaskEnabled(head + "<Settings><Enabled>false</Enabled></Settings></Task>"));   // the NVIDIA App's "off"
+        const AutoShaderCompilation Medium = AutoShaderCompilation.Medium, High = AutoShaderCompilation.High;
+        const string active = @"C:\Windows\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_new\NvOSC.exe";
+        (bool, bool) State(string? xml, string? nvosc = active, AutoShaderCompilation level = Medium) =>
+            NvidiaBackend.TaskState(level, xml, nvosc) is var s ? (s.TaskReady, s.TaskEnabled) : default;
+        string Task(string settings, string exe = active) =>
+            head + $"""<Settings>{settings}</Settings><Actions Context="Author"><Exec><Command>{exe}</Command><Arguments>-runTool</Arguments></Exec></Actions></Task>""";
+        Assert.Equal((false, false), State(null));   // schtasks: not registered
+        Assert.Equal((true, true), State(Task("<Priority>4</Priority>")));   // Enabled absent = true
+        Assert.Equal((true, true), State(Task("<Enabled>true</Enabled>")));
+        Assert.Equal((false, false), State(Task("<Enabled>false</Enabled>")));   // the NVIDIA App's "off"
+        Assert.Equal((false, true), State(Task("<Enabled>yes</Enabled>")));   // unparsable: re-registered
+
+        string Runs(string exe, int priority = 4) => Task($"<Priority>{priority}</Priority>", exe);
+        Assert.Equal((true, true), State(Runs(active.ToUpperInvariant())));
+        Assert.Equal((false, true), State(Runs(active.Replace("_new", "_old"))));   // left from an earlier driver
+        Assert.Equal((false, true), State(Runs(active), nvosc: null));   // the active driver has no NvOSC.exe
+        // NvOSC writes 10/4/2 for Low/Medium/High: High saved but NvOSC failed leaves Medium's task.
+        Assert.Equal((false, true), State(Runs(active), level: High));
+        Assert.Equal((true, true), State(Runs(active, 2), level: High));
+        Assert.Equal((true, true), State(Runs(active, 7), level: High));   // not one NvOSC writes: not judged
+    }
+
+    [Fact]
+    public void Nvidia_auto_shader_apply_touches_only_what_differs()
+    {
+        static AutoShaderState S(AutoShaderCompilation level, bool ready, bool enabled) => new(level, ready, enabled);
+        const AutoShaderCompilation Off = AutoShaderCompilation.Off, Low = AutoShaderCompilation.Low,
+            Medium = AutoShaderCompilation.Medium, High = AutoShaderCompilation.High;
+        // Already so (e.g. the NVIDIA App enabled it): no DRS write, no NvOSC run.
+        Assert.Equal((false, (string?)null), NvidiaBackend.AutoShaderSteps(S(Medium, true, true), Medium));
+        Assert.Equal((false, (string?)null), NvidiaBackend.AutoShaderSteps(S(Off, false, false), Off));
+        // Not set (Off after a clean driver install): written, then the task registered.
+        Assert.Equal((true, "-register"), NvidiaBackend.AutoShaderSteps(S(Off, false, false), Medium));
+        Assert.Equal((true, "-register"), NvidiaBackend.AutoShaderSteps(S(Low, true, true), High));
+        // Setting right, task missing, stale or of another level: only NvOSC, the setting is not rewritten.
+        Assert.Equal((false, "-register"), NvidiaBackend.AutoShaderSteps(S(Medium, false, false), Medium));
+        Assert.Equal((false, "-register"), NvidiaBackend.AutoShaderSteps(S(High, false, true), High));
+        Assert.Equal((false, "-deregister"), NvidiaBackend.AutoShaderSteps(S(Off, true, true), Off));
+        Assert.Equal((false, "-deregister"), NvidiaBackend.AutoShaderSteps(S(Off, false, true), Off));   // an earlier driver's task still enabled
+        Assert.Equal((true, "-deregister"), NvidiaBackend.AutoShaderSteps(S(High, true, true), Off));
+        // Unreadable: what was asked.
+        Assert.Equal((true, "-register"), NvidiaBackend.AutoShaderSteps(null, Low));
+        Assert.Equal((true, "-deregister"), NvidiaBackend.AutoShaderSteps(null, Off));
+
+        Assert.Equal("Already on (Medium). Nothing to change.", NvidiaBackend.AutoShaderOutcome(Medium, changed: false));
+        Assert.Equal("Turned on (High).", NvidiaBackend.AutoShaderOutcome(High, changed: true));
+        Assert.Equal("Already off. Nothing to change.", NvidiaBackend.AutoShaderOutcome(Off, changed: false));
+        Assert.Equal("Turned off.", NvidiaBackend.AutoShaderOutcome(Off, changed: true));
+    }
+
+    [Fact]
+    public void Nvidia_auto_shader_apply_failures_say_what_happened()
+    {
+        var admin = NvidiaBackend.AutoShaderDrsFailure("NvAPI_DRS_SaveSettings", -137, "NVAPI_INVALID_USER_PRIVILEGE");
+        Assert.IsType<UnauthorizedAccessException>(admin);
+        Assert.Equal("switching NVIDIA Auto Shader Compilation needs administrator rights", admin.Message);
+        Assert.Equal("this NVIDIA driver doesn't have the Auto Shader Compilation setting",
+            NvidiaBackend.AutoShaderDrsFailure("NvAPI_DRS_SetSettingEx", -160, "NVAPI_SETTING_NOT_FOUND").Message);
+        Assert.Equal("the NVIDIA driver didn't take the setting, nothing was changed (NvAPI_DRS_SaveSettings answered -1 NVAPI_ERROR)",
+            NvidiaBackend.AutoShaderDrsFailure("NvAPI_DRS_SaveSettings", -1, "NVAPI_ERROR").Message);
+
+        Assert.Equal("the setting is saved, but the NVIDIA task couldn't be set up: NvOSC.exe -register failed with Task scheduler operation failure (exit code 5). Apply again to retry.",
+            NvidiaBackend.NvOscFailure("-register", 5, settingSaved: true));
+        Assert.Equal("the NVIDIA task couldn't be removed: NvOSC.exe -deregister failed with Task scheduler operation failure (exit code 5). Apply again to retry.",
+            NvidiaBackend.NvOscFailure("-deregister", 5, settingSaved: false));
+        Assert.Contains("an unknown error (exit code 99)", NvidiaBackend.NvOscFailure("-register", 99, false));
+        Assert.Contains("an unknown error (exit code -1)", NvidiaBackend.NvOscFailure("-register", -1, false));
+        Assert.Equal("the setting is saved, but NvOSC.exe -register is still running after a minute, so the NVIDIA task may not be set up yet. Wait a minute before applying again.",
+            NvidiaBackend.NvOscFailure("-register", null, settingSaved: true));
+        Assert.Equal("the setting is saved, but the NVIDIA task couldn't be set up: NvOSC.exe -register didn't start (Access is denied.). Apply again to retry.",
+            NvidiaBackend.NvOscFailure("-register", null, settingSaved: true, "Access is denied."));
+        Assert.Equal("the NVIDIA task couldn't be set up: NvOSC.exe -register failed with Task scheduler operation failure (exit code 5). NvOSC.exe said: Failed to kill and disable task for task \\NVIDIA Shader Compiler: 0x80070005. Apply again to retry."
+                     + "\nNvOSC.exe output:\nFailed to kill and disable task for task \\NVIDIA Shader Compiler: 0x80070005.\nExiting with code 5 (Task scheduler operation failure)",
+            NvidiaBackend.NvOscFailure("-register", 5, settingSaved: false, output: "Failed to kill and disable task for task \\NVIDIA Shader Compiler: 0x80070005.\r\n\r\n  Exiting with code 5 (Task scheduler operation failure)  \r\n"));
+        Assert.Contains("NvOSC.exe said: Task setup failed. Apply", NvidiaBackend.NvOscFailure("-register", 5, false, output: "Task setup failed.\nExiting with code 5 (Task scheduler operation failure)"));
     }
 
     [Fact]
@@ -1402,6 +2082,65 @@ public class DiscoveryAndVendorTests(ITestOutputHelper output)
             Item("b.item", new { AppName = "Addon", MainGameAppName = "Game", InstallLocation = install });  // an add-on in the game's install
             Item("c.item", new { AppName = "Other", MainGameAppName = "", InstallLocation = install });      // the launcher's own base game
             Assert.Equal(["epic:Game", "epic:Other"], new EpicSource(manifests).Discover().Select(g => g.Id).Order());
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Epic_reads_the_new_launchers_install_journal_beside_the_classic_manifests()
+    {
+        var root = Directory.CreateTempSubdirectory("scskiller-epic-test-").FullName;
+        try
+        {
+            string Install(string name)
+            {
+                var d = Directory.CreateDirectory(Path.Combine(root, "Epic Games", name)).FullName;
+                File.WriteAllBytes(Path.Combine(d, name + ".exe"), new byte[100]);
+                return d;
+            }
+            var (fresh, renamed, pending, both) = (Install("Fresh"), Install("Renamed"), Install("Pending"), Install("Both"));
+            var gone = Path.Combine(root, "Epic Games", "Gone");
+            var unreal = Directory.CreateDirectory(Path.Combine(root, "Epic Games", "Unreal", "UGame", "Binaries", "Win64")).FullName;
+            File.WriteAllBytes(Path.Combine(unreal, "UGameBootstrapper.exe"), new byte[300]);
+            File.WriteAllBytes(Path.Combine(unreal, "UGameClient-Win64-Shipping.exe"), new byte[100]);
+            var unrealDir = Path.Combine(root, "Epic Games", "Unreal");
+            var launcher = Directory.CreateDirectory(Path.Combine(root, "com.epicgames.eglv2")).FullName;
+            string J(string id, bool complete, string item, string app, string dir, string exe = "", string version = "", string parent = "") => System.Text.Json.JsonSerializer.Serialize(new
+            {
+                installationId = id, complete, @namespace = "ns" + app, itemId = item, artifactId = app, dir = dir + @"\", platform = "Windows", launchExecutable = exe, version,
+                parentInstallationId = parent, writtenAt = "2026-10-14T12:00:00Z",
+            });
+            File.WriteAllLines(Path.Combine(launcher, "installations.jsonl"),
+            [
+                """{"version":1,"writtenAt":"2026-10-14T12:00:00Z","entries":6}""",
+                J("A", false, "itemA", "Fresh", fresh),
+                J("A", true, "itemA", "Fresh", fresh, "Fresh.exe", "1.2.3-CL-100"),   // the last snapshot of an install is current
+                J("B", true, "itemB", "Renamed", renamed),                             // not in the catalog cache: named after its folder
+                J("C", true, "itemC", "Pending", pending), J("C", false, "itemC", "Pending", pending),
+                J("D", true, "itemD", "Gone", gone),
+                J("E", true, "itemE", "Addon", fresh),                                 // an add-on in the game's install
+                J("F", true, "itemF", "Both", both, "Both.exe", "2.0"),
+                J("G", true, "itemG", "UGame", unrealDir, "UGame/Binaries/Win64/UGameBootstrapper.exe", "++UGame+Release-1.0-CL-5-Windows"),
+                J("H", true, "itemH", "0123456789abcdef0123456789abcdef", unrealDir, parent: "G"),   // an add-on the catalog cache doesn't name
+                "[]", """{"installationId":""",
+            ]);
+            Directory.CreateDirectory(Path.Combine(launcher, "cache", "prod"));
+            File.WriteAllText(Path.Combine(launcher, "cache", "prod", "catalog-cache.json"), """
+                { "items": { "itemA": { "item": { "id": "itemA", "title": "Fresh Game", "mainGameItem": null } },
+                             "itemE": { "item": { "id": "itemE", "title": "Fresh Game Soundtrack", "mainGameItem": { "id": "itemA" } } },
+                             "itemF": { "item": { "id": "itemF", "title": "Both Game" } } } }
+                """);
+            var manifests = Directory.CreateDirectory(Path.Combine(root, "Manifests")).FullName;
+            File.WriteAllText(Path.Combine(manifests, "f.item"), System.Text.Json.JsonSerializer.Serialize(new { AppName = "Both", DisplayName = "Both (classic)", InstallLocation = both, AppVersionString = "1.0" }));
+            File.WriteAllText(Path.Combine(manifests, "c.item"), System.Text.Json.JsonSerializer.Serialize(new { AppName = "Pending", InstallLocation = pending }));   // the new launcher's record of it is unfinished
+
+            var games = new EpicSource(manifests, launcher).Discover().OrderBy(g => g.Id).ToList();
+            Assert.Equal(["epic:Both", "epic:Fresh", "epic:Renamed", "epic:UGame"], games.Select(g => g.Id));
+            Assert.Equal(("Both Game", "2.0"), (games[0].Name, games[0].Version));   // the new launcher's record wins over a stale classic manifest
+            Assert.Equal(("Fresh Game", fresh, Path.Combine(fresh, "Fresh.exe"), "1.2.3-CL-100"), (games[1].Name, games[1].InstallDir, games[1].ExePath, games[1].Version));
+            Assert.Equal(("Renamed", (string?)null), (games[2].Name, games[2].Version));
+            Assert.Equal(Path.Combine(unreal, "UGameClient-Win64-Shipping.exe"), games[3].ExePath);   // never the bootstrapper the launcher starts
+            Assert.Equal(["Both (classic)", "Pending"], new EpicSource(manifests, Path.Combine(root, "missing")).Discover().Select(g => g.Name).Order());
         }
         finally { Directory.Delete(root, true); }
     }

@@ -21,6 +21,9 @@ public sealed class UnityReader : IEngineReader
 {
     public const string Family = "Unity";
 
+    /// <summary>Where Unity players keep their Player.log: %USERPROFILE%\AppData\LocalLow.</summary>
+    public string LocalLow { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "AppData", "LocalLow");
+
     public sealed record Loc(string Path, string? Node, long Start, long Size, int ClassId);
 
     /// <summary>Where each container was found, per game id, from the last Index (see CarvedReader: in memory only).</summary>
@@ -30,7 +33,7 @@ public sealed class UnityReader : IEngineReader
     /// install folder, or one or two levels below it (Xbox "Content\", a zip-shaped "Normal\").</summary>
     public static (string Player, string Data)? Find(Game game)
     {
-        var opts = new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 1, IgnoreInaccessible = true };
+        var opts = new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 1, IgnoreInaccessible = true, AttributesToSkip = 0 };
         IEnumerable<string> dirs = [Path.GetDirectoryName(game.ExePath) ?? "", game.InstallDir];
         if (Directory.Exists(game.InstallDir)) dirs = dirs.Concat(Directory.EnumerateDirectories(game.InstallDir, "*", opts));
         foreach (var dir in dirs.Where(d => d.Length > 0 && File.Exists(Path.Combine(d, "UnityPlayer.dll"))))
@@ -63,8 +66,10 @@ public sealed class UnityReader : IEngineReader
             }
         if (string.IsNullOrEmpty(version)) version = FileVersionInfo.GetVersionInfo(Path.Combine(player, "UnityPlayer.dll")) is { FileMajorPart: > 0 } v
             ? $"{v.FileMajorPart}.{v.FileMinorPart}.{v.FileBuildPart}" : "?";
-        return new EngineInfo(Family, version, null, Api(apis, LastRun(data)), false,
-            probed > 0 && readable == 0 ? $"Unity {version}: none of {probed} built-in shaders has DirectX (d3d11) code this reader can read" : null);
+        var lastRun = LastRun(PlayerLog(data));
+        return new EngineInfo(Family, version, null, Api(apis, lastRun), false,
+            probed > 0 && readable == 0 ? $"Unity {version}: none of {probed} built-in shaders has DirectX (d3d11) code this reader can read" : null,
+            ApiGuessed: ApiGuessed(apis, lastRun));
     }
 
     /// <summary>The API the last run used (Player.log), else the first of the build's list; "D3D11 or D3D12" when neither is
@@ -74,16 +79,36 @@ public sealed class UnityReader : IEngineReader
         : apis is [var first, ..] ? first switch { 2 => "D3D11", 18 => "D3D12", 21 => "Vulkan", _ => "OpenGL" }
         : UnrealRhi.Ambiguous;
 
+    /// <summary>The build offers DirectX 11 and 12 and no log shows which ran: the first of its list is a guess (a launch
+    /// option or the game's own menu may pick the other).</summary>
+    public static bool ApiGuessed(int[]? apis, string? lastRun) => lastRun == null && apis is [2 or 18, ..] && apis.Contains(2) && apis.Contains(18);
+
     static readonly Regex LogApi = new(@"^\s*Version:\s+(Direct3D 11|Direct3D 12|Vulkan)", RegexOptions.Multiline);
 
-    /// <summary>%USERPROFILE%\AppData\LocalLow\&lt;company&gt;\&lt;product&gt;\Player.log (from *_Data\app.info).</summary>
-    static string? LastRun(string data)
+    /// <summary><see cref="LocalLow"/>\&lt;company&gt;\&lt;product&gt;\Player.log (from *_Data\app.info); null when app.info doesn't name it.</summary>
+    string? PlayerLog(string data)
+    {
+        try { return File.ReadAllLines(Path.Combine(data, "app.info")) is [var company, var product, ..] ? Path.Combine(LocalLow, company, product, "Player.log") : null; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    /// <summary>The Player.log <see cref="Detect"/> reads the last run's API from, by size and write time: a new run redoes it.</summary>
+    public string DetectStamp(Game game, EngineInfo? engine)
+    {
+        if (engine != null && engine.Family != Family) return "";
+        if (!dataDirs.TryGetValue(game.ExePath, out var data) && Find(game) is var (_, found))
+            dataDirs[game.ExePath] = data = found;   // a miss isn't kept: the install may be mid-update
+        var log = data == null ? null : PlayerLog(data) is { } p ? new FileInfo(p) : null;
+        return log is { Exists: true } ? $"{log.Length}|{log.LastWriteTimeUtc.Ticks}" : "";
+    }
+
+    readonly ConcurrentDictionary<string, string> dataDirs = new(StringComparer.OrdinalIgnoreCase);
+
+    static string? LastRun(string? log)
     {
         try
         {
-            if (File.ReadAllLines(Path.Combine(data, "app.info")) is not [var company, var product, ..]) return null;
-            var log = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "AppData", "LocalLow", company, product, "Player.log");
-            if (!File.Exists(log)) return null;
+            if (log == null || !File.Exists(log)) return null;
             using var s = new StreamReader(new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
             var head = new char[256 << 10];
             var m = LogApi.Match(new string(head, 0, s.ReadBlock(head)));
@@ -198,7 +223,7 @@ public sealed class UnityReader : IEngineReader
     /// not its name). <paramref name="onlyManagers"/>: globalgamemanagers(.assets) only (loose or in data.unity3d).</summary>
     static IEnumerable<Source> Sources(string data, bool onlyManagers)
     {
-        var opts = new EnumerationOptions { RecurseSubdirectories = !onlyManagers, IgnoreInaccessible = true, MaxRecursionDepth = 8 };
+        var opts = new EnumerationOptions { RecurseSubdirectories = !onlyManagers, IgnoreInaccessible = true, AttributesToSkip = 0, MaxRecursionDepth = 8 };
         var paths = Directory.EnumerateFiles(data, "*", opts).Where(p => !IsResource(p)).Order(StringComparer.OrdinalIgnoreCase);
         foreach (var path in onlyManagers ? paths.Where(p => Managers.Append("data.unity3d").Contains(System.IO.Path.GetFileName(p), StringComparer.OrdinalIgnoreCase)) : paths)
         {

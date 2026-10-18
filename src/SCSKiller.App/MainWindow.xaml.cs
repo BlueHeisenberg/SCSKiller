@@ -1,8 +1,10 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using SCSKiller.App.Design;
@@ -28,7 +30,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        pages = [(QueueItem, typeof(QueuePage)), (SettingsItem, typeof(SettingsPage)), (AboutItem, typeof(AboutPage))];
+        pages = [(QueueItem, typeof(QueuePage)), (CacheItem, typeof(CachePage)), (SettingsItem, typeof(SettingsPage)), (AboutItem, typeof(AboutPage))];
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"));
@@ -39,6 +41,11 @@ public sealed partial class MainWindow : Window
         Nav.SelectedItem = LibraryItem;
         Updater.Changed += () => DispatcherQueue.TryEnqueue(ShowUpdate);
         ShowUpdate();
+        var bell = new Coalesced(DispatcherQueue, ShowBell);   // targeting reads the games, the account and the news
+        App.Core.GameChanged += _ => bell.Request();
+        App.Account.Changed += bell.Request;
+        if (App.Core is ScsKiller k) k.NewsChanged += bell.Request;
+        ShowBell();
         AppWindow.Closing += (w, e) =>
         {
             SavePlacement();
@@ -85,8 +92,84 @@ public sealed partial class MainWindow : Window
         UpdateButton.Visibility = ready != null ? Visibility.Visible : Visibility.Collapsed;
         ToolTipService.SetToolTip(UpdateButton, Updater.Problem ?? $"SCSKiller {ready} is ready. Restarting stops a running compile safely " +
             "(the driver saves its cache first) and continues it afterwards." +
-            (App.Core.Settings.InstallUpdatesAutomatically ? " Otherwise it installs the next time SCSKiller starts or quits." : ""));
+            (Updater.InstallsAutomatically ? " Otherwise it installs the next time SCSKiller starts or quits." : ""));
     }
+
+    static (IReadOnlyList<NewsItem> Shown, IReadOnlySet<string> Unread) Notifications() =>
+        NewsState.Of(App.Store, App.News.For(new(AppVersion.Current, App.Account.Status?.Ent ?? [], App.Core.Vendor.Vendor, id => App.Core.Games.Any(g => g.Game.Id == id)),
+            DateOnly.FromDateTime(DateTime.Now)));
+
+    static HashSet<string> Feed() => App.News.Items.Select(i => i.Id).ToHashSet();
+
+    void ShowBell()
+    {
+        var unread = Notifications().Unread.Count;
+        BellBadge.Value = unread;
+        BellBadge.Visibility = unread > 0 ? Visibility.Visible : Visibility.Collapsed;
+        AutomationProperties.SetName(BellButton, unread > 0 ? $"Notifications, {unread} unread" : "Notifications");
+    }
+
+    void OnBellOpening(object _, object __)
+    {
+        var (shown, unread) = Notifications();
+        FillBell(shown, unread);
+        NewsState.MarkRead(App.Store, shown.Select(i => i.Id), Feed());
+        ShowBell();
+    }
+
+    void FillBell(IReadOnlyList<NewsItem> shown, IReadOnlySet<string> unread)
+    {
+        var list = new StackPanel { Spacing = 8 };
+        foreach (var item in shown) list.Children.Add(NewsCard(item, unread.Contains(item.Id)));
+        BellFlyout.Content = new StackPanel
+        {
+            Width = 360, Spacing = 12,
+            Children =
+            {
+                new TextBlock { Text = "Notifications", Style = Res<Style>("Section") },
+                shown.Count == 0 ? new TextBlock { Text = "Nothing new.", Style = Res<Style>("Secondary") } : new ScrollViewer { MaxHeight = 480, Content = list },
+            },
+        };
+    }
+
+    UIElement NewsCard(NewsItem item, bool unread)
+    {
+        var date = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        if (unread) date.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Width = 8, Height = 8, VerticalAlignment = VerticalAlignment.Center, Fill = Res<Brush>("AccentFillColorDefaultBrush") });
+        date.Children.Add(new TextBlock { Text = News.Day(item.Date)!.Value.ToString("d"), Style = Res<Style>("Caption") });
+        var text = new StackPanel { Spacing = 4, Children = { date } };
+        text.Children.Add(new TextBlock { Text = item.Title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        text.Children.Add(new TextBlock { Text = item.Body, Style = Res<Style>("Secondary"), TextWrapping = TextWrapping.Wrap });
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+        if (item.Link != null) actions.Children.Add(new HyperlinkButton { Content = "Open", NavigateUri = new Uri(item.Link) });
+        if (item.Game != null)
+        {
+            var go = new Button { Content = "Go to game" };
+            go.Click += (_, _) => { BellFlyout.Hide(); Navigate(typeof(DetailPage), item.Game); };
+            actions.Children.Add(go);
+        }
+        if (actions.Children.Count > 0) text.Children.Add(actions);
+
+        var dismiss = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE711", FontSize = 10 }, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0),
+            Padding = new Thickness(6), VerticalAlignment = VerticalAlignment.Top,
+        };
+        ToolTipService.SetToolTip(dismiss, "Dismiss");
+        AutomationProperties.SetName(dismiss, "Dismiss");
+        dismiss.Click += (_, _) =>
+        {
+            NewsState.Dismiss(App.Store, item.Id, Feed());
+            var (shown, _) = Notifications();
+            FillBell(shown, new HashSet<string>());
+            ShowBell();
+        };
+        var row = new Grid { ColumnSpacing = 8, ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition { Width = GridLength.Auto } }, Children = { text, dismiss } };
+        Grid.SetColumn(dismiss, 1);
+        return new Border { Style = Res<Style>("Card"), Padding = new Thickness(12), Child = row };
+    }
+
+    static T Res<T>(string key) => (T)Application.Current.Resources[key];
 
     async void OnRestartToUpdate(object _, RoutedEventArgs __)
     {
@@ -174,6 +257,15 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Shows the window off-screen, never activated and not in the task switcher: the user may be gaming.</summary>
+    /// <summary>Pages and the caption buttons at once; a dialog takes it as it opens (<see cref="App.ShowAsync"/>).</summary>
+    public void ApplyTheme(AppTheme? theme)
+    {
+        Root.RequestedTheme = theme switch { AppTheme.Light => ElementTheme.Light, AppTheme.Dark => ElementTheme.Dark, _ => ElementTheme.Default };
+        AppWindow.TitleBar.PreferredTheme = theme switch { AppTheme.Light => TitleBarTheme.Light, AppTheme.Dark => TitleBarTheme.Dark, _ => TitleBarTheme.UseDefaultAppMode };
+    }
+
+    public ElementTheme Theme => Root.RequestedTheme;
+
     public void ShowOffscreen()
     {
         AppWindow.IsShownInSwitchers = false;
@@ -197,22 +289,116 @@ public sealed partial class MainWindow : Window
             await SavePngAsync(Root, Path.Combine(dir, $"{name}-{Root.RequestedTheme.ToString().ToLowerInvariant()}{part}.png"));
         }
 
-        // A scan in progress: first run (nothing listed yet), then with the games listed (a rescan).
+        // AMD's kept-aside caches: the game page's states, Settings and its Manage list. SCSKILLER_SHOTS=amd-profiles takes only these.
+        async Task AmdProfiles()
+        {
+            var gpu = fake.Vendor;
+            fake.Vendor = new FakeScsKiller.FakeAmdVendor();
+            fake.RenameDriver("610.88", fake.Vendor.Gpu.DriverVersion);
+            ShowGpu();
+            const string gb = "steam:2909400", restored = "epic:3300000", locked = "xbox:Sample.AtomicHeart", ac = "gaijin:warthunder";
+            var acWas = fake.Games.First(g => g.Game.Id == ac).AntiCheat;
+            fake.SetKept(gb, new(2_870_000_000, 1_650_000_000));
+            fake.SetKept(restored, new(2_360_000_000, 0, DateTimeOffset.Now.AddHours(-1)));
+            fake.SetKept(locked, new(4_300_000_000, 0, DateTimeOffset.Now.AddHours(-3), 1, "the Radeon overlay"));
+            fake.SetKept(ac, new(1_930_000_000, 1_240_000_000), AntiCheat.EasyAntiCheat);
+            foreach (var theme in themes)
+            {
+                Root.RequestedTheme = theme;
+                foreach (var (name, id, late) in new[] { ("kept", gb, false), ("restored", restored, false), ("late", restored, true), ("locked", locked, false), ("anticheat", ac, false) })
+                {
+                    if (id == restored) fake.SetKept(restored, new(2_360_000_000, 0, DateTimeOffset.Now.AddHours(-1), Late: late));
+                    Navigate(typeof(DetailPage), id);
+                    await Task.Delay(1000);
+                    ((DetailPage)ContentFrame.Content).ScrollToKept();
+                    await Shot("amd-kept-" + name, 400);
+                }
+                Navigate(typeof(SettingsPage));
+                await Shot("amd-kept-settings");
+                var manage = ((SettingsPage)ContentFrame.Content).ManageKeptDialog();
+                manage.RequestedTheme = Root.RequestedTheme;
+                _ = App.ShowAsync(manage);
+                await Task.Delay(800);
+                await SavePngAsync(manage, Path.Combine(dir, $"amd-kept-manage-{Root.RequestedTheme.ToString().ToLowerInvariant()}.png"));
+                manage.Hide();
+                await Task.Delay(300);
+            }
+            foreach (var id in new[] { gb, restored, locked }) fake.SetKept(id, null);
+            fake.SetKept(ac, null, acWas);
+            fake.RenameDriver(fake.Vendor.Gpu.DriverVersion, "610.88");
+            fake.Vendor = gpu;
+            ShowGpu();
+            Root.RequestedTheme = ElementTheme.Dark;
+        }
+        // "Report a problem" on the first game: the dialog with a message typed, then its thanks. SCSKILLER_SHOTS=problem takes only these.
+        async Task Problem()
+        {
+            Navigate(typeof(DetailPage), fake.Games[0].Game.Id);
+            foreach (var theme in themes)
+            {
+                Root.RequestedTheme = theme;
+                await Task.Delay(800);
+                foreach (var (name, id) in new[] { ("problem", (string?)null), ("problem-thanks", "3f9c2e1a") })
+                {
+                    var d = ((DetailPage)ContentFrame.Content).ProblemDialog(id, "The game still stutters in the first town after a full compile.");
+                    d.RequestedTheme = theme;
+                    _ = App.ShowAsync(d);
+                    await Task.Delay(800);
+                    await SavePngAsync(d, Path.Combine(dir, $"{name}-{theme.ToString().ToLowerInvariant()}.png"));
+                    d.Hide();
+                    await Task.Delay(300);
+                }
+            }
+            Root.RequestedTheme = ElementTheme.Dark;
+        }
+        switch (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS"))
+        {
+            case "amd-profiles": await AmdProfiles(); Application.Current.Exit(); return;
+            case "problem": await Problem(); Application.Current.Exit(); return;
+        }
+        await AmdProfiles();
+        await Problem();
+
+        // A scan in progress: first run (nothing listed yet), its games listed before they're read, then a rescan.
         fake.HideGames = true;
         fake.HoldScan = new();
+        fake.ScanProgress = "Scanning Steam… 120 games found";
         Navigate(typeof(LibraryPage));   // its first load scans
-        foreach (var (name, show) in new[] { ("library-scanning-empty", false), ("library-scanning", true) })
+        foreach (var name in new[] { "library-scanning-empty", "library-after-update-empty", "library-first-scan", "library-scanning", "library-after-update" })
         {
-            if (show) fake.ShowGames();
+            if (name == "library-first-scan")
+            {
+                fake.ScanProgress = "Checking each game… 4 of 120";
+                fake.Checking = true;
+                fake.ShowGames();
+            }
+            else if (name == "library-scanning")
+            {
+                fake.ScanProgress = "Checking each game… 40 of 120";
+                fake.Checking = false;
+                fake.ShowGames();
+            }
+            fake.AfterUpdateLine = name.Contains("after-update") ? ScsKiller.AfterUpdateText : null;
             foreach (var theme in themes)
             {
                 Root.RequestedTheme = theme;
                 await Shot(name);
             }
         }
+        fake.AfterUpdateLine = null;
         fake.HoldScan.SetResult();
         fake.HoldScan = null;
+        fake.ScanProgress = null;
         await Task.Delay(1000);
+        (fake.Checking, fake.NotChecked) = (true, true);   // HDD mode: the games past the first three never read
+        fake.ShowGames();
+        foreach (var theme in themes)
+        {
+            Root.RequestedTheme = theme;
+            await Shot("library-hdd");
+        }
+        (fake.Checking, fake.NotChecked) = (false, false);
+        fake.ShowGames();
 
         Root.RequestedTheme = ElementTheme.Dark;
         Navigate(typeof(QueuePage));
@@ -244,15 +430,77 @@ public sealed partial class MainWindow : Window
             foreach (var (name, page, arg) in new (string, Type, object?)[]
                      { ("library", typeof(LibraryPage), null), ("detail", typeof(DetailPage), ff7),
                        ("detail-new", typeof(DetailPage), "steam:1139900"),   // never compiled: estimated cache, Clear cache disabled
-                       ("detail-stutter", typeof(DetailPage), "steam:990080"),   // known to stutter, with a source link
+                       ("detail-stutter", typeof(DetailPage), "steam:990080"),   // stutters without a compile, with a source link
+                       ("detail-kept-cache", typeof(DetailPage), "steam:999999901"),   // compiled, then marked not supported: Clear it
+                       ("detail-maximum", typeof(DetailPage), "steam:3600000"),   // Maximum mode suggested for this game
                        ("detail-partial", typeof(DetailPage), "steam:990080"), // Hogwarts Legacy: a partial plan, the recording hint
-                       ("queue", typeof(QueuePage), null), ("settings", typeof(SettingsPage), null) })
+                       ("detail-compiling", typeof(DetailPage), "steam:3489700"),   // mid-compile: the queue's progress on the game page
+                       ("detail-report-off", typeof(DetailPage), "xbox:Sample.AtomicHeart"),   // Rate this compile off (not played since), "did not help"
+                       ("detail-similar-warning", typeof(DetailPage), "epic:3300000"),   // similar systems: ran worse
+                       ("queue", typeof(QueuePage), null), ("cache", typeof(CachePage), null), ("settings", typeof(SettingsPage), null) })
             {
                 Navigate(page, arg);
                 await Shot(name);
             }
             if (ContentFrame.Content is SettingsPage settings) settings.ScrollToEnd();   // the lower half: NVIDIA Auto Shader Compilation
             await Shot("settings-end", 400);
+            if (ContentFrame.Content is SettingsPage newShaders) newShaders.ScrollToNewShaders();
+            await Shot("settings-new-shaders", 400);
+            Navigate(typeof(CachePage));
+            await Task.Delay(1000);
+            if (ContentFrame.Content is CachePage cache)
+            {
+                cache.ScrollToEnd();   // the lower groups
+                await Shot("cache-end", 400);
+                var (clear, _) = cache.ClearEverythingDialog(cache.Vm.Inventory!);
+                clear.RequestedTheme = Root.RequestedTheme;
+                _ = App.ShowAsync(clear);
+                await Task.Delay(800);
+                await SavePngAsync(clear, Path.Combine(dir, $"cache-clear-everything-{Root.RequestedTheme.ToString().ToLowerInvariant()}.png"));
+                clear.Hide();
+                await Task.Delay(300);
+                await cache.Vm.DeleteAsync(cache.Vm.Inventory!.Everything(withOthers: false));   // the sample deletes nothing
+                cache.ScrollToTop();
+                await Shot("cache-deleted", 400);
+            }
+
+            var news = App.WhatsNewDialog(Root.XamlRoot, WhatsNew.Section(WhatsNew.Changelog, "1.2.4")!);
+            news.RequestedTheme = Root.RequestedTheme;
+            _ = App.ShowAsync(news);
+            await Task.Delay(800);
+            await SavePngAsync(news, Path.Combine(dir, $"whatsnew-{Root.RequestedTheme.ToString().ToLowerInvariant()}.png"));
+            news.Hide();
+            await Task.Delay(300);
+
+            var check = App.ActiveCheckDialog(Root.XamlRoot);
+            check.RequestedTheme = Root.RequestedTheme;
+            _ = App.ShowAsync(check);
+            await Task.Delay(800);
+            await SavePngAsync(check, Path.Combine(dir, $"daily-check-{Root.RequestedTheme.ToString().ToLowerInvariant()}.png"));
+            check.Hide();
+            await Task.Delay(300);
+
+            // Rate this compile's popup on FF7 (on, "removed or reduced"): this install's first, a later one, after an earlier report of the build, thanked
+            Navigate(typeof(DetailPage), ff7);
+            await Task.Delay(800);
+            foreach (var (name, sent, thanks, once) in new[] { ("report", (CompatSent?)null, false, false), ("report-later", null, false, true),
+                         ("report-sent", new CompatSent(CompatChoice.Better, DateTimeOffset.Now.AddDays(-4)), false, true), ("report-thanks", null, true, true) })
+            {
+                fake.Settings = fake.Settings with { CompatReportSent = once };
+                var reportDialog = ((DetailPage)ContentFrame.Content).ReportDialog(sent, thanks);
+                reportDialog.RequestedTheme = Root.RequestedTheme;
+                _ = App.ShowAsync(reportDialog);
+                await Task.Delay(800);
+                await SavePngAsync(reportDialog, Path.Combine(dir, $"{name}-{Root.RequestedTheme.ToString().ToLowerInvariant()}.png"));
+                reportDialog.Hide();
+                await Task.Delay(300);
+            }
+            fake.Settings = fake.Settings with { CompatReportSent = false };
+
+            Navigate(typeof(QueuePage));
+            await Task.Delay(1000);
+            ((QueuePage)ContentFrame.Content).Select("steam:990080", "steam:1627720");   // Hogwarts Legacy and Lies of P
+            await Shot("queue-selected", 400);
 
             // The Patreon card: signed out, signed in with "db" (the share prompt), signed out again (the download checkbox
             // turns off live, on the same page), signed in without "db".
@@ -289,11 +537,20 @@ public sealed partial class MainWindow : Window
                 foreach (var (name, id) in new[] { ("hogwarts", "steam:990080"), ("ff7", ff7), ("ghostrunner", "steam:1139900"),
                                                    ("palworld", "xbox:1623730"), ("eldenring", "steam:1245620"),
                                                    ("atomicheart", "xbox:Sample.AtomicHeart"), ("darwin", "epic:3300000"), ("townfall", "steam:3600000"),
-                                                   ("added", "manual:5f1c0e9a2b7d4c30"), ("tekken", "steam:1778820"), ("racer", "steam:4078430"), ("unreached", "xbox:Sample.HollowCircuit"), ("bothapis", "gaijin:warthunder"),
+                                                   ("added", "manual:5f1c0e9a2b7d4c30"), ("tekken", "steam:1778820"), ("racer", "steam:999999901"), ("unreached", "xbox:Sample.HollowCircuit"), ("bothapis", "gaijin:warthunder"),
                                                    ("guess-both", "xbox:CoffeeStainStudios.DeepRockGalactic"),
-                                                   ("guess-version", "steam:3900010"), ("guess-dx", "steam:3900020"), ("rebound", "steam:1292630"),
-                                                   ("ran-other-exe", "ubisoft:13504"), ("game-changed", "steam:3900030"), ("never-loaded", "steam:3900040") })
+                                                   ("guess-version", "steam:3900010"), ("guess-dx", "steam:3900020"), ("rebound", "steam:1292630"), ("no-launch", "hoyoplay:nap_global"),
+                                                   ("ran-other-exe", "ubisoft:13504"), ("game-changed", "steam:3900030"), ("never-loaded", "steam:3900040"), ("other-exe", "steam:3900050"),
+                                                   ("foreign", "steam:3900060"), ("foreign-on", "steam:3900060"), ("foreign-off", "steam:3900060"),
+                                                   ("guess-picked", "xbox:CoffeeStainStudios.DeepRockGalactic"), ("guess-overruled", "steam:3900020"), ("sure-picked", "steam:1139900") })
                 {
+                    if (name is "guess-both" or "guess-dx" or "ghostrunner") { fake.ProveApi(id, null); fake.SetApiOverride(id, null); }
+                    if (name == "guess-picked") fake.SetApiOverride(id, DxApi.D3D12);
+                    if (name == "foreign") fake.MakeForeign(id);
+                    if (name == "foreign-on") fake.SetRecorderOverride(id, RecorderOverride.On);   // what the switch's one click calls
+                    if (name == "foreign-off") fake.SetRecorderOverride(id, RecorderOverride.Off);
+                    if (name == "sure-picked") fake.SetApiOverride(id, DxApi.D3D11);
+                    if (name == "guess-overruled") { fake.SetApiOverride(id, DxApi.D3D11); fake.ProveApi(id, "D3D12"); }
                     Navigate(typeof(DetailPage), id);
                     string file = $"d-{name}-{size}";
                     await Shot(file);
@@ -319,6 +576,7 @@ public sealed partial class MainWindow : Window
                 }
             }
         }
+        foreach (var id in new[] { "xbox:CoffeeStainStudios.DeepRockGalactic", "steam:3900020", "steam:1139900" }) { fake.ProveApi(id, null); fake.SetApiOverride(id, null); }   // the library shots: as detected again
         Resize(1280);
 
         // Library search ("life": one game on Steam, one on EA) and the store sections at the end of the list.
@@ -328,13 +586,24 @@ public sealed partial class MainWindow : Window
             Navigate(typeof(LibraryPage));
             var library = (LibraryPage)ContentFrame.Content;
             // library-groups: Palworld's icon (a real exe) after the detail pages showed it at 56 px: it must not come back empty
-            foreach (var (name, search) in new[] { ("library-back", ""), ("library-search", "life"), ("library-nomatch", "zelda"), ("library-rt", "darwin"), ("library-partly", "tekken"), ("library-unsupported", "racer"), ("library-unreached", "hollow"), ("library-bothapis", "thunder"), ("library-guessed", "guessed"), ("library-offline", "elden"), ("library-nothing-recorded", "valhalla"), ("library-groups", "") })
+            foreach (var (name, search) in new[] { ("library-back", ""), ("library-search", "life"), ("library-nomatch", "zelda"), ("library-rt", "darwin"), ("library-partly", "tekken"), ("library-unsupported", "racer"), ("library-unreached", "hollow"), ("library-bothapis", "thunder"), ("library-guessed", "guessed"), ("library-offline", "elden"), ("library-nothing-recorded", "valhalla"), ("library-other-exe", "ashen"), ("library-groups", "") })
             {
                 library.SearchText = search;
                 await Task.Delay(400);
                 if (name == "library-groups") library.ScrollToEnd();
                 await Shot(name, 800);
             }
+            library.Vm.ShowHidden = true;   // the sample's hidden game under the search
+            await Shot("library-hidden", 800);
+            library.Vm.ShowHidden = false;
+            // largest cache first, then only the compiled games, then back to the default order
+            library.SearchText = "";
+            library.Vm.SortBy(LibrarySort.CacheDescending, LibrarySort.CacheAscending);
+            await Shot("library-sort-cache", 800);
+            library.Vm.ShowIndex = (int)LibraryShow.Compiled;
+            await Shot("library-show-compiled", 800);
+            library.Vm.ShowIndex = (int)LibraryShow.All;
+            library.Vm.SortBy(LibrarySort.Status, LibrarySort.Status);
             // About: as it opens, then with the first licence and the trademarks open
             Navigate(typeof(AboutPage));
             await Shot("about");
@@ -356,6 +625,7 @@ public sealed partial class MainWindow : Window
 
         // A compile over 16 GB queued: its warning on NVIDIA past the 16 GB limit ("queue" has the cache close to it), then on AMD.
         Resize(1280);
+        var sampleGpu = fake.Vendor;
         fake.Enqueue("steam:1285190");
         foreach (var (name, gpu) in new[] { ("queue-large", (GpuInfo?)null), ("queue-large-amd", new GpuInfo(GpuVendor.Amd, "AMD Radeon", "25.10.1", 0, 16UL << 30)) })
         {
@@ -368,6 +638,40 @@ public sealed partial class MainWindow : Window
             }
         }
 
+        // The theme setting over the shots' own: pages, a flyout and a dialog follow it at once
+        foreach (var setting in new[] { AppTheme.Light, AppTheme.Dark })
+        {
+            fake.Settings = fake.Settings with { Theme = setting };
+            ApplyTheme(setting);
+            var tag = setting.ToString().ToLowerInvariant();
+            foreach (var (name, page) in new[] { ("settings", typeof(SettingsPage)), ("library", typeof(LibraryPage)) })
+            {
+                Navigate(page);
+                await Task.Delay(1000);
+                await SavePngAsync(Root, Path.Combine(dir, $"theme-{tag}-{name}.png"));
+            }
+            BellFlyout.ShowAt(BellButton);
+            await Task.Delay(800);
+            var check = new List<string>();
+            // a flyout's popup never renders to a bitmap off-screen: its theme is written down instead
+            foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(Root.XamlRoot))
+                if (popup.Child is FrameworkElement shown) check.Add($"flyout {shown.ActualTheme}");
+            BellFlyout.Hide();
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Root.XamlRoot, Title = "Rename Sample", Content = new TextBox { Header = "Name", Text = "Sample" }, PrimaryButtonText = "Rename", CloseButtonText = "Cancel",
+            };
+            _ = App.ShowAsync(dialog);
+            await Task.Delay(800);
+            check.Add($"dialog {dialog.ActualTheme}");
+            if (dialog.ActualWidth > 0) await SavePngAsync(dialog, Path.Combine(dir, $"theme-{tag}-dialog.png"));
+            dialog.Hide();
+            await Task.Delay(300);
+            File.WriteAllLines(Path.Combine(dir, $"theme-{tag}.txt"), check);
+        }
+        fake.Settings = fake.Settings with { Theme = null };
+        ApplyTheme(null);
+
         // An Intel GPU: the Library says it can't compile there.
         fake.Vendor = new UnsupportedVendor(new GpuInfo(GpuVendor.Intel, "Intel Graphics", "32.0.101.6881", 0, 128UL << 20));
         ShowGpu();
@@ -378,8 +682,111 @@ public sealed partial class MainWindow : Window
             ((LibraryPage)ContentFrame.Content).Vm.Refresh();
             await Shot("library-intel");
         }
+
+        // Before and after: the game page's states, the intro, the Library's chips, the report window and its image.
+        Resize(1280);
+        fake.Vendor = sampleGpu;
+        ShowGpu();
+        const string lop = "steam:1139900";   // Ghostrunner: not queued
+        foreach (var theme in themes)
+        {
+            Root.RequestedTheme = theme;
+            foreach (var (name, info) in new (string, BeforeAfterInfo?)[]
+                     {
+                         ("none", null), ("armed", new(BeforeAfterStage.BeforeArmed, 5, null, 0)),
+                         ("clear-pending", new(BeforeAfterStage.BeforeArmed, 5, "Couldn't clear the cache: a file is in use", 0, ClearPending: true)), ("playing", new(BeforeAfterStage.BeforePlaying, 5, null, 78)),
+                         ("compiling", new(BeforeAfterStage.Compiling, 5, null, 0)),
+                         ("compile-stopped", new(BeforeAfterStage.Compiling, 5, "The compile was stopped. Compile again to go on.", 0)),
+                         ("after-ready", new(BeforeAfterStage.AfterReady, 5, null, 0)),
+                         ("after-short", new(BeforeAfterStage.AfterArmed, 5, "The after recording was 2 min of play. Play at least 3, the game compiles again first.", 0)),
+                         ("timesup", new(BeforeAfterStage.AfterPlaying, 5, null, 305)), ("done", new(BeforeAfterStage.Done, 5, null, 0)),
+                         ("voided", new(BeforeAfterStage.AfterReady, 5, ScsKiller.DriverVoidNote, 0)),
+                     })
+            {
+                fake.SetBeforeAfter(lop, info);
+                Navigate(typeof(DetailPage), lop);
+                await Shot("ba-" + name);
+            }
+        }
+        Resize(MinWidth);
+        Root.RequestedTheme = ElementTheme.Dark;
+        foreach (var (name, info) in new (string, BeforeAfterInfo)[]
+                 {
+                     ("playing", new(BeforeAfterStage.BeforePlaying, 10, null, 78)), ("armed", new(BeforeAfterStage.BeforeArmed, 5, null, 0)),
+                     ("done", new(BeforeAfterStage.Done, 5, null, 0)), ("compile-stopped", new(BeforeAfterStage.Compiling, 5, "The compile was stopped. Compile again to go on.", 0)),
+                 })
+        {
+            fake.SetBeforeAfter(lop, info);
+            Navigate(typeof(DetailPage), lop);
+            await Shot($"ba-{name}-min");   // the action row wraps
+        }
+        Resize(1280);
+        // no pair, and one can't start: the button greyed, the reason under it
+        fake.SetBeforeAfter(lop, null);
+        foreach (var (name, why) in new[]
+                 {
+                     ("recorder-off", "Turn the recorder on for this game first"), ("recorder-cant", $"The recorder can't run in this game: {ScsKiller.SkipForeignDll}"),
+                     ("api", "Only for DirectX 12 and DirectX 11 games"), ("anti-cheat", "Not for games with anti-cheat"),
+                     ("no-stutter", "Not for games without shader compilation stutter"), ("refused", ScsKiller.NeverSawNote),
+                     ("running", "Ghostrunner is running"), ("compiling", "Wait for the compile to finish"), ("shared", "Its driver cache is shared with Hi-Fi RUSH"),
+                 })
+        {
+            fake.BaBlocked[lop] = why;
+            Navigate(typeof(DetailPage), lop);
+            await Shot("ba-blocked-" + name);
+        }
+        fake.BaBlocked.Remove(lop);
+        Navigate(typeof(DetailPage), "steam:3200000");   // Unsupported: the status reason
+        await Shot("ba-blocked-status");
+
+        // the intro: first time (the steps), then once seen (folded behind "How it works")
+        fake.SetBeforeAfter(lop, null);
+        Navigate(typeof(DetailPage), lop);
+        await Task.Delay(800);
+        foreach (var (name, seen) in new[] { ("ba-intro", false), ("ba-intro-seen", true) })
+        {
+            fake.Settings = fake.Settings with { BeforeAfterIntroSeen = seen };
+            _ = BeforeAfterUi.IntroAsync(Root.XamlRoot, "Ghostrunner", BeforeAfterUi.Intro.Start);
+            await Task.Delay(1000);
+            if (BeforeAfterUi.Showing is { } dialog)
+            {
+                await SavePngAsync(dialog, Path.Combine(dir, $"{name}-dark.png"));
+                dialog.Hide();
+            }
+            await Task.Delay(400);
+        }
+
+        fake.SetBeforeAfter("steam:1627720", new(BeforeAfterStage.AfterReady, 5, null, 0));
+        fake.SetBeforeAfter("steam:1139900", new(BeforeAfterStage.Compiling, 5, null, 0));
+        fake.SetBeforeAfter("steam:3489700", new(BeforeAfterStage.AfterPlaying, 5, null, 100));
+        Navigate(typeof(LibraryPage));
+        await Task.Delay(600);
+        ((LibraryPage)ContentFrame.Content).ScrollTo("steam:3489700");
+        await Shot("ba-library");
+
+        fake.SetBeforeAfter(lop, new(BeforeAfterStage.Done, 5, null, 0));
+        if (await ReportWindow.OpenAsync(lop, offscreen: true) is { } report)
+        {
+            foreach (var theme in themes)
+            {
+                report.ShotRoot.RequestedTheme = theme;
+                report.ScrollToTop();
+                await Task.Delay(1000);
+                var t = theme.ToString().ToLowerInvariant();
+                await SavePngAsync(report.ShotRoot, Path.Combine(dir, $"ba-report-{t}.png"));
+                report.ScrollToEnd();
+                await Task.Delay(600);
+                await SavePngAsync(report.ShotRoot, Path.Combine(dir, $"ba-report-{t}-end.png"));
+            }
+            using (var png = await report.PngAsync())
+            using (var file = File.Create(Path.Combine(dir, "ba-card.png")))
+                await png.AsStreamForRead().CopyToAsync(file);
+            report.Close();
+        }
         Application.Current.Exit();
     }
+
+    // the acrylic behind a window isn't in a bitmap of its content: the base colour of each theme instead
 
     static async Task SavePngAsync(UIElement element, string path)
     {

@@ -1,10 +1,12 @@
 {
-  "about": "Steam games with EasyAntiCheat that run offline without it when their exe is started directly with steam_appid.txt (the Steam app id) beside it: the only games SCSKiller offers an offline recording session for. exe: the file the game's Steam id is discovered with. Elden Ring Nightreign has an offline mode but no source confirms this launch, so it isn't listed.",
+  "about": "Steam games with EasyAntiCheat that run offline without it when their exe is started directly with steam_appid.txt (the Steam app id) beside it: the only games SCSKiller offers an offline recording session for. exe: the file the game's Steam id is discovered with. eacProductId and eacSandboxId: the productid and sandboxid in the Settings.json of the EasyAntiCheat folder beside that exe; a copy added by hand qualifies only with this exe and both ids, a game listed without them only as the store's copy. Elden Ring Nightreign has an offline mode but no source confirms this launch, so it isn't listed.",
   "games": [
     {
       "id": "steam:1245620",
       "name": "ELDEN RING",
       "exe": "eldenring.exe",
+      "eacProductId": "773d3a68f76f4b2ebebc5b4127bbad3e",
+      "eacSandboxId": "3ef0b0eebdcd4673ba70c4cee0888bf0",
       "sources": [
         "https://steamcommunity.com/app/1245620/discussions/0/3183488724679237406",
         "https://droidwin.com/?p=19228"

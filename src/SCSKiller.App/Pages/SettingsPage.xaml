@@ -12,7 +12,7 @@
                 <StackPanel Spacing="14">
                     <StackPanel Spacing="4">
                         <TextBlock Text="{x:Bind Vm.CacheTitle}" Style="{StaticResource Section}" />
-                        <TextBlock Text="{x:Bind Vm.CacheIntro}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                        <TextBlock Text="{x:Bind Vm.CacheIntro, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                     </StackPanel>
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
@@ -55,7 +55,27 @@
                                  Severity="{x:Bind Vm.ApplySeverity, Mode=OneWay}" IsClosable="False" />
                         <TextBlock Text="You can switch back to the driver default here at any time." Style="{StaticResource Caption}" />
                     </StackPanel>
-                    <InfoBar IsOpen="{x:Bind Vm.NotConfigurable}" Visibility="{x:Bind Vm.NotConfigurable}" Severity="Informational" IsClosable="False" Message="{x:Bind Vm.NotConfigurableText}" />
+                    <StackPanel Spacing="6" Visibility="{x:Bind Vm.HasAmdUse, Mode=OneWay}">
+                        <TextBlock Text="{x:Bind Vm.AmdUse, Mode=OneWay}" TextWrapping="Wrap" />
+                        <ProgressBar Value="{x:Bind Vm.AmdPercent, Mode=OneWay}" AutomationProperties.Name="AMD DirectX 12 cache use" />
+                    </StackPanel>
+                    <InfoBar IsOpen="{x:Bind Vm.NotConfigurable}" Visibility="{x:Bind Vm.NotConfigurable}" Severity="Informational" IsClosable="False" Message="{x:Bind Vm.NotConfigurableText, Mode=OneWay}" />
+                    <Grid ColumnSpacing="12" Visibility="{x:Bind Vm.IsAmd}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Keep compiled caches aside" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <TextBlock Text="Puts a game's compiled cache back after the driver removes it." Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0" Visibility="{x:Bind Vm.HasKept, Mode=OneWay}">
+                                <TextBlock Text="{x:Bind Vm.KeptSummary, Mode=OneWay}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                                <Button Content="Manage…" Click="OnManageKept" />
+                            </StackPanel>
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" MinWidth="0" VerticalAlignment="Top" OnContent="" OffContent=""
+                                      IsOn="{x:Bind Vm.KeepCachesAside, Mode=TwoWay}" AutomationProperties.Name="Keep compiled caches aside" />
+                    </Grid>
                 </StackPanel>
             </Border>
 
@@ -95,6 +115,36 @@
                             </RadioButton>
                         </RadioButtons>
                         <TextBlock Text="{x:Bind Vm.LastRebuilt, Mode=OneWay}" Style="{StaticResource Caption}" Visibility="{x:Bind Vm.HasLastRebuilt, Mode=OneWay}" />
+                        <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
+                        <TextBlock x:Name="NewShadersHeader" Text="When games have new shaders" Style="{StaticResource Section}" />
+                        <TextBlock Text="A compiled game gains pipelines from its recording, the shared shader hashes or an SCSKiller update. Never while you play."
+                                   Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                        <RadioButtons SelectedIndex="{x:Bind Vm.NewShadersChoice, Mode=TwoWay}" AutomationProperties.Name="When games have new shaders">
+                            <RadioButton AutomationProperties.Name="Off">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Off" />
+                                    <TextBlock Text="Compile games yourself from the Library." Style="{StaticResource Caption}" />
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton AutomationProperties.Name="Notify me">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Notify me" />
+                                    <TextBlock Text="A notification offers Compile now. Nothing starts on its own." Style="{StaticResource Caption}" />
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton AutomationProperties.Name="Compile automatically and notify me">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Compile automatically and notify me" />
+                                    <TextBlock Text="Compiles while the PC is idle and tells you it's queued." Style="{StaticResource Caption}" />
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton AutomationProperties.Name="Compile automatically, silently">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Compile automatically, silently" />
+                                    <TextBlock Text="Compiles while the PC is idle with no notification." Style="{StaticResource Caption}" />
+                                </StackPanel>
+                            </RadioButton>
+                        </RadioButtons>
                         <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
                         <CheckBox Content="Pause background compiling while another game is running" IsChecked="{x:Bind Vm.PauseWhileGaming, Mode=TwoWay}" />
                         <Grid>
@@ -185,24 +235,44 @@
                                 <CheckBox IsChecked="{x:Bind Patreon.UseCommunityDb, Mode=TwoWay}" IsEnabled="{x:Bind Patreon.HasDb, Mode=OneWay}" AutomationProperties.Name="Download shared shader hashes">
                                     <StackPanel Spacing="2">
                                         <TextBlock Text="Download shared shader hashes" TextWrapping="Wrap" />
-                                        <TextBlock Text="Hashes other players recorded for your games, so they compile without you recording them first. No game files: your GPU compiles everything from your own install. Upscaler pipelines (FSR, XeSS) download for everyone, without it."
+                                        <TextBlock Text="Compile your games with hashes other players recorded."
                                                    Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                     </StackPanel>
                                 </CheckBox>
                                 <TextBlock Text="{x:Bind Patreon.DbNote, Mode=OneWay}" Visibility="{x:Bind Patreon.HasDbNote, Mode=OneWay}" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="28,0,0,0" />
                             </StackPanel>
+                            <CheckBox IsChecked="{x:Bind Vm.ShareDiagnostics, Mode=TwoWay}" AutomationProperties.Name="Share diagnostics to help fix problems">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Share diagnostics to help fix problems" TextWrapping="Wrap" />
+                                    <TextBlock Text="When a compile fails, send its error codes, once per compile." Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </CheckBox>
                             <CheckBox IsChecked="{x:Bind Vm.ShareRecordings, Mode=TwoWay}" AutomationProperties.Name="Share anonymous shader hashes">
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="Share anonymous shader hashes" TextWrapping="Wrap" />
-                                    <TextBlock Text="Helps everyone get better coverage. Your recordings' upscaler pipelines (FSR, XeSS) also reach everyone with the same upscaler version. Never linked to your Patreon account; nothing else about your games leaves your PC. Free for everyone." Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                    <TextBlock Text="Share your recorded hashes, GPU model and driver version. Never linked to your account." Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
+                            <HyperlinkButton Content="What's shared" NavigateUri="https://scskiller.com/privacy" Padding="0" />
                         </StackPanel>
                     </Border>
 
                     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="20">
                         <StackPanel Spacing="12">
                             <TextBlock Text="Compile speed when you run the queue" Style="{StaticResource Section}" />
+                            <StackPanel Spacing="4" Visibility="{x:Bind Vm.HasGpuChoices}">
+                                <ComboBox Header="GPU to compile for" ItemsSource="{x:Bind Vm.GpuLabels}" SelectedIndex="{x:Bind Vm.GpuIndex, Mode=TwoWay}"
+                                          MinWidth="220" AutomationProperties.Name="GPU to compile for" />
+                                <TextBlock Text="Pick the GPU your games run on. SCSKiller switches to it after a restart."
+                                           Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <CheckBox IsChecked="{x:Bind Vm.ExperimentalIntel, Mode=TwoWay}" Visibility="{x:Bind Vm.HasIntelGpu}"
+                                      AutomationProperties.Name="Experimental: compile on Intel GPUs">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Experimental: compile on Intel GPUs" TextWrapping="Wrap" />
+                                    <TextBlock Text="Only measured on Intel Arc. Applies after a restart." Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </CheckBox>
                             <Grid>
                                 <TextBlock Text="Compile threads" />
                                 <TextBlock Text="{x:Bind Vm.ThreadsText, Mode=OneWay}" HorizontalAlignment="Right" />
@@ -214,7 +284,7 @@
                                 <TextBlock Text="Maximum memory for compiling" />
                                 <TextBlock Text="{x:Bind Vm.MaxCompileMemoryText, Mode=OneWay}" HorizontalAlignment="Right" />
                             </Grid>
-                            <Slider Minimum="0" Maximum="16" StepFrequency="1" Value="{x:Bind Vm.MaxCompileMemory, Mode=TwoWay}"
+                            <Slider Minimum="0" Maximum="{x:Bind Vm.MaxCompileMemoryMax}" StepFrequency="1" Value="{x:Bind Vm.MaxCompileMemory, Mode=TwoWay}"
                                     AutomationProperties.Name="Maximum memory for compiling (0 = Auto)" />
                             <TextBlock Text="{x:Bind Vm.MaxCompileMemoryNote}" TextWrapping="Wrap" Style="{StaticResource Caption}" />
                             <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
@@ -225,13 +295,20 @@
                                                Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
+                            <CheckBox IsChecked="{x:Bind Vm.CompileRayTracing, Mode=TwoWay}" AutomationProperties.Name="Compile ray tracing shaders">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Compile ray tracing shaders" TextWrapping="Wrap" />
+                                    <TextBlock Text="Off: skipped, the game builds them when you turn ray tracing on in it."
+                                               Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </CheckBox>
                         </StackPanel>
                     </Border>
                 </Grid>
 
                 <Border Grid.Row="1" Style="{StaticResource Card}" Padding="20">
                     <StackPanel Spacing="12">
-                        <TextBlock Text="In the background" Style="{StaticResource Section}" />
+                        <TextBlock Text="General" Style="{StaticResource Section}" />
                         <CheckBox IsChecked="{x:Bind Vm.StartWithWindows, Mode=TwoWay}" AutomationProperties.Name="Start SCSKiller when Windows starts">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Start SCSKiller when Windows starts" TextWrapping="Wrap" />
@@ -242,7 +319,14 @@
                         <CheckBox IsChecked="{x:Bind Vm.CloseQuits, Mode=TwoWay}" AutomationProperties.Name="Closing the window quits SCSKiller">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Closing the window quits SCSKiller" TextWrapping="Wrap" />
-                                <TextBlock Text="A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps SCSKiller there; right-click its icon to quit."
+                                <TextBlock Text="A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps SCSKiller in the tray. Right-click its icon to quit."
+                                           Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </CheckBox>
+                        <CheckBox IsChecked="{x:Bind Vm.BeforeAfter, Mode=TwoWay}" AutomationProperties.Name="Before and after recording">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Before and after recording" TextWrapping="Wrap" />
+                                <TextBlock Text="Measure a game cold, compile it, measure it again, and get a report you can share."
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
@@ -253,20 +337,22 @@
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
-                        <CheckBox IsChecked="{x:Bind Vm.NotifyNewShaders, Mode=TwoWay}" AutomationProperties.Name="Notify me when games have new shaders to compile">
+                        <CheckBox IsChecked="{x:Bind Vm.HddMode, Mode=TwoWay}" AutomationProperties.Name="HDD mode">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Notify me when games have new shaders to compile" TextWrapping="Wrap" />
-                                <TextBlock Text="A compiled game gains pipelines from its recording, the shared shader hashes or an SCSKiller update. You're told once, never while you play."
+                                <TextBlock Text="HDD mode" TextWrapping="Wrap" />
+                                <TextBlock Text="Reads a game's files only when you open or compile it."
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
                         <CheckBox IsChecked="{x:Bind Vm.ActiveCheck, Mode=TwoWay}" AutomationProperties.Name="Send an anonymous daily check">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Send an anonymous daily check" TextWrapping="Wrap" />
-                                <TextBlock Text="Counts active installs: once a day, the app's version and your GPU vendor, with no identifier. Nothing about your PC or games."
+                                <TextBlock Text="Helps us count active installs so we can size our servers. Once a day, the app's version and GPU vendor, no identifier."
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
+                        <ComboBox Header="Theme" ItemsSource="{x:Bind local:SettingsVm.Themes}" SelectedIndex="{x:Bind Vm.ThemeIndex, Mode=TwoWay}" MinWidth="220"
+                                  AutomationProperties.Name="Theme" />
                     </StackPanel>
                 </Border>
 
@@ -279,13 +365,23 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Record in all compatible games" Style="{StaticResource Section}" />
-                                <TextBlock Text="Adds a small d3d12.dll to games without anti-cheat to catch shaders the plan missed and time each frame, so the game page shows what stuttered. Frame times stay on this PC. Never used in anti-cheat games. Switch off to remove it from every game you haven't turned it on for yourself."
+                                <TextBlock Text="Adds a small d3d12.dll or d3d11.dll to games without anti-cheat to catch shaders the plan missed and time each frame, so the game page shows what stuttered. Frame times stay on this PC. Never used in games with anti-cheat unless you allow it below. Switch off to remove it from every game you haven't turned it on for yourself."
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                             <ToggleSwitch Grid.Column="1" MinWidth="0" VerticalAlignment="Top" OnContent="" OffContent="" IsOn="{x:Bind Vm.RecordAllGames, Mode=TwoWay}"
                                           AutomationProperties.Name="Record in all compatible games" />
                         </Grid>
                         <TextBlock Text="{x:Bind Vm.RecordingCount, Mode=OneWay}" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                        <StackPanel Spacing="4">
+                            <CheckBox IsChecked="{x:Bind Vm.RecordAntiCheatGames, Mode=TwoWay}" AutomationProperties.Name="Allow the recorder in games with anti-cheat (at your own risk)">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Allow the recorder in games with anti-cheat (at your own risk)" TextWrapping="Wrap" />
+                                    <TextBlock Text="Some games contain anti-cheat that can ban accounts using the recorder. Turn this on to enable it per game, at your own risk. SCSKiller isn't responsible for bans."
+                                               Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </CheckBox>
+                            <HyperlinkButton Content="Details" Click="OnAntiCheatDetails" Padding="0" Margin="28,0,0,0" AutomationProperties.Name="Details on recording in games with anti-cheat" />
+                        </StackPanel>
                         <Rectangle Height="1" Fill="{ThemeResource CardStrokeColorDefaultBrush}" Margin="0,6" />
                         <Grid ColumnSpacing="12">
                             <Grid.ColumnDefinitions>

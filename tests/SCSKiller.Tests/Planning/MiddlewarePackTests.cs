@@ -103,6 +103,7 @@ public class MiddlewarePackTests(ITestOutputHelper output)
         Put("amd_fidelityfx_vk.dll", Pe("amd_fidelityfx_vk.dll"));          // Vulkan: not ours
         Put("ffx_fsr2_api_dx12_x64.dll", Pe("ffx_fsr2_api_dx12_x64.dll"));
         Put("libxess.dll", Pe("libxess.dll"));
+        File.SetAttributes(Path.Combine(dir, "libxess.dll"), FileAttributes.Hidden | FileAttributes.System);
         Put("nvngx_dlss.dll", Pe("nvngx_dlss.dll"));                        // flagged, not packable
         Put("sl.common.dll", Pe("sl.common.dll"));                          // Streamline plugins embed their shaders
         Put("sl.interposer.dll", Pe("sl.interposer.dll"));                  // Streamline's device wrapper: none

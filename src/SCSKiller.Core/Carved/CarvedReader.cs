@@ -21,17 +21,34 @@ namespace SCSKiller.Core.Carved;
 ///     (Starfield ships one per root signature), else as the first shader carrying it (CreateRootSignature takes any
 ///     container with an RTS0 part). Games whose shaders carry them plan without a recording (Version "…+RTS0"), as do
 ///     those whose pipeline records name them (Dawn, <see cref="DawnStores"/>: each record an IsPipeline map).
-/// EngineInfo: Family "Carved", Version "DXIL" / "DXBC" / "DXIL+DXBC" [+ "+RTS0"].</summary>
+/// EngineInfo: Family "Carved", or an engine recognized by its files (<see cref="Fingerprint"/>), so a planning rule can
+/// match it; Version "DXIL" / "DXBC" / "DXIL+DXBC" [+ "+RTS0"].</summary>
 public sealed class CarvedReader : IEngineReader
 {
     public const string Family = "Carved", EmbeddedRootSignatures = "+RTS0", Platform = "D3D12";
+    public const string RedEngine4 = "REDengine 4", Northlight2 = "Northlight 2";
+
+    public static readonly string[] Families = [Family, RedEngine4, Northlight2];
+
+    /// <summary>The engine a carved game is built with, by a file only it ships: REDengine 4 (Cyberpunk 2077)
+    /// engine\shader_final.cache; Northlight 2 (Alan Wake 2, CONTROL Resonant) .rmdtoc archive tables. Else <see cref="Family"/>.</summary>
+    public static string Fingerprint(string installDir) =>
+        File.Exists(Path.Combine(installDir, "engine", "shader_final.cache")) ? RedEngine4
+        : IsNorthlight2(installDir) ? Northlight2 : Family;
+
+    internal static bool IsNorthlight2(string installDir)
+    {
+        try { return Directory.EnumerateFiles(installDir, "*.rmdtoc", new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 3, IgnoreInaccessible = true, AttributesToSkip = 0 }).Any(); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
 
     /// <summary>Fewer raw graphics shaders than this: not how the game stores its shaders (Unity and UE ship a few raw compute
     /// or utility shaders next to packed ones; measured 0-472, the carver games 2.8k-121k).</summary>
     public const int MinGraphics = 256;
 
     const long DetectBudget = 512L << 20, IndexSampleBudget = 4L << 30;
-    const int NamedWindow = 16 << 20, OtherWindow = 4 << 20, Block = 8 << 20;
+    const int NamedWindow = 16 << 20, OtherWindow = 4 << 20;
+    internal const int Block = 8 << 20;
     const int MaxRecordGap = 32;   // bytes between two containers of one pipeline record (measured: 0 Gears, 8 SoT, 24 Resonance; packs 16+ or 64+)
 
     public sealed record Loc(string Path, long Offset, int Size);
@@ -41,6 +58,8 @@ public sealed class CarvedReader : IEngineReader
     /// (it re-indexes then).</summary>
     readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, Loc>> located = new();
 
+    public int ReaderVersion(EngineInfo engine) => engine.Family == Family && engine.Version.EndsWith(EmbeddedRootSignatures) ? 2 : 1;
+
     public EngineInfo? Detect(Game game) => Detect(game, out _);
 
     /// <param name="notes">what was found where (for diagnostics)</param>
@@ -48,6 +67,7 @@ public sealed class CarvedReader : IEngineReader
     {
         notes = "";
         if (!Directory.Exists(game.InstallDir)) return null;
+        if (GodotApi(game.ExePath) is { } godot) return new EngineInfo(Fingerprint(game.InstallDir), "-", null, godot, false, $"runs on {godot} (Godot)");
         var seen = new HashSet<string>();
         var perFile = new Dictionary<string, int>();
         int graphics = 0, compute = 0, dxil = 0, rts0 = 0;
@@ -70,7 +90,34 @@ public sealed class CarvedReader : IEngineReader
             : programs == 0 ? $"no raw DXBC/DXIL shaders in its files ({read / 1e9:F1} GB sampled): shaders are {packed}"
             : graphics == 0 ? $"only {compute} raw compute shaders: graphics shaders are {packed}"
             : $"only {graphics} raw graphics shaders: the rest are {packed}";
-        return new EngineInfo(Family, programs == 0 ? "-" : version, null, GraphicsApi(game, dxil > 0), false, unsupported);
+        return new EngineInfo(Fingerprint(game.InstallDir), programs == 0 ? "-" : version, null, GraphicsApi(game, dxil > 0), false, unsupported);
+    }
+
+    /// <summary>A Godot export's renderer by its pack's Godot major version: 4 renders on Vulkan by default, 3 on OpenGL. The pack
+    /// is &lt;exe&gt;.pck beside the exe, or embedded, which then ends the exe with its size (8 bytes) and "GDPC". Null: not Godot.</summary>
+    internal static string? GodotApi(string exe)
+    {
+        try
+        {
+            var pck = Path.ChangeExtension(exe, ".pck");
+            var embedded = !File.Exists(pck);
+            using var f = File.OpenRead(embedded ? exe : pck);
+            Span<byte> b = stackalloc byte[12];
+            long at = 0;
+            if (embedded)
+            {
+                if (f.Length < 24) return null;
+                f.Position = f.Length - 12;
+                f.ReadExactly(b);
+                if (!b[8..].SequenceEqual("GDPC"u8)) return null;
+                at = f.Length - 12 - System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(b);
+                if (at < 0) return null;
+            }
+            f.Position = at;
+            f.ReadExactly(b);   // "GDPC", pack format, Godot's major version
+            return !b[..4].SequenceEqual("GDPC"u8) ? null : System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(b[8..]) >= 4 ? "Vulkan" : "OpenGL";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return null; }
     }
 
     public ShaderIndex Index(Game game, EngineInfo engine, IProgress<string>? log, CancellationToken ct)
@@ -121,12 +168,12 @@ public sealed class CarvedReader : IEngineReader
         {
             var rel = Path.GetRelativePath(game.InstallDir, path);
             Stamp(path);
-            if ((path == dawnFile ? dawnRuns : Records(seq)) is { } runs)
-                foreach (var run in runs)
+            if ((path == dawnFile ? dawnRuns : Records(seq)?.Select(r => (Run: r, Root: (string?)null)).ToList()) is { } runs)
+                foreach (var (run, root) in runs)
                 {
                     records++;
                     var h = Sha1Hex(string.Join(',', run.Order(StringComparer.Ordinal)));
-                    if (mapHashes.Add(h)) maps.Add(new ShaderMap(h, rel, run.Select(PlatformOf).FirstOrDefault(p => p != Platform, Platform), run, IsPipeline: true));
+                    if (mapHashes.Add($"{h}|{root}")) maps.Add(new ShaderMap(h, rel, run.Select(PlatformOf).FirstOrDefault(p => p != Platform, Platform), run, IsPipeline: true, root));
                 }
             else
                 foreach (var pool in seq.Where(s => shaders.ContainsKey(s.Sha)).Select(s => s.Sha).Distinct().GroupBy(PlatformOf))
@@ -141,7 +188,9 @@ public sealed class CarvedReader : IEngineReader
             + string.Join(", ", shaders.Values.GroupBy(s => s.Stage).OrderByDescending(g => g.Count()).Select(g => $"{g.Count()} {g.Key}"))
             + $"){(bad > 0 ? $", {bad} unparseable" : "")}, {rs} embedded root signatures, {records} pipeline records -> {maps.Count} maps ({maps.Count(m => m.IsPipeline)} exact)"
             + string.Concat(platformOf.Values.GroupBy(p => p).Select(g => $"; {g.Count()} need {g.Key}, not planned for 32-lane GPUs")) + dawnNote + $" ({sw.Elapsed.TotalSeconds:F1}s)");
-        return new ShaderIndex(Convert.ToHexStringLower(content.GetHashAndReset()), [Platform, .. platformOf.Values.Distinct().Order(StringComparer.Ordinal)], shaders, maps);
+        var roots = new Dictionary<string, byte[]>(rootSigs.Blobs);
+        if (dawnRuns != null) foreach (var r in dawn!.Roots.Values) roots.TryAdd(r.Sha, r.Blob);
+        return new ShaderIndex(Convert.ToHexStringLower(content.GetHashAndReset()), [Platform, .. platformOf.Values.Distinct().Order(StringComparer.Ordinal)], shaders, maps, roots);
     }
 
     /// <summary>Re-slices each container at the (file, offset) the index found it; one whose bytes changed since (game
@@ -166,16 +215,15 @@ public sealed class CarvedReader : IEngineReader
     }
 
     /// <summary>Dawn's pipeline records (<see cref="DawnStores"/>) over the shaders carved from its rawshader.store2: each
-    /// record whose shaders were all indexed, as a run. A shader gets the root signature of its records, none when they use
-    /// several: a stage set takes the first root signature among its stages, so the record's other stage gives it its own,
-    /// where a majority pick on a VS would override its PS's. A record of such shaders only plans nothing. The root-signature
-    /// containers are located for ReadShaders (the carver stops before rawroot.store2).</summary>
-    static List<List<string>> DawnRuns(DawnStores.Stores dawn, List<(long Off, int Size, int Kind, string Sha)> seq,
+    /// record whose shaders were all indexed, as a run with the root signature it names. A shader gets the root signature of
+    /// its records, none when they use several. The root-signature containers are located for ReadShaders (the carver stops
+    /// before rawroot.store2).</summary>
+    static List<(List<string> Run, string? Root)> DawnRuns(DawnStores.Stores dawn, List<(long Off, int Size, int Kind, string Sha)> seq,
         Dictionary<string, ShaderInfo> shaders, Dictionary<string, Loc> locs, out string note)
     {
         var shaAt = new Dictionary<long, string>();
         foreach (var s in seq) shaAt.TryAdd(s.Off, s.Sha);
-        var runs = new List<List<string>>();
+        var runs = new List<(List<string> Run, string? Root)>();
         var rootsOf = new Dictionary<string, HashSet<string>>();
         var unindexed = 0;
         foreach (var (root, ids) in dawn.Pipelines)
@@ -183,13 +231,13 @@ public sealed class CarvedReader : IEngineReader
             var run = ids.Select(id => shaAt.GetValueOrDefault(dawn.Shaders[id])).OfType<string>().Where(shaders.ContainsKey).ToList();
             if (run.Count < ids.Length) { unindexed++; continue; }
             foreach (var h in run) (rootsOf.TryGetValue(h, out var set) ? set : rootsOf[h] = []).Add(dawn.Roots[root].Sha);
-            runs.Add(run);
+            runs.Add((run, dawn.Roots[root].Sha));
         }
         foreach (var (h, set) in rootsOf) shaders[h] = shaders[h] with { RootSignature = set.Count == 1 ? set.First() : null };
         foreach (var r in dawn.Roots.Values) locs.TryAdd(r.Sha, new Loc(dawn.RootFile, r.Offset, r.Size));
-        var several = rootsOf.Where(r => r.Value.Count > 1).Select(r => r.Key).ToHashSet();
-        note = $"; Dawn: {runs.Count} pipeline records, {rootsOf.Count - several.Count} shaders given their root signature"
-            + (several.Count > 0 ? $", {several.Count} used with several left without ({runs.Count(r => r.All(several.Contains))} records of only those plan nothing)" : "")
+        var several = rootsOf.Count(r => r.Value.Count > 1);
+        note = $"; Dawn: {runs.Count} pipeline records, {rootsOf.Count - several} shaders given their root signature"
+            + (several > 0 ? $", {several} used with several left without: their pipelines take their record's" : "")
             + (unindexed + dawn.Skipped > 0 ? $"; left out: {unindexed} records with a shader not indexed, {dawn.Skipped} naming another stage" : "");
         return runs;
     }
@@ -215,7 +263,7 @@ public sealed class CarvedReader : IEngineReader
     }
 
     delegate void Found(FileInfo file, long offset, ReadOnlySpan<byte> container);
-    delegate void Hit(long offset, ReadOnlySpan<byte> container);
+    internal delegate void Hit(long offset, ReadOnlySpan<byte> container);
 
     static readonly HashSet<string> NotShaders = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -227,7 +275,7 @@ public sealed class CarvedReader : IEngineReader
     /// rest, smallest first (shader packs are rarely a game's biggest files).</summary>
     static (List<FileInfo> Named, List<FileInfo> Other) Files(string dir)
     {
-        var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, MaxRecursionDepth = 8 };
+        var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0, MaxRecursionDepth = 8 };
         var all = new DirectoryInfo(dir).EnumerateFiles("*", opts).Where(f => f.Length >= 64 && !NotShaders.Contains(f.Extension)).ToList();
         bool Named(FileInfo f) => Path.GetRelativePath(dir, f.FullName) is var rel
             && (rel.Contains("shader", StringComparison.OrdinalIgnoreCase) || rel.Contains("pso", StringComparison.OrdinalIgnoreCase));
@@ -266,19 +314,19 @@ public sealed class CarvedReader : IEngineReader
     static (long Lo, long Hi)[] Windows(long len, long w) =>
         len <= 3 * w ? [(0, len)] : [(0, w), (len / 2 - w / 2, len / 2 + w / 2), (len - w, len)];
 
-    static long Scan(FileInfo f, byte[] buf, (long Lo, long Hi)[] windows, Hit hit, CancellationToken ct)
+    internal static long Scan(FileInfo f, byte[] buf, (long Lo, long Hi)[] windows, Hit hit, CancellationToken ct, int maxSize = Dxbc.MaxSize)
     {
         try
         {
             using var h = File.OpenHandle(f.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, FileOptions.SequentialScan);
             var len = RandomAccess.GetLength(h);
-            return windows.Sum(w => Carve(h, len, w.Lo, Math.Min(w.Hi, len), buf, hit, ct));
+            return windows.Sum(w => Carve(h, len, w.Lo, Math.Min(w.Hi, len), buf, hit, ct, maxSize));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return 0; }
     }
 
     /// <summary>Every valid container starting in [lo, hi) of the file (it may end past hi), in file order.</summary>
-    static long Carve(SafeFileHandle h, long len, long lo, long hi, byte[] buf, Hit hit, CancellationToken ct)
+    static long Carve(SafeFileHandle h, long len, long lo, long hi, byte[] buf, Hit hit, CancellationToken ct, int maxSize)
     {
         long read = 0;
         Span<byte> head = stackalloc byte[32];
@@ -297,7 +345,7 @@ public sealed class CarvedReader : IEngineReader
                 i = at + 1;
                 ReadOnlySpan<byte> hd = at + 32 <= n ? span.Slice(at, 32) : RandomAccess.Read(h, head, off) == 32 ? head : default;
                 var size = Dxbc.HeaderSize(hd);
-                if (size == 0 || off + size > len) continue;
+                if (size == 0 || size > maxSize || off + size > len) continue;
                 ReadOnlySpan<byte> c = at + size <= n ? span.Slice(at, size) : ReadAt(h, off, size);
                 if (!Dxbc.Valid(c)) continue;
                 hit(off, c);
@@ -323,9 +371,12 @@ public sealed class CarvedReader : IEngineReader
         lanes is { } l && (l.Min > 32 || l.Max < 32) ? $"{Platform} wave{l.Min}{(l.Max != l.Min ? $"-{l.Max}" : "")}" : null;
 
     /// <summary>Per-class binding counts (the planner's learned lookup keys on them; unbounded ranges count once).</summary>
+    /// <summary>Registers per class (an unbounded range counts one). ArgumentException when a class's total isn't an int:
+    /// a malformed shader, which every reader skips as unparseable.</summary>
     internal static ResourceCounts Counts(IReadOnlyList<Binding> b)
     {
-        int N(string cls) => b.Where(x => x.Class == cls).Sum(x => Math.Max(1, x.Count));
+        int N(string cls) => b.Where(x => x.Class == cls).Sum(x => (long)Math.Max(1, x.Count)) is var n and <= int.MaxValue ? (int)n
+            : throw new ArgumentException($"{cls} registers overflow");
         return new ResourceCounts(N("cbv"), N("srv"), N("uav"), N("sampler"));
     }
 
@@ -337,7 +388,7 @@ public sealed class CarvedReader : IEngineReader
     static string GraphicsApi(Game game, bool dxil)
     {
         var apis = Imports(game);
-        var core = new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 4, IgnoreInaccessible = true };
+        var core = new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 4, IgnoreInaccessible = true, AttributesToSkip = 0 };
         bool d3d12 = dxil || apis.Contains("D3D12") || Directory.EnumerateFiles(game.InstallDir, "D3D12Core.dll", core).Any();
         bool d3d11 = apis.Contains("D3D11");
         return d3d12 ? (d3d11 && !dxil ? UnrealRhi.Ambiguous : "D3D12") : d3d11 ? "D3D11" : apis.Contains("Vulkan") ? "Vulkan" : UnrealRhi.Ambiguous;
@@ -374,7 +425,7 @@ public sealed class CarvedReader : IEngineReader
     /// <summary>Import + delay-import DLL names (<paramref name="delayed"/> false: imports only); <paramref name="agility"/>: exports D3D12SDKVersion.</summary>
     public static List<string> PeImports(string path, out bool agility, bool delayed = true)
     {
-        using var pe = new PEReader(File.OpenRead(path));
+        using var pe = PeFile.Open(path);
         var dlls = PeImports(pe, delayed);
         agility = PeFile.ExportNames(pe).Take(20000).Contains("D3D12SDKVersion");
         return dlls;
@@ -408,14 +459,24 @@ public sealed class CarvedReader : IEngineReader
 sealed class RootSigCarriers
 {
     readonly Dictionary<string, string> rsOnly = [], carrier = [], partOf = [];
+    readonly Dictionary<string, byte[]> parts = [], blobs = [];
+
+    /// <summary>Each container that can serve a root signature (every RTS0-only one, the first shader per part), by its
+    /// SHA-1: its RTS0 part (<see cref="ShaderIndex.RootSignatures"/>).</summary>
+    public IReadOnlyDictionary<string, byte[]> Blobs => blobs;
 
     /// <param name="kind"><see cref="Dxbc.Kind"/> of the container</param>
     public void See(ReadOnlySpan<byte> c, string sha, int kind)
     {
         if (Dxbc.Part(c, "RTS0"u8) is not { IsEmpty: false } rts) return;
         var part = Convert.ToHexStringLower(SHA1.HashData(rts));
-        if (kind < 0) rsOnly.TryAdd(part, sha);
-        else { carrier.TryAdd(part, sha); partOf[sha] = part; }
+        if (!parts.TryGetValue(part, out var bytes)) parts[part] = bytes = rts.ToArray();
+        if (kind < 0) { rsOnly.TryAdd(part, sha); blobs[sha] = bytes; }
+        else
+        {
+            if (carrier.TryAdd(part, sha)) blobs[sha] = bytes;
+            partOf[sha] = part;
+        }
     }
 
     public void Apply(Dictionary<string, ShaderInfo> shaders)

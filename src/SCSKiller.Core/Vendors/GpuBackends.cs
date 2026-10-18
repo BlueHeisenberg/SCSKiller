@@ -4,16 +4,20 @@ namespace SCSKiller.Core.Vendors;
 
 public static class GpuBackends
 {
-    /// <summary>Backend for the primary discrete adapter. Adding a vendor = one case here.</summary>
-    public static IGpuVendorBackend Detect()
+    /// <summary>Backend for the picked adapter (<see cref="Pick"/>). <paramref name="intel"/>: <see cref="Settings.ExperimentalIntel"/>.</summary>
+    public static IGpuVendorBackend Detect(GpuChoice? choice = null, bool intel = false) =>
+        For(Pick(Adapters(), choice)?.Gpu ?? new GpuInfo(GpuVendor.Unknown, "no D3D adapter", "", 0, 0), intel);
+
+    /// <summary>The backend of <paramref name="gpu"/>. Adding a vendor = one case here.</summary>
+    public static IGpuVendorBackend For(GpuInfo gpu, bool intel = false)
     {
-        var gpu = PrimaryAdapter() ?? new GpuInfo(GpuVendor.Unknown, "no D3D adapter", "", 0, 0);
         try
         {
             return gpu.Vendor switch
             {
                 GpuVendor.Nvidia => new NvidiaBackend(gpu),
                 GpuVendor.Amd => new AmdBackend(gpu),
+                GpuVendor.Intel when intel => new IntelBackend(gpu),
                 _ => new UnsupportedVendor(gpu),
             };
         }
@@ -29,10 +33,27 @@ public static class GpuBackends
 
     public static GpuInfo? Primary(IReadOnlyList<DxgiAdapter> adapters) => adapters.MaxBy(a => a.Gpu.DedicatedVideoMemory)?.Gpu;
 
-    /// <summary>The non-software adapters, in DXGI's order.</summary>
+    /// <summary>The adapter the user picked (<see cref="Chosen"/>), else the one with the most video memory.</summary>
+    public static DxgiAdapter? Pick(IReadOnlyList<DxgiAdapter> adapters, GpuChoice? choice) =>
+        Chosen(adapters, choice) ?? adapters.MaxBy(a => a.Gpu.DedicatedVideoMemory);
+
+    /// <summary>The listed adapter <paramref name="choice"/> names: by its LUID (with its vendor and device id) while this
+    /// boot keeps it, else by vendor, device id and name; of identical cards, the first DXGI lists. Null when none is.</summary>
+    public static DxgiAdapter? Chosen(IReadOnlyList<DxgiAdapter> adapters, GpuChoice? choice) => choice is not { } c ? null
+        : adapters.FirstOrDefault(a => (a.Gpu.AdapterLuid, a.Gpu.Vendor, a.DeviceId) == (c.AdapterLuid, c.Vendor, c.DeviceId))
+          ?? adapters.FirstOrDefault(a => (a.Gpu.Vendor, a.DeviceId, a.Gpu.Name) == (c.Vendor, c.DeviceId, c.Name));
+
+    /// <summary>The adapters SCSKiller compiles for (NVIDIA, AMD, and Intel with <paramref name="intel"/>): what a pick is offered from.</summary>
+    public static IEnumerable<DxgiAdapter> Usable(IReadOnlyList<DxgiAdapter> adapters, bool intel = false) =>
+        adapters.Where(a => a.Gpu.Vendor is GpuVendor.Nvidia or GpuVendor.Amd || intel && a.Gpu.Vendor == GpuVendor.Intel);
+
+    public static GpuChoice ChoiceOf(DxgiAdapter a) => new(a.Gpu.AdapterLuid, a.Gpu.Vendor, a.DeviceId, a.Gpu.Name);
+
+    /// <summary>The non-software adapters, in DXGI's order. Under Wine, DriverVersion is the host driver's (<see cref="Wine"/>).</summary>
     public static unsafe IReadOnlyList<DxgiAdapter> Adapters()
     {
         var all = new List<DxgiAdapter>();
+        var host = Wine.HostDriverVersions();
         var iid = new Guid("770aae78-f26f-4dba-a829-253c83d1b387");   // IDXGIFactory1
         if (CreateDXGIFactory1(&iid, out var factory) < 0) return all;
         try
@@ -50,6 +71,7 @@ public static class GpuBackends
                     ? $"{umd >> 48 & 0xFFFF}.{umd >> 32 & 0xFFFF}.{umd >> 16 & 0xFFFF}.{umd & 0xFFFF}" : "";
                 ((delegate* unmanaged<nint, uint>)vt[2])(adapter);   // Release
                 if ((d.Flags & 2) != 0) continue;   // DXGI_ADAPTER_FLAG_SOFTWARE
+                if (host.TryGetValue((d.VendorId, d.DeviceId), out var hostVersion)) version = hostVersion;
                 var vendor = Enum.IsDefined(typeof(GpuVendor), (int)d.VendorId) ? (GpuVendor)d.VendorId : GpuVendor.Unknown;
                 all.Add(new(new GpuInfo(vendor, new string(d.Description), version, ((long)d.LuidHigh << 32) | d.LuidLow, d.DedicatedVideoMemory),
                     d.DeviceId, d.SubSysId));
@@ -87,7 +109,8 @@ public interface IRefreshableGpu
     string FallbackVersion(string umd);
 }
 
-/// <summary>Intel / unknown until measured: no cache assumptions, warming reports Unsupported via the caps.</summary>
+/// <summary>Intel (unless <see cref="Settings.ExperimentalIntel"/>) / unknown until measured: no cache assumptions, warming
+/// reports Unsupported via the caps.</summary>
 public sealed class UnsupportedVendor(GpuInfo gpu) : IGpuVendorBackend, IRefreshableGpu
 {
     public GpuVendor Vendor => Gpu.Vendor;

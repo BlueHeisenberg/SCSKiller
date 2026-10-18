@@ -89,6 +89,7 @@ public class CarvedReaderTests
         var index = reader.Index(d.Game, engine, null, CancellationToken.None);
         Assert.Equal(2 * Pairs, index.Shaders.Count);
         var (rs1, rs2) = (Sha(d.Rs1), Sha(d.Rs2));
+        Assert.All(index.Shaders.Values.Select(s => s.RootSignature).OfType<string>(), h => Assert.Contains(h, index.RootSignatures!.Keys));   // the planner checks coverage with them
         foreach (var (vs, ps, rs) in d.Shaders)
         {
             Assert.Equal(rs == 1 ? rs1 : rs2, index.Shaders[Sha(vs)].RootSignature); // the standalone RTS0 container, not the shader
@@ -124,10 +125,43 @@ public class CarvedReaderTests
         Assert.Null(new CarvedReader().Detect(game with { InstallDir = Path.Combine(dir, "missing") }));
     }
 
+    /// <summary>A carved game whose files name its engine reports that family, readable or not, so a rule can match it.</summary>
+    [Fact]
+    public void FingerprintsNameTheEngine()
+    {
+        var dir = Ff7.TempDir("carved-fingerprint");
+        var game = new Game("test:fingerprint", "fp", Store.Other, dir, Path.Combine(dir, "game.exe"));
+        Assert.Equal(CarvedReader.Family, CarvedReader.Fingerprint(dir));
+        Directory.CreateDirectory(Path.Combine(dir, "data", "pc"));
+        File.WriteAllBytes(Path.Combine(dir, "data", "pc", "base-generic.rmdtoc"), [1]);
+        Assert.Equal(CarvedReader.Northlight2, new CarvedReader().Detect(game)!.Family);
+        Directory.CreateDirectory(Path.Combine(dir, "engine"));
+        File.WriteAllBytes(Path.Combine(dir, "engine", "shader_final.cache"), [1]);
+        Assert.Equal(CarvedReader.RedEngine4, CarvedReader.Fingerprint(dir));
+        var deep = Ff7.TempDir("carved-fingerprint-deep");
+        Directory.CreateDirectory(Path.Combine(deep, "a", "b", "c", "d"));
+        File.WriteAllBytes(Path.Combine(deep, "a", "b", "c", "d", "x.rmdtoc"), [1]);
+        Assert.Equal(CarvedReader.Family, CarvedReader.Fingerprint(deep)); // past the search depth
+    }
+
+    /// <summary>The carver listed under each of its families: one Detect, and a cached EngineInfo of any of them finds it.</summary>
+    [Fact]
+    public void OneReaderUnderSeveralFamiliesDetectsOnce()
+    {
+        var game = Data.Value.Game;
+        var red4 = new EngineInfo(CarvedReader.RedEngine4, "DXIL", null, "D3D12", false, null);
+        var c = new Stub(red4 with { Unsupported = "packed" });
+        var chain = new EngineReaders([.. CarvedReader.Families.Select(f => (f, (IEngineReader)c))]);
+        Assert.Equal(red4 with { Unsupported = "packed" }, chain.Detect(game));
+        Assert.Equal(1, c.Detected);
+        chain.Index(game, red4, null, CancellationToken.None);
+        Assert.Equal(1, c.Indexed);
+    }
+
     sealed class Stub(EngineInfo? e, bool throws = false) : IEngineReader
     {
-        public int Indexed;
-        public EngineInfo? Detect(Game game) => throws ? throw new IOException("unreadable") : e;
+        public int Indexed, Detected;
+        public EngineInfo? Detect(Game game) { Detected++; return throws ? throw new IOException("unreadable") : e; }
         public ShaderIndex Index(Game game, EngineInfo engine, IProgress<string>? log, CancellationToken ct) { Indexed++; return new("", [], new Dictionary<string, ShaderInfo>(), []); }
         public void ReadShaders(Game game, EngineInfo engine, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct) { }
     }
@@ -149,6 +183,27 @@ public class CarvedReaderTests
         Assert.Equal(carved, new EngineReaders(("Unreal", new Stub(null, throws: true)), (CarvedReader.Family, c)).Detect(game));
         Assert.Throws<IOException>(() => new EngineReaders(("Unreal", new Stub(null, throws: true)), (CarvedReader.Family, new Stub(null))).Detect(game));
         Assert.Null(new EngineReaders(("Unreal", new Stub(null)), (CarvedReader.Family, new Stub(null))).Detect(game));
+    }
+
+    /// <summary>The app's whole chain on an Unreal 4.26 install from its own launcher: encrypted paks and enough raw DXIL
+    /// for the carver. Wuthering Waves' fork has a rule, so its key makes it compile and Unreal's result wins. Without a
+    /// fork the carver's does.</summary>
+    [Theory]
+    [InlineData("Wuthering Waves Game", true)]
+    [InlineData("Some Game", false)]
+    public void AnEncryptedForkWithARuleWinsOverTheCarver(string folder, bool fork)
+    {
+        var install = Path.Combine(Ff7.TempDir($"encrypted-fork-{fork}"), folder);
+        var content = Directory.CreateDirectory(Path.Combine(install, "Client", "Content")).FullName;
+        Unreal.UnrealReaderTests.EncryptedIndexPak11(Path.Combine(Directory.CreateDirectory(Path.Combine(content, "Paks")).FullName, "pakchunk0-WindowsNoEditor.pak"));
+        File.Copy(Path.Combine(Data.Value.Dir, "Shaders", "pack.bin"), Path.Combine(content, "pack.bin"));
+        var exe = Path.Combine(Directory.CreateDirectory(Path.Combine(install, "Client", "Binaries", "Win64")).FullName, "Client-Win64-Shipping.exe");
+        var game = new Game($"test:encrypted-fork-{fork}", folder, Store.Other, install, exe);
+        var carved = new CarvedReader().Detect(game)!;
+        Assert.Null(carved.Unsupported);
+        var e = SCSKiller.Core.App.ScsKiller.DefaultReaders(Ff7.TempDir($"encrypted-fork-readers-{fork}")).Detect(game)!;
+        if (fork) Assert.Equal(("Unreal", "4.26", "GAME_WutheringWaves", true), (e.Family, e.Version, e.Fork, e.Encrypted));
+        else Assert.Equal(carved, e);
     }
 
     /// <summary>Planner: embedded root signatures without a recording, pairs only within one root signature, IsPipeline
@@ -224,5 +279,32 @@ public class CarvedReaderTests
         var engine = new EngineInfo(CarvedReader.Family, "DXBC", null, "D3D12", false, null);
         Assert.Throws<OperationCanceledException>(() => new CarvedReader().Index(game, engine, null, new CancellationToken(true)));
         Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public void PeFilesAreReadWithoutAMap()   // a read error in a mapped page ends the process, a stream read throws
+    {
+        var dll = Path.Combine(Ff7.TempDir("pe-unmapped"), "kernel32.dll");
+        File.Copy(Path.Combine(Environment.SystemDirectory, "kernel32.dll"), dll);
+        using var pe = PeFile.Open(dll);
+        Assert.NotEmpty(PeFile.ExportNames(pe));   // its export section is over PEReader's 16 KB map threshold
+        using var f = new FileStream(dll, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+        f.SetLength(0);   // refused while a section is mapped (ERROR_USER_MAPPED_FILE)
+    }
+
+    [Fact]
+    public void GodotIsToldByItsPackBesideOrEmbedded()
+    {
+        var dir = Ff7.TempDir("godot");
+        static byte[] Header(uint major) => [.. "GDPC"u8, .. BitConverter.GetBytes(2u), .. BitConverter.GetBytes(major), .. new byte[20]];
+        var beside = Path.Combine(dir, "game.exe");
+        File.WriteAllBytes(beside, new byte[4096]);
+        Assert.Null(CarvedReader.GodotApi(beside));
+        File.WriteAllBytes(Path.Combine(dir, "game.pck"), Header(4));
+        Assert.Equal("Vulkan", CarvedReader.GodotApi(beside));
+        var embedded = Path.Combine(dir, "old.exe");
+        var pack = Header(3);
+        File.WriteAllBytes(embedded, [.. new byte[4096], .. pack, .. BitConverter.GetBytes((long)pack.Length), .. "GDPC"u8]);
+        Assert.Equal("OpenGL", CarvedReader.GodotApi(embedded));
     }
 }

@@ -16,9 +16,47 @@ configure_file(version.h.in version.h @ONLY)
 add_library(scskiller SHARED proxy.cpp warm11.cpp vtslots.cpp stubs.asm d3d12.def version.rc)
 set_target_properties(scskiller PROPERTIES OUTPUT_NAME d3d12)
 # /MAP: function RVAs for reading crash stacks. Delay-load what only the D3D11 warm uses (in a game it is never loaded) and
-# what only admission at the first device uses (the ledger's folder).
+# what only admission at the first device uses (the recorder folder).
 target_link_options(scskiller PRIVATE /MAP /DELAYLOAD:d3d11.dll /DELAYLOAD:d3dcompiler_47.dll /DELAYLOAD:dxgi.dll /DELAYLOAD:shell32.dll /DELAYLOAD:ole32.dll)
 target_link_libraries(scskiller delayimp)
+# Fault injection for the tests: never in a tagged release, whose version publish.ps1 sets
+if(SCSK_VERSION MATCHES "^0[.]0[.]0-internal")
+  target_compile_definitions(scskiller PRIVATE SCSK_TEST_HOOKS)
+endif()
+
+# scskiller_ags.dll: the same recorder in front of AMD's AGS, installed as the game's amd_ags_x64.dll where AGS makes the
+# device (the app's GameFiles.AgsMakesTheDevice). The game's own AGS is renamed amd_ags_real.dll: Wrap_AgsCreateDevice is
+# ours, every other export in ags_exports.txt goes to it through an import library made from the same list.
+file(STRINGS ags_exports.txt AGS_NAMES)
+set(AGS_DEF ${CMAKE_CURRENT_BINARY_DIR}/ags_wrap.def)
+set(AGS_REAL_DEF ${CMAKE_CURRENT_BINARY_DIR}/amd_ags_real.def)
+set(AGS_REAL_LIB ${CMAKE_CURRENT_BINARY_DIR}/amd_ags_real.lib)
+set(AGS_DEF_TEXT "EXPORTS
+    agsDriverExtensionsDX12_CreateDevice = Wrap_AgsCreateDevice
+    SCSKiller_StartWarm
+")
+set(AGS_REAL_DEF_TEXT "LIBRARY amd_ags_real.dll
+EXPORTS
+")
+foreach(n ${AGS_NAMES})
+  string(APPEND AGS_REAL_DEF_TEXT "    ${n}
+")
+  if(NOT n STREQUAL "agsDriverExtensionsDX12_CreateDevice")
+    string(APPEND AGS_DEF_TEXT "    ${n}
+")
+  endif()
+endforeach()
+file(WRITE ${AGS_DEF} "${AGS_DEF_TEXT}")
+file(WRITE ${AGS_REAL_DEF} "${AGS_REAL_DEF_TEXT}")
+add_custom_command(OUTPUT ${AGS_REAL_LIB} COMMAND ${CMAKE_AR} /nologo /DEF:${AGS_REAL_DEF} /MACHINE:X64 /OUT:${AGS_REAL_LIB}
+                   DEPENDS ${AGS_REAL_DEF} ags_exports.txt VERBATIM)
+add_custom_target(amd_ags_real_lib DEPENDS ${AGS_REAL_LIB})
+add_library(scskiller_ags SHARED proxy.cpp warm11.cpp vtslots.cpp stubs.asm ${AGS_DEF} version.rc)
+add_dependencies(scskiller_ags amd_ags_real_lib)
+target_compile_definitions(scskiller_ags PRIVATE SCSK_AGS_WRAP)
+target_include_directories(scskiller_ags PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_link_options(scskiller_ags PRIVATE /MAP /DELAYLOAD:d3d11.dll /DELAYLOAD:d3dcompiler_47.dll /DELAYLOAD:dxgi.dll /DELAYLOAD:shell32.dll /DELAYLOAD:ole32.dll)
+target_link_libraries(scskiller_ags ${AGS_REAL_LIB} delayimp)
 
 add_executable(selftest selftest.cpp)
 target_link_libraries(selftest d3dcompiler)
@@ -26,7 +64,7 @@ target_include_directories(selftest PRIVATE third_party/vulkan)  # headers only;
 add_dependencies(selftest scskiller fakenext)
 
 # A mod's d3d12.dll for `selftest chain` (scskiller.ini next=); test only, never published
-add_library(fakenext SHARED fakenext.cpp)
+add_library(fakenext SHARED fakenext.cpp fakenext.asm)
 
 add_executable(scskiller_warm warm.cpp version.rc)
 # The same exe on the segment heap (warm.manifest), in segheap\ under the same file name: the warmer runs it on NVIDIA
@@ -77,3 +115,7 @@ endif()
 # Also the "game" of the D3D11 warm end-to-end test (compile, first).
 add_executable(probe11 probe11.cpp)
 target_link_libraries(probe11 d3dcompiler)
+
+# D3D11 compile-key probe: which input-layout fields, partner stages and output state make the driver compile again.
+add_executable(layout11 layout11.cpp)
+target_link_libraries(layout11 d3dcompiler)

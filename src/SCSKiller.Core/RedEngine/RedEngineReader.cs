@@ -11,7 +11,7 @@ namespace SCSKiller.Core.RedEngine;
 /// <summary>REDengine 3 (The Witcher 3's DX12 build): the shaders of content\content0's caches (<see cref="RedShaderCache"/>).
 /// Maps: every distinct technique's graphics stages are one IsPipeline map and its compute shader another (a technique is
 /// one pipeline: every recorded PSO of material shaders is one); the static cache is one pool, paired by linkage. Shaders
-/// carry no root signature: the engine has three, one per kind of pipeline (<see cref="RootSig.Rule.Red3"/>).
+/// carry no root signature: the engine has three, one per kind of pipeline (plan-rules.json's red3 rule, <see cref="RulesFile"/>).
 /// A material cache that doesn't read whole, or whose first techniques name no usable pipeline, isn't detected: the next
 /// reader (the carver) gets the game, under its own engine, so the REDengine 3 root signatures never apply to it.
 /// EngineInfo: Family "REDengine 3", Version "DX12".</summary>
@@ -34,7 +34,7 @@ public sealed class RedEngineReader : IEngineReader
     readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, Loc>> located = new();
 
     /// <summary>The whole material cache's layout, then the shaders of its first techniques whose keys it has, until one
-    /// is a pipeline <see cref="Graphics"/> takes.</summary>
+    /// is a pipeline <see cref="Graphics"/> takes of a stage set the embedded rule lists.</summary>
     public EngineInfo? Detect(Game game)
     {
         var path = Path.Combine(game.InstallDir, Materials);
@@ -52,7 +52,7 @@ public sealed class RedEngineReader : IEngineReader
                     try { if (ShaderContainer.Parse(c, sha, new(0, 0, 0, 0)) is { } info) shaders[sha] = info; }
                     catch (Exception ex) when (ex is ArgumentException or IndexOutOfRangeException) { }
                 }
-            if (Graphics(t, shaOf, shaders) != null) return new EngineInfo(Family, Version, null, "D3D12", false, null);
+            if (Graphics(t, shaOf, shaders) is { } g && Listed(g, shaders)) return new EngineInfo(Family, Version, null, "D3D12", false, null);
         }
         return null;
     }
@@ -105,13 +105,14 @@ public sealed class RedEngineReader : IEngineReader
             var shaOf = new Dictionary<ulong, string>(m.Shaders.Count);
             foreach (var (key, e) in m.Shaders.OrderBy(s => s.Value.At))
                 if (Add(path, e, f) is { } sha) shaOf[key] = sha;
-            var seen = new HashSet<string>();
-            void Pipeline(List<string> shas)
+            HashSet<string> seen = [], wider = [];   // each capped: the embedded rule's sets fill the cap as they always did
+            void Pipeline(List<string> shas, bool listed = true)
             {
                 var h = CarvedReader.Sha1Hex(string.Join(',', shas.Order(StringComparer.Ordinal)));
-                if (seen.Contains(h)) return;
-                if (seen.Count >= RedShaderCache.MaxPipelines) { overCap++; return; }
-                seen.Add(h);
+                var set = listed ? seen : wider;
+                if (set.Contains(h)) return;
+                if (set.Count >= RedShaderCache.MaxPipelines) { overCap++; return; }
+                set.Add(h);
                 maps.Add(new ShaderMap(h, Materials, shas.Select(PlatformOf).FirstOrDefault(p => p != CarvedReader.Platform, CarvedReader.Platform), shas, IsPipeline: true));
             }
             var groups = new HashSet<string>();
@@ -122,8 +123,12 @@ public sealed class RedEngineReader : IEngineReader
                 if (HitGroup(t, shaOf, shaders) is { } hg && groups.Count < RedShaderCache.MaxPipelines && groups.Add(string.Join(',', hg)))
                     maps.Add(new ShaderMap(CarvedReader.Sha1Hex($"{HitGroups}|{string.Join(',', hg)}"), HitGroups, CarvedReader.Platform, hg));
                 if (Graphics(t, shaOf, shaders) is not { } g) { rejected++; continue; }
-                if (g.Count > 0) Pipeline(g);
-                if (t[5] != 0) Pipeline([shaOf[t[5]]]); // a technique's compute pass is a pipeline of its own
+                var listed = Listed(g, shaders);
+                if (g.Count > 0) Pipeline(g, listed);
+                // a technique's compute pass is a pipeline of its own.
+                // ponytail: kept only with a graphics set the embedded rule lists (as always); a server rule widening the
+                // sets plans the wider graphics pipelines, not their techniques' compute passes. Carry the set in the map if one must.
+                if (t[5] != 0 && listed) Pipeline([shaOf[t[5]]]);
                 pipelines++;
             }
             // DXIL libraries outside the hit groups: one pool
@@ -136,14 +141,12 @@ public sealed class RedEngineReader : IEngineReader
         log?.Report($"{shaders.Count} shaders ({engineShaders} engine, {libraries} ray tracing libraries; "
             + string.Join(", ", shaders.Values.GroupBy(s => s.Stage).OrderByDescending(g => g.Count()).Select(g => $"{g.Count()} {g.Key}"))
             + $"), {m.Techniques.Count} techniques -> {maps.Count(x => x.IsPipeline)} distinct pipelines"
-            + (rejected > 0 ? $"; {rejected} techniques left out (a shader missing or of another stage, or stages no root signature is confirmed for)" : "")
+            + (rejected > 0 ? $"; {rejected} techniques left out (a shader missing or of another stage, or stages that form no pipeline)" : "")
             + (overCap > 0 ? $"; warning: {overCap} pipelines over the cap of {RedShaderCache.MaxPipelines} left out" : "")
             + $" ({sw.Elapsed.TotalSeconds:F1}s)");
         return new ShaderIndex(Convert.ToHexStringLower(content.GetHashAndReset()), [CarvedReader.Platform, .. platformOf.Values.Distinct().Order(StringComparer.Ordinal)], shaders, maps);
     }
 
-    /// <summary>A technique's graphics stages (slots VS, PS, GS, HS, DS) as SHA-1s, empty when it has none; null when it
-    /// isn't a pipeline the engine's root signatures are confirmed for, or a key isn't a shader of its slot's stage.</summary>
     /// <summary>A technique's ray tracing hit group: its closest hit library, then its any hit library when it names one;
     /// null when it names none, or a key isn't a library of the cache.</summary>
     internal static List<string>? HitGroup(ulong[] t, IReadOnlyDictionary<ulong, string> shaOf, IReadOnlyDictionary<string, ShaderInfo> shaders)
@@ -153,6 +156,16 @@ public sealed class RedEngineReader : IEngineReader
         if (t[7] == 0) return [ch];
         return Lib(t[7], out var ah) ? [ch, ah] : null;
     }
+
+    /// <summary>A technique's graphics stages (slots VS, PS, GS, HS, DS) as SHA-1s, empty when it has none; null when a key
+    /// isn't a shader of its slot's stage, or the stages can't form a pipeline. Which stage sets get a root signature is
+    /// the rule's, decided at plan time, so the index doesn't depend on the rules.</summary>
+    static readonly PlanRule? Red3 = RulesFile.Embedded.RuleFor(new(Family, Version, null, "D3D12", false, null));
+
+    /// <summary>The embedded rule lists the technique's graphics stage set (none: compute only). Detection and compute passes
+    /// go by it, so they don't depend on the rules in use.</summary>
+    static bool Listed(List<string> g, IReadOnlyDictionary<string, ShaderInfo> shaders) =>
+        g.Count == 0 || Red3 is { } r && RootSig.InStageSets(r, g.Select(h => shaders[h].Stage));
 
     internal static List<string>? Graphics(ulong[] t, IReadOnlyDictionary<ulong, string> shaOf, IReadOnlyDictionary<string, ShaderInfo> shaders)
     {
@@ -166,7 +179,7 @@ public sealed class RedEngineReader : IEngineReader
             }
         var stages = Enumerable.Range(0, 5).Where(i => shas[i] != null).ToList();
         if (stages.Count == 0) return shas[5] != null ? [] : null;
-        return RootSig.Red3Validated(stages.Select(i => slots[i])) ? stages.Select(i => shas[i]).ToList() : null;
+        return shas[0] != null && (shas[3] == null) == (shas[4] == null) ? stages.Select(i => shas[i]).ToList() : null; // D3D12: a VS, and a HS only with a DS
     }
 
     /// <summary>Re-reads each shader where the index found it; one whose bytes changed or are gone since (game patched) is

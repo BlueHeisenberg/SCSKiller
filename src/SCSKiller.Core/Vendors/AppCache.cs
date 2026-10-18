@@ -11,7 +11,7 @@ public static class AppCacheFiles
     /// process snapshot: none opened).</summary>
     public static IReadOnlySet<string> KeysOpenBy(string exeFileName, IEnumerable<(string Path, string Key)> files)
     {
-        var pids = Warming.ProcessTree.Snapshot().Where(p => p.Exe.Equals(exeFileName, StringComparison.OrdinalIgnoreCase))
+        var pids = Processes().Where(p => p.Exe.Equals(exeFileName, StringComparison.OrdinalIgnoreCase))
             .Select(p => (nuint)p.Pid).ToHashSet();
         var keys = new HashSet<string>();
         if (pids.Count == 0) return keys;
@@ -19,6 +19,10 @@ public static class AppCacheFiles
             if (!keys.Contains(key) && ProcessesUsing(path).Overlaps(pids)) keys.Add(key);
         return keys;
     }
+
+    /// <summary>The processes whose open files count. Tests: their own process tree, so another test run on the PC with
+    /// the same process names never counts.</summary>
+    internal static Func<List<(int Pid, int Parent, string Exe)>> Processes { get; set; } = Warming.ProcessTree.Snapshot;
 
     /// <summary>Deletes all <paramref name="files"/> or none: InvalidOperationException ("files in use by ...") when one
     /// is open (the driver holds a running app's files). All files are opened exclusively first, so nothing can open them
@@ -41,6 +45,15 @@ public static class AppCacheFiles
         }
         finally { foreach (var h in held) h.Dispose(); }
     }
+
+    /// <summary>The folder exists and its files can be listed: false for a link (a junction to another drive) whose target is
+    /// gone, which Directory.Exists still reports as there.</summary>
+    public static bool Readable(string dir) => Directory.Exists(dir) && Games.GameFiles.FinalPath(dir) != null;
+
+    /// <summary>A cache folder of <paramref name="cache"/> that is a link whose target is missing; null when none is.</summary>
+    public static string? MissingTarget(IAppCache? cache) =>
+        (cache switch { NvidiaAppCache nv => [nv.Dir], AmdAppCache amd => new[] { amd.DxcDir, amd.DxDir }, _ => [] })
+            .FirstOrDefault(d => Directory.Exists(d) && !Readable(d));
 
     static string Describe(nuint pid) =>
         Warming.ProcessTree.Snapshot().FirstOrDefault(p => (nuint)p.Pid == pid).Exe is { } exe ? $"{exe} (pid {pid})" : $"pid {pid}";   // exited meanwhile

@@ -49,18 +49,39 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     /// <summary>Bump when the plan for the same game and inputs changes (new pipeline kinds, root-signature rules, D3D11):
     /// the app then rebuilds plans (warmed games' when idle, ScsKiller.CheckPlans) and offers a re-warm only where the new
     /// plan has records the warm didn't replay.</summary>
-    public const int Version = 33;
+    public const int Version = 42;
 
     /// <summary>The vendor's D3D11 driver cache persists across processes, is keyed on the exe file name and caches per
-    /// shader, whatever the state or the other stages (measured on NVIDIA, proxy/probe11.cpp): a staged warm
-    /// that creates and draws/dispatches each shader once fills it. ponytail: measured for "nvidia-1" only; becomes the
-    /// proposed VendorCaps.D3D11CacheKeyedByExeName once that's in the contract.</summary>
-    internal static bool D3D11Cache(VendorCaps caps) => caps.Profile == "nvidia-1";
+    /// shader, whatever the state or the other stages (measured on NVIDIA and Intel, proxy/probe11.cpp): a staged warm
+    /// that creates and draws/dispatches each shader once fills it. ponytail: measured for "nvidia-1" and "intel-1" only;
+    /// becomes the proposed VendorCaps.D3D11CacheKeyedByExeName once that's in the contract.</summary>
+    internal static bool D3D11Cache(VendorCaps caps) => D3D11Stages(caps) != null;
+
+    /// <summary>The D3D11 stages a staged warm compiles the way the game uses them; null when the vendor's D3D11 cache isn't
+    /// measured. NVIDIA: every stage. Intel: every stage too (probe11: a state change costs under 1 ms). AMD
+    /// (proxy/layout11.cpp): the PS and CS whatever the state; a VS compiles again for
+    /// the format, offset, slot and step rate of each element it reads and for the topology class, which its bytecode
+    /// doesn't say, so it needs the game's layouts; a GS, HS or DS is compiled with the VS before it.</summary>
+    public static Stage[]? D3D11Stages(VendorCaps caps) => caps.Profile switch
+    {
+        "nvidia-1" or Vendors.IntelBackend.Profile => [Stage.Vertex, Stage.Pixel, Stage.Domain, Stage.Hull, Stage.Geometry, Stage.Compute],
+        "amd-1" => [Stage.Pixel, Stage.Compute],
+        _ => null,
+    };
+
+    /// <summary>A staged D3D11 warm compiles the vertex shaders too (else they need the game's recorded layouts).</summary>
+    public static bool D3D11CoversVs(VendorCaps caps) => D3D11Stages(caps)?.Contains(Stage.Vertex) != false;
+
+    public const string D3D11VsRecord = "a 5-min recording covers those";
 
     /// <summary>The vendor's driver caches a ray tracing collection on its own, so a collection compiled by the warm makes
     /// the game's pipelines linking it cheap (NVIDIA, selftest dxr: per-shader collections cached across processes,
     /// linking them &lt; 1 ms; AMD caches whole state objects only): <see cref="VendorCaps.RtCacheGranularity"/>.</summary>
     internal static bool RtCollectionCache(VendorCaps caps) => caps.RtCacheGranularity == RtCacheGranularity.Collection;
+
+    /// <summary>A record a compile without ray tracing leaves out of the plan, the warm and the count of new pipelines: a
+    /// ray tracing state object, recorded ('R', 'A') or a planned collection ('Y', 'H'). A PSO that traces rays inline (RayQuery) stays.</summary>
+    public static bool LeftOutWithoutRt(Rec r) => IsStateObject(r.Tag) || r.Tag is 'Y' or 'H';
 
     /// <summary>A shader D3D11 takes: VS/PS/DS/HS/GS/CS in DXBC up to SM 5.0 (5.1 and DXIL are D3D12 only).</summary>
     internal static bool IsD3D11(ShaderInfo s) => s.Stage <= Stage.Compute && s.ShaderModel[^3..] is "4_0" or "4_1" or "5_0";
@@ -82,14 +103,17 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         // GraphicsApi: "D3D12[ (why)]", "D3D11[ (why)]", "Vulkan…", or "D3D11 or D3D12" when the game offers both (UnrealRhi)
         var api = engine.GraphicsApi;
         var dx11 = api.StartsWith("D3D11") && D3D11Cache(caps);
+        // a vendor whose VS needs the game's layouts (AMD): they come from a D3D11 recording ('D' draws)
+        var noVs = !D3D11CoversVs(caps) && !(dx11 && recording != null && HasDraws11(recording));
+        var all11 = "compiles every DirectX 11 shader" + (noVs ? " but the vertex shaders" : "");
         if (!api.Contains("D3D12"))
-            return dx11 ? new(Readiness.Ready, "compiles every DirectX 11 shader" + api[5..])
+            return dx11 ? new(Readiness.Ready, all11 + api[5..] + (noVs ? "; " + D3D11VsRecord : ""))
                 : new(Readiness.Unsupported, $"runs on {(api.StartsWith("D3D11") ? "DirectX 11" + api[5..] : api)}");
         var dx12 = CheckD3D12(engine, recording, caps, api.StartsWith("D3D12") || dx11 ? "" : "; " + Dx12Only);
         if (!dx11) return dx12;
         // may run on either: DX11 shaders help whatever DX12 still needs (a recording can come later)
-        return new(Readiness.Ready, dx12.Readiness == Readiness.Ready ? $"{dx12.Reason}; also compiles every DirectX 11 shader (the game may run on either)"
-            : $"compiles every DirectX 11 shader (the game may run on either); for DirectX 12, {dx12.Reason}");
+        return new(Readiness.Ready, dx12.Readiness == Readiness.Ready ? $"{dx12.Reason}; also {all11} (the game may run on either)"
+            : $"{all11} (the game may run on either); for DirectX 12, {dx12.Reason}");
     }
 
     static PlanCheck CheckD3D12(EngineInfo engine, Recording? recording, VendorCaps caps, string maybe)
@@ -107,6 +131,23 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
 
     /// <summary>The recording has a graphics PSO with a vertex shader (a menu-only session may have none): a state-dependent
     /// cache needs its input layouts.</summary>
+    static bool HasDraws11(Recording recording) => File.Exists(recording.DbPath) && Read(recording.DbPath).Any(r => r.Tag == 'D');
+
+    /// <summary>The DirectX a recording shows the game ran: a D3D12 pipeline ("D3D12"; it wins over D3D11 draws, which an
+    /// earlier DirectX 11 run may have left), else a D3D11 recorder's draw ("D3D11"); null = neither, or unreadable.</summary>
+    public static string? RecordedApi(string db)
+    {
+        try
+        {
+            bool draws11 = false;
+            foreach (var r in Read(db))
+                if (r.Tag is 'G' or 'C' or 'S') return "D3D12";
+                else draws11 |= r.Tag == 'D';
+            return draws11 ? "D3D11" : null;
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { return null; }
+    }
+
     static bool HasDraws(Recording recording)
     {
         foreach (var r in Read(recording.DbPath))
@@ -115,13 +156,90 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         return false;
     }
 
+    /// <summary>The rules plans are built with; null: <see cref="RulesFile.Current"/>.</summary>
+    public RulesFile? Rules { get; init; }
+
+    /// <summary>A plan under this share of the items the embedded rules plan for the game keeps the embedded rules: a wrong
+    /// server description makes stage sets uncovered or unserializable, and a plan that adds nothing keeps a game Warmed.</summary>
+    public const double MinRulesShare = 0.9;
+
+    /// <summary>A plan over this many items (and over the embedded rules' plan) keeps the embedded rules. A plan has one
+    /// root-signature rule and one ray tracing rule, so this bounds each rule too. The Witcher 3's whole plan: 62,815.</summary>
+    public const long MaxRulesItems = 1_000_000;
+
+    /// <summary>The managed memory a build may take; null: <see cref="PlanBudget.DefaultMemory"/> of this PC's RAM.</summary>
+    public long? MemoryBudget { get; init; }
+    /// <summary>The time a build may take; null: <see cref="PlanBudget.DefaultTime"/>.</summary>
+    public TimeSpan? TimeBudget { get; init; }
+    /// <summary>The driver cache one game's plan may fill where state is in the key (AMD, Intel); null:
+    /// <see cref="PlanBuilder.CacheBudgetOf"/> the vendor.</summary>
+    public long? CacheBudget { get; init; }
+
+    /// <summary>With rules other than the embedded ones for this engine, also plans with the embedded ones and keeps those,
+    /// saying why in the log, when the other plan fails, is under <see cref="MinRulesShare"/> of theirs or over <see cref="MaxRulesItems"/>.
+    /// Both builds share one <see cref="PlanBudget"/>: over it, a plan of only the recorded pipelines (and the packs'), so the
+    /// game still compiles those; with none of those, <see cref="PlanTooBigException"/> and no plan file.</summary>
     public Plan Build(Game game, EngineInfo engine, ShaderIndex index, Recording? recording, VendorCaps caps, string outDir,
-        IProgress<string>? log, CancellationToken ct, bool maximum = false)
+        IProgress<string>? log, CancellationToken ct, bool maximum = false, bool rayTracing = true)
     {
-        var builder = new PlanBuilder(game, engine, index, recording, caps, outDir, log, ct, maximum, Packs, SharedPacks);
-        var plan = builder.Build();
-        if (builder.PackFingerprint is { } f) seeded.AddOrUpdate(plan, f);
-        return plan;
+        try { return Build(game, engine, index, recording, caps, outDir, log, ct, maximum, rayTracing, pairs: true); }
+        catch (PlanTooBigException e)
+        {
+            log?.Report($"warning: {e.Message}: planning only the recorded pipelines");
+            var plan = Build(game, engine, index, recording, caps, outDir, log, ct, maximum, rayTracing, pairs: false);
+            if (plan.Stats.Recorded + plan.Stats.MiddlewareItems > 0) return plan;
+            File.Delete(plan.FilePath);
+            throw;
+        }
+    }
+
+    Plan Build(Game game, EngineInfo engine, ShaderIndex index, Recording? recording, VendorCaps caps, string outDir,
+        IProgress<string>? log, CancellationToken ct, bool maximum, bool rayTracing, bool pairs)
+    {
+        var budget = new PlanBudget(MemoryBudget ?? PlanBudget.DefaultMemory(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes), TimeBudget ?? PlanBudget.DefaultTime);
+        var rules = Rules ?? RulesFile.Current;
+        if (rules.Hash(engine) == RulesFile.Embedded.Hash(engine)) return Kept(One(rules, outDir, log));
+        void Keep(string why) => log?.Report($"warning: planning rules: the server's rules for {engine.Family} {engine.Version} {why}: this game keeps the app's own rules");
+        (Plan Plan, string? Fingerprint) other;
+        try { other = One(rules, outDir, log); }
+        catch (Exception e) when (e is not (OperationCanceledException or PlanTooBigException))   // validated at load, yet never a failed compile
+        {
+            Keep($"build no plan ({e.Message})");
+            return Kept(One(RulesFile.Embedded, outDir, log));
+        }
+        var dir = Path.Combine(outDir, "embedded-rules");
+        try
+        {
+            (Plan Plan, string? Fingerprint) own;
+            try { own = One(RulesFile.Embedded, dir, null); }   // the same inputs: its log would repeat the plan's
+            catch
+            {
+                try { File.Delete(other.Plan.FilePath); }   // not compared, so not kept
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // the failure's own reason is what the user needs
+                throw;
+            }
+            var (n, m) = (other.Plan.Stats.Generated, own.Plan.Stats.Generated);
+            var why = n < MinRulesShare * m ? $"under {MinRulesShare:P0} of the {m:N0} the app's own rules plan"
+                : n > Math.Max(MaxRulesItems, m) ? $"over the cap of {MaxRulesItems:N0}" : null;
+            if (why == null) return Kept(other);
+            Keep($"plan {n:N0} item{(n == 1 ? "" : "s")}, {why}");
+            File.Move(own.Plan.FilePath, other.Plan.FilePath, overwrite: true);
+            return Kept((own.Plan with { FilePath = other.Plan.FilePath }, own.Fingerprint));
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+
+        Plan Kept((Plan Plan, string? Fingerprint) p)
+        {
+            log?.Report(budget.ToString());
+            if (p.Fingerprint is { } f) seeded.AddOrUpdate(p.Plan, f);
+            return p.Plan;
+        }
+
+        (Plan Plan, string? Fingerprint) One(RulesFile r, string dir, IProgress<string>? l)
+        {
+            var builder = new PlanBuilder(game, engine, index, recording, caps, dir, l, ct, maximum, Packs, SharedPacks, r, budget, CacheBudget, rayTracing, pairs);
+            return (builder.Build(), builder.PackFingerprint);
+        }
     }
 
     readonly System.Runtime.CompilerServices.ConditionalWeakTable<Plan, string> seeded = new();
@@ -162,7 +280,13 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         if (recording != null) CopyRaw(recording.DbPath, mainDb);
         else File.WriteAllBytes(mainDb, []);
         var inMain = new HashSet<string>(); // blob hashes and PSO keys already in scskiller.db
-        foreach (var r in Read(mainDb)) inMain.Add(r.Tag == 'B' ? Hex(r.Payload.AsSpan(0, 20)) : r.Key);
+        // 'L' (a community recording's): the record names a shader only a recording on this PC has, not for the proxy
+        var localOnly = new HashSet<string>();
+        foreach (var r in Read(mainDb))
+        {
+            inMain.Add(r.Tag == 'B' ? Hex(r.Payload.AsSpan(0, 20)) : r.Key);
+            if (r.Tag == 'L') localOnly.Add(HashOnly.Target(r));
+        }
 
         var body = PlanFile.Read(plan.FilePath).Records.ToList();
         var templates = body.Where(r => r.Tag is 'G' or 'C' or 'S' && !inMain.Contains(r.Key)).ToList();
@@ -177,7 +301,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
             .Concat(Rehydrate.References(Read(mainDb).Where(r => IsStateObject(r.Tag)))).ToHashSet();   // the recorded state objects' libraries: a recording may leave out the install's
         shaders.ExceptWith(inMain);
         shaders.ExceptWith(body.Where(r => r.Tag == 'B').Select(r => Hex(r.Payload.AsSpan(0, 20)))); // root signatures the plan doesn't carry are the game's own (RTS0): pulled like shaders
-        shaders.UnionWith(Rehydrate.References(body.Where(r => r.Tag is '1' or '2'))); // a D3D11 item's blobs are in gen.db itself
+        shaders.UnionWith(Rehydrate.References(body.Where(r => r.Tag is '1' or '2' or '3'))); // a D3D11 item's blobs are in gen.db itself
         shaders.Remove(Zero);
 
         // blobs first, then templates, then items: the proxy resolves items against templates as it loads
@@ -202,43 +326,64 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         // a DLL without it) is skipped, not replayed: the warm's "failed" means only that the driver rejected something.
         // A template stays while a kept item uses it (the item may swap the missing stage).
         bool Resolved(Rec r) => Rehydrate.References([r]).IsSubsetOf(written);
-        var items = body.Where(r => r.Tag is 'P' or '1' or '2').ToList();
+        var items = body.Where(r => r.Tag is 'P' or '1' or '2' or '3').ToList();
         var keptItems = items.Where(Resolved).ToList();
         var usedTemplates = keptItems.Where(r => r.Tag == 'P').Select(r => ParseItem(r.Payload).Template).ToHashSet();
         bool Keep(Rec r) => usedTemplates.Contains(r.Key) || Resolved(r);
-        var main = Read(mainDb).ToList();
-        // 'L' (a community recording's): the record names a shader only a recording on this PC has, not for the proxy. 'W' (a
-        // layer's pairing of two records that both replay) is: a warm through the layer creates what the layer made under it
-        var flags = main.Where(r => r.Tag == 'L').ToList();
-        var localOnly = flags.Select(HashOnly.Target).ToHashSet();
-        long needsRecording = 0;
-        // a ray tracing state object also needs the records it builds on (its collections, its base): in file order they
-        // come first, so one pass drops the dependents of a dropped one too
+        // scskiller.db streamed twice, its shader bytes never held: what stays, then, when anything goes, the rewrite. 'W' (a
+        // layer's pairing of two records that both replay) stays: a warm through the layer creates what the layer made under it.
+        // A ray tracing state object also needs the records it builds on (its collections, its base): in file order they come
+        // first, so one pass drops the dependents of a dropped one too
+        long mainCount = 0, flagCount = 0, keptCount = 0, needsRecording = 0;
         var keptKeys = new HashSet<string>();
-        var keptMain = new List<Rec>();
-        foreach (var r in main)
-            if (r.Tag is 'B' or 'W') keptMain.Add(r);
-            else if (r.Tag == 'L') continue;
-            else if (Keep(r) && (!IsStateObject(r.Tag) || ParseStateObject(r).Depends.All(keptKeys.Contains))) { keptMain.Add(r); keptKeys.Add(r.Key); }
-            else if (localOnly.Contains(r.Key)) needsRecording++;
-        if (keptMain.Count < main.Count)
+        var recordedPayloads = new List<uint>();
+        var nvOfMain = new List<Rec>();   // its state objects and 'N' records: what the option fixes learn from (RtCollections.OptionFixes)
+        bool Stays(Rec r)
         {
-            using var f = new BufferedStream(File.Create(mainDb), 1 << 20);
-            foreach (var r in keptMain) Write(f, r.Tag, r.Payload);
+            if (r.Tag is 'B' or 'W') return true;
+            if (r.Tag == 'L' || !Keep(r) || IsStateObject(r.Tag) && !ParseStateObject(r).Depends.All(keptKeys.Contains)) return false;
+            keptKeys.Add(r.Key);
+            return true;
+        }
+        foreach (var r in Read(mainDb))
+        {
+            mainCount++;
+            if (RtCollections.Read(r) is { } c) recordedPayloads.Add(c.Payload);
+            if (r.Tag == 'N' || IsStateObject(r.Tag)) nvOfMain.Add(r);
+            if (Stays(r)) keptCount++;
+            else if (r.Tag == 'L') flagCount++;
+            else if (localOnly.Contains(r.Key)) needsRecording++;
+        }
+        if (keptCount < mainCount)
+        {
+            keptKeys.Clear();   // the same walk again, writing
+            var tmp = mainDb + ".tmp";
+            try
+            {
+                using (var f = new BufferedStream(File.Create(tmp), 1 << 20))
+                    foreach (var r in Read(mainDb))
+                        if (Stays(r)) Write(f, r.Tag, r.Payload);
+                File.Move(tmp, mainDb, true);
+            }
+            finally { File.Delete(tmp); }
         }
         var keptTemplates = templates.Where(Keep).ToList();
-        skipped += main.Count - main.Count(r => r.Tag == 'L') - keptMain.Count + templates.Count - keptTemplates.Count + items.Count - keptItems.Count;
+        skipped += mainCount - flagCount - keptCount + templates.Count - keptTemplates.Count + items.Count - keptItems.Count;
         foreach (var r in keptTemplates) Write(gen, r.Tag, r.Payload);
         foreach (var r in keptItems) Write(gen, r.Tag, r.Payload);
         var keptPsos = keptTemplates.Concat(keptItems).Select(r => r.Key).ToHashSet();
         foreach (var r in body.Where(r => r.Tag == 'N' && keptPsos.Contains(NvState.Parse(r).Target))) Write(gen, r.Tag, r.Payload); // the NVAPI state they're created with
+        // the recorded state objects' NVAPI creation options where the recording lost them, learned from the whole recording
+        // as WarmInputs does; read after the main db's, they win
+        foreach (var r in RtCollections.OptionFixes(nvOfMain).Where(r => keptKeys.Contains(NvState.Parse(r).Target))) Write(gen, r.Tag, r.Payload);
+        var rtOptions = RtCollections.RecordedOptions(nvOfMain);
         // a ray tracing collection per library ('Y'), its exports read from the library: an 'R' record the warm creates like a
         // recorded one; a library not in this install, or without a ray tracing entry point, is skipped. With rule payload 0 a
         // ray generation library gets one per payload the other libraries have (RtCollections.Payloads), the recorded ones'
         // (no 'Y': their collections replay from the recording) included
         var own = rt.Select(y => y.Library).Distinct().Where(rtBytes.ContainsKey).ToDictionary(h => h, h => RtCollections.OwnPayload(rtBytes[h]));
         var pipelinePayloads = rt.Where(y => y.Payload == 0).Select(y => own.GetValueOrDefault(y.Library))
-            .Concat(main.Select(RtCollections.Read).OfType<RtCollections.Recorded>().Select(c => c.Payload)).Where(p => p > 0).Distinct().Order().ToList();
+            .Concat(recordedPayloads).Where(p => p > 0).Distinct().Order().ToList();
         foreach (var y in rt)
         {
             var n = 0;
@@ -247,7 +392,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
                     if (RtCollections.Collection(lib, y.Library, y.Global, y.LocalRayGen, y.LocalOther, p, y.Attributes, y.Depth, y.Flags) is { } so)
                     {
                         Write(gen, 'R', so);
-                        if (y.Nv is { } nv) { var r = new NvState(new Rec('R', so).Key, nv.Slot, nv.Space, 2, nv.Options).ToRec(); Write(gen, r.Tag, r.Payload); }
+                        if (RtCollections.WithOptions(y.Nv, rtOptions) is { } nv) { var r = new NvState(new Rec('R', so).Key, nv.Slot, nv.Space, 2, nv.Options).ToRec(); Write(gen, r.Tag, r.Payload); }
                         n++;
                     }
             if (n == 0) skipped++;
@@ -259,7 +404,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
                     : RedEngine.RedRayTracing.Collection(ch, h, h.AnyHit != null ? rtBytes[h.AnyHit] : [])) is { } so)
             {
                 Write(gen, 'R', so);
-                if (h.Nv is { } nv) { var r = new NvState(new Rec('R', so).Key, nv.Slot, nv.Space, 2, nv.Options).ToRec(); Write(gen, r.Tag, r.Payload); }
+                if (RtCollections.WithOptions(h.Nv, rtOptions) is { } nv) { var r = new NvState(new Rec('R', so).Key, nv.Slot, nv.Space, 2, nv.Options).ToRec(); Write(gen, r.Tag, r.Payload); }
             }
             else skipped++;
         }
@@ -332,6 +477,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
             if (dxbc && i.SysValue == 1 && outs.TryGetValue((i.Semantic.ToUpperInvariant(), i.Index), out var pos) && pos.Register != i.Register) return false;
             if (i.SysValue != 0 && !FromPrevStage.Contains(i.SysValue) && !controlPoints) continue;
             if (!outs.TryGetValue((i.Semantic.ToUpperInvariant(), i.Index), out var o) || (exact ? i.Mask != o.Mask : (i.Mask & ~o.Mask) != 0)) return false;
+            if (i.ReadMask != SigElement.UnknownReadMask && o.ReadMask != SigElement.UnknownReadMask && (i.ReadMask & ~o.ReadMask) != 0) return false;
         }
         return true;
     }
@@ -350,6 +496,11 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
             else if (i.SysValue == 0 && o.CompType != i.CompType) return false;
         return Sig(perVertex) == Sig(ms.Outputs) && Links(ms, ps, true);
     }
+
+    /// <summary>An amplification shader sends the payload the mesh shader takes: the same size, else the runtime rejects the
+    /// pipeline (E_INVALIDARG, "CreateMeshShader_MismatchedASMSPayloadSize"; PRAGMATA lists its one 128-byte AS with mesh
+    /// shaders that take none).</summary>
+    internal static bool Launches(ShaderInfo a, ShaderInfo m) => a.Payload == m.Payload;
 
     /// <summary>The hull -> domain shader pairs of one shader map whose control points link (the HS's output signature is the
     /// DS's input signature, register for register). ponytail: the patch constants, tessellator domain and control-point
@@ -382,8 +533,59 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     }
 }
 
+/// <summary>What one <see cref="Planner.Build"/> may take: the process's managed heap (the index in it) and the wall time.
+/// The planner's loops call <see cref="Tick"/>; over either, it throws <see cref="PlanTooBigException"/> before the plan file
+/// is written. A library whose shaders all link pairs N x N (a carved archive is one pool): no plan of it would fit.</summary>
+public sealed class PlanBudget(long memoryBytes, TimeSpan time)
+{
+    /// <summary>Half the RAM, at least 4 GiB, at most 32 GiB.</summary>
+    public static long DefaultMemory(long ram) => Math.Clamp(ram / 2, 4L << 30, 32L << 30);
+    /// <summary>Planning runs at below-normal priority, often while the PC is in use.</summary>
+    public static readonly TimeSpan DefaultTime = TimeSpan.FromMinutes(30);
+
+    readonly System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+    long ticks, collectAfterMs;
+
+    /// <summary>What the planner has done so far, for the message: e.g. "1,234 stage sets".</summary>
+    internal Func<string>? Progress { get; set; }
+
+    /// <summary>What the budget bounds and why it ran out, for the message.</summary>
+    internal string What { get; init; } = "the plan";
+    internal string Why { get; init; } = "this game's shaders combine into more pipelines than a compile can hold";
+
+    /// <summary>The most managed memory a check saw, garbage included.</summary>
+    public long Peak { get; private set; }
+
+    public void Tick()
+    {
+        if ((++ticks & 255) == 0) Check();
+    }
+
+    public void Check()
+    {
+        if (clock.Elapsed > time) throw new PlanTooBigException($"{What} took over {time.TotalMinutes:N0} minutes{At()}");
+        var used = GC.GetTotalMemory(false);
+        Peak = Math.Max(Peak, used);
+        // garbage counts until a collection: only what is live trips it; one collection every 5 s at most, unless a quarter over
+        if (used <= memoryBytes || clock.ElapsedMilliseconds < collectAfterMs && used - memoryBytes <= memoryBytes / 4) return;
+        GC.Collect();
+        collectAfterMs = clock.ElapsedMilliseconds + 5000;
+        if (GC.GetTotalMemory(false) > memoryBytes) throw new PlanTooBigException($"{What} outgrew its memory limit of {Gb(memoryBytes)} on this PC{At()}");
+    }
+
+    /// <summary>The build's line for the log: its time and memory against the budget.</summary>
+    public override string ToString() => $"plan: built in {clock.Elapsed.TotalSeconds:F1}s, managed memory up to {Gb(Peak)} of its {Gb(memoryBytes)} limit";
+
+    static string Gb(long bytes) => $"{bytes / (double)(1L << 30):N1} GB";
+
+    string At() => (Progress?.Invoke() is { } p ? $" at {p}" : "") + ": " + Why;
+}
+
+/// <summary>A plan over its <see cref="PlanBudget"/>: the compile fails with this reason, nothing written.</summary>
+public sealed class PlanTooBigException(string message) : Exception(message);
+
 /// <summary>plan.bin: "SCSKPLAN", u32 version, u32 header length, header (the <see cref="Plan"/> as JSON), then a
-/// Brotli-compressed body of proxy db records: 'B' root signatures, 'G'/'C'/'S' templates, 'P' items, '1' D3D11 shaders, '2' D3D11 HS+DS pairs, 'Y' ray tracing collections (<see cref="RtCollections.Item"/>), 'H' REDengine 3 and FromSoftware hit group collections (<see cref="RedEngine.RedRayTracing.Item"/>), 'N' NVAPI states, 'M' middleware pack entries (<see cref="MiddlewarePacks.Wrap"/>). Hash-only: shader
+/// Brotli-compressed body of proxy db records: 'B' root signatures, 'G'/'C'/'S' templates, 'P' items, '1' D3D11 shaders, '2' D3D11 HS+DS pairs, '3' D3D11 vertex stages with a recorded layout (<see cref="Draws11"/>), 'Y' ray tracing collections (<see cref="RtCollections.Item"/>), 'H' REDengine 3 and FromSoftware hit group collections (<see cref="RedEngine.RedRayTracing.Item"/>), 'N' NVAPI states, 'M' middleware pack entries (<see cref="MiddlewarePacks.Wrap"/>). Hash-only: shader
 /// bytes are pulled from the game at materialize time.</summary>
 public static class PlanFile
 {
@@ -393,14 +595,18 @@ public static class PlanFile
     {
         Directory.CreateDirectory(Path.GetDirectoryName(plan.FilePath)!);
         var tmp = plan.FilePath + ".tmp";
-        using (var f = File.Create(tmp))
+        try
         {
-            WriteHeader(f, "SCSKPLAN"u8, Version, plan);
-            using var z = new BrotliStream(f, CompressionLevel.Optimal);
-            using var b = new BufferedStream(z, 1 << 20);
-            foreach (var r in body) PsoDb.Write(b, r.Tag, r.Payload);
+            using (var f = File.Create(tmp))
+            {
+                WriteHeader(f, "SCSKPLAN"u8, Version, plan);
+                using var z = new BrotliStream(f, CompressionLevel.Optimal);
+                using var b = new BufferedStream(z, 1 << 20);
+                foreach (var r in body) PsoDb.Write(b, r.Tag, r.Payload);
+            }
+            File.Move(tmp, plan.FilePath, true);
         }
-        File.Move(tmp, plan.FilePath, true);
+        finally { File.Delete(tmp); }
     }
 
     public static (Plan Plan, IEnumerable<Rec> Records) Read(string path)

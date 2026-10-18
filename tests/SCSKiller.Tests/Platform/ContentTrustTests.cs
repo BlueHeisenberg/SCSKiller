@@ -149,7 +149,7 @@ public class ContentTrustTests : IDisposable
     }
 
     [Fact]
-    public async Task Fetch_TakesTheChannelsCopyOfItsOwnName()
+    public async Task Fetch_TakesTheNewestCopyOfItsOwnNameAmongTheChannels()
     {
         Directory.CreateDirectory(_dir);
         var cache = Path.Combine(_dir, "news.json");
@@ -165,8 +165,10 @@ public class ContentTrustTests : IDisposable
         Assert.Equal(stable, File.ReadAllText(cache));
         files["v1/updates/beta/news.json"] = Env(B.Seed, "rules-b", "news", """{"items":[2]}""", T.AddHours(1));
         Assert.Equal("""{"items":[2]}""", await Fetch(files, "beta"));
-        Assert.Equal("""{"items":[1]}""", await Fetch(files));   // beta no longer read: stable's older copy
-        Assert.False(File.Exists(ContentTrust.CacheFile(Path.Combine(_dir, "news.json"), "beta")));
+        Assert.Equal("""{"items":[1]}""", await Fetch(files));   // beta no longer read: stable's older copy, its own channel's newest
+        Assert.False(File.Exists(Path.Combine(_dir, "news@beta.json")));
+        files["v1/content/news.json"] = Env(A.Seed, "rules-a", "news", """{"items":[3]}""", T.AddHours(2));
+        Assert.Equal("""{"items":[3]}""", await Fetch(files, "beta"));   // unlike game verdicts, a newer stable copy wins over the channel's
     }
 
     [Fact]

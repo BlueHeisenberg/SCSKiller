@@ -41,7 +41,7 @@ public sealed class UnitCover(ExactLayouts facts)
     {
         var read = s.Stages.TryGetValue((int)Stage.Vertex, out var vs) && x.Shaders.TryGetValue(vs, out var vi)
             ? ExactLayouts.ReadLayout(ExactLayouts.Explicit(s.Layout), vi) : ExactLayouts.Explicit(s.Layout); // no signature: the whole layout
-        return Units(x, s.Stages, s.Rs, read, s.Topology, ExactLayouts.ExportShape(s));
+        return Units(x, s.Stages, s.Rs, read, s.Topology, x.ShapeOf(s));
     }
 
     /// <summary>The units of one PSO: <paramref name="readLayout"/> as <see cref="ExactLayouts.ReadLayout"/> returns it.</summary>
@@ -158,12 +158,13 @@ public sealed class UnitCover(ExactLayouts facts)
     /// <summary>Covers many stage sets in two passes: first only PSOs that bring a new VS and a new PS unit together (a greedy
     /// matching: pairing two uncovered units in one PSO is what gets a cover near max(#VS units, #PS units)), then
     /// <see cref="Cover"/> for whatever is left. Returns the picks per candidate, in candidate order.</summary>
-    public List<(Candidate Candidate, UnitPick Pick)> CoverAll(IReadOnlyList<Candidate> candidates)
+    public List<(Candidate Candidate, UnitPick Pick)> CoverAll(IReadOnlyList<Candidate> candidates, Action? tick = null)
     {
         var picks = new List<(int, Candidate, UnitPick)>();
         foreach (var pairsOnly in new[] { true, false })
             for (var i = 0; i < candidates.Count; i++)
             {
+                tick?.Invoke();
                 var c = candidates[i];
                 picks.AddRange(Cover(c.Stages, c.Rs, c.Layouts, c.Topologies, c.Shapes, pairsOnly).Select(p => (i, c, p)));
             }

@@ -17,15 +17,21 @@
     <PackageReference Include="Microsoft.Bcl.Memory" Version="10.0.12" />
     <!-- Ed25519 for the signed update feed (App/Updates.cs): the BCL has none; the same package the origin signs tokens with -->
     <PackageReference Include="NSec.Cryptography" Version="26.4.0" />
+    <PackageReference Include="ValvePak" Version="6.0.0.182" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="Games\known-stutter.json" LogicalName="SCSKiller.Core.Games.known-stutter.json" />
+    <EmbeddedResource Include="Games\precompiles-at-boot.json" LogicalName="SCSKiller.Core.Games.precompiles-at-boot.json" />
     <EmbeddedResource Include="Games\game-verdicts.json" LogicalName="SCSKiller.Core.Games.game-verdicts.json" />
+    <EmbeddedResource Include="Games\maximum-mode.json" LogicalName="SCSKiller.Core.Games.maximum-mode.json" />
     <EmbeddedResource Include="Games\shader-mods.json" LogicalName="SCSKiller.Core.Games.shader-mods.json" />
     <EmbeddedResource Include="Games\offline-eac.json" LogicalName="SCSKiller.Core.Games.offline-eac.json" />
+    <EmbeddedResource Include="Games\collections.json" LogicalName="SCSKiller.Core.Games.collections.json" />
     <EmbeddedResource Include="Planning\confirmed-engines.json" LogicalName="SCSKiller.Core.Planning.confirmed-engines.json" />
+    <EmbeddedResource Include="Planning\plan-rules.json" LogicalName="SCSKiller.Core.Planning.plan-rules.json" />
     <EmbeddedResource Include="App\welcome.json" LogicalName="SCSKiller.Core.App.welcome.json" />
+    <EmbeddedResource Include="..\..\CHANGELOG.md" LogicalName="SCSKiller.Core.CHANGELOG.md" />
   </ItemGroup>
 
   <!-- the commit, also in a release (publish.ps1 drops it from the informational version): ScsKiller.CoreBuild keys the scan cache on it -->

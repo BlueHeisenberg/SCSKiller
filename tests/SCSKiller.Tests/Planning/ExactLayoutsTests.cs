@@ -84,6 +84,32 @@ public class ExactLayoutsTests(ITestOutputHelper output)
         Assert.Equal((Provenance.Guessed, L(Planner.VsLayout(vsUint))), (synth.Provenance, L(Assert.Single(synth.Value))));
     }
 
+    /// <summary>A recording's distinct layouts are each kept once, in recording order, however often they repeat; a VS whose
+    /// inputs another VS already resolved by the covering layouts gets what it would get alone.</summary>
+    [Fact]
+    public void ManyLayoutsAreKeptOnceInOrderAndCoversResolveAsAlone()
+    {
+        var rs = Hash("rs");
+        var vss = Enumerable.Range(0, 10).Select(i => Shader($"many-vs{i}", Stage.Vertex, [In("POSITION", 0, 0, 7), In("TEXCOORD", 0, 1, 3)])).ToList();
+        List<LayoutElem> Layout(int k) => [new("POSITION", 0, 6, 0), new("TEXCOORD", 0, 34, 12 + 4 * (uint)(k % 7)), new("COLOR", 0, 28, 64 + 4 * (uint)k)];
+        var recs = Enumerable.Range(0, 300).Select(i => (Vs: vss[i % 10], Layout: Layout(i * 7 % 50))).ToList();
+        var x = ExactLayouts.Build(recs.Select(r => Gfx(rs, r.Vs, null, r.Layout, [])), new Dictionary<string, byte[]>(), UnitPolicy.Amd, vss.ToDictionary(s => s.Sha1));
+
+        static List<string> Distinct(IEnumerable<List<LayoutElem>> ls) { var seen = new List<string>(); foreach (var l in ls.Select(L)) if (!seen.Contains(l)) seen.Add(l); return seen; }
+        Assert.Equal(Distinct(recs.Select(r => r.Layout)), x.FullLayouts.Select(L));
+        Assert.Equal(50, x.FullLayouts.Count);
+        foreach (var vs in vss)
+            Assert.Equal(Distinct(recs.Where(r => r.Vs == vs).Select(r => ExactLayouts.ReadLayout(r.Layout, vs))), x.ReadLayouts[vs.Sha1].Select(L));
+        Assert.Equal(Distinct(recs.Select(r => ExactLayouts.ReadLayout(r.Layout, r.Vs))), x.LayoutsBySig[ExactLayouts.SigKey(vss[0])].Select(L));
+
+        var p = Shader("many-p", Stage.Vertex, [In("POSITION", 0, 0, 0xF)]);
+        var q = Shader("many-q", Stage.Vertex, [In("POSITION", 0, 2, 0xF)]);   // the same inputs in another register
+        var alone = ExactLayouts.Build(recs.Select(r => Gfx(rs, r.Vs, null, r.Layout, [])), new Dictionary<string, byte[]>(), UnitPolicy.Amd, vss.ToDictionary(s => s.Sha1));
+        Assert.Equal(Provenance.Inferred, x.Layouts(p).Provenance);
+        var shared = x.Layouts(q);
+        Assert.Equal((alone.Layouts(q).Provenance, string.Join('|', alone.Layouts(q).Value.Select(L))), (shared.Provenance, string.Join('|', shared.Value.Select(L))));
+    }
+
     [Fact]
     public void GuessesPerElementWhenNoLayoutCoversAll()
     {

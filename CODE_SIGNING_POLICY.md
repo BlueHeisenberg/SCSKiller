@@ -43,6 +43,7 @@ SCSKiller sends nothing about you, your PC or your games unless you ask it to. I
     channel to check for those updates
   - only with "Share my shader hashes" on, to upload your recordings' hash-only form (no shader code) under an
     anonymous device not linked to your account
+  - only when you press Send in a game's "Report a problem", to send the report it shows you (kept 90 days)
 - `dl.scskiller.io`, for alpha and beta updates
 - GitHub Releases, for stable updates
 - public GitHub-hosted sources, for a decompression library (Oodle) or an archive key a game needs, the first time it's

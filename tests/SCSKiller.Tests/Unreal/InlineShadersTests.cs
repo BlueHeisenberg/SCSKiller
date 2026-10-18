@@ -264,4 +264,75 @@ public class InlineShadersTests(ITestOutputHelper output)
             Interlocked.Add(ref held, -bytes);
         });
     }
+
+    /// <summary>A read of <paramref name="n"/> one-shader packages, mounted.</summary>
+    static (CUE4Parse.FileProvider.DefaultFileProvider Provider, Game Game) Packages(string name, int n)
+    {
+        var vs = Code("float4 main() : SV_Position { return 0; }", "vs_5_0", 0, 0);
+        byte[] Package = [.. Anchor(1), .. I32(vs.Length), .. vs, .. I32(vs.Length), 0]; // one raw 'A' entry
+        var install = Ff7.TempDir(name);
+        var paks = Directory.CreateDirectory(Path.Combine(install, "Proj", "Content", "Paks")).FullName;
+        Pak(Path.Combine(paks, "Proj-Windows.pak"), Enumerable.Range(0, n).Select(i => ($"Proj/Content/M_{i}.uasset", Package)).ToArray());
+        var provider = new CUE4Parse.FileProvider.DefaultFileProvider(paks, SearchOption.TopDirectoryOnly,
+            new CUE4Parse.UE4.Versions.VersionContainer(CUE4Parse.UE4.Versions.EGame.GAME_UE4_27), StringComparer.OrdinalIgnoreCase);
+        provider.Initialize();
+        provider.Mount();
+        return (provider, new Game("test:" + name, name, Store.Other, install, ""));
+    }
+
+    /// <summary>The whole-package read is under the plan's memory budget: over it, it stops with the reason and where it was, a <see cref="PlanTooBigException"/> as the plan's, not an AggregateException of its workers.</summary>
+    [Fact]
+    public void AReadOverItsBudgetStopsWithTheReason()
+    {
+        var (provider, game) = Packages("inline-budget", 40);
+        using (provider)
+        {
+            var memory = Assert.Throws<PlanTooBigException>(() => new UnrealReader(Ff7.TempDir("inline-budget-data")) { MemoryBudget = 1 }.IndexInline(provider, game, null, CancellationToken.None));
+            Assert.StartsWith("the shader read outgrew its memory limit of ", memory.Message);
+            Assert.EndsWith(" GB on this PC at 0 of 40 packages: this game's packages hold more shaders than a compile can read", memory.Message);
+            Assert.DoesNotContain(";", memory.Message);
+            Assert.Single(new UnrealReader(Ff7.TempDir("inline-budget-data")).IndexInline(provider, game, null, CancellationToken.None).Shaders);   // within the default budget
+        }
+    }
+
+    /// <summary>The read reports packages read of the total as it goes, from below-normal threads, and the caller's thread
+    /// keeps its priority.</summary>
+    [Fact]
+    public void TheReadCountsPackagesOnBelowNormalThreads()
+    {
+        var (provider, game) = Packages("inline-count", 150);
+        using (provider)
+        {
+            var seen = new System.Collections.Concurrent.ConcurrentBag<(int Done, int Total, ThreadPriority Priority)>();
+            var index = new UnrealReader(Ff7.TempDir("inline-count-data")).IndexInline(provider, game, null, CancellationToken.None,
+                progress: new Reporter<(int Done, int Total)>(r => seen.Add((r.Done, r.Total, Thread.CurrentThread.Priority))));
+            Assert.Equal(150, index.Maps.Count);
+            Assert.Equal((150, 150), seen.Max(s => (s.Done, s.Total)));
+            Assert.InRange(seen.Count, 100, 150);   // each whole percent, not each package
+            Assert.All(seen, s => Assert.Equal(ThreadPriority.BelowNormal, s.Priority));
+            Assert.Equal(ThreadPriority.Normal, Thread.CurrentThread.Priority);
+        }
+    }
+
+    /// <summary>The package loop runs up to one package per CPU thread at once (the scheduler decides how many it reaches),
+    /// all below normal.</summary>
+    [Fact]
+    public void PackagesReadOnEveryThreadBelowNormal()
+    {
+        int now = 0, most = 0;
+        var priorities = new System.Collections.Concurrent.ConcurrentBag<ThreadPriority>();
+        UnrealReader.ForEachPackage(Enumerable.Range(0, 400).ToList(), null, null, CancellationToken.None, _ =>
+        {
+            var n = Interlocked.Increment(ref now);
+            for (int m; (m = Volatile.Read(ref most)) < n && Interlocked.CompareExchange(ref most, n, m) != m;) { }
+            priorities.Add(Thread.CurrentThread.Priority);
+            Thread.Sleep(5);
+            Interlocked.Decrement(ref now);
+        });
+        Assert.Equal(400, priorities.Count);
+        Assert.All(priorities, p => Assert.Equal(ThreadPriority.BelowNormal, p));
+        Assert.InRange(most, 1, Environment.ProcessorCount);
+    }
+
+    sealed class Reporter<T>(Action<T> a) : IProgress<T> { public void Report(T value) => a(value); }
 }

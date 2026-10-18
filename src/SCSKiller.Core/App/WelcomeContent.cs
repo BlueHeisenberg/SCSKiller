@@ -28,7 +28,7 @@ public sealed record WelcomeContent(string Title, IReadOnlyList<string> Paragrap
             && (w.Link == null || Ok(w.Link.Text, 100) && IsAllowedLink(w.Link.Url)) ? w : null;
     }
 
-    static bool IsAllowedLink(string? url) =>
+    internal static bool IsAllowedLink(string? url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps && u.IsDefaultPort && u.UserInfo.Length == 0
         && LinkDomains.Any(d => u.Host.Equals(d, StringComparison.OrdinalIgnoreCase) || u.Host.EndsWith("." + d, StringComparison.OrdinalIgnoreCase));
 

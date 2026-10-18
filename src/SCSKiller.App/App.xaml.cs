@@ -1,5 +1,6 @@
 ﻿using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Windows.AppLifecycle;
 using Microsoft.Windows.AppNotifications;
@@ -17,6 +18,10 @@ public partial class App : Application
     public static MainWindow Main { get; private set; } = null!;
     /// <summary>Sign in with Patreon: <see cref="Account.SignInAsync"/> is the entry point for Settings and the welcome dialog.</summary>
     public static Account Account { get; private set; } = null!;
+    /// <summary>The data folder's store: the real one, or the design data's temporary folder.</summary>
+    public static AppStore Store { get; private set; } = null!;
+    /// <summary>The signed news.json in use (the bell's notifications).</summary>
+    public static News News => Core is ScsKiller k ? k.News : FakeScsKiller.SampleNews;
 
     /// <summary>At the session's end (shutdown, restart, sign-out), how long a running compile gets to stop before Windows
     /// goes on (it won't wait much longer); the warm job then kills what is left. A stopped warm exits once its in-flight
@@ -31,6 +36,9 @@ public partial class App : Application
     static bool notifications, quitting, checkingDriver, checkAgain;
     static string? toldDriver;   // the driver and games the last driver-update notification was about
     static Dictionary<string, string>? told;   // NewShaders' notified store
+    static readonly HashSet<string> autoQueued = [];   // games NotifyNewShaders queued, while they wait for idle
+    static readonly DateTimeOffset session = DateTimeOffset.UtcNow;   // NewShaders.Plan: what an earlier one queued was lost with it
+    static Coalesced? newShadersCheck;
     static TaskCompletionSource? quitNow;   // set while quitting waits for the compile to finish: the tray's Quit again ends it
     static readonly CancellationTokenSource stopWatching = new();
     static Task watcher = Task.CompletedTask;
@@ -67,30 +75,39 @@ public partial class App : Application
         // The design data starts signed out and never touches the real auth.dat.
         var fakeDir = Path.Combine(Path.GetTempPath(), $"SCSKiller-fake-{Environment.ProcessId}");
         Account = shots >= 0 ? FakeAccount.Create(fakeDir) : new Account(Core is FakeScsKiller ? fakeDir : AppStore.DefaultDir);   // screenshots: a fake server
+        Store = Core is ScsKiller ks ? ks.Store : new AppStore(fakeDir);
         if (Core is ScsKiller real)
         {
-            real.Community = new Community(AppStore.DefaultDir, Account.GetDbTokenAsync);
+            real.Log = new AppLog(real.Store.DataDir);
+            Codecs.Log = real.Log;
+            real.Log.Report($"SCSKiller {AppVersion.Current} started on Windows {Environment.OSVersion.Version}, {real.Vendor.Gpu.Name}, driver {real.Vendor.Gpu.DriverVersion}");
+            real.Community = new Community(AppStore.DefaultDir, Account.GetDbTokenAsync) { TokenWith = Account.GetTokenAsync };
+            real.DbEntitled = () => Account.SignedIn && (Account.Status == null || Account.HasDb);
             real.Sharing = new Sharing(AppStore.DefaultDir, () => real.Settings.ShareRecordings);   // anonymous: never the Patreon sign-in
+            real.Diagnostics = new Diagnostics(() => real.Settings.ShareDiagnostics);   // no token at all
             real.ContentRoutes = RouteFailover.Default;
             real.ChannelAccess = async () => (await Account.GetAccessTokenAsync(), Account.Status?.Ent);
             // the entitlements first: the update check picks the channel they allow
             real.UserFetch = async () => { await Account.RefreshAsync(); await Updater.CheckAsync(); };
-            // not before the welcome, which says it is sent and where to turn it off
-            real.ActiveCheck = new ActiveCheck(AppStore.DefaultDir, () => real.Settings is { ActiveCheck: true, WelcomeSeen: true }, real.Vendor.Vendor);
+            real.ActiveCheck = new ActiveCheck(AppStore.DefaultDir, () => ActiveCheck.Allowed(real.Settings), real.Vendor.Vendor);
             // not in the unattended --driver-updated launch: nobody at the PC, no game folder is written
             real.ManageRecorders = !driverUpdated;
             real.CleanupHelper = Environment.ProcessPath;
             real.CheckPlans = true;
             var hadDb = false;   // signed in (or the membership turned active): check at once, not at the next scan
             Account.Changed += () => { var db = Account.Status?.Ent.Contains("db") == true; if (db && !hadDb) real.StartCommunitySync(); hadDb = db; };
+            // signed in, the entitlements are known once a token came
+            void Channels() { if (!Account.SignedIn || Account.Status != null) real.UseChannels(Account.Status?.Ent); }
+            Account.Changed += Channels;
+            Channels();
             watcher = real.WatchGames(stopWatching.Token);
         }
         Main = new MainWindow();
+        Main.ApplyTheme(Core.Settings.Theme);
         if (shots < 0) Main.RestorePlacement(Core is ScsKiller own ? own.Store : new AppStore(fakeDir));   // screenshots: always the default size
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(Main);
         if (Core is ScsKiller seen) seen.Unseen = () => !IsWindowVisible(hwnd) || IsIconic(hwnd);
 
-        var activation = AppInstance.GetCurrent().GetActivatedEventArgs();
         string? toastError = null;
         try
         {
@@ -99,6 +116,8 @@ public partial class App : Application
         }
         catch (Exception ex) { toastError = ex.Message; }   // the app works without notifications
         notifications = toastError == null;
+        // after Register(): a toast click's relaunch fail-fasts in the Windows App SDK when the args are read first
+        var activation = AppInstance.GetCurrent().GetActivatedEventArgs();
 
         if (shots >= 0)
         {
@@ -110,13 +129,26 @@ public partial class App : Application
             {
                 File.WriteAllText(Path.Combine(dir, "toast-new-shaders.xml"), NewShadersToast([Core.Games[0] with { RecordedSinceWarm = 42 }]).Payload);
                 File.WriteAllText(Path.Combine(dir, "toast-new-shaders-games.xml"), NewShadersToast(Core.Games.Take(3).ToList()).Payload);
+                File.WriteAllText(Path.Combine(dir, "toast-new-shaders-compiling.xml"), NewShadersToast([Core.Games[0] with { RecordedSinceWarm = 42 }], compiling: true).Payload);
             }
             _ = Main.TakeScreenshotsAsync(dir, (FakeScsKiller)Core);
             return;   // no tray icon, no notification, no single-instance registration
         }
 
+        BeforeAfterUi.Watch();
+
         // design data: the bundled text, no network
-        if (!Core.Settings.WelcomeSeen) ShowWelcome(Core is FakeScsKiller ? Task.FromResult<WelcomeContent?>(null) : WelcomeContent.FetchAsync());
+        if (!Core.Settings.WelcomeSeen)
+        {
+            WhatsNew.AtStart(Store, firstRun: true, AppVersion.Current);
+            WhenShown(root => ShowWelcomeAsync(root, Core is FakeScsKiller ? Task.FromResult<WelcomeContent?>(null) : WelcomeContent.FetchAsync()));
+        }
+        else WhenShown(async root =>   // one dialog at a time
+        {
+            if (ActiveCheck.Asks(Core.Settings)) await AskActiveCheckAsync(root);
+            if (Diagnostics.Asks(Core.Settings)) await AskDiagnosticsAsync(root);
+            if (WhatsNew.AtStart(Store, firstRun: false, AppVersion.Current) is { } news) await ShowWhatsNewAsync(root, news);
+        });
 
         tray = CreateTray();
         UpdateTip();
@@ -139,13 +171,15 @@ public partial class App : Application
                 Task.Run(Core.RefreshCacheSizes);
             };
             if (Core is ScsKiller gpu) gpu.GpuChanged += () => Main.DispatcherQueue.TryEnqueue(OnGpuChanged);
-            ApplyStartWithWindows();
+            ApplyStartWithWindows(byUser: false);
             Updater.Start();
             if (activation.Kind == ExtendedActivationKind.Launch) _ = Updater.ApplyAtStartAsync(args[1..]);
             if (Core is ScsKiller k && !driverUpdated)
             {
-                var check = new Coalesced(Main.DispatcherQueue, () => NotifyNewShaders(k.Store));
+                var check = newShadersCheck = new Coalesced(Main.DispatcherQueue, () => NotifyNewShaders(k.Store));
                 Core.GameChanged += _ => check.Request();
+                // a compile starting clears its "waits for idle", one ending lets the games it held back compile
+                Core.QueueChanged += q => { if (q.Stage is QueueStage.Indexing or QueueStage.Done or QueueStage.Failed or QueueStage.Stopped) check.Request(); };
             }
             if (Updater.HasResume)   // restarted by "Restart to update": the queue goes on once the games are known
                 _ = Core.ScanAsync(CancellationToken.None).ContinueWith(_ => Main.DispatcherQueue.TryEnqueue(Updater.ResumeQueue));
@@ -253,10 +287,18 @@ public partial class App : Application
             .BuildNotification());
     }
 
-    /// <summary>The first-run welcome, once the window is first shown (a --tray or toast start shows it later): the server's
-    /// text (<paramref name="fetch"/>, at most 3 s) or the bundled one, as plain text. Closing it either way marks it seen and saves its
-    /// share checkbox (<see cref="Settings.ShareRecordings"/>).</summary>
-    static void ShowWelcome(Task<WelcomeContent?> fetch)
+    /// <summary>A toast for a step the user takes in another app, shown over it; gone from the notification center after
+    /// a few minutes, when the step is stale.</summary>
+    public static void Hint(string title, string text)
+    {
+        if (!notifications) return;
+        var toast = new AppNotificationBuilder().AddText(title).AddText(text).BuildNotification();
+        toast.Expiration = DateTimeOffset.Now.AddMinutes(5);
+        AppNotificationManager.Default.Show(toast);
+    }
+
+    /// <summary>Runs <paramref name="show"/> once the window is first shown (a --tray or toast start shows it later).</summary>
+    static void WhenShown(Func<XamlRoot, Task> show)
     {
         var root = (FrameworkElement)Main.Content;
         root.Loaded += OnLoaded;
@@ -264,23 +306,116 @@ public partial class App : Application
         async void OnLoaded(object _, RoutedEventArgs __)
         {
             root.Loaded -= OnLoaded;
-            var c = await fetch ?? WelcomeContent.Default;
-            var panel = new StackPanel { Spacing = 12 };
-            foreach (var p in c.Paragraphs) panel.Children.Add(new TextBlock { Text = p, TextWrapping = TextWrapping.Wrap });
-            if (c.Link != null) panel.Children.Add(new HyperlinkButton { Content = c.Link.Text, NavigateUri = new Uri(c.Link.Url), Padding = new Thickness(0) });
-            var share = new CheckBox { Content = c.Share, IsChecked = false };   // never pre-ticked: that isn't consent
-            panel.Children.Add(share);
-            var dialog = new ContentDialog
-            {
-                XamlRoot = root.XamlRoot, Title = c.Title, Content = new ScrollViewer { Content = panel },
-                PrimaryButtonText = c.SignIn, CloseButtonText = c.Dismiss, DefaultButton = ContentDialogButton.Primary,
-            };
-            ContentDialogResult result;
-            try { result = await dialog.ShowAsync(); }
-            catch (COMException) { return; }   // another dialog is open (the user got there first): next start
-            Core.Settings = Core.Settings with { WelcomeSeen = true, ShareRecordings = share.IsChecked == true };   // either button, or Esc
-            if (result == ContentDialogResult.Primary) SignInWithPatreon();
+            await show(root.XamlRoot);
         }
+    }
+
+    /// <summary>The first-run welcome: the server's text (<paramref name="fetch"/>, at most 3 s) or the bundled one, as plain
+    /// text. Closing it either way marks it seen and saves its checkboxes (<see cref="Settings.ShareRecordings"/>,
+    /// <see cref="Settings.ShareDiagnostics"/> as the answer to <see cref="Diagnostics.Asks"/>, and <see cref="Settings.ActiveCheck"/>).</summary>
+    static async Task ShowWelcomeAsync(XamlRoot root, Task<WelcomeContent?> fetch)
+    {
+        var c = await fetch ?? WelcomeContent.Default;
+        var panel = new StackPanel { Spacing = 12 };
+        foreach (var p in c.Paragraphs) panel.Children.Add(new TextBlock { Text = p, TextWrapping = TextWrapping.Wrap });
+        if (c.Link != null) panel.Children.Add(new HyperlinkButton { Content = c.Link.Text, NavigateUri = new Uri(c.Link.Url), Padding = new Thickness(0) });
+        var share = new CheckBox { Content = c.Share, IsChecked = false };   // never pre-ticked: that isn't consent
+        panel.Children.Add(share);
+        var diagnostics = new CheckBox { Content = "Share diagnostics to help fix problems", IsChecked = false };
+        panel.Children.Add(diagnostics);
+        var activeCaption = new TextBlock { Text = "Helps us count active installs so we can size our servers. Once a day, the app's version and GPU vendor, no identifier.", TextWrapping = TextWrapping.Wrap,
+            Style = (Style)Current.Resources["Caption"] };
+        var active = new CheckBox { IsChecked = false, Content = new StackPanel { Spacing = 2, Children = { new TextBlock { Text = "Send an anonymous daily check", TextWrapping = TextWrapping.Wrap }, activeCaption } } };
+        AutomationProperties.SetName(active, "Send an anonymous daily check");
+        panel.Children.Add(active);
+        var dialog = new ContentDialog
+        {
+            XamlRoot = root, Title = c.Title, Content = new ScrollViewer { Content = panel },
+            PrimaryButtonText = c.SignIn, CloseButtonText = c.Dismiss, DefaultButton = ContentDialogButton.Primary,
+        };
+        ContentDialogResult result;
+        try { result = await Themed(dialog).ShowAsync(); }
+        catch (COMException) { return; }   // another dialog is open (the user got there first): next start
+        Core.Settings = ActiveCheck.Answered(Diagnostics.Answered(Core.Settings, diagnostics.IsChecked == true), active.IsChecked == true) with { WelcomeSeen = true, ShareRecordings = share.IsChecked == true };   // either button, or Esc
+        if (result == ContentDialogResult.Primary) SignInWithPatreon();
+    }
+
+    /// <summary>The one-time daily check question (<see cref="ActiveCheck.Asks"/>): Esc or closing keeps it off and answers it.</summary>
+    static async Task AskActiveCheckAsync(XamlRoot root)
+    {
+        ContentDialogResult result;
+        try { result = await Themed(ActiveCheckDialog(root)).ShowAsync(); }
+        catch (COMException) { return; }   // another dialog is open: next start
+        Core.Settings = ActiveCheck.Answered(Core.Settings, result == ContentDialogResult.Primary);
+    }
+
+    public static ContentDialog ActiveCheckDialog(XamlRoot root) => new()
+    {
+        XamlRoot = root, Title = "Anonymous daily check",
+        Content = new StackPanel
+        {
+            Spacing = 8,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = "Once a day SCSKiller can tell our server that an install is active, with its version and GPU vendor and no identifier. "
+                        + "This helps us count active installs so we can size our servers. It's off until you turn it on.",
+                    TextWrapping = TextWrapping.Wrap,
+                },
+                new TextBlock { Text = "Change it any time in Settings.", TextWrapping = TextWrapping.Wrap, Style = (Style)Current.Resources["Caption"] },
+            },
+        },
+        PrimaryButtonText = "Turn it on", CloseButtonText = "Keep it off", DefaultButton = ContentDialogButton.None,   // no nudge either way
+    };
+
+    /// <summary>The one-time diagnostics question (<see cref="Diagnostics.Asks"/>): either button, or Esc, answers it.</summary>
+    static async Task AskDiagnosticsAsync(XamlRoot root)
+    {
+        var dialog = new ContentDialog
+        {
+            XamlRoot = root, Title = "Share diagnostics to help fix problems?",
+            Content = new TextBlock
+            {
+                Text = "When a compile fails, send its error codes, once per compile. You can change this in Settings.",
+                TextWrapping = TextWrapping.Wrap,
+            },
+            PrimaryButtonText = "Share diagnostics", CloseButtonText = "No thanks", DefaultButton = ContentDialogButton.Close,
+        };
+        ContentDialogResult result;
+        try { result = await Themed(dialog).ShowAsync(); }
+        catch (COMException) { return; }   // another dialog is open: next start
+        Core.Settings = Diagnostics.Answered(Core.Settings, result == ContentDialogResult.Primary);
+    }
+
+    /// <summary>The bullets of a version's CHANGELOG section.</summary>
+    public static async Task ShowWhatsNewAsync(XamlRoot root, WhatsNewSection section)
+    {
+        try { await Themed(WhatsNewDialog(root, section)).ShowAsync(); }
+        catch (COMException) { }   // another dialog is open: About shows it again
+    }
+
+    public static ContentDialog WhatsNewDialog(XamlRoot root, WhatsNewSection section)
+    {
+        var panel = new StackPanel { Spacing = 10 };
+        foreach (var b in section.Bullets)
+        {
+            var text = new TextBlock { TextWrapping = TextWrapping.Wrap };
+            text.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "• " });
+            foreach (var s in WhatsNew.Spans(b))
+            {
+                Microsoft.UI.Xaml.Documents.Inline inline = s.Kind switch
+                {
+                    SpanKind.Bold => new Microsoft.UI.Xaml.Documents.Bold { Inlines = { new Microsoft.UI.Xaml.Documents.Run { Text = s.Text } } },
+                    SpanKind.Code => new Microsoft.UI.Xaml.Documents.Run { Text = s.Text, FontFamily = new("Consolas") },
+                    SpanKind.Link => new Microsoft.UI.Xaml.Documents.Hyperlink { NavigateUri = new(s.Url!), Inlines = { new Microsoft.UI.Xaml.Documents.Run { Text = s.Text } } },
+                    _ => new Microsoft.UI.Xaml.Documents.Run { Text = s.Text },
+                };
+                text.Inlines.Add(inline);
+            }
+            panel.Children.Add(text);
+        }
+        return new ContentDialog { XamlRoot = root, Title = $"What's new in {section.Version}", Content = new ScrollViewer { Content = panel }, CloseButtonText = "Close" };
     }
 
     /// <summary>A question with Cancel and one action; true = the action was chosen.</summary>
@@ -296,8 +431,15 @@ public partial class App : Application
     /// handler can't survive.</summary>
     public static async Task<ContentDialogResult> ShowAsync(ContentDialog dialog)
     {
-        try { return await dialog.ShowAsync(); }
+        try { return await Themed(dialog).ShowAsync(); }
         catch (COMException) { return ContentDialogResult.None; }
+    }
+
+    // a dialog opens in the window's popup layer, outside the root the theme is set on
+    static ContentDialog Themed(ContentDialog dialog)
+    {
+        dialog.RequestedTheme = Main.Theme;
+        return dialog;
     }
 
     /// <summary>The welcome's sign-in button: starts the browser flow and shows Settings, whose Account card follows it.</summary>
@@ -307,14 +449,21 @@ public partial class App : Application
         Main.Navigate(typeof(SettingsPage));
     }
 
-    /// <summary>The sign-in entry follows the setting (and the exe, if the app moved). Real data only, and only in Release
-    /// builds (build\publish.ps1): a Debug build from a checkout or worktree must not point the sign-in entry at
-    /// itself. In Debug the setting is saved but the registry is left as it is.</summary>
-    public static void ApplyStartWithWindows()
+    /// <summary>The sign-in entry: <paramref name="byUser"/>, the user turned the setting on or off here
+    /// (<see cref="WindowsStartup.Set"/>); otherwise the app start (<see cref="WindowsStartup.Reconcile"/>, which restores a
+    /// missing value, or one whose exe is gone, only for the installed copy; Velopack counts its portable zip as installed
+    /// too). Real data only, and only in Release builds (build\publish.ps1): a Debug build from a checkout or worktree must
+    /// not point the sign-in entry at itself. In Debug the setting is saved but the registry is left as it is.</summary>
+    public static void ApplyStartWithWindows(bool byUser)
     {
 #if !DEBUG
         if (Core is FakeScsKiller || Environment.ProcessPath is not { } exe) return;
-        try { WindowsStartup.Apply(Core.Settings.StartWithWindows, exe); }
+        var on = Core.Settings.StartWithWindows;
+        try
+        {
+            if (byUser) WindowsStartup.Set(on, exe, WindowsStartup.ReadRegistry, WindowsStartup.WriteRegistry);
+            else WindowsStartup.Reconcile(on, exe, Updater.Installed && !AppStore.IsPortable, WindowsStartup.ReadRegistry, WindowsStartup.WriteRegistry, File.Exists);
+        }
         catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException) { }   // a policy-locked key: the setting just doesn't apply
 #endif
     }
@@ -348,17 +497,15 @@ public partial class App : Application
         return t;
     }
 
+    static (string Line, double? Done) Status()
+    {
+        var q = Running();
+        return Format.TrayStatus(q, q == null ? null : Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId, quitting);
+    }
+
     static void UpdateTip()
     {
-        if (tray == null) return;
-        var q = Running();
-        var name = q == null ? null : Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId;
-        tray.Tip = quitting ? "SCSKiller: finishing, the driver is saving the shader cache"
-            : q == null ? "SCSKiller: idle"
-            : q.PlanCheck ? "SCSKiller: checking games for more to compile"
-            : q.Stage == QueueStage.Paused ? $"SCSKiller: paused ({name})"
-            : q is { Stage: QueueStage.Warming, Progress: { Total: > 0 } p } ? $"Compiling {name}, {100.0 * p.Done / p.Total:0}%"
-            : $"Compiling {name}";
+        if (tray != null) tray.Tip = "SCSKiller: " + Status().Line;
     }
 
     static QueueItem? Running() => Core.Queue.FirstOrDefault(Format.Running);
@@ -394,10 +541,15 @@ public partial class App : Application
             }
             stopWatching.Cancel();
             await Task.WhenAny(watcher, Task.Delay(1000));   // let a poll's refresh in flight finish
+            if (Core is ScsKiller { Log: AppLog log }) await log.FlushAsync(TimeSpan.FromSeconds(1));
             DisposeTray();
             await Updater.ApplyOnExitAsync();   // a downloaded update installs once this process has exited
         }
-        finally { Current.Exit(); }   // Quit quits, whatever went wrong before
+        finally
+        {
+            ReportWindow.CloseAll();
+            Current.Exit();   // Quit quits, whatever went wrong before
+        }
     }
 
     public static void DisposeTray()
@@ -422,27 +574,51 @@ public partial class App : Application
             .BuildNotification();
     }
 
-    /// <summary>One notification for every compiled game that has pipelines to compile again (<see cref="NewShaders"/>).</summary>
+    /// <summary>One notification for every compiled game that has pipelines to compile again, and the "when idle" compile of
+    /// the ones whose setting compiles automatically (<see cref="NewShaders.Plan"/>).</summary>
     static void NotifyNewShaders(AppStore store)
     {
-        if (!notifications || !Core.Settings.NotifyNewShaders) return;
+        var (withdraw, forget) = NewShaders.Withdrawn(autoQueued, Core.Queue, Core.Games, Core.Settings);
+        foreach (var id in forget) autoQueued.Remove(id);
+        foreach (var id in withdraw)
+        {
+            Core.Remove(id);
+            autoQueued.Remove(id);
+        }
         told ??= store.LoadNotified();
-        var (due, notified) = NewShaders.Due(Core.Games, Core.Queue, told, Core.DriverStaleGames().Select(s => s.Game.Id).ToHashSet(), DateTimeOffset.UtcNow);
+        var (due, compile, notified) = NewShaders.Plan(Core.Games, Core.Queue, told, Core.DriverStaleGames().Select(s => s.Game.Id).ToHashSet(),
+            DateTimeOffset.UtcNow, s => NewShaders.ModeOf(s, Core.Settings), Core.Compiling, forget.ToHashSet(), session);
         if (due.Count == 0 && notified.Count == told.Count && notified.All(e => told.GetValueOrDefault(e.Key) == e.Value)) return;
         store.SaveNotified(told = notified);   // before showing: never twice
-        if (due.Count > 0) AppNotificationManager.Default.Show(NewShadersToast(due));
+        foreach (var s in compile)
+        {
+            Core.EnqueueWhenIdle(s.Game.Id);
+            autoQueued.Add(s.Game.Id);
+        }
+        if (!notifications) return;
+        var compiling = due.Where(compile.Contains).ToList();
+        if (compiling.Count > 0) AppNotificationManager.Default.Show(NewShadersToast(compiling, compiling: true));
+        if (due.Except(compiling).ToList() is { Count: > 0 } ask) AppNotificationManager.Default.Show(NewShadersToast(ask));
     }
 
-    static AppNotification NewShadersToast(IReadOnlyList<GameState> games)
+    /// <summary>The Settings page changed the global choice: queued automatic compiles follow it.</summary>
+    public static void NewShadersChanged() => newShadersCheck?.Request();
+
+    static AppNotification NewShadersToast(IReadOnlyList<GameState> games, bool compiling = false)
     {
         var ids = string.Join('|', games.Select(g => g.Game.Id));
         var n = NewShaders.Count(games[0]);
-        return new AppNotificationBuilder()
-            .AddArgument("action", "shaders-show").AddArgument("games", ids)
-            .AddText("New shaders to compile")
-            .AddText(games.Count == 1 ? $"{games[0].Game.Name} has {n:N0} new pipeline{(n == 1 ? "" : "s")}. Compile now so they don't stutter."
-                : $"{games.Count} games have new shaders to compile")
-            .AddButton(new AppNotificationButton("Compile now").AddArgument("action", "shaders-compile").AddArgument("games", ids))
+        var b = new AppNotificationBuilder()
+            .AddArgument("action", "shaders-show").AddArgument("games", ids);
+        if (compiling)
+            b.AddText("Compiling new shaders")
+                .AddText(games.Count == 1 ? $"{games[0].Game.Name} has {n:N0} new pipeline{(n == 1 ? "" : "s")}. They compile when the PC is idle."
+                    : $"{games.Count} games have new shaders. They compile when the PC is idle.");
+        else
+            b.AddText("New shaders to compile")
+                .AddText(games.Count == 1 ? $"{games[0].Game.Name} has {n:N0} new pipeline{(n == 1 ? "" : "s")}. Compile now so they don't stutter."
+                    : $"{games.Count} games have new shaders to compile");
+        return b.AddButton(new AppNotificationButton("Compile now").AddArgument("action", "shaders-compile").AddArgument("games", ids))
             .AddButton(new AppNotificationButton("Show").AddArgument("action", "shaders-show").AddArgument("games", ids))
             .BuildNotification();
     }
@@ -493,10 +669,10 @@ public partial class App : Application
     }
 
     /// <summary>"Compile queue" (the library's and the queue's): everything listed, "when idle" items too (Enqueue makes
-    /// them normal ones).</summary>
+    /// them normal ones). Plan checks aren't listed: Enqueue would turn them into compiles of games nobody picked.</summary>
     public static void CompileQueue()
     {
-        foreach (var q in Core.Queue.Where(q => q.Stage == QueueStage.Waiting && q.Note == ScsKiller.WhenIdleNote).ToList()) Core.Enqueue(q.GameId);
+        foreach (var q in Core.Queue.Where(q => q.Stage == QueueStage.Waiting && q.Note == ScsKiller.WhenIdleNote && !q.PlanCheck).ToList()) Core.Enqueue(q.GameId);
         Core.StartQueue();
     }
 

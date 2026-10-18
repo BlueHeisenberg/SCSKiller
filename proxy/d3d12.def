@@ -19,6 +19,57 @@ EXPORTS
     D3D12SerializeRootSignature = stub_D3D12SerializeRootSignature @115
     D3D12SerializeVersionedRootSignature = stub_D3D12SerializeVersionedRootSignature @116
     GetBehaviorValue = stub_GetBehaviorValue         @117
+    D3D11CreateDeviceForD3D12 = stub_D3D11CreateDeviceForD3D12        @1
+    D3DKMTCloseAdapter = stub_D3DKMTCloseAdapter                      @2
+    D3DKMTDestroyAllocation = stub_D3DKMTDestroyAllocation            @3
+    D3DKMTDestroyContext = stub_D3DKMTDestroyContext                  @4
+    D3DKMTDestroyDevice = stub_D3DKMTDestroyDevice                    @5
+    D3DKMTDestroySynchronizationObject = stub_D3DKMTDestroySynchronizationObject @6
+    D3DKMTPresent = stub_D3DKMTPresent                                @7
+    D3DKMTQueryAdapterInfo = stub_D3DKMTQueryAdapterInfo              @8
+    D3DKMTSetDisplayPrivateDriverFormat = stub_D3DKMTSetDisplayPrivateDriverFormat @9
+    D3DKMTSignalSynchronizationObject = stub_D3DKMTSignalSynchronizationObject @10
+    D3DKMTUnlock = stub_D3DKMTUnlock                                  @11
+    D3DKMTWaitForSynchronizationObject = stub_D3DKMTWaitForSynchronizationObject @12
+    EnableFeatureLevelUpgrade = stub_EnableFeatureLevelUpgrade        @13
+    OpenAdapter10 = stub_OpenAdapter10                                @14
+    OpenAdapter10_2 = stub_OpenAdapter10_2                            @15
+    CreateDirect3D11DeviceFromDXGIDevice = stub_CreateDirect3D11DeviceFromDXGIDevice @16
+    CreateDirect3D11SurfaceFromDXGISurface = stub_CreateDirect3D11SurfaceFromDXGISurface @17
+    D3D11CoreCreateDevice = stub_D3D11CoreCreateDevice                @18
+    D3D11CoreCreateLayeredDevice = stub_D3D11CoreCreateLayeredDevice  @19
+    D3D11CoreGetLayeredDeviceSize = stub_D3D11CoreGetLayeredDeviceSize @20
+    D3D11CoreRegisterLayers = stub_D3D11CoreRegisterLayers            @21
+    D3D11CreateDevice = Proxy_D3D11CreateDevice                       @22
+    D3D11CreateDeviceAndSwapChain = Proxy_D3D11CreateDeviceAndSwapChain @23
+    D3D11On12CreateDevice = stub_D3D11On12CreateDevice                @24
+    D3DKMTCreateAllocation = stub_D3DKMTCreateAllocation              @25
+    D3DKMTCreateContext = stub_D3DKMTCreateContext                    @26
+    D3DKMTCreateDevice = stub_D3DKMTCreateDevice                      @27
+    D3DKMTCreateSynchronizationObject = stub_D3DKMTCreateSynchronizationObject @28
+    D3DKMTEscape = stub_D3DKMTEscape                                  @29
+    D3DKMTGetContextSchedulingPriority = stub_D3DKMTGetContextSchedulingPriority @30
+    D3DKMTGetDeviceState = stub_D3DKMTGetDeviceState                  @31
+    D3DKMTGetDisplayModeList = stub_D3DKMTGetDisplayModeList          @32
+    D3DKMTGetMultisampleMethodList = stub_D3DKMTGetMultisampleMethodList @33
+    D3DKMTGetRuntimeData = stub_D3DKMTGetRuntimeData                  @34
+    D3DKMTGetSharedPrimaryHandle = stub_D3DKMTGetSharedPrimaryHandle  @35
+    D3DKMTLock = stub_D3DKMTLock                                      @36
+    D3DKMTOpenAdapterFromHdc = stub_D3DKMTOpenAdapterFromHdc          @37
+    D3DKMTOpenResource = stub_D3DKMTOpenResource                      @38
+    D3DKMTQueryAllocationResidency = stub_D3DKMTQueryAllocationResidency @39
+    D3DKMTQueryResourceInfo = stub_D3DKMTQueryResourceInfo            @40
+    D3DKMTRender = stub_D3DKMTRender                                  @41
+    D3DKMTSetAllocationPriority = stub_D3DKMTSetAllocationPriority    @42
+    D3DKMTSetContextSchedulingPriority = stub_D3DKMTSetContextSchedulingPriority @43
+    D3DKMTSetDisplayMode = stub_D3DKMTSetDisplayMode                  @44
+    D3DKMTSetGammaRamp = stub_D3DKMTSetGammaRamp                      @45
+    D3DKMTSetVidPnSourceOwner = stub_D3DKMTSetVidPnSourceOwner        @46
+    D3DKMTWaitForVerticalBlankEvent = stub_D3DKMTWaitForVerticalBlankEvent @47
+    D3DPerformance_BeginEvent = stub_D3DPerformance_BeginEvent        @48
+    D3DPerformance_EndEvent = stub_D3DPerformance_EndEvent            @49
+    D3DPerformance_GetStatus = stub_D3DPerformance_GetStatus          @50
+    D3DPerformance_SetMarker = stub_D3DPerformance_SetMarker          @51
     SCSKiller_Stats                                  @200
     SCSKiller_StartWarm                              @201
     SCSKiller_WarmOptions                            @202
@@ -30,3 +81,6 @@ EXPORTS
     SCSKiller_WarmCrash                              @208
     SCSKiller_Crashes                                @209
     SCSKiller_WarmPass                               @210
+    SCSKiller_Workers                                @211
+    SCSKiller_Skipped                                @212
+    SCSKiller_Hung                                   @213

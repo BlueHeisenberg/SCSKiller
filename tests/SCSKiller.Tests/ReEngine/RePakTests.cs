@@ -26,7 +26,7 @@ public class RePakTests
         var chunks = new List<(long Start, int Packed)>();
         var table = new byte[48 * entries.Length];
         long head = 16 + table.Length + ((features & RePak.ExtraU32) != 0 ? 4 : 0) + ((features & RePak.ExtraData) != 0 ? 9 : 0)
-            + ((features & RePak.EncryptedTable) != 0 ? 128 : 0);
+            + ((features & RePak.EncryptedTable) != 0 ? 128 : 0) + ((features & RePak.RemapTable) != 0 ? 8 + 16 * Remaps : 0);
         var chunked = entries.Where(e => e.Chunked).Sum(e => (e.Data.Length + block - 1) / block);
         if ((features & RePak.ChunkTable) != 0) head += 8 + 8 * chunked;
         for (var i = 0; i < entries.Length; i++)
@@ -78,6 +78,14 @@ public class RePakTests
         o.Write(table);
         if ((features & RePak.ExtraU32) != 0) o.Write(BitConverter.GetBytes(0xAABBCCDD));
         if ((features & RePak.ExtraData) != 0) o.Write(new byte[9]);
+        if ((features & RePak.RemapTable) != 0)
+        {
+            o.Write(BitConverter.GetBytes(Remaps));
+            o.Write(BitConverter.GetBytes(1 << 19)); // the unused u32: not 0, to show it is ignored
+            var r = new byte[16 * Remaps];
+            new Random(3).NextBytes(r);
+            o.Write(r);
+        }
         if ((features & RePak.EncryptedTable) != 0) o.Write(raw);
         if ((features & RePak.ChunkTable) != 0)
         {
@@ -90,6 +98,8 @@ public class RePakTests
         data.CopyTo(o);
         return o.ToArray();
     }
+
+    const int Remaps = 3;
 
     static byte[] Compress(byte[] b, int compression)
     {
@@ -113,6 +123,8 @@ public class RePakTests
     [InlineData((ushort)0)]
     [InlineData((ushort)(RePak.EncryptedTable | RePak.ChunkTable))]  // PRAGMATA's re_chunk_000.pak
     [InlineData((ushort)(RePak.ExtraU32 | RePak.ExtraData | RePak.EncryptedTable | RePak.ChunkTable))]
+    [InlineData((ushort)(RePak.RemapTable | RePak.EncryptedTable | RePak.ChunkTable))]  // Dragon's Dogma 2's
+    [InlineData((ushort)(RePak.ExtraU32 | RePak.ExtraData | RePak.RemapTable | RePak.EncryptedTable | RePak.ChunkTable))]
     public void ReadsEveryEntryKind(ushort features)
     {
         var chunk = (features & RePak.ChunkTable) != 0;
@@ -146,7 +158,7 @@ public class RePakTests
         var dir = Temp("repak-bad");
         var path = Path.Combine(dir, "a.pak");
         var b = Pak(0, 64, new E(1, Bytes(10, 3)));
-        b[6] = 0x40; // an unknown feature bit
+        b[6] = 0x80; // an unknown feature bit
         File.WriteAllBytes(path, b);
         Assert.Contains("features", Assert.Throws<InvalidDataException>(() => RePak.Open(path)).Message);
 
@@ -155,6 +167,136 @@ public class RePakTests
         File.WriteAllBytes(path, b);
         using var pak = RePak.Open(path);
         Assert.Throws<InvalidDataException>(() => pak.Read(pak.Entries[0]));
+
+        // entry fields are checked at Read: offsets before the file or a chunk index past the table, sizes beyond what
+        // the stored bytes or the chunks can hold
+        var n = 0;
+        RePak With(ushort features, E e, int at, long value)
+        {
+            var p = Path.Combine(dir, $"e{n++}.pak");
+            var x = Pak(features, 64, e);
+            BinaryPrimitives.WriteInt64LittleEndian(x.AsSpan(16 + at), value);
+            File.WriteAllBytes(p, x);
+            return RePak.Open(p);
+        }
+        var stored = new E(1, Bytes(10, 3));
+        var chunked = new E(2, Bytes(100, 3), Chunked: true);
+        foreach (var (features, e, at, value) in new[] { (0, stored, 8, -1L), (0, stored, 8, long.MaxValue), (0, stored, 16, -1L), (0, stored, 24, -1L),
+                     (RePak.ChunkTable, chunked, 8, -1L), (RePak.ChunkTable, chunked, 8, 2L), (RePak.ChunkTable, chunked, 24, 1L << 30) })
+        {
+            using var bad = With((ushort)features, e, at, value);
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            Assert.Throws<InvalidDataException>(() => bad.Read(bad.Entries[0]));
+            Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 1 << 20);
+        }
+        using (var big = With(0, stored, 24, 1L << 30)) // a stored entry claiming 1 GiB: its 10 bytes, nothing allocated for the rest
+        {
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            Assert.Equal(stored.Data, big.Read(big.Entries[0]));
+            Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 1 << 20);
+        }
+    }
+
+    /// <summary>A compressed entry whose size claims the read budget: its real bytes, allocated as they decode; claiming more
+    /// (1 GB, the array limit): refused whole, its prefix still read.</summary>
+    [Theory]
+    [InlineData(1, RePak.MaxEntry)]
+    [InlineData(2, RePak.MaxEntry)]
+    [InlineData(1, 1L << 30)]
+    [InlineData(2, 1L << 30)]
+    [InlineData(2, 0x7FFFFFC7L)]   // Array.MaxLength
+    public void ACompressedSizeAllocatesNothingBeyondItsBytes(int compression, long size)
+    {
+        var e = new E(1, Bytes(3000, 3), compression);
+        var b = Pak(0, 64, e);
+        BinaryPrimitives.WriteInt64LittleEndian(b.AsSpan(16 + 24), size);
+        var path = Path.Combine(Temp("repak-bomb"), "a.pak");
+        File.WriteAllBytes(path, b);
+        using var pak = RePak.Open(path);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        if (size <= RePak.MaxEntry) Assert.Equal(e.Data, pak.Read(pak.Entries[0]));
+        else Assert.Equal("entry over 256 MB", Assert.Throws<InvalidDataException>(() => pak.Read(pak.Entries[0])).Message);
+        Assert.Equal(e.Data[..4], pak.Read(pak.Entries[0], 4));
+        Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 4 << 20);
+    }
+
+    /// <summary>A zstd frame declaring a 128 MB window around 4 bytes is refused, not decoded with a 128 MB window.</summary>
+    [Fact]
+    public void AZstdWindowOverTheBudgetIsRefused()
+    {
+        byte[] frame = [0x28, 0xB5, 0x2F, 0xFD, 0x00, 0x88, 0x21, 0x00, 0x00, .. "SDF\0"u8];
+        var b = Pak(0, 64, new E(1, Bytes(frame.Length, 3), 2));
+        frame.CopyTo(b, 16 + 48);
+        BinaryPrimitives.WriteInt64LittleEndian(b.AsSpan(16 + 16), frame.Length);
+        var path = Path.Combine(Temp("repak-bomb"), "w.pak");
+        File.WriteAllBytes(path, b);
+        using var pak = RePak.Open(path);
+        Assert.Throws<ZstdSharp.ZstdException>(() => pak.Read(pak.Entries[0], 4));
+    }
+
+    /// <summary>A chunked entry claiming the read budget over a chunk table that holds as many chunks, all but two of them
+    /// pointing past the end of the file: refused at the third chunk, having allocated for two.</summary>
+    [Fact]
+    public void AChunkedSizeAllocatesNothingBeyondItsChunks()
+    {
+        const int block = 1 << 16, n = RePak.MaxEntry / block;
+        var x = Pak(RePak.ChunkTable, block, new E(1, Bytes(2 * block, 3), Chunked: true));
+        const int ct = 16 + 48, shift = 8 * (n - 2);
+        var o = new MemoryStream();
+        o.Write(x.AsSpan(0, ct + 4));
+        o.Write(BitConverter.GetBytes(n));
+        for (var i = 0; i < 2; i++)
+        {
+            o.Write(BitConverter.GetBytes(BinaryPrimitives.ReadUInt32LittleEndian(x.AsSpan(ct + 8 + 8 * i)) + shift));
+            o.Write(x.AsSpan(ct + 12 + 8 * i, 4));
+        }
+        for (var i = 2; i < n; i++) { o.Write(BitConverter.GetBytes(0xFFFF_0000u)); o.Write(BitConverter.GetBytes(16u << 10)); }
+        o.Write(x.AsSpan(ct + 24));
+        var b = o.ToArray();
+        BinaryPrimitives.WriteInt64LittleEndian(b.AsSpan(16 + 24), RePak.MaxEntry);
+        var path = Path.Combine(Temp("repak-bomb"), "c.pak");
+        File.WriteAllBytes(path, b);
+        using var pak = RePak.Open(path);
+        Assert.Equal(Bytes(2 * block, 3)[..4], pak.Read(pak.Entries[0], 4));
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        Assert.Contains("truncated", Assert.Throws<InvalidDataException>(() => pak.Read(pak.Entries[0])).Message);
+        Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 4 << 20);
+    }
+
+    /// <summary>An entry or chunk table over its budget is refused at open, before anything is allocated for it.</summary>
+    [Theory]
+    [InlineData(RePak.ChunkTable, 8, RePak.MaxTable / 48 + 1, "entry table over 64 MB")]
+    [InlineData(RePak.ChunkTable, 16 + 48 + 4, RePak.MaxChunkTable / 8 + 1, "chunk table over 32 MB")]
+    [InlineData(RePak.ChunkTable, 16 + 48 + 4, -1, "chunk table over 32 MB")]
+    public void RefusesATableOverTheBudget(ushort features, int at, int count, string message)
+    {
+        var b = Pak(features, 64, new E(1, Bytes(10, 3)));
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(at), count);
+        var path = Path.Combine(Temp("repak-budget"), "a.pak");
+        File.WriteAllBytes(path, b);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        Assert.Equal(message, Assert.Throws<InvalidDataException>(() => RePak.Open(path)).Message);
+        Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 1 << 20);
+    }
+
+    /// <summary>A remap table whose count runs past the end of the file, or a file cut inside it, is refused at open without
+    /// allocating for the count it claims.</summary>
+    [Theory]
+    [InlineData(0u)]   // one record more than the rest of the file holds
+    [InlineData(0x1000_0000u)]
+    [InlineData(uint.MaxValue)]
+    [InlineData((uint)Remaps)]   // as built, the file cut inside its last record
+    public void RefusesABadRemapTable(uint count)
+    {
+        var path = Path.Combine(Temp("repak-remap"), "a.pak");
+        var b = Pak(RePak.RemapTable | RePak.EncryptedTable, 64, new E(1, Bytes(10, 3)));
+        const int at = 16 + 48;
+        if (count == Remaps) b = b[..(at + 8 + 16 * Remaps - 1)];
+        else BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(at), count == 0 ? (uint)(b.Length - at - 8) / 16 + 1 : count);
+        File.WriteAllBytes(path, b);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        Assert.Contains("remap", Assert.Throws<InvalidDataException>(() => RePak.Open(path, [Modulus])).Message);
+        Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 1 << 20);
     }
 
     /// <summary>A fake install: base package with a master material ("SDF\0" + a table + two containers), a texture and a
@@ -177,7 +319,7 @@ public class RePakTests
         Directory.CreateDirectory(Path.GetDirectoryName(reader.ModulusFile(game))!);
         File.WriteAllText(reader.ModulusFile(game), "0x" + Convert.ToHexString(Modulus.ToByteArray(isUnsigned: true, isBigEndian: true)));
         var engine = reader.Detect(game)!;
-        Assert.Equal(new EngineInfo(ReEngineReader.Family, "PAK 4.2", null, "D3D12", false, null), engine);
+        Assert.Equal(new EngineInfo(ReEngineReader.Family, "PAK 4.2", "game", "D3D12", false, null), engine);
         Assert.Null(reader.Detect(game with { InstallDir = Path.GetTempPath(), ExePath = Path.Combine(Path.GetTempPath(), "x.exe") }));
 
         var index = reader.Index(game, engine, null, CancellationToken.None);
@@ -264,8 +406,9 @@ public class RePakTests
         Directory.Delete(dir, true);
     }
 
-    /// <summary>A chunked material whose length is in its packed size is indexed (not taken for an empty entry); a patch
-    /// that can't be read makes the game unsupported, naming it, instead of indexing the shaders it replaces; a chunk
+    /// <summary>A chunked material whose length is in its packed size is indexed (not taken for an empty entry); an empty
+    /// patch file is skipped, and a patch that can't be read makes the game unsupported, naming it, instead of indexing the
+    /// shaders it replaces; a chunk
     /// table claiming a block size no package uses is refused at open.</summary>
     [Fact]
     public void ChunkedEntriesSizedByPackedLengthAndUnreadablePatches()
@@ -279,6 +422,12 @@ public class RePakTests
         var engine = reader.Detect(game)!;
         Assert.Null(engine.Unsupported);
         Assert.Equal(new[] { vs, ps }.Select(c => Convert.ToHexStringLower(SHA1.HashData(c))).Order(), reader.Index(game, engine, null, CancellationToken.None).Shaders.Keys.Order());
+
+        File.WriteAllBytes(Path.Combine(dir, "re_chunk_000.pak.patch_001.pak"), []);   // empty
+        reader = new ReEngineReader(Path.Combine(dir, "data"), Offline);
+        engine = reader.Detect(game)!;
+        Assert.Null(engine.Unsupported);
+        Assert.Equal(2, reader.Index(game, engine, null, CancellationToken.None).Shaders.Count);
 
         File.WriteAllBytes(Path.Combine(dir, "re_chunk_000.pak.patch_001.pak"), Pak(0, 64, new E(0xABCD, Sdf(ps)))[..20]);   // truncated
         Assert.StartsWith("re_chunk_000.pak.patch_001.pak: ", new ReEngineReader(Path.Combine(dir, "data"), Offline).Detect(game)!.Unsupported);

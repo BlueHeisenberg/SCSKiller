@@ -55,7 +55,7 @@ public class ReEngineGameTests(ITestOutputHelper output)
         Assert.True(index.Shaders.Count > 0);
         if (key == "PRAGMATA") Assert.Equal(93400, index.Shaders.Count); // the downloaded modulus opens every package
         if (key.StartsWith("Resident Evil Village")) Assert.Equal("D3D12", engine.GraphicsApi); // DirectX 12 only: SM5 ships beside its SM6
-        Assert.Equal(check.Readiness == Readiness.Ready, index.Shaders.Values.Count(s => s.RootSignature != null) >= 0.9 * index.Shaders.Count);
+        Assert.Equal(check.Readiness == Readiness.Ready, index.Shaders.Values.Count(s => s.RootSignature != null) >= 0.9 * index.Shaders.Count || RootSig.Verified(engine));
 
         // ReadShaders serves the indexed bytes back (a sample)
         var want = index.Shaders.Keys.Where((_, i) => i % 97 == 0).ToHashSet();

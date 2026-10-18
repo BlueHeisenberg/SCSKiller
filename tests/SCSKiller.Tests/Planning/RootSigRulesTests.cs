@@ -33,7 +33,7 @@ public class RootSigRulesTests
     const uint Px = 5, Vx = 1, Gx = 4, Mx = 7, All = 0, Srv = 0, Uav = 1, Smp = 3;
     static readonly uint[] RootConstants = [1, 0, 0, 3, 4], Diagnostic = [4, 0, 0, 999, 2], Ags = [4, 0, 0, 0x7FFF0ADE, 2];
 
-    static void Check(Rule r, Dictionary<Stage, ShaderInfo> stages, bool meshTier, uint flags, params uint[][] rows)
+    static void Check(PlanRule r, Dictionary<Stage, ShaderInfo> stages, bool meshTier, uint flags, params uint[][] rows)
     {
         var d = Build(r, stages, meshTier);
         Assert.Equal(new Desc(flags, [.. rows]).Key, d.Key);
@@ -43,16 +43,17 @@ public class RootSigRulesTests
     }
 
     [Theory]
-    [InlineData("4.22", null, Rule.Ue422)] [InlineData("4.23", null, Rule.Ue422)] [InlineData("4.24", null, Rule.Ue422)]
-    [InlineData("4.25", null, Rule.Ue425)] [InlineData("4.26", null, Rule.Ue426)] [InlineData("4.27", null, Rule.Ue426)]
-    [InlineData("4.26", "GAME_FinalFantasy7Rebirth", Rule.Ff7)] [InlineData("4.26", "GAME_StellarBlade", Rule.Ue426)]
-    [InlineData("5.0", null, Rule.Ue50)] [InlineData("5.1", "GAME_Palworld", Rule.Ue51)] [InlineData("5.2", null, Rule.Ue51)]
-    [InlineData("5.3", null, Rule.Ue51)] [InlineData("5.4", null, Rule.Ue54)] [InlineData("5.5", null, Rule.Ue55)]
-    [InlineData("5.6", null, Rule.Ue55)] [InlineData("5.7", null, Rule.Ue55)] [InlineData("5.8", null, Rule.Ue58)] [InlineData("5.12", null, Rule.Ue58)] [InlineData("6.0", null, Rule.Ue58)]
-    [InlineData("4.20", null, Rule.Ue420)] [InlineData("4.21", null, Rule.Ue421)] [InlineData("4.19", null, null)] [InlineData("6.1", null, null)] [InlineData("GAME_Something", null, null)]
-    public void RuleForMapsVersions(string version, string? fork, Rule? expected)
+    [InlineData("4.22", null, "ue-4.22")] [InlineData("4.23", null, "ue-4.22")] [InlineData("4.24", null, "ue-4.22")]
+    [InlineData("4.25", null, "ue-4.25")] [InlineData("4.26", null, "ue-4.26")] [InlineData("4.27", null, "ue-4.26")]
+    [InlineData("4.26", "GAME_FinalFantasy7Rebirth", "ue-ff7")] [InlineData("4.26", "GAME_StellarBlade", "ue-4.26")]
+    [InlineData("4.26", "GAME_WutheringWaves", "ue-kuro")] [InlineData("4.27", "GAME_WutheringWaves", "ue-4.26")] [InlineData("4.26", "GAME_WutheringWave", "ue-4.26")]
+    [InlineData("5.0", null, "ue-5.0")] [InlineData("5.1", "GAME_Palworld", "ue-5.1")] [InlineData("5.2", null, "ue-5.1")]
+    [InlineData("5.3", null, "ue-5.1")] [InlineData("5.4", null, "ue-5.4")] [InlineData("5.5", null, "ue-5.5")]
+    [InlineData("5.6", null, "ue-5.5")] [InlineData("5.7", null, "ue-5.5")] [InlineData("5.8", null, "ue-5.8")] [InlineData("5.12", null, "ue-5.8")] [InlineData("6.0", null, "ue-5.8")]
+    [InlineData("4.20", null, "ue-4.20")] [InlineData("4.21", null, "ue-4.21")] [InlineData("4.19", null, null)] [InlineData("6.1", null, null)] [InlineData("GAME_Something", null, null)]
+    public void RuleForMapsVersions(string version, string? fork, string? expected)
     {
-        Assert.Equal(expected, RuleFor(new EngineInfo("Unreal", version, fork, "D3D12", false, null)));
+        Assert.Equal(expected, RuleFor(new EngineInfo("Unreal", version, fork, "D3D12", false, null))?.Id);
         Assert.Null(RuleFor(new EngineInfo("Carved", version, null, "D3D12", false, null)));
     }
 
@@ -62,17 +63,34 @@ public class RootSigRulesTests
     public void Ue4AndUe50TablesAreAlwaysFull()
     {
         uint[][] vsps(uint srv) => [T(Px, Srv, srv), T(Px, Smp, 16), T(Px, Uav, 16), T(Vx, Srv, srv), T(Vx, Smp, 16), Cbv(Px, 0), Cbv(Px, 1), Cbv(Vx, 0)];
-        Check(Rule.Ue422, P(Vs, Ps), false, 0x1D, vsps(48)); // IA | deny HS, DS, GS
-        Check(Rule.Ue425, P(Vs, Ps), false, 0x1D, vsps(64));
-        Check(Rule.Ue426, P(Vs, Ps), false, 0x1D, vsps(64));
-        Check(Rule.Ue50, P(Vs, Ps), true, 0x311, vsps(64));  // UE 5: no hull/domain; SM6 denies mesh/amplification
-        Check(Rule.Ue50, P(Vs, Ps), false, 0x11, vsps(64));
-        Check(Rule.Ue426, P(Vs, Gs, Ps), false, 0xD,
+        Check(Rules.Ue422, P(Vs, Ps), false, 0x1D, vsps(48)); // IA | deny HS, DS, GS
+        Check(Rules.Ue425, P(Vs, Ps), false, 0x1D, vsps(64));
+        Check(Rules.Ue426, P(Vs, Ps), false, 0x1D, vsps(64));
+        Check(Rules.Ue50, P(Vs, Ps), true, 0x311, vsps(64));  // UE 5: no hull/domain; SM6 denies mesh/amplification
+        Check(Rules.Ue50, P(Vs, Ps), false, 0x11, vsps(64));
+        Check(Rules.Ue426, P(Vs, Gs, Ps), false, 0xD,
             T(Px, Srv, 64), T(Px, Smp, 16), T(Px, Uav, 16), T(Vx, Srv, 64), T(Vx, Smp, 16), T(Gx, Srv, 64), T(Gx, Smp, 16),
             Cbv(Px, 0), Cbv(Px, 1), Cbv(Vx, 0), Cbv(Gx, 0), Cbv(Gx, 1), Cbv(Gx, 2));
-        Check(Rule.Ue426, P(Cs), false, 0x3E, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0)); // compute denies every graphics stage
-        Check(Rule.Ue422, P(Cs), false, 0x3E, T(All, Srv, 48), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0));
-        Check(Rule.Ue50, P(CsDiagnostic), false, 0x32, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0), Diagnostic);
+        Check(Rules.Ue426, P(Cs), false, 0x3E, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0)); // compute denies every graphics stage
+        Check(Rules.Ue422, P(Cs), false, 0x3E, T(All, Srv, 48), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0));
+        Check(Rules.Ue50, P(CsDiagnostic), false, 0x32, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0), Diagnostic);
+    }
+
+    /// <summary>Kuro's 4.26 fork: 4.26's rows, every root signature also denying the mesh and amplification stages whatever
+    /// the tier (a player's recording of Wuthering Waves: 113 of 113 distinct root signatures).</summary>
+    [Fact]
+    public void KuroIs426DenyingMeshAndAmplification()
+    {
+        uint[][] vsps = [T(Px, Srv, 64), T(Px, Smp, 16), T(Px, Uav, 16), T(Vx, Srv, 64), T(Vx, Smp, 16), Cbv(Px, 0), Cbv(Px, 1), Cbv(Vx, 0)];
+        Check(Rules.Kuro, P(Vs, Ps), false, 0x31D, vsps);
+        Check(Rules.Kuro, P(Vs, Ps), true, 0x31D, vsps);
+        Check(Rules.Kuro, P(Cs), false, 0x33E, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0));
+        foreach (var set in new[] { P(Vs, Ps), P(Vs, Gs, Ps), P(Cs), P(VsUav, Ps) })
+            foreach (var tier in new[] { false, true })
+            {
+                var stock = Build(Rules.Ue426, set, tier);
+                Assert.Equal((stock with { Flags = stock.Flags | 0x300 }).Key, Build(Rules.Kuro, set, tier).Key);
+            }
     }
 
     /// <summary>4.20/4.21 (Epic's 4.20.3/4.21.2 source): 4.22's layout (32 SRVs in 4.20, 48 in 4.21), but the input-layout flag
@@ -82,11 +100,11 @@ public class RootSigRulesTests
     {
         var vsReads = Vs with { Inputs = [new SigElement("ATTRIBUTE", 0, 0, 0xF, 0, 3)] };
         uint[][] vsps(uint srv) => [T(Px, Srv, srv), T(Px, Smp, 16), T(Px, Uav, 16), T(Vx, Srv, srv), T(Vx, Smp, 16), Cbv(Px, 0), Cbv(Px, 1), Cbv(Vx, 0)];
-        Check(Rule.Ue421, P(vsReads, Ps), false, 0x1D, vsps(48));   // IA | deny HS, DS, GS: 4.22's
-        Check(Rule.Ue421, P(Vs, Ps), false, 0x1C, vsps(48));        // no vertex input: no IA flag
-        Check(Rule.Ue422, P(Vs, Ps), false, 0x1D, vsps(48));        // 4.22: a declaration is always bound
-        Check(Rule.Ue420, P(vsReads, Ps), false, 0x1D, vsps(32));
-        Check(Rule.Ue421, P(Cs), false, 0x3E, T(All, Srv, 48), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0));
+        Check(Rules.Ue421, P(vsReads, Ps), false, 0x1D, vsps(48));   // IA | deny HS, DS, GS: 4.22's
+        Check(Rules.Ue421, P(Vs, Ps), false, 0x1C, vsps(48));        // no vertex input: no IA flag
+        Check(Rules.Ue422, P(Vs, Ps), false, 0x1D, vsps(48));        // 4.22: a declaration is always bound
+        Check(Rules.Ue420, P(vsReads, Ps), false, 0x1D, vsps(32));
+        Check(Rules.Ue421, P(Cs), false, 0x3E, T(All, Srv, 48), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0));
     }
 
     /// <summary>A project may raise MAX_SRVS; a shader binding past the rule's means it did: the next size UE ships.</summary>
@@ -94,12 +112,12 @@ public class RootSigRulesTests
     public void MaxSrvsFollowTheShadersWhenTheyNeedMore()
     {
         ShaderInfo[] upTo(int srv) => [Ps, S(Stage.Pixel, 1, srv, 0, 1)];
-        Assert.Equal(0u, MaxSrvsFor(Rule.Ue421, upTo(48)));
-        Assert.Equal(64u, MaxSrvsFor(Rule.Ue421, upTo(58)));    // Tiny Tina's Wonderlands: up to t57
-        Assert.Equal(48u, MaxSrvsFor(Rule.Ue420, upTo(40)));
-        Assert.Equal(0u, MaxSrvsFor(Rule.Ue426, upTo(80)));     // 64 already: nothing bigger to infer
-        Assert.Equal(0u, MaxSrvsFor(Rule.Ff7, upTo(80)));
-        var d = Build(Rule.Ue421, P(Vs, Ps), false, 64);
+        Assert.Equal(0u, MaxSrvsFor(Rules.Ue421, upTo(48)));
+        Assert.Equal(64u, MaxSrvsFor(Rules.Ue421, upTo(58)));    // Tiny Tina's Wonderlands: up to t57
+        Assert.Equal(48u, MaxSrvsFor(Rules.Ue420, upTo(40)));
+        Assert.Equal(0u, MaxSrvsFor(Rules.Ue426, upTo(80)));     // 64 already: nothing bigger to infer
+        Assert.Equal(0u, MaxSrvsFor(Rules.Ff7, upTo(80)));
+        var d = Build(Rules.Ue421, P(Vs, Ps), false, 64);
         Assert.Equal(64u, d.Rows[0][3]);
     }
 
@@ -108,19 +126,19 @@ public class RootSigRulesTests
     [Fact]
     public void Ue5TablesFollowTheCounts()
     {
-        Check(Rule.Ue51, P(Vs, Ps), false, 0x11, T(Px, Srv, 64), T(Px, Smp, 16), T(Px, Uav, 16), Cbv(Px, 0), Cbv(Px, 1), Cbv(Vx, 0));
-        Check(Rule.Ue54, P(Vs, Ps), true, 0x311, T(Px, Srv, 64), T(Px, Smp, 32), T(Px, Uav, 16), Cbv(Px, 0), Cbv(Px, 1), Cbv(Vx, 0));
-        Check(Rule.Ue51, P(Vs, Gs, Ps), false, 0x1, T(Px, Srv, 64), T(Px, Smp, 16), T(Px, Uav, 16), T(Gx, Srv, 64),
+        Check(Rules.Ue51, P(Vs, Ps), false, 0x11, T(Px, Srv, 64), T(Px, Smp, 16), T(Px, Uav, 16), Cbv(Px, 0), Cbv(Px, 1), Cbv(Vx, 0));
+        Check(Rules.Ue54, P(Vs, Ps), true, 0x311, T(Px, Srv, 64), T(Px, Smp, 32), T(Px, Uav, 16), Cbv(Px, 0), Cbv(Px, 1), Cbv(Vx, 0));
+        Check(Rules.Ue51, P(Vs, Gs, Ps), false, 0x1, T(Px, Srv, 64), T(Px, Smp, 16), T(Px, Uav, 16), T(Gx, Srv, 64),
             Cbv(Px, 0), Cbv(Px, 1), Cbv(Vx, 0), Cbv(Gx, 0), Cbv(Gx, 1), Cbv(Gx, 2));
-        Check(Rule.Ue54, P(VsUav, Ps), false, 0x11, T(Px, Srv, 64), T(Px, Smp, 32), T(Px, Uav, 16), T(Vx, Srv, 64),
+        Check(Rules.Ue54, P(VsUav, Ps), false, 0x11, T(Px, Srv, 64), T(Px, Smp, 32), T(Px, Uav, 16), T(Vx, Srv, 64),
             Cbv(Px, 0), Cbv(Px, 1), Cbv(Vx, 0), Cbv(Vx, 1));
-        Check(Rule.Ue55, P(VsUav, Ps), false, 0x11, T(Px, Srv, 64), T(Px, Smp, 32), T(Px, Uav, 16), T(Vx, Srv, 64), T(Vx, Uav, 16),
+        Check(Rules.Ue55, P(VsUav, Ps), false, 0x11, T(Px, Srv, 64), T(Px, Smp, 32), T(Px, Uav, 16), T(Vx, Srv, 64), T(Vx, Uav, 16),
             Cbv(Px, 0), Cbv(Px, 1), Cbv(Vx, 0), Cbv(Vx, 1));
         var rc = new[] { T(All, Srv, 64), T(All, Smp, 32), T(All, Uav, 16), Cbv(All, 0), Cbv(All, 1), Cbv(All, 2), Cbv(All, 3) };
-        Check(Rule.Ue54, P(CsRootConstants), true, 0x332, [.. rc, RootConstants]);
-        Check(Rule.Ue51, P(CsRootConstants), true, 0x332, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0), Cbv(All, 1), Cbv(All, 2), Cbv(All, 3));
-        Check(Rule.Ue55, P(CsDiagnostic), false, 0x32, T(All, Uav, 16), Cbv(All, 0), Diagnostic);
-        Check(Rule.Ue55, P(Ms, Ps), true, 0x112, // no input layout without a vertex shader; deny VS, GS, amplification
+        Check(Rules.Ue54, P(CsRootConstants), true, 0x332, [.. rc, RootConstants]);
+        Check(Rules.Ue51, P(CsRootConstants), true, 0x332, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16), Cbv(All, 0), Cbv(All, 1), Cbv(All, 2), Cbv(All, 3));
+        Check(Rules.Ue55, P(CsDiagnostic), false, 0x32, T(All, Uav, 16), Cbv(All, 0), Diagnostic);
+        Check(Rules.Ue55, P(Ms, Ps), true, 0x112, // no input layout without a vertex shader; deny VS, GS, amplification
             T(Px, Srv, 64), T(Px, Smp, 32), T(Px, Uav, 16), T(Mx, Srv, 64), T(Mx, Smp, 32),
             Cbv(Px, 0), Cbv(Px, 1), Cbv(Mx, 0), Cbv(Mx, 1), Cbv(Mx, 2), Cbv(Mx, 3), RootConstants);
     }
@@ -134,18 +152,18 @@ public class RootSigRulesTests
         var msUav = S(Stage.Mesh, 1, 2, 3, 1);
         var asUav = S(Stage.Amplification, 1, 0, 2, 0);
         const uint Ax = 6;
-        Check(Rule.Ue58, P(asUav, msUav, Ps), true, 0x12, // deny VS, GS
+        Check(Rules.Ue58, P(asUav, msUav, Ps), true, 0x12, // deny VS, GS
             T(Px, Srv, 64), T(Px, Smp, 32), T(Px, Uav, 16), T(Mx, Srv, 64), T(Mx, Smp, 32), T(Mx, Uav, 16), T(Ax, Uav, 16),
             Cbv(Px, 0), Cbv(Px, 1), Cbv(Mx, 0), Cbv(Ax, 0));
-        Check(Rule.Ue55, P(msUav, Ps), true, 0x112,
+        Check(Rules.Ue55, P(msUav, Ps), true, 0x112,
             T(Px, Srv, 64), T(Px, Smp, 32), T(Px, Uav, 16), T(Mx, Srv, 64), T(Mx, Smp, 32), Cbv(Px, 0), Cbv(Px, 1), Cbv(Mx, 0));
         uint[] nv = [0, All, Uav, 1, 0, 1001, 0, 0];
         var all = UeFlags.AmdIntrinsics | UeFlags.RootConstants | UeFlags.NvIntrinsics | UeFlags.DiagnosticBuffer;
-        Check(Rule.Ue58, P(S(Stage.Compute, 0, 0, 1, 0, all)), false, 0x32, T(All, Uav, 16), Ags, RootConstants, nv, Diagnostic);
-        Check(Rule.Ue55, P(S(Stage.Compute, 0, 0, 1, 0, all)), false, 0x32, T(All, Uav, 16), Ags, RootConstants, Diagnostic);
-        Check(Rule.Ue58, P(Vs, S(Stage.Pixel, 2, 4, 4, 1, UeFlags.NvIntrinsics)), false, 0x11,
+        Check(Rules.Ue58, P(S(Stage.Compute, 0, 0, 1, 0, all)), false, 0x32, T(All, Uav, 16), Ags, RootConstants, nv, Diagnostic);
+        Check(Rules.Ue55, P(S(Stage.Compute, 0, 0, 1, 0, all)), false, 0x32, T(All, Uav, 16), Ags, RootConstants, Diagnostic);
+        Check(Rules.Ue58, P(Vs, S(Stage.Pixel, 2, 4, 4, 1, UeFlags.NvIntrinsics)), false, 0x11,
             T(Px, Srv, 64), T(Px, Smp, 32), T(Px, Uav, 16), Cbv(Px, 0), Cbv(Px, 1), Cbv(Vx, 0), nv);
-        var blob = Serialize(Build(Rule.Ue58, P(S(Stage.Compute, 0, 0, 0, 0, UeFlags.NvIntrinsics)), false), StaticSamplers(Rule.Ue58));
+        var blob = Serialize(Build(Rules.Ue58, P(S(Stage.Compute, 0, 0, 0, 0, UeFlags.NvIntrinsics)), false), StaticSamplers(Rules.Ue58));
         Assert.Contains((0u, 1u, 0u, 1u, 1001u, true), Parse(blob).Slots);
     }
 
@@ -155,10 +173,10 @@ public class RootSigRulesTests
     public void Ue5ExtrasAndBindlessFlags()
     {
         var all = UeFlags.AmdIntrinsics | UeFlags.RootConstants | UeFlags.DiagnosticBuffer | UeFlags.BindlessResources | UeFlags.BindlessSamplers;
-        Check(Rule.Ue55, P(S(Stage.Compute, 0, 0, 0, 0, all)), false, 0xC32, Ags, RootConstants, Diagnostic);
-        Check(Rule.Ue51, P(S(Stage.Compute, 0, 0, 0, 0, all)), false, 0xC32, Ags, Diagnostic);
-        Check(Rule.Ue426, P(S(Stage.Compute, 0, 0, 0, 0, all)), false, 0x3E, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16));
-        Check(Rule.Ue51, P(Vs, S(Stage.Pixel, 1, 0, 0, 0, UeFlags.BindlessResources)), false, 0x411, Cbv(Px, 0), Cbv(Vx, 0));
+        Check(Rules.Ue55, P(S(Stage.Compute, 0, 0, 0, 0, all)), false, 0xC32, Ags, RootConstants, Diagnostic);
+        Check(Rules.Ue51, P(S(Stage.Compute, 0, 0, 0, 0, all)), false, 0xC32, Ags, Diagnostic);
+        Check(Rules.Ue426, P(S(Stage.Compute, 0, 0, 0, 0, all)), false, 0x3E, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16));
+        Check(Rules.Ue51, P(Vs, S(Stage.Pixel, 1, 0, 0, 0, UeFlags.BindlessResources)), false, 0x411, Cbv(Px, 0), Cbv(Vx, 0));
     }
 
     /// <summary>A UE 4 fork's bindless SRVs (Respawn's, Jedi: Survivor): per bindless group of spaces 10g..10g+4 the shader
@@ -170,9 +188,9 @@ public class RootSigRulesTests
         static uint[] Group(uint vis, uint g) => [0, vis, .. Enumerable.Range(0, 5).SelectMany(k => new uint[] { 0, uint.MaxValue, 0, 10 * g + (uint)k, 5 })];
         var ps = S(Stage.Pixel, 1, 1, 0, 1) with { Bindings = [new("cbv", 0, 0, 1), new("srv", 0, 0, 1), new("srv", 11, 0, -1)] };
         var cs = S(Stage.Compute, 1, 1, 1, 0) with { Bindings = [new("srv", 42, 0, -1), new("srv", 11, 0, -1), new("srv", 13, 0, -1), new("srv", 31, 0, -1)] };
-        Check(Rule.Ue426, P(Vs, ps), false, 0x1D, T(Px, Srv, 64), T(Px, Smp, 16), T(Px, Uav, 16), Group(Px, 1), T(Vx, Srv, 64), T(Vx, Smp, 16), Cbv(Px, 0), Cbv(Vx, 0));
-        Check(Rule.Ue426, P(cs), false, 0x3E, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16), Group(All, 1), Group(All, 3), Group(All, 4), Cbv(All, 0));
-        var rts0 = Serialize(Build(Rule.Ue426, P(Vs, ps), false), Ue426Samplers);
+        Check(Rules.Ue426, P(Vs, ps), false, 0x1D, T(Px, Srv, 64), T(Px, Smp, 16), T(Px, Uav, 16), Group(Px, 1), T(Vx, Srv, 64), T(Vx, Smp, 16), Cbv(Px, 0), Cbv(Vx, 0));
+        Check(Rules.Ue426, P(cs), false, 0x3E, T(All, Srv, 64), T(All, Smp, 16), T(All, Uav, 16), Group(All, 1), Group(All, 3), Group(All, 4), Cbv(All, 0));
+        var rts0 = Serialize(Build(Rules.Ue426, P(Vs, ps), false), Ue426Samplers);
         var off = BitConverter.ToInt32(rts0, 32) + 8;                        // RTS0 part: param 3 is the group table
         var table = BitConverter.ToInt32(rts0, off + BitConverter.ToInt32(rts0, off + 8) + 12 * 3 + 8);
         Assert.Equal(5, BitConverter.ToInt32(rts0, off + table));
@@ -191,12 +209,12 @@ public class RootSigRulesTests
         var vs = S(Stage.Vertex, 1, 2, 0, 1) with { Bindings = [new("srv", 4, 0, -1)] };
         var ps = S(Stage.Pixel, 1, 1, 0, 1) with { Bindings = [new("srv", 7, 0, -1)] }; // only space 7: still 4, 5, 6, 7
         var cs = S(Stage.Compute, 0, 1, 1, 0) with { Bindings = [new("srv", 5, 0, -1), new("srv", 4, 0, -1)] };
-        Assert.Equal(128u, MaxSrvsFor(Rule.Ue426, [Vs, ps]));
-        Assert.Equal(0u, MaxSrvsFor(Rule.Ue426, [Vs, Ps]));
-        Assert.Equal(0u, MaxSrvsFor(Rule.Ue55, [ps])); // UE 5 has its own bindless
+        Assert.Equal(128u, MaxSrvsFor(Rules.Ue426, [Vs, ps]));
+        Assert.Equal(0u, MaxSrvsFor(Rules.Ue426, [Vs, Ps]));
+        Assert.Equal(0u, MaxSrvsFor(Rules.Ue55, [ps])); // UE 5 has its own bindless
         void Fork(Dictionary<Stage, ShaderInfo> st, uint flags, params uint[][] rows)
         {
-            var d = Build(Rule.Ue426, st, false, 128);
+            var d = Build(Rules.Ue426, st, false, 128);
             Assert.Equal(new Desc(flags, [.. rows]).Key, d.Key);
             if (D3D12Runtime.Available) Assert.Equal(0, D3D12Runtime.CreateRootSignature(Serialize(d, Ue426Samplers)));
         }
@@ -269,7 +287,7 @@ public class JediSurvivorRootSigTests(Xunit.Abstractions.ITestOutputHelper outpu
         var game = new Game("ea:198300", "STAR WARS Jedi: Survivor", Store.EA, Install, Exe);
         var reader = new UnrealReader(Ff7.TempDir("jedi-data"));
         var engine = reader.Detect(game)!;
-        Assert.Equal(Rule.Ue426, RuleFor(engine));
+        Assert.Equal(Rules.Ue426, RuleFor(engine));
         if (Ff7.Recording(game, engine, reader, "jedi-rec") is not { } db) return;
         var bc = reader.Index(game, engine, null, CancellationToken.None).Shaders;
         var recs = PsoDb.Read(db).ToList();
@@ -280,7 +298,7 @@ public class JediSurvivorRootSigTests(Xunit.Abstractions.ITestOutputHelper outpu
             if (!pso.Stages.Values.All(bc.ContainsKey) || !blobs.TryGetValue(pso.Rs, out var blob)) continue;
             n++;
             Assert.Equal(Ue426Samplers, Samplers(blob));
-            if (Serialize(Build(Rule.Ue426, pso.Stages.ToDictionary(s => (Stage)s.Key, s => bc[s.Value]), false), Ue426Samplers).AsSpan().SequenceEqual(blob)) ok++;
+            if (Serialize(Build(Rules.Ue426, pso.Stages.ToDictionary(s => (Stage)s.Key, s => bc[s.Value]), false), Ue426Samplers).AsSpan().SequenceEqual(blob)) ok++;
         }
         output.WriteLine($"root signatures rebuilt byte-exact: {ok}/{n} recorded PSOs");
         Assert.True(n > 1000, $"only {n} recorded PSOs of index shaders");

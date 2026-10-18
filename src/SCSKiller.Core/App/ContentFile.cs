@@ -16,10 +16,10 @@ public static class ContentFile
         RespectNullableAnnotations = true, RespectRequiredConstructorParameters = true,
     };
 
-    /// <summary>The document when it is within <see cref="MaxBytes"/> and valid JSON of <typeparamref name="T"/>'s shape; else null.</summary>
-    public static T? Read<T>(string json) where T : class
+    /// <summary>The document when it is within <paramref name="maxBytes"/> (<see cref="MaxBytes"/>) and valid JSON of <typeparamref name="T"/>'s shape; else null.</summary>
+    public static T? Read<T>(string json, int maxBytes = MaxBytes) where T : class
     {
-        if (System.Text.Encoding.UTF8.GetByteCount(json) > MaxBytes) return null;
+        if (System.Text.Encoding.UTF8.GetByteCount(json) > maxBytes) return null;
         try { return JsonSerializer.Deserialize<T>(json, Strict); }
         catch (JsonException) { return null; }
     }

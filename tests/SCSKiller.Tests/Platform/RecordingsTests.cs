@@ -255,6 +255,23 @@ public class RecordingsTests(ITestOutputHelper output) : IDisposable
         Assert.Equal(new[] { Sha(a), Sha(rs), Sha(runtime), Cs(rs, a).Key, nv.Key, Cs(rs, runtime).Key }.Order(), named.Order());
     }
 
+    /// <summary>A D3D11 recorder's draws ('D') go into the store with the shaders they name, and the keys file names them,
+    /// so the next session doesn't record them again; one whose shader is shipped goes in by hash.</summary>
+    [Fact]
+    public void D3D11_draws_are_imported_and_named_in_the_keys_file()
+    {
+        byte[] vs = Shader("vs"), shipped = Shader("shipped vs");
+        PsoDb.Rec Draw(byte[] v) => new('D', PsoDb.Draw11Bytes(new(Sha(v), PsoDb.Zero, PsoDb.Zero, PsoDb.Zero, 4, true, [new("POSITION", 0, 6, 0)])));
+        var store = Path.Combine(_dir, "recording.db");
+        var added = Recordings.Merge(store, Raw("d.db", Blob(vs), Draw(vs), Blob(shipped), Draw(shipped)), new HashSet<string> { Sha(shipped) }.Contains);
+        Assert.Equal(new[] { Draw(vs).Key, Draw(shipped).Key }.Order(), added.Order());
+        Assert.Equal(Keys([Blob(vs), Draw(vs), Draw(shipped)]), Keys(PsoDb.Read(store)));   // the shipped shader's bytes come from the install
+        var keys = Path.Combine(_dir, Recordings.KeysFile);
+        Assert.Equal(0, Recordings.WriteKeys(store, new HashSet<string> { Sha(shipped) }, keys));
+        var named = File.ReadAllBytes(keys)[8..].Chunk(20).Select(Convert.ToHexStringLower).ToHashSet();
+        Assert.Equal(new[] { Sha(vs), Sha(shipped), Draw(vs).Key, Draw(shipped).Key }.Order(), named.Order());
+    }
+
     /// <summary>A keys write with nothing to name deletes the file only if the publish check still holds once the recording
     /// was read: the game started meanwhile leaves it as it is.</summary>
     [Fact]
@@ -710,8 +727,49 @@ public class RecordingsTests(ITestOutputHelper output) : IDisposable
         Assert.Empty(Pending(amd, Inputs(store, false)));
     }
 
+    /// <summary>NVAPI's pipeline creation options are global (nvapi.h). The Witcher 3 sets 0x11 once, and a recorder that kept
+    /// them per thread recorded them only on the pipelines of that thread: once the recording has one, its state objects
+    /// recorded with 0 take them (RtCollections.OptionFixes), on NVIDIA another compile than the warm took.</summary>
+    [Fact]
+    public void State_objects_recorded_without_the_recordings_creation_options_take_them_on_NVIDIA()
+    {
+        static PsoDb.Rec Nv(PsoDb.Rec r, uint options = 0) => new PsoDb.NvState(r.Key, 12, 1, 1, options).ToRec();
+        var basePipeline = Pipeline("25B6436BA6B34F27");
+        var material = Material(basePipeline.Key, new('c', 40), new('a', 40), "0x1");
+        var store = Path.Combine(_dir, "recording.db");
+        Recordings.Merge(store, Raw("s1.db", basePipeline, Nv(basePipeline), material, Nv(material)), null);
+        var (nv, amd) = (Baseline(Inputs(store, true)), Baseline(Inputs(store, false)));
+        var occlusion = HitSo("6B09914CA188FA81");
+        Recordings.Merge(store, Raw("s2.db", occlusion, Nv(occlusion, 0x11)), null);
+
+        Assert.Equal(Keys([basePipeline, material, occlusion]).ToHashSet(), Pending(nv, Inputs(store, true)).ToHashSet());
+        Assert.Empty(Pending(amd, Inputs(store, false)));
+        var fixes = RtCollections.OptionFixes(PsoDb.Read(store)).Select(PsoDb.NvState.Parse).ToList();
+        Assert.Equal([new(basePipeline.Key, 12, 1, 1, 0x11), new(material.Key, 12, 1, 1, 0x11)], fixes);
+    }
+
+    /// <summary>A recompile leaves out what an earlier warm compiled by the item's last 'N' (CompiledItems): state objects an
+    /// old recording gave options 0, warmed so, take the recording's options from the gen db's fixes
+    /// (RtCollections.OptionFixes, Planner.Materialize), so they are another item and replayed under those options.</summary>
+    [Fact]
+    public void State_objects_given_the_recordings_options_are_replayed_not_left_out_as_compiled()
+    {
+        static PsoDb.Rec Nv(PsoDb.Rec r, uint options) => new PsoDb.NvState(r.Key, 12, 1, 1, options).ToRec();
+        var occlusion = HitSo("6B09914CA188FA81");
+        var basePipeline = Pipeline("25B6436BA6B34F27");
+        var material = Material(basePipeline.Key, new('c', 40), new('a', 40), "0x1");
+        PsoDb.Rec[] recs = [occlusion, Nv(occlusion, 0x11), basePipeline, Nv(basePipeline, 0), material, Nv(material, 0)];
+        var main = Raw("scskiller.db", recs);
+        var compiled = CompiledItems.Created([main, Raw("before.db")], []);   // warmed before the fixes, under options 0
+        var gen = Raw("scskiller_gen.db", RtCollections.OptionFixes(recs));
+
+        Assert.Equal(1, CompiledItems.LeaveOut([main, gen], compiled));
+        Assert.Equal(Keys([basePipeline, material]), Keys(PsoDb.Read(main).Where(r => PsoDb.IsStateObject(r.Tag))));
+        Assert.Equal(2, CompiledItems.Created([main, gen], []).Except(compiled).Count());   // recorded as compiled under 0x11 once warmed
+    }
+
     // a 'G' payload as the recorder writes it: root signature, VS, PS, ..., the rasterizer's cull mode at 456
-    static PsoDb.Rec Gfx(string rs, string vs, string ps, uint cull = 3, byte[]? streamOutput = null)
+    internal static PsoDb.Rec Gfx(string rs, string vs, string ps, uint cull = 3, byte[]? streamOutput = null)
     {
         var g = new byte[616];
         Convert.FromHexString(rs).CopyTo(g, 0);
@@ -747,9 +805,45 @@ public class RecordingsTests(ITestOutputHelper output) : IDisposable
         Assert.Empty(Pending([ab.Key, a2c.Key], Inputs(Raw("old.db", ab, Nv(ab), culled, Nv(culled)), true)));   // a key file from before: its records' keys
     }
 
-    // as ScsKiller.PendingOf counts them: each new pipeline once, by its first record
-    static List<string> Buildable(HashSet<string> warmed, HashSet<string> inputs) =>
-        [.. inputs.Where(i => !WarmInputs.Lacks(i) && !WarmInputs.Taken(warmed, i)).Select(i => WarmInputs.Records(i).First()).Distinct()];
+    /// <summary>The same holds for a stage the plan compiled: a game planned without a recording records its pipelines at
+    /// other fixed-function state than the plan's templates, and those aren't new on NVIDIA. Another NVAPI state is.</summary>
+    [Fact]
+    public void On_NVIDIA_a_recorded_pipeline_of_stages_the_plan_compiled_is_nothing_new()
+    {
+        string H(char c) => new(c, 40);
+        var (rs, a, b, c, d) = (H('9'), H('a'), H('b'), H('c'), H('d'));
+        var (planned, nvPlanned) = (Gfx(rs, a, b), Gfx(rs, b, c));
+        var plan = Path.Combine(_dir, "plan.bin");
+        PlanFile.Write(new Plan("t", "c", "PCD3D_SM6", "nvidia-1", new PlanStats(0, 2, 2, 0, false), plan), [planned, nvPlanned, new PsoDb.NvState(nvPlanned.Key, 12, 1, 1, 0).ToRec()]);
+        var store = Path.Combine(_dir, "recording.db");
+        var warmed = Baseline(Inputs(Raw("none.db"), _ => true, plan));
+        var (culled, otherNv, unseen) = (Gfx(rs, a, b, cull: 1), Gfx(rs, b, c, cull: 1), Gfx(rs, a, d));
+        Recordings.Merge(store, Raw("s1.db", culled, otherNv, unseen), null);
+
+        Assert.Equal([otherNv.Key, unseen.Key], Buildable(warmed, Inputs(store, _ => true, plan)));
+        Assert.Equal([culled.Key, otherNv.Key, unseen.Key], Buildable(warmed, Inputs(store, _ => true)));   // without the plan
+        var stageB = Assert.Single(Inputs(store, _ => true, plan), i => WarmInputs.Records(i).SequenceEqual([culled.Key]));
+        Assert.False(WarmInputs.Taken(warmed, stageB, k => k == planned.Key));   // the plan's pipeline crashed: it compiled nothing
+    }
+
+    /// <summary>The warm skips a pipeline that crashed the driver by its key. On NVIDIA a stage it shares with another
+    /// record is left out too: the count can't tell whether that record has every blob or builds on what crashed.</summary>
+    [Fact]
+    public void On_NVIDIA_a_stage_of_a_crashed_pipeline_is_nothing_new()
+    {
+        string H(char c) => new(c, 40);
+        var (rs, a, b, c) = (H('9'), H('a'), H('b'), H('c'));
+        var (crashed, culled, other) = (Gfx(rs, a, b), Gfx(rs, a, b, cull: 1), Gfx(rs, a, c));
+        var store = Path.Combine(_dir, "recording.db");
+        Recordings.Merge(store, Raw("s1.db", crashed, culled, other), null);
+        var warmed = Baseline(Inputs(Raw("none.db"), _ => true));
+
+        Assert.Equal([crashed.Key, other.Key], Buildable(warmed, Inputs(store, _ => true)));
+        Assert.Equal([other.Key], Buildable(warmed, Inputs(store, _ => true), crashed.Key));   // by its own stage
+        Assert.Empty(Buildable(warmed, Inputs(store, _ => true), crashed.Key, other.Key));
+    }
+
+    static List<string> Buildable(HashSet<string> warmed, HashSet<string> inputs, params string[] crashed) => WarmInputs.Fresh(inputs, warmed, crashed.Contains);
 
     static HashSet<string> Inputs(string store, Func<string, bool> has, string? plan = null) => WarmInputs.Of(WarmInputs.Recorded.Read([store], has, true), plan, [], has);
 
@@ -814,12 +908,61 @@ public class RecordingsTests(ITestOutputHelper output) : IDisposable
         var local = Raw("local.db", a, NvSpace(a, 1001), NvSpace(a, 404));
         var community = Raw("community.db", a, NvSpace(a, 1001));
         var merged = Path.Combine(_dir, "merged.db");
-        Community.Union(local, community, merged);
+        Community.Union(local, [community], merged);
 
         Assert.Equal(NvSpace(a, 404).Key, PsoDb.Read(merged).Last(r => r.Tag == 'N').Key);
         HashSet<string> Of(params string[] recordings) => WarmInputs.Of(WarmInputs.Recorded.Read(recordings, _ => true, true), null, [], _ => true);
         Assert.Equal(Of(Raw("as-404.db", a, NvSpace(a, 404))), Of(local, community));
         Assert.NotEqual(Of(Raw("as-1001.db", a, NvSpace(a, 1001))), Of(local, community));
+    }
+
+    /// <summary>A warm that leaves out what earlier warms compiled (CompiledItems) keeps what a kept item is created on: the
+    /// base of an addition and a plan item's template. An item whose NVAPI state changed since goes in again, and D3D11
+    /// items, blobs and 'N' records always stay. Created keys an item by its last 'N' and drops the failed.</summary>
+    [Fact]
+    public void A_warm_leaves_out_what_was_compiled_but_keeps_what_the_rest_is_created_on()
+    {
+        var rs = CommunityTests.RootSignature();
+        var basePipeline = Pipeline("25B6436BA6B34F27");
+        var addition = Material(basePipeline.Key, new('c', 40), new('a', 40), "0x1");
+        var (done, again) = (Cs(rs, Shader("a")), Cs(rs, Shader("b")));
+        var (template, usedTemplate) = (Cs(rs, Shader("t")), Cs(rs, Shader("u")));
+        PsoDb.Rec Item(PsoDb.Rec t, string s) => new('P', PsoDb.Item(t.Key, PsoDb.Zero, new Dictionary<int, string> { [(int)Stage.Compute] = Sha(Shader(s)) }, null));
+        var (doneItem, newItem) = (Item(template, "x"), Item(usedTemplate, "y"));
+        var d3d11 = new PsoDb.Rec('1', [6, 0, 0, 0, .. Convert.FromHexString(Sha(Shader("d")))]);
+        PsoDb.Rec Nv(PsoDb.Rec r, uint space) => new PsoDb.NvState(r.Key, 12, space, 1, 0).ToRec();
+        var main = Raw("scskiller.db", Blob(rs), basePipeline, addition, done, again, Nv(again, 1));
+        var gen = Raw("scskiller_gen.db", template, usedTemplate, doneItem, newItem, d3d11);
+        var compiled = CompiledItems.Created([main, gen], [Path.Combine(_dir, "none.keys")]);
+        Assert.Equal(8, compiled.Count);
+        Assert.Contains(Nv(again, 1).Key, compiled);   // keyed by its NVAPI state
+        Assert.DoesNotContain(again.Key, compiled);
+
+        compiled.Remove(addition.Key);
+        compiled.Remove(newItem.Key);
+        main = Raw("scskiller.db", Blob(rs), basePipeline, addition, done, again, Nv(again, 1), Nv(again, 404));   // another state since
+        Assert.Equal(3, CompiledItems.LeaveOut([main, gen], compiled));
+        Assert.Equal(Keys([Blob(rs), basePipeline, addition, again, Nv(again, 1), Nv(again, 404)]), Keys(PsoDb.Read(main)));
+        Assert.Equal(Keys([usedTemplate, newItem, d3d11]), Keys(PsoDb.Read(gen)));
+
+        var failed = Path.Combine(_dir, Recordings.FailedFile);
+        File.WriteAllBytes(failed, Convert.FromHexString(addition.Key));
+        Assert.DoesNotContain(addition.Key, CompiledItems.Created([main, gen], [failed]));
+        File.WriteAllBytes(Path.Combine(_dir, "c.keys"), CompiledItems.Bytes(compiled));
+        Assert.Equal(compiled, CompiledItems.Load(Path.Combine(_dir, "c.keys")));
+        Assert.Null(CompiledItems.Load(Path.Combine(_dir, "missing.keys")));
+    }
+
+    /// <summary>A warm that left out what was compiled before keeps the earlier warm's keys and tuples in scskiller.warmed.</summary>
+    [Fact]
+    public void The_warmed_file_keeps_an_earlier_warms_keys_when_asked()
+    {
+        var rs = CommunityTests.RootSignature();
+        var (a, b) = (Cs(rs, Shader("a")), Cs(rs, Shader("b")));
+        var first = Recordings.Warmed([Raw("first.db", Blob(rs), a)], []);
+        var both = Recordings.Warmed([Raw("second.db", Blob(rs), b)], [], first);
+        Assert.Equal(Recordings.Warmed([Raw("all.db", Blob(rs), a, b)], []), both);
+        Assert.NotEqual(both, Recordings.Warmed([Raw("second.db", Blob(rs), b)], []));
     }
 
     [Fact]

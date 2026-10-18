@@ -38,25 +38,30 @@ public static class SamplerVariants
     public static HashSet<string> OtherSettings(IReadOnlySet<string> mine, IEnumerable<HashSet<string>> settings) =>
         [.. settings.Where(s => s.Overlaps(mine)).SelectMany(s => s).Where(s => !mine.Contains(s))];
 
-    /// <summary>The keys of <paramref name="others"/>' records made at another texture filtering setting than this PC's
-    /// recording (<paramref name="own"/>): naming a root signature whose samplers are another setting, or building on such
-    /// a state object. Another setting is a sampler set the others have on a root signature the own recording has with
-    /// one of its own sets; a set only ever on root signatures this PC didn't record is kept. None without an own recording
-    /// with samplers: then this PC's setting isn't known and every setting is kept.</summary>
-    public static HashSet<string> Foreign(string own, IEnumerable<string> others)
+    /// <summary>The keys of <paramref name="others"/>' records made at another texture filtering setting than the one the
+    /// compile takes: naming a root signature whose samplers are another setting, or building on such a state object. The
+    /// setting taken is this PC's recording's (<paramref name="own"/>, every one it has); without an own recording with
+    /// samplers, the others' most common at the player's <paramref name="anisotropy"/> (<see cref="Anisotropy"/>), else their
+    /// most common (by records; a tie goes to the lowest sampler bytes, the same on every PC), or with <paramref name="every"/>
+    /// (Maximum mode) all of them. Another setting is a sampler set the others have on a root signature also seen at a taken
+    /// set; a set only ever on other root signatures is kept.</summary>
+    public static HashSet<string> Foreign(string own, IEnumerable<string> others, bool every = false, int? anisotropy = null)
     {
-        if (!File.Exists(own)) return [];
-        var dbs = new[] { own }.Concat(others.Where(File.Exists)).Select(Read).ToList();
-        IEnumerable<(string RootSignature, string Samplers)> Settings((List<Rec> Records, Dictionary<string, byte[]> Blobs) db) =>
-            db.Records.SelectMany(RootSignatures).Distinct().Select(h => db.Blobs.GetValueOrDefault(h) is { } b ? Setting(b) : null).OfType<(string, string)>();
-        var mine = Settings(dbs[0]).ToList();
+        (List<Rec> Records, Dictionary<string, byte[]> Blobs) ownDb = File.Exists(own) ? Read(own) : ([], []);
+        var dbs = others.Where(File.Exists).Select(Read).ToList();
+        var mine = Settings(ownDb).ToList();
+        if (mine.Count == 0)
+        {
+            if (every || ((anisotropy is { } a ? MostCommon(dbs, s => Anisotropy(s) == Math.Clamp(a, 1, 16)) : null) ?? MostCommon(dbs)) is not { } top) return [];
+            mine = [.. dbs.SelectMany(Settings).Where(x => x.Samplers == top)];
+        }
         var sets = mine.Select(x => x.Samplers).ToHashSet();
         var recorded = mine.Select(x => x.RootSignature).ToHashSet();
-        var other = dbs.Skip(1).SelectMany(Settings).Where(x => recorded.Contains(x.RootSignature) && !sets.Contains(x.Samplers)).Select(x => x.Samplers).ToHashSet();
+        var other = dbs.SelectMany(Settings).Where(x => recorded.Contains(x.RootSignature) && !sets.Contains(x.Samplers)).Select(x => x.Samplers).ToHashSet();
         if (other.Count == 0) return [];
-        var keys = dbs[0].Records.Select(r => r.Key).ToHashSet();
+        var keys = ownDb.Records.Select(r => r.Key).ToHashSet();
         var foreign = new HashSet<string>();
-        foreach (var (records, blobs) in dbs.Skip(1))
+        foreach (var (records, blobs) in dbs)
         {
             var at = new Dictionary<string, bool>();   // root signature -> another setting's
             bool Other(string h) => at.TryGetValue(h, out var o) ? o : at[h] = blobs.GetValueOrDefault(h) is { } b && Setting(b) is { } x && other.Contains(x.Samplers);
@@ -65,6 +70,36 @@ public static class SamplerVariants
                     foreign.Add(r.Key);
         }
         return foreign;
+    }
+
+    static IEnumerable<(string RootSignature, string Samplers)> Settings((List<Rec> Records, Dictionary<string, byte[]> Blobs) db) =>
+        db.Records.SelectMany(RootSignatures).Distinct().Select(h => db.Blobs.GetValueOrDefault(h) is { } b ? Setting(b) : null).OfType<(string, string)>();
+
+    /// <summary>A sampler set's (hex) anisotropy: its samplers' highest MaxAnisotropy, which D3D12 clamps to 1-16 as the engine does r.MaxAnisotropy.</summary>
+    public static int Anisotropy(string samplers)
+    {
+        var b = Convert.FromHexString(samplers);
+        var max = 0;
+        for (var o = 20; o + 4 <= b.Length; o += 52) max = Math.Max(max, (int)Math.Min(BitConverter.ToUInt32(b, o), 16u));   // D3D12_STATIC_SAMPLER_DESC.MaxAnisotropy
+        return Math.Max(max, 1);
+    }
+
+    /// <summary>The sampler set (hex) most records of <paramref name="dbs"/> name on a root signature they have at two sets or
+    /// more (one only ever at one set, a middleware's, doesn't vote), of those <paramref name="take"/> takes; null when there is none.</summary>
+    static string? MostCommon(List<(List<Rec> Records, Dictionary<string, byte[]> Blobs)> dbs, Func<string, bool>? take = null)
+    {
+        var varied = dbs.SelectMany(Settings).Distinct().GroupBy(x => x.RootSignature).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
+        var count = new Dictionary<string, int>();
+        foreach (var (records, blobs) in dbs)
+        {
+            var of = new Dictionary<string, string?>();   // root signature -> its sampler set, on a varied one
+            foreach (var r in records)
+                foreach (var set in RootSignatures(r).Select(h => of.TryGetValue(h, out var x) ? x
+                             : of[h] = blobs.GetValueOrDefault(h) is { } b && Setting(b) is { } y && varied.Contains(y.RootSignature) ? y.Samplers : null)
+                             .OfType<string>().Distinct())
+                    count[set] = count.GetValueOrDefault(set) + 1;
+        }
+        return count.Where(c => take?.Invoke(c.Key) != false).OrderByDescending(c => c.Value).ThenBy(c => c.Key, StringComparer.Ordinal).Select(c => c.Key).FirstOrDefault();
     }
 
     static (List<Rec> Records, Dictionary<string, byte[]> Blobs) Read(string db)

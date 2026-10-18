@@ -210,4 +210,62 @@ public class PlannerTests(ITestOutputHelper output)
             Assert.Equal(rec == null, gs.Any(x => x.Prim == 1)); // with the recording: no point template to reuse, none synthesized
         }
     }
+
+    /// <summary>A carved library's pool: <paramref name="n"/> VSs and as many PSs whose signatures all link, n x n stage sets.</summary>
+    static ShaderIndex Pool(int n)
+    {
+        var uv = ExactLayoutsTests.In("TEXCOORD", 0, 0);
+        var pos = ExactLayoutsTests.In("SV_Position", 0, 1, 0xF, 3, 1);
+        var all = Enumerable.Range(0, n).SelectMany(i => new[] {
+            ExactLayoutsTests.Shader($"pool-vs{i}", Stage.Vertex, [ExactLayoutsTests.In("POSITION", 0, 0)], [uv, pos]),
+            ExactLayoutsTests.Shader($"pool-ps{i}", Stage.Pixel, [uv, pos], [ExactLayoutsTests.Target(0)]) }).ToList();
+        return new ShaderIndex("pool" + n, ["PCD3D_SM6"], all.ToDictionary(s => s.Sha1), [new ShaderMap("pool", "Game", "PCD3D_SM6", [.. all.Select(s => s.Sha1)])]);
+    }
+
+    static readonly EngineInfo Ue51 = new("Unreal", "5.1", null, "D3D12", false, null);
+
+    /// <summary>A plan over its memory or time budget fails with the reason, on both kinds of cache, and leaves no plan file;
+    /// one under it is the plan an unlimited build makes, and its log says what it took.</summary>
+    [Theory]
+    [InlineData("nvidia")]
+    [InlineData("amd")]
+    public void A_plan_over_its_budget_fails_with_the_reason_and_writes_nothing(string vendor)
+    {
+        var caps = vendor == "amd" ? Ff7.Amd : Ff7.Nvidia;
+        var index = Pool(40);
+        var dir = Ff7.TempDir("plan-budget-" + vendor);
+        foreach (var (planner, why) in new[] { (new Planner { MemoryBudget = 1 }, "the plan outgrew its memory limit of 0.0 GB on this PC at "),
+                     (new Planner { TimeBudget = TimeSpan.Zero }, "the plan took over 0 minutes at ") })
+        {
+            var e = Assert.Throws<PlanTooBigException>(() => planner.Build(Ff7.Game, Ue51, index, null, caps, Path.Combine(dir, "over"), null, CancellationToken.None));
+            Assert.StartsWith(why, e.Message);
+            Assert.EndsWith(" stage sets: this game's shaders combine into more pipelines than a compile can hold", e.Message);
+            Assert.False(Directory.Exists(Path.Combine(dir, "over")) && Directory.EnumerateFileSystemEntries(Path.Combine(dir, "over")).Any());
+        }
+        // a build checks once more before it writes, however few stage sets it walked
+        Assert.Throws<PlanTooBigException>(() => new Planner { MemoryBudget = 1 }.Build(Ff7.Game, Ue51, Pool(1), null, caps, Path.Combine(dir, "small"), null, CancellationToken.None));
+        Assert.False(File.Exists(Path.Combine(dir, "small", "plan.bin")));
+        var log = new List<string>();
+        var under = new Planner().Build(Ff7.Game, Ue51, index, null, caps, Path.Combine(dir, "under"), new SyncLog(log.Add), CancellationToken.None);
+        var unlimited = new Planner { MemoryBudget = long.MaxValue, TimeBudget = TimeSpan.MaxValue }.Build(Ff7.Game, Ue51, index, null, caps, Path.Combine(dir, "unlimited"), null, CancellationToken.None);
+        Assert.Equal(unlimited.Stats, under.Stats);
+        Assert.Equal(PlanFile.Read(unlimited.FilePath).Records.Select(r => r.Key), PlanFile.Read(under.FilePath).Records.Select(r => r.Key));
+        Assert.Contains(log, l => l.StartsWith("plan: built in ") && l.Contains(" GB limit"));
+    }
+
+    /// <summary>Over budget with the server's rules, the build fails: it doesn't plan the whole library again with the app's own.</summary>
+    [Fact]
+    public void A_plan_over_its_budget_with_the_servers_rules_fails_without_the_embedded_rules()
+    {
+        var log = new List<string>();
+        var ue = RootSig.RuleFor(Ue51)!;
+        var rules = RulesFile.WithServer(RulesFile.TryParse(System.Text.Json.JsonSerializer.Serialize(new { rules = new[] { ue with { Id = ue.Id + "-server" } } },
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web) { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull }))!);
+        Assert.NotEqual(RulesFile.Embedded.Hash(Ue51), rules.Hash(Ue51));
+        Assert.Throws<PlanTooBigException>(() => new Planner { Rules = rules, MemoryBudget = 1 }.Build(Ff7.Game, Ue51, Pool(40), null, Ff7.Nvidia,
+            Ff7.TempDir("plan-budget-rules"), new SyncLog(log.Add), CancellationToken.None));
+        Assert.DoesNotContain(log, l => l.Contains("keeps the app's own rules"));
+    }
+
+    sealed class SyncLog(Action<string> a) : IProgress<string> { public void Report(string value) => a(value); }
 }

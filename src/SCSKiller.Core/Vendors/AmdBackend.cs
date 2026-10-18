@@ -89,7 +89,7 @@ public sealed class AmdBackend : IGpuVendorBackend, IRefreshableGpu
     public CacheUsage GetCacheUsage() => new(CacheDir, Bytes(CacheDir) + Bytes(D3D11CacheDir), UpperBound: true);
 
     /// <summary>Bytes on disk of one cache folder (for a D3D12/D3D11 breakdown).</summary>
-    public static long Bytes(string dir) => Directory.Exists(dir)
+    public static long Bytes(string dir) => AppCacheFiles.Readable(dir)
         ? new DirectoryInfo(dir).EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }).Sum(f => f.Length)
         : 0;
 

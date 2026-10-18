@@ -135,6 +135,31 @@ public class UnrealRhiTests(ITestOutputHelper output)
         Assert.Equal("D3D11 (last run)", Api(4, Sm5, new(), UserDir("", "LogD3D11RHI: Chosen D3D11 Adapter:\n")));
     }
 
+    /// <summary>A WinGDK build reads its own target's DefaultGraphicsRHI and user folder, never the Windows target's (Evil West).</summary>
+    [Fact]
+    public void WinGdkReadsItsOwnTarget()
+    {
+        static string Gdk(int ue, Dictionary<string, string> config, string? user = null) => UnrealRhi.Resolve(ue, Sm5, config, "Game", user, "", winGdk: true).Api;
+        static string GdkRhi(string value) => $"[/Script/WinGDKPlatformEditor.WinGDKTargetSettings]\nDefaultGraphicsRHI={value}\n";
+        var dx11 = Config(Rhi("DefaultGraphicsRHI_DX11"));
+        Assert.Equal("D3D11", Api(4, Sm5, dx11));   // Win64
+        Assert.Equal(UnrealRhi.Ambiguous, Gdk(4, dx11));
+        Assert.Equal(("D3D12", true), (UnrealRhi.Resolve(5, Both, dx11, "Game", null, "", out var guess, winGdk: true).Api, guess));
+        var engine12 = new Dictionary<string, string>(dx11) { ["Engine/Platforms/WinGDK/Config/BaseWinGDKEngine.ini"] = GdkRhi("DefaultGraphicsRHI_DX12") };
+        Assert.Equal("D3D12", Gdk(4, engine12));
+        Assert.Equal("D3D11", Api(4, Sm5, engine12));
+        Assert.Equal("D3D11", Gdk(4, new(engine12) { ["Game/Platforms/WinGDK/Config/WinGDKEngine.ini"] = GdkRhi("DefaultGraphicsRHI_DX11") }));
+
+        var user = UserDir("", "LogD3D12RHI: Chosen D3D12 Adapter:\n");
+        Assert.Equal("D3D12 (last run)", Gdk(4, dx11, user));
+        Directory.CreateDirectory(Path.Combine(user, "Config", "WinGDK"));
+        File.WriteAllText(Path.Combine(user, "Config", "WinGDK", "Engine.ini"), GdkRhi("DefaultGraphicsRHI_DX11"));
+        File.WriteAllText(Path.Combine(user, "Config", "Windows", "Engine.ini"), GdkRhi("DefaultGraphicsRHI_DX12"));
+        Assert.Equal("D3D11", Gdk(4, engine12, user));   // Saved\Config\WinGDK, not Windows
+        Assert.True(UnrealRhi.IsWinGdk(@"X:\Game\Binaries\WinGDK\Game-WinGDK-Shipping.exe"));
+        Assert.False(UnrealRhi.IsWinGdk(@"X:\Game\Binaries\Win64\Game-Win64-Shipping.exe"));
+    }
+
     /// <summary>UE4 DX12 may run the SM5 libraries, so a DX11-default project that ships ray tracing (DX12-only) offers DX12 (Ghostrunner).</summary>
     [Fact]
     public void RayTracingOffersDx12()
@@ -253,7 +278,7 @@ public class UnrealRhiTests(ITestOutputHelper output)
         var ue = new EngineInfo("Unreal", "4.26", null, "D3D11", false, null);
         Assert.Equal(new PlanCheck(Readiness.Unsupported, "runs on DirectX 11"), p.Check(Ff7.Game, ue, null, Ff7.Nvidia with { Profile = "unmeasured" }));
         Assert.Equal(new PlanCheck(Readiness.Unsupported, "runs on DirectX 11 (user setting)"), p.Check(Ff7.Game, ue with { GraphicsApi = "D3D11 (user setting)" }, null, Ff7.Nvidia with { Profile = "unmeasured" }));
-        Assert.Equal(new PlanCheck(Readiness.Unsupported, "runs on DirectX 11 (last run)"), p.Check(Ff7.Game, ue with { GraphicsApi = "D3D11 (last run)" }, null, Ff7.Amd));
+        Assert.Equal(new PlanCheck(Readiness.Unsupported, "runs on DirectX 11 (last run)"), p.Check(Ff7.Game, ue with { GraphicsApi = "D3D11 (last run)" }, null, Ff7.Nvidia with { Profile = "unmeasured" }));
         Assert.Equal(new PlanCheck(Readiness.Unsupported, "runs on Vulkan"), p.Check(Ff7.Game, ue with { GraphicsApi = "Vulkan" }, null, Ff7.Nvidia));
         Assert.Equal(Readiness.Ready, p.Check(Ff7.Game, ue with { GraphicsApi = "D3D12 (user setting)" }, null, Ff7.Nvidia).Readiness);
         var both = p.Check(Ff7.Game, ue with { GraphicsApi = UnrealRhi.Ambiguous }, null, Ff7.Nvidia);
@@ -291,6 +316,96 @@ public class UnrealRhiTests(ITestOutputHelper output)
         Assert.True(Launch(racer, "-nogpucrashdebuggingx"));   // another switch
     }
 
+    /// <summary>A user Saved folder with these files in Config\Windows.</summary>
+    static string Saved(params (string File, string Text)[] files)
+    {
+        var d = Ff7.TempDir("rhi-saved-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(Path.Combine(d, "Config", "Windows"));
+        foreach (var (file, text) in files) File.WriteAllText(Path.Combine(d, "Config", "Windows", file), text);
+        return d;
+    }
+
+    /// <summary>r.MaxAnisotropy as the engine applies it, each layer over the one below: the TextureQuality group at the saved
+    /// level (Epic when never saved, Cine at 4), the project setting, [SystemSettings] (the user's Engine.ini last), the active
+    /// device profile over its base, a game's own group at its saved level. Unknown is null.</summary>
+    [Fact]
+    public void MaxAnisotropyFollowsTheEnginesPriorities()
+    {
+        static int? Af(Dictionary<string, string> paks, string? user = null, int ue = 4, string launch = "") => UnrealRhi.MaxAnisotropy(ue, paks, "Game", user, launch);
+        static string Gus(int level) => $"[ScalabilityGroups]\nsg.TextureQuality={level}\n";
+        const string scalability = "[TextureQuality@0]\nr.MaxAnisotropy=0\n[TextureQuality@1]\nr.MaxAnisotropy=2\n[TextureQuality@2]\nr.MaxAnisotropy=4\n"
+            + "[TextureQuality@3]\nr.MaxAnisotropy=8\n[TextureQuality@Cine]\nr.MaxAnisotropy=16\n";
+        static Dictionary<string, string> Paks(params (string File, string Text)[] more)
+        {
+            var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Engine/Config/BaseScalability.ini"] = scalability };
+            foreach (var (f, t) in more) d[f] = t;
+            return d;
+        }
+
+        Assert.Null(Af(new()));   // nothing sets it
+        Assert.Null(Af(new() { ["Game/Config/DefaultEngine.ini"] = "[SystemSettings]\nr.MaxAnisotropy.Other=1\n" }));
+        Assert.Null(Af(new() { ["Game/Config/DefaultEngine.ini"] = "[SystemSettings]\nr.MaxAnisotropy=high\n" }));
+        // 1. the scalability group
+        Assert.Equal(8, Af(Paks()));   // never saved: Epic
+        Assert.Equal(4, Af(Paks(), Saved(("GameUserSettings.ini", Gus(2)))));
+        Assert.Equal(16, Af(Paks(), Saved(("GameUserSettings.ini", Gus(4)))));
+        Assert.Equal(0, Af(Paks(), Saved(("GameUserSettings.ini", "﻿" + Gus(0)))));
+        Assert.Equal(6, Af(Paks(("Game/Config/Windows/WindowsScalability.ini", "[TextureQuality@2]\nr.MaxAnisotropy=6\n")), Saved(("GameUserSettings.ini", Gus(2)))));
+        Assert.Equal(12, Af(Paks(), Saved(("GameUserSettings.ini", Gus(2)), ("Scalability.ini", "[TextureQuality@2]\nr.MaxAnisotropy=12\n"))));
+        var level1 = ("Game/Config/DefaultDeviceProfiles.ini", "[WindowsNoEditor DeviceProfile]\n+CVars=sg.TextureQuality=1\n");
+        Assert.Equal(2, Af(Paks(level1)));   // the profile's level is the default
+        Assert.Equal(4, Af(Paks(level1), Saved(("GameUserSettings.ini", Gus(2)))));
+        // 2. the project setting, 3. [SystemSettings] and [ConsoleVariables], the user's Engine.ini last
+        var project = Paks(("Game/Config/DefaultEngine.ini", "[/Script/Engine.RendererSettings]\nr.MaxAnisotropy=3\n"));
+        Assert.Equal(3, Af(project));
+        project["Game/Config/Windows/WindowsEngine.ini"] = "[SystemSettings]\nr.MaxAnisotropy=5\n";
+        Assert.Equal(5, Af(project));
+        Assert.Null(Af(project, Saved(("Engine.ini", "[ConsoleVariables]\nr.MaxAnisotropy=7\n"))));   // one priority, two values: either may be applied last
+        Assert.Equal(7, Af(Paks(("Game/Config/DefaultEngine.ini", "[ConsoleVariables]\nr.MaxAnisotropy=7\n"))));
+        Assert.Equal(9, Af(project, Saved(("Engine.ini", "[SystemSettings]\nr.MaxAnisotropy=9\n"))));
+        // 4. the active device profile over its base: WindowsNoEditor in UE4, Windows in UE5, or dp.Override
+        project["Game/Config/DefaultDeviceProfiles.ini"] = "[Windows DeviceProfile]\n+CVars=r.MaxAnisotropy=10\n[WindowsNoEditor DeviceProfile]\nBaseProfileName=Windows\n"
+            + "[Windows_High DeviceProfile]\nBaseProfileName=Windows\n+CVars=r.MaxAnisotropy=14\n-CVars=r.MaxAnisotropy=14\n+CVars=r.MaxAnisotropy=11\n";
+        Assert.Equal(10, Af(project, Saved(("Engine.ini", "[SystemSettings]\nr.MaxAnisotropy=9\n"))));
+        Assert.Equal(10, Af(project, ue: 5));
+        Assert.Equal(11, Af(project, Saved(("Engine.ini", "[SystemSettings]\ndp.Override=Windows_High\n"))));
+        Assert.Equal(1, Af(project, Saved(("DeviceProfiles.ini", "[Windows DeviceProfile]\n!CVars=ClearArray\n+CVars=r.MaxAnisotropy=1 ;note\n"))));
+        Assert.Equal(8, Af(Paks(("Game/Config/DefaultDeviceProfiles.ini", "[Other DeviceProfile]\n+CVars=r.MaxAnisotropy=10\n"))));   // not the active profile
+        // ConsoleVariables.ini isn't read by a Shipping build; the launch options can set anything
+        Assert.Equal(8, Af(Paks(("Engine/Config/ConsoleVariables.ini", "[Startup]\nr.MaxAnisotropy=2\n"))));
+        Assert.Null(Af(Paks(), launch: "-ExecCmds=\"r.MaxAnisotropy 16\""));
+        // 5. a game's own group (Stellar Blade's, in its WindowsGameUserSettings.ini): applied by the game at the level it saved
+        var own = Paks(("Game/Config/Windows/WindowsGameUserSettings.ini", "[AnisotropicFiltering@OFF]\nr.MaxAnisotropy = 1\n[AnisotropicFiltering@HIGH]\nr.MaxAnisotropy = 8\n"
+            + "[AnisotropicFiltering@VERYHIGH]\nr.MaxAnisotropy = 16\n"), ("Game/Config/DefaultDeviceProfiles.ini", "[Windows_Base DeviceProfile]\n+CVars=r.MaxAnisotropy=4\n"),
+            ("Game/Config/Windows/WindowsEngine.ini", "[SystemSettings]\ndp.Override=Windows_Base\n"));
+        Assert.Null(Af(own, Saved(("GameUserSettings.ini", "[/Script/SB.SBGameUserSettings]\nEnviromentTextures=SB_GAMEUSERSETTINGS_HIGH\n" + Gus(3)))));   // not saved
+        Assert.Equal(16, Af(own, Saved(("GameUserSettings.ini", "[/Script/SB.SBGameUserSettings]\nAnisotropicFiltering=SB_GAMEUSERSETTINGS_VERYHIGH\n"))));
+        Assert.Equal(1, Af(own, Saved(("GameUserSettings.ini", "[/Script/SB.SBGameUserSettings]\nAnisotropicFiltering=OFF\n"))));
+        own["Game/Config/DefaultGameUserSettings.ini"] = "[Sharpness@HIGH]\nr.MaxAnisotropy=2\n";
+        Assert.Null(Af(own, Saved(("GameUserSettings.ini", "[/Script/SB.SBGameUserSettings]\nAnisotropicFiltering=OFF\n"))));   // another group at a level not saved
+        Assert.Null(Af(Paks(("Game/Config/DefaultEngine.ini", "[Filtering@HIGH]\nr.MaxAnisotropy=16\n"))));
+        Assert.Null(Af(new() { ["Game/Config/DefaultEngine.ini"] = "[SystemSettings]\nr.MaxAnisotropy=2147483648\n" }));
+        // a group in the Scalability inis that no sg cvar names is the game's too
+        Assert.Null(Af(Paks(("Game/Config/DefaultScalability.ini", "[Filtering@2]\nr.MaxAnisotropy=16\n"))));
+        Assert.Equal(16, Af(Paks(("Game/Config/DefaultScalability.ini", "[Filtering@2]\nr.MaxAnisotropy=16\n")), Saved(("GameUserSettings.ini", "[ScalabilityGroups]\nsg.Filtering=2\n"))));
+    }
+
+    /// <summary>Detection reads the player's settings again when any user ini the resolvers read changes.</summary>
+    [Fact]
+    public void TheStampFollowsTheUserInisTheResolversRead()
+    {
+        var user = Saved(("GameUserSettings.ini", "[ScalabilityGroups]\nsg.TextureQuality=3\n"));
+        var before = UnrealRhi.UserFiles(user);
+        File.WriteAllText(Path.Combine(user, "Config", "Windows", "GameUserSettings.ini"), "[ScalabilityGroups]\nsg.TextureQuality=2\nsg.ShadowQuality=1\n");
+        var settings = UnrealRhi.UserFiles(user);
+        Assert.NotEqual(before, settings);
+        File.WriteAllText(Path.Combine(user, "Config", "Windows", "Scalability.ini"), "[TextureQuality@2]\nr.MaxAnisotropy=16\n");
+        var scalability = UnrealRhi.UserFiles(user);
+        Assert.NotEqual(settings, scalability);
+        File.WriteAllText(Path.Combine(user, "Config", "Windows", "DeviceProfiles.ini"), "[Windows DeviceProfile]\n+CVars=r.MaxAnisotropy=4\n");
+        Assert.NotEqual(scalability, UnrealRhi.UserFiles(user));
+    }
+
     /// <summary>The Aftermath library where the engine loads it from, in a version folder too (FINAL FANTASY VII REBIRTH).</summary>
     [Fact]
     public void AftermathShipsInTheEnginesThirdPartyFolder()
@@ -308,6 +423,7 @@ public class UnrealRhiTests(ITestOutputHelper output)
     /// <summary>The installed UE games (dev machine; read-only: paks, the user's saved ini, logs, Steam launch options).
     /// Expectations only where the project's own config or shader formats settle it.</summary>
     [Fact]
+    [Trait("Needs", "Game")]
     public void InstalledGames()
     {
         var expect = new Dictionary<string, string>
@@ -323,7 +439,8 @@ public class UnrealRhiTests(ITestOutputHelper output)
         foreach (var g in games)
         {
             if (reader.Detect(g, out var why) is not { } e) continue;
-            output.WriteLine($"{g.Name,-45} UE {e.Version,-4} {e.GraphicsApi,-22} {(e.AftermathShaderDebug ? "Aftermath shader debug info, " : "")}{why}");
+            output.WriteLine($"{g.Name,-45} UE {e.Version,-4} {e.GraphicsApi,-22} r.MaxAnisotropy {e.MaxAnisotropy?.ToString() ?? "unknown",-8} {(e.AftermathShaderDebug ? "Aftermath shader debug info, " : "")}{why}");
+            if (g.Name.StartsWith("Stellar Blade") || g.Name.StartsWith("FINAL FANTASY VII REBIRTH")) Assert.Null(e.MaxAnisotropy);   // their game code sets it
             if (g.Name.Contains("Galactic Racer") || g.Name.Contains("E-Day")) Assert.True(e.AftermathShaderDebug, g.Name);
             if (expect.TryGetValue(g.Name, out var api))   // an undecided config goes by the game's last log when there is one
                 Assert.True(api == e.GraphicsApi || api == UnrealRhi.Ambiguous && e.GraphicsApi.EndsWith(" (last run)"), $"{g.Name}: {e.GraphicsApi}");

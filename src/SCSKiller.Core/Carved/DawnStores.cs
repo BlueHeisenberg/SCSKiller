@@ -17,7 +17,7 @@ public static class DawnStores
     const long MaxPsoFile = 256L << 20;   // the game's: 8.3 MB
     static readonly int[] OtherStages = [56, 72, 88, 104];   // where a GS, HS or DS id would sit: none in the game's records
 
-    public sealed record Root(long Offset, int Size, string Sha);
+    public sealed record Root(long Offset, int Size, string Sha, byte[] Blob);
 
     /// <param name="Shaders">entry id -> the container's offset in <paramref name="ShaderFile"/></param>
     /// <param name="Pipelines">each record's root signature id and shader ids (VS [+ PS], or CS)</param>
@@ -43,7 +43,7 @@ public static class DawnStores
                     if (n == 0 || n > size) return null;
                     var container = c.AsSpan(0, n);
                     if (!Dxbc.Valid(container) || Dxbc.Kind(container) >= 0 || Dxbc.Part(container, "RTS0"u8).IsEmpty) return null;
-                    roots[id] = new Root(off, n, Convert.ToHexStringLower(SHA1.HashData(container)));
+                    roots[id] = new Root(off, n, Convert.ToHexStringLower(SHA1.HashData(container)), container.ToArray());
                 }
             byte[] p;
             using (var h = Open(psoFile))

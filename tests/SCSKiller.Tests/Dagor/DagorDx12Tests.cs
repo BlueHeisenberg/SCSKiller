@@ -1,8 +1,11 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using SCSKiller.Core;
+using SCSKiller.Core.Carved;
 using SCSKiller.Core.Dagor;
 using SCSKiller.Core.Planning;
+using SCSKiller.Tests.Carved;
+using SCSKiller.Tests.Nixxes;
 using SCSKiller.Tests.Planning;
 using static SCSKiller.Tests.Dagor.DagorReaderTests;
 
@@ -93,13 +96,26 @@ public class DagorDx12Tests
         Assert.Equal(Gs, got[Sha(Gs)]);
         Assert.Equal(Cs, got[Sha(Cs)]);
 
-        Assert.Equal(RootSig.Rule.DagorCbvRanges, RootSig.RuleFor(engine));
+        Assert.Equal(SCSKiller.Tests.Planning.Rules.DagorCbvRanges, RootSig.RuleFor(engine));
         Assert.Equal(Readiness.Ready, new Planner().Check(game, engine, null, Ff7.Nvidia).Readiness);
         var plan = new Planner().Build(game, engine, index, null, Ff7.Nvidia with { PerStageCache = true }, Ff7.TempDir("dagor-dx12-plan"), null, CancellationToken.None);
         Assert.Equal(2, plan.Stats.StageSets);
         Assert.Equal(0, plan.Stats.LeftOut);
         Assert.Equal(2, plan.Stats.RootSignatures);
+
+        // a server copy selecting the other Dagor shape is planned next to the embedded rules and kept: as many items
+        var server = RulesFile.WithServer(RulesFile.TryParse(System.Text.Json.JsonSerializer.Serialize(
+            new { rules = new[] { SCSKiller.Tests.Planning.Rules.DagorCbvRanges with { RootSignature = new RootSigRule(Select: ["dagor"]) } } },
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web) { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull }))!);
+        Assert.NotEqual(RulesFile.Embedded.Hash(engine), server.Hash(engine));
+        var log = new List<string>();
+        var other = new Planner { Rules = server }.Build(game, engine, index, null, Ff7.Nvidia with { PerStageCache = true }, Ff7.TempDir("dagor-dx12-server-plan"),
+            new Progress(log.Add), CancellationToken.None);
+        Assert.DoesNotContain(log, l => l.Contains("planning rules"));
+        Assert.Equal(plan.Stats.Generated, other.Stats.Generated);
     }
+
+    sealed class Progress(Action<string> a) : IProgress<string> { public void Report(string value) => a(value); }
 
     [Fact]
     public void APassNamingAShaderTheDumpLacksThrows()
@@ -109,6 +125,121 @@ public class DagorDx12Tests
         Assert.Throws<InvalidDataException>(() => new DagorReader().Index(game, new DagorReader().Detect(game)!, null, CancellationToken.None));
         var outside = Dump([Ps], 0, metadata: [Meta(0, 0, (Header(1), 8, Ps.Length, 0))]);   // bytecode past the entry
         Assert.Throws<InvalidDataException>(() => DagorReader.Entries(DagorReader.Body(outside), CancellationToken.None).Select(DagorReader.Stages).ToList());
+    }
+
+    /// <summary>An exe holding, among other bytes, DXBC/DXIL containers: Dagor's DX12 driver keeps its own shaders in it.</summary>
+    static void Exe(Game game, params byte[][] containers)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(game.ExePath)!);
+        File.WriteAllBytes(game.ExePath, [.. new byte[4096], .. containers.SelectMany(c => (byte[])[.. c, .. new byte[13]])]);
+    }
+
+    /// <summary>A DXIL pixel shader with one SV_Target output: the driver's blit and clear shaders.</summary>
+    static byte[] DxilWithTarget()
+    {
+        var osg1 = new byte[8 + 32 + 12];
+        BinaryPrimitives.WriteInt32LittleEndian(osg1, 1);
+        BinaryPrimitives.WriteInt32LittleEndian(osg1.AsSpan(4), 8);
+        BinaryPrimitives.WriteInt32LittleEndian(osg1.AsSpan(8 + 4), 40);   // name
+        BinaryPrimitives.WriteInt32LittleEndian(osg1.AsSpan(8 + 12), 64);   // system value: target
+        BinaryPrimitives.WriteInt32LittleEndian(osg1.AsSpan(8 + 16), 3);   // float
+        osg1[8 + 24] = 0xF;
+        "SV_Target"u8.CopyTo(osg1.AsSpan(40));
+        byte[] dxil = [0x60, 0, 0, 0, 7, 0, 0, 0];
+        var size = 32 + 8 + 8 + osg1.Length + 8 + dxil.Length;
+        var c = new byte[size];
+        "DXBC"u8.CopyTo(c);
+        BinaryPrimitives.WriteInt32LittleEndian(c.AsSpan(20), 1);
+        BinaryPrimitives.WriteInt32LittleEndian(c.AsSpan(24), size);
+        BinaryPrimitives.WriteInt32LittleEndian(c.AsSpan(28), 2);
+        BinaryPrimitives.WriteInt32LittleEndian(c.AsSpan(32), 40);
+        BinaryPrimitives.WriteInt32LittleEndian(c.AsSpan(36), 48 + osg1.Length);
+        "OSG1"u8.CopyTo(c.AsSpan(40));
+        BinaryPrimitives.WriteInt32LittleEndian(c.AsSpan(44), osg1.Length);
+        osg1.CopyTo(c, 48);
+        "DXIL"u8.CopyTo(c.AsSpan(48 + osg1.Length));
+        BinaryPrimitives.WriteInt32LittleEndian(c.AsSpan(52 + osg1.Length), dxil.Length);
+        dxil.CopyTo(c, 56 + osg1.Length);
+        return c;
+    }
+
+    static bool Has(byte[] payload, string sha) => payload.AsSpan().IndexOf(Convert.FromHexString(sha)) >= 0;
+
+    [Fact]
+    public void ADepthPassIsDrawnWithTheDriversNullPixelShader()
+    {
+        byte[][] meta = [Meta(0, 0, (Header(0, b: 1, inOut: 1), 0, Vs.Length, 0)), Meta(0, 0, (Header(1, t: 1, s: 1), 0, Ps.Length, 0)), Meta(0, 0, (Header(5, u: 1), 0, Cs.Length, 0))];
+        var dump = Dump([Vs, Ps, Cs], 1, metadata: meta, passes: [(0, 0), (0xFFFF, 1), (0, 0xFFFF)]);
+        var game = Install("dagor-depth", dump, "video{\n  driver:t=\"dx12\"\n}", "gameDX12.ps50.shdump.bin");
+        var reader = new DagorReader();
+        var engine = reader.Detect(game)!;
+        var without = reader.Index(game, engine, null, CancellationToken.None);   // no exe: the depth pass is left out
+
+        var nullPs = NixxesReaderTests.Dxil(0, 1);   // a DXIL pixel shader with no inputs, outputs or resources
+        Exe(game, DxilWithTarget(), Hlsl.Compile("void main() {}", "main", "ps_5_0"), nullPs, NixxesReaderTests.Dxil(1, 2));
+        var log = new List<string>();
+        var index = reader.Index(game, engine, new Progress(log.Add), CancellationToken.None);
+        Assert.Equal(without.Maps.Select(m => m.Hash).Append(CarvedReader.Sha1Hex($"{DagorReader.Platform12}|{Sha(Vs)},{Sha(nullPs)}")), index.Maps.Select(m => m.Hash));
+        Assert.Equal([Sha(Vs), Sha(nullPs)], index.Maps[^1].Shaders);
+        Assert.True(index.Maps[^1].IsPipeline);
+        Assert.Null(index.Shaders[Sha(nullPs)].EngineHeader);   // the driver's header is all zero: no resources
+        Assert.NotEqual(without.ContentHash, index.ContentHash);
+        Assert.Contains(log, l => l.Contains("1 drawn with the driver's null pixel shader;"));
+
+        var got = new Dictionary<string, byte[]>();
+        reader.ReadShaders(game, engine, new HashSet<string> { Sha(nullPs), Sha(Vs) }, (h, b) => got.Add(h, b), CancellationToken.None);
+        Assert.Equal(nullPs, got[Sha(nullPs)]);
+        Assert.Equal(Vs, got[Sha(Vs)]);
+
+        // the root signature is the one a VS drawn alone gets: the pixel stage denied
+        var rs = DagorRootSig.Build(new Dictionary<Stage, ShaderInfo> { [Stage.Vertex] = index.Shaders[Sha(Vs)], [Stage.Pixel] = index.Shaders[Sha(nullPs)] }, cbvRanges: true);
+        Assert.Equal(DagorRootSig.Build(new Dictionary<Stage, ShaderInfo> { [Stage.Vertex] = index.Shaders[Sha(Vs)] }, cbvRanges: true).Rows, rs.Rows);
+        Assert.Equal(0x1u | 0x4 | 0x8 | 0x10 | 0x20, rs.Flags);
+
+        // every planner mode plans the VS with the null pixel shader, and the VS+PS pass as before
+        foreach (var caps in new[] { Ff7.Nvidia, Ff7.Nvidia with { PerStageCache = true }, Ff7.Amd })
+        {
+            var plan = new Planner().Build(game, engine, index, null, caps, Ff7.TempDir($"dagor-depth-{caps.Profile}-{caps.PerStageCache}"), null, CancellationToken.None);
+            Assert.Equal((3, 0), (plan.Stats.StageSets, plan.Stats.LeftOut));
+            var records = PlanFile.Read(plan.FilePath).Records.ToList();
+            Assert.Contains(records, r => Has(r.Payload, Sha(Vs)) && Has(r.Payload, Sha(nullPs)));
+            Assert.Contains(records, r => Has(r.Payload, Sha(Vs)) && Has(r.Payload, Sha(Ps)));
+            Assert.DoesNotContain(records, r => Has(r.Payload, Sha(Vs)) && !Has(r.Payload, Sha(nullPs)) && !Has(r.Payload, Sha(Ps)));   // never a VS alone
+        }
+        // AMD compiles the VS for a pixel shader with no render target, not for none
+        var facts = ExactLayouts.Build([], new Dictionary<string, byte[]>(), UnitPolicy.Amd, index.Shaders);
+        var vsUnit = UnitCover.Units(facts, new SortedDictionary<int, string> { [(int)Stage.Vertex] = Sha(Vs), [(int)Stage.Pixel] = Sha(nullPs) }, new string('a', 40), [], 3, "").Single(u => u.Stage == Stage.Vertex);
+        Assert.Contains("|ps:no-rt", vsUnit.Key);
+    }
+
+    [Fact]
+    public void AnExeWithoutASingleNullPixelShaderLeavesTheDepthPassOut()
+    {
+        var dump = Dump([Vs, Ps], 1, metadata: [Meta(0, 0, (Header(0, inOut: 1), 0, Vs.Length, 0)), Meta(0, 0, (Header(1), 0, Ps.Length, 0))], passes: [(0, 0), (0, 0xFFFF)]);
+        var game = Install("dagor-depth-none", dump, null, "gameDX12.ps50.shdump.bin");
+        var reader = new DagorReader();
+        var engine = reader.Detect(game)!;
+        int Maps() => reader.Index(game, engine, null, CancellationToken.None).Maps.Count;
+
+        Exe(game, NixxesReaderTests.Dxil(0, 1), NixxesReaderTests.Dxil(0, 2));   // two: which one is unknown
+        Assert.Equal(1, Maps());
+        Assert.Null(DagorReader.NullPixelShader(game, CancellationToken.None));
+
+        // a null shape too big to be one, a container claiming the largest size past the end, a truncated header: none taken
+        var big = new byte[(64 << 10) + 64];
+        NixxesReaderTests.Dxil(0, 3).CopyTo(big, 0);
+        BinaryPrimitives.WriteInt32LittleEndian(big.AsSpan(24), big.Length);
+        var past = NixxesReaderTests.Dxil(0, 4);
+        BinaryPrimitives.WriteInt32LittleEndian(past.AsSpan(24), Dxbc.MaxSize);
+        File.WriteAllBytes(game.ExePath, [.. new byte[100], .. big, .. new byte[7], .. past, .. "DXBC"u8, .. new byte[20]]);
+        Assert.Equal(1, Maps());
+        Assert.False(Dxbc.Valid([]));   // what a candidate read short (the exe cut while scanned) comes back as
+
+        // the exe the launcher names wins over the listed one
+        Directory.CreateDirectory(Path.Combine(game.InstallDir, "BattlEye"));
+        File.WriteAllText(Path.Combine(game.InstallDir, "BattlEye", "BELauncher.ini"), "[Launcher]\n64BitExe=win64\\real.exe\n");
+        File.WriteAllBytes(Path.Combine(game.InstallDir, "win64", "real.exe"), [.. new byte[64], .. NixxesReaderTests.Dxil(0, 5)]);
+        Assert.Equal(2, Maps());
     }
 
     static ShaderInfo Info(Stage stage, byte[] header) => new(Sha(header) + stage, stage, "6_4", 0, new(0, 0, 0, 0), [], [], [], EngineHeader: header);
@@ -172,12 +303,12 @@ public class DagorDx12Tests
         Directory.CreateDirectory(Path.Combine(game.InstallDir, "cache"));
         File.WriteAllBytes(Path.Combine(game.InstallDir, "cache", "dx12.cache"), header);
         var engine = new DagorReader().Detect(game)!;
-        Assert.Equal((null, RootSig.Rule.Dagor), (engine.Fork, RootSig.RuleFor(engine)));
+        Assert.Equal((null, SCSKiller.Tests.Planning.Rules.Dagor), (engine.Fork, RootSig.RuleFor(engine)));
         var (stamp, hash) = (new DagorReader().IndexStamp(game), new DagorReader().Index(game, engine, null, CancellationToken.None).ContentHash);
         header[28] = 1;
         File.WriteAllBytes(Path.Combine(game.InstallDir, "cache", "dx12.cache"), header);
         engine = new DagorReader().Detect(game)!;
-        Assert.Equal((DagorReader.CbvRangesFork, RootSig.Rule.DagorCbvRanges), (engine.Fork, RootSig.RuleFor(engine)));
+        Assert.Equal((DagorReader.CbvRangesFork, SCSKiller.Tests.Planning.Rules.DagorCbvRanges), (engine.Fork, RootSig.RuleFor(engine)));
         // the warm goes stale and the next compile's plan is rebuilt: both follow the mode
         Assert.NotEqual(stamp, new DagorReader().IndexStamp(game));
         Assert.NotEqual(hash, new DagorReader().Index(game, engine, null, CancellationToken.None).ContentHash);

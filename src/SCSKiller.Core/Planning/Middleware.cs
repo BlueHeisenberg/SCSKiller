@@ -107,7 +107,7 @@ public static class Middleware
     {
         var found = new List<MiddlewareDll>();
         if (!Directory.Exists(exeDir)) return found;
-        foreach (var path in Directory.EnumerateFiles(exeDir, "*", new EnumerationOptions { IgnoreInaccessible = true }).Order(StringComparer.OrdinalIgnoreCase))
+        foreach (var path in Directory.EnumerateFiles(exeDir, "*", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 }).Order(StringComparer.OrdinalIgnoreCase))
         {
             var file = Path.GetFileName(path);
             if (!file.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && !file.EndsWith(".asi", StringComparison.OrdinalIgnoreCase)) continue;

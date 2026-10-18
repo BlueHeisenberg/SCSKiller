@@ -11,9 +11,9 @@ namespace SCSKiller.Tests.Platform;
 /// decodes either way. CI runs this class a second time with DOTNET_EnableAVX2=0, which turns both off for .NET.</summary>
 public class CodecCpuTests
 {
-    static readonly byte[] Text = Encoding.ASCII.GetBytes(string.Join(" ", Enumerable.Range(0, 300).Select(i => $"shader{i * 7 % 23}")));
+    internal static readonly byte[] Text = Encoding.ASCII.GetBytes(string.Join(" ", Enumerable.Range(0, 300).Select(i => $"shader{i * 7 % 23}")));
 
-    const string Kraken = "jAYAAFmIAFdzaGFkZXIwIAAAIjcxNDIxNTEyOTMxMDc4MTI2MTI0MTE4MjkxIHNoYWRlcjAAABgQFdYWVVoVVVoZVBXZGVVZGVWaFVUVgfwAAAMBDQ0AAAH/CwQ1gEY=";
+    internal const string Kraken = "jAYAAFmIAFdzaGFkZXIwIAAAIjcxNDIxNTEyOTMxMDc4MTI2MTI0MTE4MjkxIHNoYWRlcjAAABgQFdYWVVoVVVoZVBXZGVVZGVWaFVUVgfwAAAMBDQ0AAAH/CwQ1gEY=";
 
     /// <summary>Shader code no codec reads names the CPU only for an Oodle block where native Oodle is off; any other
     /// failure keeps its own error.</summary>
@@ -22,10 +22,10 @@ public class CodecCpuTests
     {
         Codecs.Load();
         var oodle = Assert.Throws<InvalidDataException>(() => UnrealReader.Decompress(Convert.FromBase64String(Kraken)[..40], Text.Length));   // cut short
-        Assert.StartsWith("cannot decompress", oodle.Message);
-        Assert.Equal(!Codecs.NativeOodle, oodle.Message.EndsWith(Codecs.NoNativeOodle));
+        Assert.StartsWith("cannot decompress", (oodle.InnerException ?? oodle).Message);
+        Assert.Equal(!Codecs.NativeOodle ? Codecs.NoNativeOodle : null, Codecs.Reason(oodle));
         var other = Assert.Throws<InvalidDataException>(() => UnrealReader.Decompress([0x78, 0x9C, 1, 2, 3, 4, 5, 6], 64));
-        Assert.DoesNotContain(Codecs.NoNativeOodle, other.Message);
+        Assert.Null(Codecs.Reason(other));
     }
 
     // Text compressed by the pinned Oodle DLL (Optimal2)

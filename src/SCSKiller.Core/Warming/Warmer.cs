@@ -7,15 +7,20 @@ using SCSKiller.Core.Vendors;
 namespace SCSKiller.Core.Warming;
 
 /// <summary>One line of scskiller_warm.exe's stdout protocol (ARCHITECTURE.md). Unknown or non-JSON lines parse to null.
-/// A "retry" event (the process's driver was poisoned by a fault or hang in ray tracing, <paramref name="Reason"/> "rt", or
-/// its device was removed, "removed") says where a new process goes on: <paramref name="From"/> (--start),
-/// <paramref name="RtThreads"/> (--rt-threads), <paramref name="FailedItem"/> (-1 or an item that faulted alone: --skip from
-/// then on), <paramref name="Isolate"/> (--isolate). <paramref name="Crashed"/> (retry and done): the record keys of the items
-/// that crash the driver, skipped or blamed by that process (--skip-keys from then on). <paramref name="Stage"/> (the "stage"
-/// event, the first line): the process's own staging folder, where its scskiller.log ends up.</summary>
+/// A "retry" event (the process's driver was poisoned by a fault or hang in ray tracing, <paramref name="Reason"/> "rt", its
+/// device was removed, "removed", a pipeline's create raised an exception, "fault", creates kept hanging with the device
+/// intact, "hang", or the process died without a last line, "died", planned by its parent from the item states it left)
+/// says where a new process goes on: <paramref name="From"/> (--start), <paramref name="RtThreads"/>
+/// (--rt-threads), <paramref name="FailedItem"/> (-1 or an item that faulted alone: --skip from then on),
+/// <paramref name="Skip"/> (hung items, or one that died alone, at or after From: --skip from then on), <paramref name="Isolate"/> (--isolate).
+/// <paramref name="Crashed"/> (retry and done): the record keys of the items that crash the driver, skipped or blamed by
+/// that process (--skip-keys from then on). <paramref name="Stage"/> (the "stage" event, the first line): the process's own
+/// staging folder, where its scskiller.log ends up. <paramref name="Workers"/> of <paramref name="Threads"/> (progress): the
+/// threads its memory budget lets run now; 0 from a warm that doesn't say.
+/// <paramref name="DriverSkipped"/> (progress, retry and done, counted like Failed): <see cref="WarmResult.DriverSkipped"/>.</summary>
 public sealed record WarmEvent(string Event, long Done, long Total, long Failed, double Rate, double Seconds, bool Stopped, string? Message,
     long From = 0, int RtThreads = 0, long FailedItem = -1, string? Reason = null, IReadOnlyList<string>? Crashed = null, IReadOnlyList<long>? Isolate = null,
-    string? Stage = null)
+    string? Stage = null, int Workers = 0, int Threads = 0, long DriverSkipped = 0, IReadOnlyList<long>? Skip = null)
 {
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -26,7 +31,7 @@ public sealed record WarmEvent(string Event, long Done, long Total, long Failed,
         {
             if (JsonSerializer.Deserialize<WarmEvent>(line, Json) is not { Event: not null } e) return null;
             // null when empty: records compare lists by reference, and Pump folds equal progress lines
-            return e with { Crashed = e.Crashed is { Count: > 0 } ? e.Crashed : null, Isolate = e.Isolate is { Count: > 0 } ? e.Isolate : null };
+            return e with { Crashed = e.Crashed is { Count: > 0 } ? e.Crashed : null, Isolate = e.Isolate is { Count: > 0 } ? e.Isolate : null, Skip = e.Skip is { Count: > 0 } ? e.Skip : null };
         }
         catch (JsonException) { return null; }
     }
@@ -38,10 +43,19 @@ public sealed class Warmer(IGpuVendorBackend vendor, string? warmExe = null) : I
     /// <summary>After Stop: a warm that hasn't printed its done event by then is stuck (workers deadlocked in the driver
     /// ignore the stop event) and is ended. Replaceable for tests.</summary>
     public TimeSpan StuckAfter { get; init; } = TimeSpan.FromSeconds(30);
-    public const string StuckError = "the compile didn't stop cleanly (the driver may be stuck); ended it";
+    public const string StuckError = "the compile didn't stop cleanly (the driver may be stuck), so it was ended";
+    public const string NoDoneError = "scskiller_warm exited without a done event";
 
-    /// <summary>Processes a warm may start after a removed device before it gives up. Replaceable for tests.</summary>
+    /// <summary>Removed devices, faults or hangs in a row whose retry blamed no new item before a warm gives up. Replaceable for tests.</summary>
     public int MaxRecoveries { get; init; } = 20;
+
+    /// <summary>The error of a warm that stopped on removed devices, by the number of items it skipped for crashing the driver.</summary>
+    public static string CrashedError(int skipped) => skipped == 0
+        ? "the GPU driver kept crashing with no single pipeline to blame, so the compile stopped"
+        : skipped == 1 ? "1 pipeline that crashes the GPU driver was skipped. Compiling again continues where it stopped"
+        : $"{skipped} pipelines that crash the GPU driver were skipped. Compiling again continues where it stopped";
+
+    public const string HungError = "the GPU driver kept hanging, so the compile stopped. Compiling again continues where it stopped";
 
     /// <summary>Added to scskiller_warm's environment (tests: SCSKILLER_WARM_* fault injection).</summary>
     public IReadOnlyDictionary<string, string>? Environment { get; init; }
@@ -51,13 +65,17 @@ public sealed class Warmer(IGpuVendorBackend vendor, string? warmExe = null) : I
     /// <summary>The game's AGS registration (<see cref="AmdAgs.Of"/>); null or returning null: a plain device.</summary>
     public Func<Game, AgsRegistration?>? Ags { get; set; }
 
+    /// <summary>How the game starts NVIDIA Aftermath (<see cref="NvAftermath.Of"/>); null or returning null: the warm doesn't.</summary>
+    public Func<Game, AftermathInit?>? Aftermath { get; set; }
+
     /// <summary>A folder holding a copy of the game's layer (ReShade's dll, its ini, the add-ons), staged next to the warm's
     /// exe (scskiller_warm --layer) so the layer changes the warm's pipelines as it changes the game's; null or returning
     /// null: none. Called with the run's work folder.</summary>
     public Func<Game, string, string?>? Layer { get; set; }
 
-    /// <summary>The warm exe for a vendor, relative to native\: NVIDIA's runs on the segment heap (ARCHITECTURE.md), the
-    /// others on the NT heap. Both are named scskiller_warm.exe and stage themselves under the game's name.</summary>
+    /// <summary>The warm exe for a vendor, relative to native\: NVIDIA's runs on the segment heap, since on the NT heap its
+    /// compiler threads queue on the process heap's lock. AMD's compiler is slower on the segment heap, so the others keep
+    /// the NT heap. Both are named scskiller_warm.exe and stage themselves under the game's name.</summary>
     public static string ExeFor(GpuVendor vendor) => vendor == GpuVendor.Nvidia ? @"segheap\scskiller_warm.exe" : "scskiller_warm.exe";
 
     public IWarmRun Start(Game game, string workDir, WarmOptions options, IProgress<WarmProgress>? progress) =>
@@ -77,6 +95,8 @@ public sealed class Warmer(IGpuVendorBackend vendor, string? warmExe = null) : I
         if (agsWhy != null) Log?.Report($"{game.Name}: {agsWhy}");
         if (Layer?.Invoke(game, workDir) is { } layer) ags = [.. ags, "--layer", layer];
         if (AgilityDir(game.ExePath) is { } d3d12) ags = [.. ags, "--d3d12", d3d12];
+        if (DxvkDll(vendor.Vendor, game.ExePath) is { } d3d11) ags = [.. ags, "--d3d11", d3d11];
+        if (vendor.Vendor == GpuVendor.Nvidia && Aftermath?.Invoke(game) is { } am) ags = [.. ags, .. AftermathArgs(vendor.Vendor, am, NvAftermath.DllFor(game))];
         return new WarmRun(vendor, gpu, exe, game, workDir, options, progress, StuckAfter, stagePath, MaxRecoveries, Environment, ags, Log);
     }
 
@@ -96,18 +116,47 @@ public sealed class Warmer(IGpuVendorBackend vendor, string? warmExe = null) : I
         return ["--ags", agsDll, "--ags-app", reg.App, "--ags-engine", reg.Engine];
     }
 
+    /// <summary>scskiller_warm's --aftermath arguments: on NVIDIA, for a game that starts Aftermath in a way that changes the
+    /// driver's key, the child starts it the same way through the game's own <paramref name="dll"/>. Empty otherwise.</summary>
+    public static string[] AftermathArgs(GpuVendor vendor, AftermathInit? init, string? dll) =>
+        vendor == GpuVendor.Nvidia && init is { ChangesKey: true } && dll != null ? ["--aftermath", dll, "--aftermath-init", init.Arg] : [];
+
+    /// <summary>scskiller_warm's --d3d11: the game's d3d11.dll when it is DXVK's, on NVIDIA, whose Vulkan cache is keyed on
+    /// the exe name (AMD's on the full path, which the staged warm doesn't share); null otherwise.</summary>
+    public static string? DxvkDll(GpuVendor vendor, string exePath)
+    {
+        try
+        {
+            var dll = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(exePath))!, App.ScsKiller.Dll11);
+            return vendor == GpuVendor.Nvidia && Games.ReShade.IsDxvk(dll) ? dll : null;
+        }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or IOException) { return null; }
+    }
+
     /// <summary>scskiller_warm's --d3d12: the folder of the Agility SDK runtime the game's exe asks for (its D3D12SDKPath
-    /// export, relative to the exe), when it holds a D3D12Core.dll; null otherwise. The warm then runs on that runtime, as
-    /// the game does: where the system's is older (Windows 10), it rejects what the game recorded on the newer one.</summary>
+    /// export, relative to the exe, else its D3D12 or D3D12\x64 folder), when it holds a D3D12Core.dll; null otherwise.
+    /// The warm then runs on that runtime, as the game does: where the system's is older (Windows 10), it rejects what the
+    /// game recorded on the newer one.</summary>
     public static string? AgilityDir(string exePath)
     {
         try
         {
-            using var pe = Carved.PeFile.Open(exePath);
-            return AgilityFolder(Path.GetDirectoryName(Path.GetFullPath(exePath))!, Carved.PeFile.ExportedString(pe, "D3D12SDKPath")) is { } dir
-                   && File.Exists(Path.Combine(dir, "D3D12Core.dll")) ? dir : null;
+            var exeDir = Path.GetDirectoryName(Path.GetFullPath(exePath))!;
+            string? sdkPath = null;
+            try
+            {
+                using var pe = Carved.PeFile.Open(exePath);
+                sdkPath = Carved.PeFile.ExportedString(pe, "D3D12SDKPath");
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or BadImageFormatException) { }
+            // a protected or packed exe's exports can't be read from the file: the folder the Agility SDK installs to, or
+            // its x64 subfolder (Fortnite's)
+            var d3d12 = Path.Combine(exeDir, "D3D12");
+            var dir = !string.IsNullOrEmpty(sdkPath) ? AgilityFolder(exeDir, sdkPath)
+                : File.Exists(Path.Combine(d3d12, "D3D12Core.dll")) ? d3d12 : Path.Combine(d3d12, "x64");
+            return dir != null && File.Exists(Path.Combine(dir, "D3D12Core.dll")) ? dir : null;
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or BadImageFormatException or ArgumentException) { return null; }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or IOException) { return null; }
     }
 
     /// <summary>The folder a D3D12SDKPath export names: a relative path that stays inside the exe's folder, as the D3D12
@@ -145,18 +194,25 @@ public sealed class Warmer(IGpuVendorBackend vendor, string? warmExe = null) : I
 }
 
 /// <summary>One warm, possibly several scskiller_warm processes: a process whose driver was poisoned by a fault or hang in
-/// ray tracing ends with a "retry" event, and a new one goes on from its first unfinished item with a quarter of the ray
-/// tracing threads (and the items that failed alone skipped), until a "done" (ARCHITECTURE.md). Failed counts add up
-/// across them; the progress note says "retrying ray tracing with fewer threads (n)" meanwhile. A process whose device was
-/// removed ends with a "removed" retry: the next one creates the items that were in flight alone first and skips the ones
-/// that crash the driver (by record key), at most MaxRecoveries times (per pass
-/// of a careful warm). A work folder with a pass file (<see cref="WarmPasses"/>) runs one process per pass, in order,
+/// ray tracing ends with a "retry" event, and a new one goes on from its first unfinished item with the same ray tracing
+/// threads, the state object that faulted or hung skipped (a quarter of the threads when that item is unknown, or after
+/// <see cref="WarmRun.MaxKnownSkips"/> such skips). Failed counts add up across them; the progress note says what the retry
+/// did meanwhile. A process whose device was removed, or whose replay of a pipeline faulted, ends with a "removed" or "fault"
+/// retry: the next one creates the items that were in flight alone first and skips the ones that crash the driver (by record
+/// key). A process whose creates kept hanging ends with a "hang" retry: the next one skips the hung items for this compile
+/// only. Both go on until MaxRecoveries such retries in a row blame no new item (per pass of a careful warm). A work folder
+/// with a pass file (<see cref="WarmPasses"/>) runs one process per pass, in order,
 /// with the crash keys found so far; Done and StartAt then count the whole warm's items
-/// (<see cref="WarmPasses.Overall"/>), so a stopped careful warm resumes in its pass.</summary>
+/// (<see cref="WarmPasses.Overall"/>), so a stopped careful warm resumes in its pass. A process started with --aftermath that
+/// fails or dies before its first item (the game's Aftermath may fault or hang there) is run again without it, once, from the
+/// warm's first item (<see cref="WarmResult.AftermathDropped"/>).</summary>
 sealed class WarmRun : IWarmRun
 {
     static readonly TimeSpan CacheSampleInterval = TimeSpan.FromSeconds(5), ReportEvery = TimeSpan.FromMilliseconds(250);
-    const int MaxProcesses = 64;   // ponytail: 32 -> 8 -> 2 -> 1 threads, then one per item that fails alone; a bound, not a tuned value
+    // Up to two processes per item that removes the device (the removal, then the one that blames it alone): ~127 such items.
+    const int MaxProcesses = 256;
+    // Known state objects skipped in one compile before the retries lower the ray tracing threads too (a crash storm).
+    const int MaxKnownSkips = 8;
     Process _p = null!;
     readonly EventWaitHandle _stop;
     readonly object _lock = new();
@@ -199,7 +255,18 @@ sealed class WarmRun : IWarmRun
             if (stagePath != null) { psi.ArgumentList.Add("--stage-path"); psi.ArgumentList.Add(stagePath); }
             foreach (var a in extra ?? []) psi.ArgumentList.Add(a);
             if (vendor.Caps.PackageKeyed && Games.XboxSource.AppUserModelId(game) is { } app) { psi.ArgumentList.Add("--package"); psi.ArgumentList.Add(app); }
-            if (skipKeys.Count > 0) { psi.ArgumentList.Add("--skip-keys"); psi.ArgumentList.Add(string.Join(',', skipKeys.Order(StringComparer.Ordinal))); }
+            if (skipKeys.Count > 0)
+            {
+                var keys = string.Join(',', skipKeys.Order(StringComparer.Ordinal));
+                if (keys.Length > 8000)   // a command line holds 32,767 characters: a long list goes through a file
+                {
+                    var file = Path.GetFullPath(Path.Combine(workDir, "skip-keys.txt"));
+                    File.WriteAllText(file, keys);
+                    keys = "@" + file;
+                }
+                psi.ArgumentList.Add("--skip-keys");
+                psi.ArgumentList.Add(keys);
+            }
             if (isolate.Count > 0) { psi.ArgumentList.Add("--isolate"); psi.ArgumentList.Add(string.Join(',', isolate)); }
             foreach (var (k, v) in env ?? new Dictionary<string, string>()) psi.Environment[k] = v;
             if (passes != null) { psi.ArgumentList.Add("--pass"); psi.ArgumentList.Add(passes.Number(pass).ToString()); }
@@ -232,22 +299,24 @@ sealed class WarmRun : IWarmRun
                 if (sampled == null || sampled.Elapsed >= CacheSampleInterval) (growth, sampled) = (Math.Max(0, vendor.GetCacheUsage().BytesOnDisk - before), Stopwatch.StartNew());
                 return growth;
             }
-            long carried = 0;   // failures the earlier processes counted (before their retry point, or in earlier passes)
+            long carried = 0, carriedSkips = 0;   // failures and skips the earlier processes counted (before their retry point, or in earlier passes)
             var lastCarried = false;   // the last process's failures are in carried already
             string? note = null;
             var skip = new List<long>();
             var crashed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var removals = 0;
+            int removals = 0, knownSkips = 0;
             WarmEvent? last, done;
             string? error;
             int code;
             bool betweenPasses = false;   // stopped after a pass ended: the next one resumes from its first item
+            bool resumable = false;       // gave up on device removals or hangs at a retry point
+            bool dropped = false;         // run again without --aftermath
             string? stage = null;         // the last process's staging folder (its stage event)
             for (var n = 1; ; n++)
             {
                 var passNote = passes == null ? null : passes.IsFast(pass) ? "careful compile: the plan's other pipelines at full speed"
                     : $"careful compile: recorded pipelines, pass {passes.Number(pass)} of {passes.CarefulCount}";
-                var report = progress == null ? null : new Adjusted(progress, carried, note ?? passNote, passes?.Total);
+                var report = progress == null ? null : new Adjusted(progress, carried, carriedSkips, note ?? passNote, passes?.Total);
                 var lastPass = passes == null || pass == passes.Count - 1;
                 stage = null;   // this process's, never an earlier one's
                 (last, done, error) = await WarmOutput.Pump(_p.StandardOutput, report, Growth, ReportEvery,
@@ -258,7 +327,7 @@ sealed class WarmRun : IWarmRun
                 crashed.UnionWith(done?.Crashed ?? []);
                 if (error == null && code == 0 && done is { Event: "done", Stopped: false } && !lastPass)
                 {
-                    (carried, lastCarried) = (carried + done.Failed, true);
+                    (carried, carriedSkips, lastCarried) = (carried + done.Failed, carriedSkips + done.DriverSkipped, true);
                     lock (_lock)
                     {
                         if (_stopping) { betweenPasses = true; break; }
@@ -269,25 +338,49 @@ sealed class WarmRun : IWarmRun
                     }
                     continue;
                 }
+                var am = Array.IndexOf(extra ?? [], "--aftermath");
+                if (am >= 0 && !_stopping && (error != null || done is { Event: "retry", Reason: "died", Isolate: null, Skip: null }) && (last?.Done ?? from) <= from)
+                {
+                    log?.Report($"{game.Name}: the compile stopped while starting NVIDIA Aftermath ({error ?? "the warm process died"}): compiling without it");
+                    lock (_lock)
+                    {
+                        (extra, dropped, error) = ([.. extra![..am], .. extra[(am + 4)..]], true, null);   // AftermathArgs: the option, its DLL, --aftermath-init, its values
+                        // what ran before filled the Aftermath key only: the plain key starts from the first item
+                        (pass, carried, carriedSkips, lastCarried, removals, knownSkips, note) = (0, 0, 0, false, 0, 0, null);
+                        skip.Clear();
+                        _p = Launch(0, 0, skip, []);
+                    }
+                    continue;
+                }
                 if (done is not { Event: "retry" } r || error != null) break;
-                (carried, lastCarried) = (carried + r.Failed, true);
+                (carried, carriedSkips, lastCarried) = (carried + r.Failed, carriedSkips + r.DriverSkipped, true);
                 if (r.FailedItem >= 0) skip.Add(r.FailedItem);
-                skipKeys.UnionWith(r.Crashed ?? []);
-                var removed = r.Reason == "removed";
+                skip.AddRange(r.Skip ?? []);
+                var blamed = skipKeys.Count;
+                skipKeys.UnionWith(r.Crashed ?? []);   // a retry also lists the known keys it skipped
+                var removed = r.Reason is "removed" or "fault" or "died";
+                var hung = r.Reason == "hang";
+                var rtThreads = r.RtThreads;
+                if (r.FailedItem >= 0 && ++knownSkips > MaxKnownSkips) rtThreads = Math.Max(1, rtThreads / 4);
                 lock (_lock)
                 {
-                    var capped = removed && removals >= maxRecoveries;
-                    if (_stopping || n >= MaxProcesses || capped)
+                    // an item that died alone is skipped for this run only: no key, yet progress all the same
+                    if (removed || hung) removals = skipKeys.Count > blamed || r.Reason == "died" && r.Skip is { Count: > 0 } ? 0 : removals + 1;
+                    if (_stopping || n >= MaxProcesses || removals > maxRecoveries)
                     {
                         error = _stopping ? null
-                            : capped ? $"the GPU driver crashed {removals + 1} times in this {(passes != null ? "pass" : "compile")} (the D3D12 device was removed); stopped"
+                            : removed ? Warmer.CrashedError(crashed.Count)
+                            : hung ? Warmer.HungError
                             : $"gave up after {n} processes (the driver keeps faulting)";
+                        resumable = (removed || hung) && !_stopping;
                         break;
                     }
-                    removals += removed ? 1 : 0;
-                    note = removed ? "recovering from a GPU driver crash" : $"retrying ray tracing with fewer threads ({r.RtThreads})";
-                    progress?.Report(new WarmProgress(Whole(r.Done), passes?.Total ?? r.Total, carried, 0, Growth(), Note: note));
-                    _p = Launch(r.From, r.RtThreads, skip, removed ? r.Isolate ?? [] : []);
+                    note = removed ? "recovering from a GPU driver crash"
+                        : hung ? "skipping pipelines that hung the GPU driver"
+                        : r.FailedItem >= 0 ? $"skipping a ray tracing state object that crashed ({rtThreads} {(rtThreads == 1 ? "thread" : "threads")})"
+                        : $"retrying ray tracing with fewer threads ({rtThreads})";
+                    progress?.Report(new WarmProgress(Whole(r.Done), passes?.Total ?? r.Total, carried, 0, Growth(), Note: note, DriverSkipped: carriedSkips));
+                    _p = Launch(r.From, rtThreads, skip, removed ? r.Isolate ?? [] : []);
                 }
             }
             _stop.Dispose();
@@ -298,19 +391,21 @@ sealed class WarmRun : IWarmRun
             if (_ended != null) (outcome, error) = (WarmOutcome.Failed, _ended);
             if (outcome == WarmOutcome.Failed)
                 error ??= code != 0 ? $"scskiller_warm exited with code {code}{(stderr.IsEmpty ? "" : ": " + string.Join(" | ", stderr.TakeLast(3)))}"
-                                    : "scskiller_warm exited without a done event";
+                                    : Warmer.NoDoneError;
             var failed = carried + (lastCarried ? 0 : last?.Failed ?? 0);
+            var skips = carriedSkips + (lastCarried ? 0 : last?.DriverSkipped ?? 0);
             return new WarmResult(outcome, Whole(last?.Done ?? from), passes?.Total ?? last?.Total ?? 0, failed, clock.Elapsed, growth,
                 Path.Combine(stage ?? Path.Combine(workDir, "stage"), "scskiller.log"), outcome == WarmOutcome.Failed ? error : null,
-                Crashed: crashed.Count > 0 ? crashed : null);
+                Crashed: crashed.Count > 0 ? crashed : null, DriverSkipped: skips, Resumable: resumable && outcome == WarmOutcome.Failed && _ended == null,
+                AftermathDropped: dropped);
         }
     }
 
-    /// <summary>A later process's progress, as the whole warm's: its failures plus the earlier ones', with the retry or pass
-    /// note; a careful warm's total is every pass's items.</summary>
-    sealed class Adjusted(IProgress<WarmProgress> inner, long carried, string? note, long? total) : IProgress<WarmProgress>
+    /// <summary>A later process's progress, as the whole warm's: its failures and skips plus the earlier ones', with the retry
+    /// or pass note; a careful warm's total is every pass's items.</summary>
+    sealed class Adjusted(IProgress<WarmProgress> inner, long carried, long carriedSkips, string? note, long? total) : IProgress<WarmProgress>
     {
-        public void Report(WarmProgress p) => inner.Report(p with { Total = total ?? p.Total, Failed = p.Failed + carried, Note = note });
+        public void Report(WarmProgress p) => inner.Report(p with { Total = total ?? p.Total, Failed = p.Failed + carried, DriverSkipped = p.DriverSkipped + carriedSkips, Note = note });
     }
 
     public void Pause()
@@ -400,7 +495,7 @@ public static class WarmOutput
             rate.Add(clock.Elapsed, d);
             if (progress == null || (e == reported && !final && since.Elapsed < KeepAlive)) return;
             (reported, since) = (e, Stopwatch.StartNew());
-            progress.Report(new WarmProgress(d, e.Total, e.Failed, rate.PerSecond ?? e.Rate, cacheGrowth()));
+            progress.Report(new WarmProgress(d, e.Total, e.Failed, rate.PerSecond ?? e.Rate, cacheGrowth(), Workers: e.Workers, Threads: e.Threads, DriverSkipped: e.DriverSkipped));
         }
         while (await Task.WhenAny(reader, Task.Delay(every)) != reader) Report(false);
         await reader;
@@ -529,6 +624,8 @@ static class ProcessTree
     /// <summary>An NT path (\Device\HarddiskVolume3\...) on a drive letter's device, as a DOS path; null when no drive maps it.</summary>
     internal static string? DosPath(string nt, IEnumerable<(string Drive, string Device)> devices)
     {
+        // Wine names images in the DOS devices namespace (\??\C:\...)
+        if (nt.Length > 7 && nt.StartsWith(@"\??\", StringComparison.Ordinal) && char.IsAsciiLetter(nt[4]) && nt[5] == ':' && nt[6] == '\\') return nt[4..];
         foreach (var (drive, device) in devices)
             if (nt.StartsWith(device + "\\", StringComparison.OrdinalIgnoreCase)) return drive + nt[device.Length..];
         return null;

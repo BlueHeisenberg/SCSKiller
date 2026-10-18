@@ -6,6 +6,7 @@ Builds dist\SCSKiller\ and dist\SCSKiller.zip:
   cli\scskiller.exe        command line, self-contained, same Core project and commit, + the two codec DLLs
   cli\scskillerw.exe       the same CLI flagged as a GUI-subsystem exe: what the scheduled task runs (no console window)
   native\                  scskiller_warm.exe + the proxy d3d12.dll (the app looks in native\, the CLI in ..\native\)
+                           + scskiller_ags.dll (the same recorder as an AMD AGS wrapper, installed as a game's amd_ags_x64.dll)
                            + amd_ags_x64.dll (AMD AGS, downloaded by the proxy's CMake configure)
                            + segheap\scskiller_warm.exe (the same on the segment heap: NVIDIA's warm)
   THIRD-PARTY-NOTICES.md   every third-party component and its licence; notices\ holds the Microsoft packages' own notices
@@ -35,6 +36,8 @@ if ($Version -and (Get-Content (Join-Path $repo "src\SCSKiller.Core\App\ContentT
     throw "ContentTrust.RulesKeys has no rules-a key: pin the public key from tools/release-sign keygen --for rules before a release"
 }
 $versionArgs = if ($Version) { @("-p:Version=$Version", "-p:IncludeSourceRevisionInInformationalVersion=false") } else { @() }
+# Published debug symbols embed the private checkout path and repository URL.
+$versionArgs += "-p:DebugType=None", "-p:DebugSymbols=false"
 Write-Host "version: $(if ($Version) { $Version } else { '0.0.0-internal.0 (dev)' })"
 $dotnet = Join-Path $env:LOCALAPPDATA "Microsoft\dotnet\dotnet.exe"   # .NET 10 SDK is per user; PATH may have an older one
 if (-not (Test-Path $dotnet)) { $dotnet = "dotnet" }
@@ -56,7 +59,7 @@ $scskVersion = if ($Version) { $Version } else { "0.0.0-internal.0" }   # every 
 Run cmake @("-S", (Join-Path $repo "proxy"), "-B", $build, "-A", "x64", "-DSCSK_VERSION=$scskVersion")
 Run cmake @("--build", $build, "--config", "Release")
 New-Item -ItemType Directory -Force $native | Out-Null
-Copy-Item (Join-Path $build "Release\scskiller_warm.exe"), (Join-Path $build "Release\d3d12.dll"), (Join-Path $build "Release\amd_ags_x64.dll") $native
+Copy-Item (Join-Path $build "Release\scskiller_warm.exe"), (Join-Path $build "Release\d3d12.dll"), (Join-Path $build "Release\amd_ags_x64.dll"), (Join-Path $build "Release\scskiller_ags.dll") $native
 New-Item -ItemType Directory -Force (Join-Path $native "segheap") | Out-Null
 Copy-Item (Join-Path $build "Release\segheap\scskiller_warm.exe") (Join-Path $native "segheap")
 
@@ -133,13 +136,14 @@ foreach ($n in @(
 # 5. layout check, including self-contained .NET (no "install .NET" prompt): the runtime next to each exe and
 #    runtimeconfig.json listing includedFrameworks rather than a shared framework
 $expected = "SCSKiller.exe", "oodle-data-shared.dll", "zlib-ng2.dll", "cli\scskiller.exe", "cli\scskillerw.exe",
-    "cli\oodle-data-shared.dll", "cli\zlib-ng2.dll", "native\scskiller_warm.exe", "native\segheap\scskiller_warm.exe", "native\d3d12.dll", "native\amd_ags_x64.dll",
+    "cli\oodle-data-shared.dll", "cli\zlib-ng2.dll", "native\scskiller_warm.exe", "native\segheap\scskiller_warm.exe", "native\d3d12.dll", "native\amd_ags_x64.dll", "native\scskiller_ags.dll",
     "hostfxr.dll", "coreclr.dll", "cli\hostfxr.dll", "cli\coreclr.dll", "Microsoft.WindowsAppRuntime.dll", "SCSKiller.pri",
     "THIRD-PARTY-NOTICES.md", "LICENSE", "LICENSE-EXCEPTION.txt", "notices\dotnet-THIRD-PARTY-NOTICES.txt"
 if ($NoOodle) { $expected = $expected | Where-Object { $_ -notlike "*oodle-data-shared.dll" } }
 $missing = $expected | Where-Object { -not (Test-Path (Join-Path $out $_)) }
 if ($missing) { throw "dist\SCSKiller is missing: $($missing -join ', ')" }
 if ($NoOodle -and (Get-ChildItem $out -Recurse -Filter "oodle-data-shared.dll")) { throw "-NoOodle, but oodle-data-shared.dll is in dist\SCSKiller" }
+if (Get-ChildItem $out -Recurse -Filter "*.pdb") { throw "debug symbols must not be published" }
 foreach ($rc in "SCSKiller.runtimeconfig.json", "cli\scskiller.runtimeconfig.json") {
     if ((Get-Content (Join-Path $out $rc) -Raw) -notmatch '"includedFrameworks"') { throw "$rc is framework-dependent" }
 }

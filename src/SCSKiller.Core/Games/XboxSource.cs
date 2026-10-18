@@ -95,7 +95,7 @@ public sealed class XboxSource(IEnumerable<string>? driveRoots = null) : IGameSo
             .Select(e => e.Attribute("Name")?.Value)
             .FirstOrDefault(n => n != null)
             ?? (known?.GetValueOrDefault($"xbox:{familyName ?? name}") is { Version: { } was } k && was == version && k.InstallDir.Equals(content, StringComparison.OrdinalIgnoreCase)
-                && File.Exists(k.ExePath) ? k.ExePath : FindExeFallback(content));
+                && File.Exists(k.ExePath) && Pickable(k.ExePath) ? k.ExePath : FindExeFallback(content));
         if (exeRel == null) return null;
         var exe = Path.GetFullPath(Path.Combine(content, exeRel));
 
@@ -142,11 +142,13 @@ public sealed class XboxSource(IEnumerable<string>? driveRoots = null) : IGameSo
     /// the largest non-helper-named exe under Content.</summary>
     static string? FindExeFallback(string content)
     {
-        var opts = new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 3, IgnoreInaccessible = true };
+        var opts = new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 3, IgnoreInaccessible = true, AttributesToSkip = 0 };
         return Directory.EnumerateFiles(content, "*.exe", opts)
-            .Where(f => !LauncherOrUtility(Path.GetFileName(f)) && !GameFiles.IsHelper(f))
+            .Where(Pickable)
             .Select(f => new FileInfo(f)).MaxBy(f => f.Length)?.FullName;
     }
+
+    static bool Pickable(string exe) => !LauncherOrUtility(Path.GetFileName(exe)) && !GameFiles.IsHelper(exe);
 
     /// <summary>A launcher's or utility's exe by its name (<see cref="HelperHints"/>).</summary>
     internal static bool LauncherOrUtility(string name) => HelperHints.Any(h => name.Contains(h, StringComparison.OrdinalIgnoreCase));

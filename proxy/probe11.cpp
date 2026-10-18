@@ -18,6 +18,7 @@
 //                       inputs, a PS with up to 4 textures, 1 sampler, 1 float4 cbuffer). ~17 ms cold, ~1 ms when
 //                       the driver cache already holds both (warmed by scskiller_warm).
 //   firsttess <vs.bin> <hs.bin> <ds.bin> <ps.bin> - the same draw through a hull and a domain shader (3-point patches).
+//   firstps <ps.bin>   - time the first draw of a PS alone (behind its own VS, drawn first).
 // No args: orchestrator. Runs the child under itself and copies of itself (same/other exe name,
 // same/other folder), 3x with fresh seeds each, and prints medians.
 #define NOMINMAX
@@ -386,6 +387,39 @@ static int child_first(const wchar_t* vs_path, const wchar_t* ps_path) {
     return 0;
 }
 
+// firstps: the PS alone, behind a VS without input layout compiled here (SV_Position + TEXCOORD0 out); created right before
+// its draw: AMD compiles from create on in the background.
+static int child_firstps(const wchar_t* ps_path) {
+    std::string p = read_file(ps_path);
+    ID3DBlob* vsb = compile("struct O{float4 p:SV_Position;float2 uv:TEXCOORD0;};O main(uint i:SV_VertexID){O o;o.uv=float2(i&1,i>>1);o.p=float4(o.uv*2-1,0.5,1);return o;}", "vs_5_0");
+    ID3D11DeviceContext* ctx = nullptr;
+    ID3D11Device* dev = make_device(&ctx);
+    CHECK(dev && vsb && !p.empty());
+    ID3D11VertexShader* vs = make_vs(dev, vsb);
+    Common c = make_common(dev);
+    ID3D11RenderTargetView* rtv = nullptr;
+    D3D11_TEXTURE2D_DESC rtd = {64, 64, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET};
+    ID3D11Texture2D* rt = nullptr;
+    dev->CreateTexture2D(&rtd, nullptr, &rt);
+    dev->CreateRenderTargetView(rt, nullptr, &rtv);
+    D3D11_VIEWPORT vp = {0, 0, 64, 64, 0, 1};
+    ctx->OMSetRenderTargets(1, &rtv, nullptr);
+    ctx->RSSetViewports(1, &vp);
+    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx->VSSetShader(vs, nullptr, 0);
+    ID3D11ShaderResourceView* srvs[4] = {c.srv, c.srv, c.srv, c.srv};
+    ctx->PSSetShaderResources(0, 4, srvs);
+    ctx->PSSetSamplers(0, 1, &c.smp);
+    ctx->PSSetConstantBuffers(0, 1, &c.cb);
+    timed_gpu(dev, ctx, [&] { ctx->Draw(3, 0); });  // the VS's own compile
+    ID3D11PixelShader* ps = nullptr;
+    dev->CreatePixelShader(p.data(), p.size(), nullptr, &ps);
+    CHECK(vs && ps);
+    ctx->PSSetShader(ps, nullptr, 0);
+    printf("FIRST draw=%.3f\n", timed_gpu(dev, ctx, [&] { ctx->Draw(3, 0); }));
+    return 0;
+}
+
 // firsttess: the same with a hull and a domain shader (3-control-point patches; b0 in HS/DS, t0-t3 + s0 in the DS too).
 static int child_firsttess(const wchar_t* vs_path, const wchar_t* hs_path, const wchar_t* ds_path, const wchar_t* ps_path) {
     std::string b[4] = {read_file(vs_path), read_file(hs_path), read_file(ds_path), read_file(ps_path)};
@@ -486,6 +520,7 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 2) {
         if (mode == L"compile" && argc == 5) return child_compile(argv[2], argv[3], argv[4]);
         if (mode == L"first" && argc == 4) return child_first(argv[2], argv[3]);
+        if (mode == L"firstps" && argc == 3) return child_firstps(argv[2]);
         if (mode == L"firsttess" && argc == 6) return child_firsttess(argv[2], argv[3], argv[4], argv[5]);
         unsigned seed = (unsigned)_wtoi(argv[2]);
         return mode == L"state" ? child_state(seed) : child_cold(seed);

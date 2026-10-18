@@ -33,7 +33,7 @@ public sealed class Account
 {
     public static readonly TimeSpan SignInTimeout = TimeSpan.FromMinutes(5);
     const string Unreachable = "Can't reach the SCSKiller server right now. Check your internet connection, or try again later.";
-    const string NotRevoked = "Signed out on this PC. The server couldn't remove it from your account's devices; it drops off there after 90 days unused.";
+    const string NotRevoked = "Signed out on this PC. The server couldn't remove it from your account's devices. It drops off there after 90 days unused.";
 
     readonly string file;
     readonly RouteFailover routes;
@@ -105,7 +105,7 @@ public sealed class Account
         catch (OperationCanceledException) when (timeout.IsCancellationRequested && !mine.IsCancellationRequested)
         {
             Problem = $"Sign-in timed out after {SignInTimeout.TotalMinutes:0} minutes. If the Patreon page didn't load, Patreon may be " +
-                      "unreachable from your network right now; if a football match is on, try again afterwards.";
+                      "unreachable from your network right now. If a football match is on, try again afterwards.";
         }
         catch (OperationCanceledException) when (mine.IsCancellationRequested) { }
         catch (Exception e) { Problem = Plain(e); }
@@ -151,11 +151,14 @@ public sealed class Account
     /// <summary>The access token when it carries "db" (the community database), else null: signed out, not a supporter, or
     /// no token to be had. <paramref name="fresh"/>: a new one even if the current one is young (the edge answered 401).
     /// Throws like <see cref="GetAccessTokenAsync"/>.</summary>
-    public async Task<string?> GetDbTokenAsync(bool fresh = false, CancellationToken ct = default)
+    public Task<string?> GetDbTokenAsync(bool fresh = false, CancellationToken ct = default) => GetTokenAsync("db", fresh, ct);
+
+    /// <summary>The access token when it carries <paramref name="flag"/>, else null; as <see cref="GetDbTokenAsync"/>.</summary>
+    public async Task<string?> GetTokenAsync(string flag, bool fresh = false, CancellationToken ct = default)
     {
         if (fresh && deviceToken != null) await NewAccessTokenAsync(ct);
         var token = await GetAccessTokenAsync(ct);
-        return HasDb ? token : null;
+        return Status?.Ent.Contains(flag) == true ? token : null;
     }
 
     // Timed on this PC's monotonic clock from when the token arrived, never by comparing the server's exp with the local

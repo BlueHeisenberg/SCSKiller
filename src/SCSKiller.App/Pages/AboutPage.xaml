@@ -23,7 +23,7 @@
                             <Button Content="Check for updates" Click="OnCheckForUpdates" IsEnabled="{x:Bind Vm.CanCheck, Mode=OneWay}" />
                             <TextBlock Text="{x:Bind Vm.UpdateNote, Mode=OneWay}" Style="{StaticResource Caption}" VerticalAlignment="Center" TextWrapping="Wrap" />
                         </StackPanel>
-                        <CheckBox IsChecked="{x:Bind Vm.InstallUpdatesAutomatically, Mode=TwoWay}" Visibility="{x:Bind Vm.ShowsCheck}"
+                        <CheckBox IsChecked="{x:Bind Vm.InstallUpdatesAutomatically, Mode=TwoWay}" Visibility="{x:Bind Vm.ShowsAutoInstall, Mode=OneWay}"
                                   AutomationProperties.Name="Install updates automatically">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Install updates automatically" TextWrapping="Wrap" />
@@ -43,6 +43,7 @@
                             <Run Text="SCSKiller licence:" FontWeight="SemiBold" /><Run Text=" GPL-3.0-or-later, with an additional permission for Oodle, the Windows App SDK and graphics driver libraries (LICENSE-EXCEPTION.txt)" />
                         </TextBlock>
                         <StackPanel Orientation="Horizontal" Spacing="16" Margin="0,4,0,0">
+                            <HyperlinkButton Content="What's new" Padding="0" FontSize="12" Click="OnWhatsNew" />
                             <HyperlinkButton Content="Website" Padding="0" FontSize="12" NavigateUri="https://scskiller.com" />
                             <HyperlinkButton Content="Source code" Padding="0" FontSize="12" NavigateUri="https://github.com/BlueHeisenberg/SCSKiller" />
                             <HyperlinkButton Content="Support on Patreon" Padding="0" FontSize="12" NavigateUri="https://www.patreon.com/SCSKiller" />

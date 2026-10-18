@@ -20,7 +20,7 @@ public static class Dxbc
     /// <summary>The whole container (exactly its size) is well formed.</summary>
     public static bool Valid(ReadOnlySpan<byte> c)
     {
-        if (HeaderSize(c) != c.Length) return false;
+        if (c.IsEmpty || HeaderSize(c) != c.Length) return false;
         for (var k = 0; k < (int)U(c, 28); k++)
         {
             long co = U(c, 32 + 4 * k);

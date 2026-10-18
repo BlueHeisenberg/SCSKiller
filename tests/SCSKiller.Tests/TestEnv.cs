@@ -45,50 +45,45 @@ static partial class TestEnv
     internal static void BuildCodecs() => SCSKiller.Core.App.Codecs.DirOverride =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SCSKiller-build", "codecs");
 
-    /// <summary>The ledger the tests arm in and the built proxy and selftest read (SCSKILLER_TEST_LEDGER_DIR, inherited by
-    /// every process a test starts), never the user's %LOCALAPPDATA%\SCSKiller\armed.</summary>
-    public static readonly string Ledger = Path.Combine(Path.GetTempPath(), "scskiller-test-ledger-" + Guid.NewGuid().ToString("N")[..8], "armed");
-
-    /// <summary>The user's live ledger folder: watched and read, never written.</summary>
-    public static readonly string LiveLedger = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SCSKiller", "armed");
-
-    static readonly bool LiveLedgerExisted = Directory.Exists(LiveLedger);
-
-    // every name created, changed, renamed or deleted there while the tests run; the user's own app may add some
-    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> LiveLedgerSeen = new(StringComparer.OrdinalIgnoreCase);
-    static FileSystemWatcher? _liveLedgerWatch;
-    static volatile bool _liveLedgerWatchLost;
-
-    /// <summary>Fails when a test's own ledger names (<paramref name="keys"/>) reached <see cref="LiveLedger"/>: seen there,
-    /// or a refusal left there, or the folder was made during the run. The watcher is best-effort (an event may land after
-    /// the check); the refusal and the folder are read as they are.</summary>
-    public static void AssertLiveLedgerUntouched(IReadOnlySet<string> keys)
+    /// <summary>This run's own Busy and CacheDelete mutex names, for the processes the tests start too: an app running in the
+    /// same logon session sees none of the run's holds.</summary>
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    internal static void MutexScope()
     {
-        Assert.False(_liveLedgerWatchLost, "the live ledger's watcher lost events");
-        Assert.True(LiveLedgerExisted || !Directory.Exists(LiveLedger), "the live ledger folder was made during the run");
-        Assert.DoesNotContain(LiveLedgerSeen.Keys, n => keys.Contains(n.Split('.')[0]));
-        Assert.DoesNotContain(keys, k => File.Exists(Path.Combine(LiveLedger, k + ".refused")));
+        var scope = ".test-" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable("SCSKILLER_TEST_SCOPE", scope);
+        SCSKiller.Core.App.Busy.Scope = scope;
+    }
+
+    /// <summary>The recorder folder the tests stamp with (its recorder.key, recorder.revoked and refused\) and
+    /// the built proxy and selftest read (SCSKILLER_TEST_RECORDER_DIR, inherited by every process a test starts), never the
+    /// user's %LOCALAPPDATA%\SCSKiller.</summary>
+    public static readonly string Recorder = Path.Combine(Path.GetTempPath(), "scskiller-test-recorder-" + Guid.NewGuid().ToString("N")[..8]);
+
+    /// <summary>The user's live recorder folder: read, never written.</summary>
+    public static readonly string LiveRecorder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SCSKiller");
+
+    static readonly bool LiveKeyExisted = File.Exists(Path.Combine(LiveRecorder, "recorder.key")), LiveLedgerExisted = Directory.Exists(Path.Combine(LiveRecorder, "armed"));
+
+    /// <summary>Fails when the tests reached <see cref="LiveRecorder"/>: a refusal left there for one of <paramref name="keys"/>
+    /// (the file keys of a test's exes), a recorder.key made, or the user's 1.2 ledger deleted during the run.</summary>
+    public static void AssertLiveRecorderUntouched(IReadOnlySet<string> keys)
+    {
+        Assert.True(LiveKeyExisted || !File.Exists(Path.Combine(LiveRecorder, "recorder.key")), "a recorder.key was made in the live folder during the run");
+        Assert.True(!LiveLedgerExisted || Directory.Exists(Path.Combine(LiveRecorder, "armed")), "the live 1.2 ledger was deleted during the run");
+        Assert.DoesNotContain(keys, k => File.Exists(Path.Combine(LiveRecorder, "refused", k)));
     }
 
     [System.Runtime.CompilerServices.ModuleInitializer]
-    internal static void TestLedger()
+    internal static void TestRecorder()
     {
-        Environment.SetEnvironmentVariable("SCSKILLER_TEST_LEDGER_DIR", Ledger);
-        SCSKiller.Core.App.ScsKiller.LedgerDir = Ledger;
+        Environment.SetEnvironmentVariable("SCSKILLER_TEST_RECORDER_DIR", Recorder);
+        SCSKiller.Core.App.ScsKiller.RecorderDir = Recorder;
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
-            try { Directory.Delete(Path.GetDirectoryName(Ledger)!, true); }
+            try { Directory.Delete(Recorder, true); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         };
-        if (!LiveLedgerExisted) return;
-        _liveLedgerWatch = new FileSystemWatcher(LiveLedger) { NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite, InternalBufferSize = 64 * 1024 };
-        FileSystemEventHandler seen = (_, e) => LiveLedgerSeen.TryAdd(e.Name!, 0);
-        _liveLedgerWatch.Created += seen;
-        _liveLedgerWatch.Changed += seen;
-        _liveLedgerWatch.Deleted += seen;
-        _liveLedgerWatch.Renamed += (_, e) => { LiveLedgerSeen.TryAdd(e.Name!, 0); LiveLedgerSeen.TryAdd(e.OldName!, 0); };
-        _liveLedgerWatch.Error += (_, _) => _liveLedgerWatchLost = true;
-        _liveLedgerWatch.EnableRaisingEvents = true;
     }
 
     /// <summary>SCSKILLER_TEST_GAMES_ROOT's folders, then Steam's libraries' steamapps\common, existing ones only.</summary>
@@ -151,4 +146,21 @@ static partial class TestEnv
         var common = Directory.GetParent(gitDir)?.Parent;   // <main>\.git
         return common?.Name == ".git" && common.Parent != null ? common.Parent.FullName : RepoRoot;
     }
+
+    /// <summary>The skip reason when the test output has no Fixtures\<paramref name="folder"/>: the fixtures taken from games
+    /// stay out of the public source.</summary>
+    public static string? FixtureMissing(string folder) =>
+        Directory.Exists(Path.Combine(AppContext.BaseDirectory, "Fixtures", folder)) ? null : $@"no Fixtures\{folder}: kept private";
+}
+
+/// <summary>Skipped without its fixture folder (<see cref="TestEnv.FixtureMissing"/>).</summary>
+public sealed class FixtureFactAttribute : FactAttribute
+{
+    public FixtureFactAttribute(string folder) => Skip = TestEnv.FixtureMissing(folder);
+}
+
+/// <summary>Skipped without its fixture folder (<see cref="TestEnv.FixtureMissing"/>).</summary>
+public sealed class FixtureTheoryAttribute : TheoryAttribute
+{
+    public FixtureTheoryAttribute(string folder) => Skip = TestEnv.FixtureMissing(folder);
 }

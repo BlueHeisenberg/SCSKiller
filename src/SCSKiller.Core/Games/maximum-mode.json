@@ -1,0 +1,4 @@
+{
+  "about": "Games whose Maximum mode the app suggests, per GPU vendor (amd, nvidia). ids are Game.Id values, the only match. note is one short English line. source is never shown but this file is public. date = when the entry was last checked. This is the body: the server serves it signed (release-sign sign-content --name maximum-mode).",
+  "games": []
+}

@@ -7,8 +7,13 @@
 #include <windows.h>
 #define D3D12CreateDevice D3D12CreateDevice_h  // d3d12.h declares it without dllexport
 #include <d3d12.h>
+#include <dxgi1_2.h>
 #undef D3D12CreateDevice
+#include <algorithm>
+#include <atomic>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 static LONG g_calls;
@@ -70,24 +75,66 @@ static HRESULT STDMETHODCALLTYPE wrap_rs(Wrap* w, UINT mask, const void* blob, S
     return hr;
 }
 
+// A vtable whose every slot forwards to the same slot of the object at offset 8.
+static void** forward_vtable() {
+    const int n = 128;
+    auto code = (uint8_t*)VirtualAlloc(nullptr, n * 16, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    auto t = new void*[n];
+    for (int i = 0; i < n; ++i) {
+        uint8_t* c = code + i * 16;
+        const uint8_t op[] = {0x48, 0x8B, 0x49, 0x08, 0x48, 0x8B, 0x01, 0xFF, 0xA0};  // mov rcx,[rcx+8]; mov rax,[rcx]; jmp [rax+disp32]
+        int32_t disp = i * 8;
+        memcpy(c, op, sizeof op), memcpy(c + sizeof op, &disp, 4);
+        t[i] = c;
+    }
+    FlushInstructionCache(GetCurrentProcess(), code, n * 16);
+    return t;
+}
+
 static void** wrapper_vtable() {
     static void** vt = [] {
-        const int n = 128;
-        auto code = (uint8_t*)VirtualAlloc(nullptr, n * 16, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-        auto t = new void*[n];
-        for (int i = 0; i < n; ++i) {
-            uint8_t* c = code + i * 16;
-            const uint8_t op[] = {0x48, 0x8B, 0x49, 0x08, 0x48, 0x8B, 0x01, 0xFF, 0xA0};  // mov rcx,[rcx+8]; mov rax,[rcx]; jmp [rax+disp32]
-            int32_t disp = i * 8;
-            memcpy(c, op, sizeof op), memcpy(c + sizeof op, &disp, 4);
-            t[i] = c;
-        }
-        FlushInstructionCache(GetCurrentProcess(), code, n * 16);
+        void** t = forward_vtable();
         t[0] = (void*)wrap_qi, t[10] = (void*)wrap_gfx, t[16] = (void*)wrap_rs;
         return t;
     }();
     return vt;
 }
+
+// Copied as dxgi.dll beside selftest.exe (`selftest framesmod`): a mod's dxgi.dll like ReShade's, which forwards to
+// System32's. CreateDXGIFactory1's factory is its own object around System32's (every call forwarded, interfaces from
+// QueryInterface included, so it stays the wrapper). The wrapper itself is leaked: a test process.
+static HMODULE system_dxgi() {
+    wchar_t sys[MAX_PATH];
+    GetSystemDirectoryW(sys, MAX_PATH);
+    return LoadLibraryW((std::wstring(sys) + L"\\dxgi.dll").c_str());
+}
+struct FactoryWrap {
+    void** vt;
+    IUnknown* real;
+};
+static HRESULT STDMETHODCALLTYPE factory_qi(FactoryWrap* w, REFIID riid, void** pp) {
+    HRESULT hr = w->real->QueryInterface(riid, pp);
+    if (SUCCEEDED(hr) && *pp == w->real) *pp = w;
+    return hr;
+}
+extern "C" HRESULT WINAPI fake_dxgi_create1(REFIID riid, void** pp) {
+    static auto real = (HRESULT(WINAPI*)(REFIID, void**))GetProcAddress(system_dxgi(), "CreateDXGIFactory1");
+    static void** vt = [] {
+        void** t = forward_vtable();
+        t[0] = (void*)factory_qi;
+        return t;
+    }();
+    IUnknown* f = nullptr;
+    HRESULT hr = real ? real(riid, (void**)&f) : E_FAIL;
+    if (SUCCEEDED(hr)) *pp = new FactoryWrap{vt, f};
+    return hr;
+}
+extern "C" HRESULT WINAPI fake_dxgi_create2(UINT flags, REFIID riid, void** pp) {
+    static auto real = (HRESULT(WINAPI*)(UINT, REFIID, void**))GetProcAddress(system_dxgi(), "CreateDXGIFactory2");
+    return real ? real(flags, riid, pp) : E_FAIL;
+}
+#pragma comment(linker, "/EXPORT:CreateDXGIFactory1=fake_dxgi_create1")
+#pragma comment(linker, "/EXPORT:CreateDXGIFactory2=fake_dxgi_create2")
 
 extern "C" __declspec(dllexport) HRESULT WINAPI D3D12CreateDevice(IUnknown* adapter, D3D_FEATURE_LEVEL fl, REFIID riid, void** pp) {
     static auto real = (decltype(&D3D12CreateDevice_h))GetProcAddress(system_d3d12(), "D3D12CreateDevice");
@@ -148,4 +195,120 @@ extern "C" __declspec(dllexport) BOOL WINAPI FakeNext_Layer(BOOL unwrap) {
         return TRUE;
     }
     return FALSE;
+}
+
+// FidelityFX's ffxCreateContext for `selftest framesfg ffx` (the test copies this dll as amd_fidelityfx_loader_dx12.dll):
+// a FOR_HWND frame generation swap chain desc (type 0x30006) gets a stand-in swap chain, its vtable read-only data here,
+// whose Present presents the real one on the calling thread (FSR 3 generating nothing, as in menus), then twice from
+// another thread (a rendered and a generated frame).
+struct FgChain {
+    const void* const* vt;
+    IDXGISwapChain1* real;
+};
+static HRESULT STDMETHODCALLTYPE fg_qi(FgChain*, REFIID, void** pp) { return *pp = nullptr, E_NOINTERFACE; }
+static ULONG STDMETHODCALLTYPE fg_ref(FgChain*) { return 1; }
+static HRESULT STDMETHODCALLTYPE fg_none(FgChain*) { return E_NOTIMPL; }
+static HRESULT STDMETHODCALLTYPE fg_present(FgChain* c, UINT sync, UINT flags) {
+    HRESULT hr = c->real->Present(sync, flags);
+    std::thread([&] { for (int i = 0; i < 2 && SUCCEEDED(hr); ++i) hr = c->real->Present(sync, flags); }).join();
+    return hr;
+}
+static const void* const kFgVt[23] = {(const void*)fg_qi, (const void*)fg_ref, (const void*)fg_ref, (const void*)fg_none, (const void*)fg_none,
+    (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_present, (const void*)fg_none, (const void*)fg_none,
+    (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_none,
+    (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_none};
+struct FgForHwnd {
+    uint64_t type;
+    void* next;
+    IUnknown** swapchain;
+    HWND hwnd;
+    DXGI_SWAP_CHAIN_DESC1* desc;
+    DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreen;
+    IDXGIFactory* factory;
+    ID3D12CommandQueue* queue;
+};
+extern "C" uint32_t fake_ffx_create(void** ctx, FgForHwnd* d, const void*) {  // ffxCreateContext (fakenext.asm) jumps here
+    if (!d || (uint32_t)d->type != 0x30006) return 1;
+    ID3D12Device* dev = nullptr;
+    IDXGIFactory2* f2 = nullptr;
+    ID3D12CommandQueue* q = nullptr;
+    D3D12_COMMAND_QUEUE_DESC qd = {};
+    auto c = new FgChain{kFgVt, nullptr};
+    bool ok = SUCCEEDED(d->queue->GetDevice(IID_PPV_ARGS(&dev))) && SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q))) &&
+              SUCCEEDED(q->SetName(L"AMD FSR PresentQueue")) && SUCCEEDED(d->factory->QueryInterface(IID_PPV_ARGS(&f2))) &&
+              SUCCEEDED(f2->CreateSwapChainForHwnd(q, d->hwnd, d->desc, d->fullscreen, nullptr, &c->real));
+    if (!ok) return delete c, 1;
+    *d->swapchain = (IUnknown*)c;
+    *ctx = c;
+    return 0;
+}
+
+// NVAPI's nvapi_QueryInterface for `selftest nvqi` (the test loads a copy as nvapi64.dll): 0x5EE000nn resolves to its own
+// function, 0x5EE100nn to the same one by resolving 0x5EE000nn through the exported entry from inside this resolution (a
+// layer that resolves through whatever hooked the entry), every other id to none.
+static char g_nv_fns[16];
+extern "C" void* nvapi_QueryInterface(uint32_t id);
+#pragma comment(linker, "/EXPORT:nvapi_QueryInterface")
+#pragma comment(linker, "/EXPORT:ffxCreateContext")
+// `selftest nvopts`: NvAPI_Initialize and SetCreatePipelineStateOptions, which keeps the flags of each call it accepts for FakeNv_Opts.
+static std::mutex g_nv_mx;
+static std::vector<uint32_t> g_nv_opts;
+extern "C" void FakeNv_SetOpts();
+extern "C" void FakeNv_OneByte();
+extern "C" void FakeNv_ShortPad();
+extern "C" void FakeNv_LivePad();
+extern "C" void FakeNv_Raced();
+extern "C" int FakeNv_OnOpts(void*, const uint32_t* p) {
+    if (!p || (p[0] & 0xFFFF) < 8) return -9;  // NVAPI_INCOMPATIBLE_STRUCT_VERSION
+    std::lock_guard l(g_nv_mx);
+    g_nv_opts.push_back(p[1]);
+    return 0;
+}
+static int nv_init() { return 0; }
+extern "C" __declspec(dllexport) int WINAPI FakeNv_Opts(uint32_t* out, int max) {
+    std::lock_guard l(g_nv_mx);
+    int n = (int)std::min<size_t>(max, g_nv_opts.size());
+    std::copy_n(g_nv_opts.begin(), n, out);
+    return n;
+}
+
+// `selftest nvqi`: a thread inside nvapi_QueryInterface, past its first instruction, while the proxy hooks it.
+static std::atomic<int> g_nv_inside;
+extern "C" void fake_nv_qi_inside() {
+    g_nv_inside = 1;
+    g_nv_inside.notify_all();
+    g_nv_inside.wait(1);
+}
+#pragma comment(linker, "/EXPORT:FakeNext_NvQiInside")
+extern "C" __declspec(dllexport) void WINAPI FakeNext_NvQiHold(bool release) {  // false: until a thread is inside; true: it goes on
+    if (!release) g_nv_inside.wait(0);
+    else g_nv_inside = 2, g_nv_inside.notify_all();
+}
+
+extern "C" void* fake_nv_qi(uint32_t id) {
+    if (id == 0x0150E828) return (void*)nv_init;
+    if (id == 0x5C607A27) return (void*)FakeNv_SetOpts;
+    if (id == 0xAC2DFEB5) return (void*)FakeNv_OneByte;   // SetNvShaderExtnSlotSpace
+    if (id == 0x43D867C0) return (void*)FakeNv_ShortPad;  // SetNvShaderExtnSlotSpaceLocalThread
+    if (id == 0x2FC28856) return (void*)FakeNv_LivePad;   // CreateGraphicsPipelineState
+    if (id == 0x2762DEAC) return (void*)FakeNv_Raced;     // CreateComputePipelineState
+    if ((id & ~0xFu) == 0x5EE00000) return &g_nv_fns[id & 0xF];
+    if ((id & ~0xFu) == 0x5EE10000) return nvapi_QueryInterface(0x5EE00000 | (id & 0xF));
+    return nullptr;
+}
+
+// After FakeNext_NvAtExit, this dll's process detach resolves 16 ids it never resolved before and the 16 known ones
+// through the exported entry (a dll that detaches after the proxy, loaded before it, calling NVAPI at process exit), then
+// makes nv_at_exit.done beside itself.
+static bool g_nv_at_exit;
+extern "C" __declspec(dllexport) void WINAPI FakeNext_NvAtExit() { g_nv_at_exit = true; }
+BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
+    if (reason != DLL_PROCESS_DETACH || !reserved || !g_nv_at_exit) return TRUE;
+    for (uint32_t i = 0; i < 16; ++i) nvapi_QueryInterface(0x5EE20000 | i), nvapi_QueryInterface(0x5EE00000 | i);
+    wchar_t p[MAX_PATH];
+    if (DWORD n = GetModuleFileNameW(self, p, MAX_PATH); n && n < MAX_PATH - 16 && wcsrchr(p, L'\\')) {
+        wcscpy(wcsrchr(p, L'\\') + 1, L"nv_at_exit.done");
+        CloseHandle(CreateFileW(p, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr));
+    }
+    return TRUE;
 }

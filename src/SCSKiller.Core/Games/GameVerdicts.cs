@@ -84,7 +84,7 @@ public sealed class GameVerdicts
         && DateOnly.TryParseExact(e.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _);
 
     // any store: an id of a store this version doesn't know never matches
-    static bool IsId(string? id) => id is { Length: <= 120 } && id.IndexOf(':') is > 0 and var c && c < id.Length - 1 && !id.Any(char.IsWhiteSpace);
+    internal static bool IsId(string? id) => id is { Length: <= 120 } && id.IndexOf(':') is > 0 and var c && c < id.Length - 1 && !id.Any(char.IsWhiteSpace);
 
     static bool Scope(string[]? s) => s == null || s is { Length: >= 1 and <= 16 } && s.All(v => ContentFile.Text(v, 60));
 

@@ -14,8 +14,8 @@ namespace SCSKiller.Core.App;
 // The update system's pure parts. Velopack itself lives in the App project.
 
 /// <summary>A SemVer 2 version, X.Y.Z[-pre][+build] (a leading "v" is accepted: tags). Compares by SemVer precedence:
-/// 1.5.0-alpha.3 &lt; 1.5.0-beta.1 &lt; 1.5.0-internal.1 &lt; 1.5.0 (internal sorts after beta by ASCII, which is why the
-/// internal channel allows downgrades). Build metadata is ignored.</summary>
+/// 1.5.0-alpha.3 &lt; 1.5.0-beta.1 &lt; 1.5.0-internal.1 &lt; 1.5.0 (internal sorts after beta by ASCII). Build metadata
+/// is ignored.</summary>
 public sealed partial record AppVersion(int Major, int Minor, int Patch, string Pre) : IComparable<AppVersion>
 {
     [GeneratedRegex(@"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z.-]+)?$")]
@@ -44,11 +44,18 @@ public sealed partial record AppVersion(int Major, int Minor, int Patch, string 
         string[] x = Pre.Split('.'), y = o.Pre.Split('.');
         for (var i = 0; i < Math.Min(x.Length, y.Length); i++)
         {
-            bool xn = ulong.TryParse(x[i], out var xv), yn = ulong.TryParse(y[i], out var yv);
-            c = xn && yn ? xv.CompareTo(yv) : xn ? -1 : yn ? 1 : string.CompareOrdinal(x[i], y[i]);
+            bool xn = x[i].All(char.IsAsciiDigit), yn = y[i].All(char.IsAsciiDigit);
+            c = xn && yn ? Numeric(x[i], y[i]) : xn ? -1 : yn ? 1 : string.CompareOrdinal(x[i], y[i]);
             if (c != 0) return Math.Sign(c);
         }
         return x.Length.CompareTo(y.Length);
+
+        // any length: an identifier past ulong must not turn textual
+        static int Numeric(string a, string b)
+        {
+            (a, b) = (a.TrimStart('0'), b.TrimStart('0'));
+            return a.Length != b.Length ? a.Length.CompareTo(b.Length) : string.CompareOrdinal(a, b);
+        }
     }
 }
 
@@ -72,9 +79,6 @@ public static class UpdateChannels
         while (at > 0 && ent?.Contains(All[at]) != true) at--;
         return All[Math.Max(at, 0)];
     }
-
-    /// <summary>The internal channel installs whatever its feed names, even an older version (§4.1).</summary>
-    public static bool AllowsDowngrade(string channel) => channel == Internal;
 
     /// <summary>A download from the <paramref name="staged"/> channel's feed still installs: it is the feed <see cref="Effective"/>
     /// picks. With the entitlements unknown (null: signed in, but no token read since the start, as at a logon without
@@ -158,7 +162,7 @@ public sealed record StagedUpdate(string Channel, string Version, string FileNam
         var order = AppVersion.Parse(Version)!.CompareTo(current);
         return order == 0 ? StartStep.Installed
             : handedOver ? StartStep.Failed
-            : order > 0 || UpdateChannels.AllowsDowngrade(Channel) ? StartStep.Apply : StartStep.Older;
+            : order > 0 ? StartStep.Apply : StartStep.Older;
     }
 }
 
@@ -168,23 +172,31 @@ public enum StartStep { Apply, Installed, Failed, Older }
 
 /// <summary>"Install updates automatically" (<see cref="Settings.InstallUpdatesAutomatically"/>): a downloaded update installs
 /// at the app's next start, before anything there has begun, or at the tray's Quit. Never during Windows' shutdown, which
-/// may cut the swap off halfway. "Restart to update" offers it whenever it is downloaded, with the setting on or off.</summary>
+/// may cut the swap off halfway. "Restart to update" offers it whenever it is downloaded, with the setting on or off.
+/// A download from the internal channel's feed never installs by itself.</summary>
 public static class AutoInstall
 {
     public const string Off = "Automatic install is off.";
+    public const string Internal = "Updates on the internal channel install only through Restart to update.";
     public const string Compiling = "A compile is running.";
-    public const string Offline = "An offline session's game or cleanup is running.";
+    public const string Offline = "A recording session's game or cleanup is running. The update installs once it has ended.";
     public const string Playing = "A game is running, or the games aren't known yet.";
 
-    /// <summary>Why a downloaded update doesn't install by itself now; null: it does.</summary>
-    public static string? HeldBack(Settings s, bool compiling, bool offline, bool playing) =>
-        !s.InstallUpdatesAutomatically ? Off : compiling ? Compiling : offline ? Offline : playing ? Playing : null;
+    /// <summary>Whether a download from <paramref name="channel"/>'s feed installs by itself at a start or quit.</summary>
+    public static bool On(Settings s, string channel) => s.InstallUpdatesAutomatically && channel != UpdateChannels.Internal;
 
-    /// <summary>"Restart to update" shows for every downloaded update that still installs, whatever the setting.</summary>
-    public static bool OffersRestart(StagedUpdate? staged, string? chosen, string buildChannel, IReadOnlyCollection<string>? ent) =>
-        staged != null && UpdateChannels.Installs(staged.Channel, chosen, buildChannel, ent);
+    /// <summary>Why a download from <paramref name="channel"/>'s feed doesn't install by itself now; null: it does.</summary>
+    public static string? HeldBack(Settings s, string channel, bool compiling, bool offline, bool playing) =>
+        channel == UpdateChannels.Internal ? Internal : !s.InstallUpdatesAutomatically ? Off : compiling ? Compiling : offline ? Offline : playing ? Playing : null;
 
-    public static string ReadyNote(string version, Settings s) => s.InstallUpdatesAutomatically
+    /// <summary>"Restart to update" shows for every downloaded update that still installs, whatever the setting: its
+    /// channel still the chosen one, and newer than <paramref name="current"/> whatever a feed lists. The one older one is
+    /// <paramref name="backToStable"/>: "Go back to stable now"'s download, in the run that asked for it.</summary>
+    public static bool OffersRestart(StagedUpdate? staged, string? chosen, AppVersion current, IReadOnlyCollection<string>? ent, bool backToStable = false) =>
+        staged != null && UpdateChannels.Installs(staged.Channel, chosen, current.Channel, ent)
+        && (AppVersion.Parse(staged.Version) is { } v && v.CompareTo(current) > 0 || backToStable && staged.Channel == UpdateChannels.Stable);
+
+    public static string ReadyNote(string version, bool auto) => auto
         ? $"SCSKiller {version} is ready: it installs the next time SCSKiller starts or quits, or use Restart to update at the top."
         : $"SCSKiller {version} is ready: use Restart to update at the top.";
 }
@@ -212,6 +224,24 @@ public static class UpdateFeeds
     public static Uri Package(AppVersion v, string fileName) => v.Channel == UpdateChannels.Stable
         ? new($"https://github.com/{GhRepo}/releases/download/v{v}/{Uri.EscapeDataString(fileName)}")
         : new(PackageHost, $"v1/updates/{v.Channel}/{Uri.EscapeDataString(fileName)}");
+
+    /// <summary>The edge allows 10 full packages a day per device; 8 leaves a margin for requests this count misses.</summary>
+    public const int PackagesPerDay = 8;
+    static readonly TimeSpan[] Backoff = [TimeSpan.FromHours(1), TimeSpan.FromHours(2), TimeSpan.FromHours(4), TimeSpan.FromHours(12)];
+
+    /// <summary>When a package may be requested again, or null now: after consecutive failed downloads the wait doubles from
+    /// the last failure (1 h, 2 h, 4 h, then 12 h; <paramref name="asked"/>, a click, skips it), and an <paramref name="edge"/>
+    /// package (not GitHub's) never goes over <see cref="PackagesPerDay"/> full packages in any 24 h, whoever asks. Times after
+    /// <paramref name="now"/> (a clock set back) don't count: the edge's own limit still holds.</summary>
+    public static DateTimeOffset? PackageHold(PackageTries t, DateTimeOffset now, bool asked, bool edge)
+    {
+        var recent = t.At.Where(a => Recent(a, now)).Order().ToList();
+        DateTimeOffset? hold = edge && recent.Count >= PackagesPerDay ? recent[^PackagesPerDay] + TimeSpan.FromDays(1) : null;
+        if (!asked && t.Failures > 0 && t.FailedAt is { } failed && failed <= now && failed + Backoff[Math.Min(t.Failures, Backoff.Length) - 1] is var wait && wait > (hold ?? DateTimeOffset.MinValue)) hold = wait;
+        return hold > now ? hold : null;
+    }
+
+    internal static bool Recent(DateTimeOffset at, DateTimeOffset now) => at <= now && now - at < TimeSpan.FromDays(1);
 
     /// <summary>A package body into <paramref name="to"/>: at most the signed feed's <paramref name="size"/> (its SHA-256 is
     /// only checked once the download ends), and refused when no byte arrives for <paramref name="stall"/>.</summary>
@@ -242,6 +272,18 @@ public static class UpdateFeeds
         UpdateChannels.Alpha or UpdateChannels.Beta => new(RouteFailover.Default.Primary, $"v1/updates/{v.Channel}/source-{v}.zip"),
         _ => null,
     };
+}
+
+/// <summary>When package requests were made in the last day, and the downloads that failed in a row (<see cref="UpdateFeeds.PackageHold"/>).</summary>
+public sealed class PackageTries
+{
+    public List<DateTimeOffset> At { get; set; } = [];
+    public int Failures { get; set; }
+    public DateTimeOffset? FailedAt { get; set; }
+
+    public void Requested(DateTimeOffset now) => At = [.. At.Where(a => UpdateFeeds.Recent(a, now)), now];
+    public void Failed(DateTimeOffset now) => (Failures, FailedAt) = (Failures + 1, now);
+    public void Succeeded() => (Failures, FailedAt) = (0, null);
 }
 
 /// <summary>The signed feeds an update check reads (§4.1, §4.3) and the packages they name. A 429's Retry-After holds back
@@ -414,17 +456,24 @@ public static class HookSteps
 /// hands over to Update.exe (<see cref="MarkApplying"/>): a marker file, since a mutex dies with the app before the swap.</summary>
 public static class Busy
 {
-    public const string Name = @"Local\SCSKiller.Busy";
+    // SCSKILLER_TEST_SCOPE: a test run's suffix, set only by the tests and inherited by the processes they start
+    internal static string Scope = ScopeFrom(Environment.GetEnvironmentVariable("SCSKILLER_TEST_SCOPE"));
+
+    // anything but .test-<guid> keeps the production names: a stray value (a backslash, say) must not make them invalid
+    internal static string ScopeFrom(string? value) =>
+        value is { Length: 38 } && value.StartsWith(".test-", StringComparison.Ordinal) && Guid.TryParseExact(value[6..], "N", out _) ? value : "";
+
+    public static string Name => @"Local\SCSKiller.Busy" + Scope;
     public static readonly TimeSpan ApplyingFor = TimeSpan.FromMinutes(2);   // an older marker is a crashed apply
 
     /// <summary>Held until disposed. The named object exists while any process has it open, so ownership (and its thread
     /// affinity, awkward across awaits) isn't needed.</summary>
-    public static IDisposable Hold(string name = Name) => new Mutex(false, name);
+    public static IDisposable Hold(string? name = null) => new Mutex(false, name ?? Name);
 
     /// <summary>A compile worker's hold, taken before it reads the marker (the updater writes the marker before it reads
     /// <see cref="IsHeld"/>), so an update and a compile never both go ahead; null, holding nothing, while an update is
     /// being handed over.</summary>
-    public static IDisposable? TryHold(string dataDir, DateTimeOffset now, string name = Name)
+    public static IDisposable? TryHold(string dataDir, DateTimeOffset now, string? name = null)
     {
         var hold = Hold(name);
         if (!Applying(dataDir, now)) return hold;
@@ -432,9 +481,9 @@ public static class Busy
         return null;
     }
 
-    public static bool IsHeld(string name = Name)
+    public static bool IsHeld(string? name = null)
     {
-        if (!Mutex.TryOpenExisting(name, out var m)) return false;
+        if (!Mutex.TryOpenExisting(name ?? Name, out var m)) return false;
         m.Dispose();
         return true;
     }

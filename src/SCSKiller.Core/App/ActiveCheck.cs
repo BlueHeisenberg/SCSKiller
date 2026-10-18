@@ -25,11 +25,23 @@ public sealed class ActiveCheck
         file = Path.Combine(dataDir, "active-check.txt");
         this.enabled = enabled;
         this.version = version ?? AppVersion.Current;
-        gpu = vendor switch { GpuVendor.Nvidia => "nvidia", GpuVendor.Amd => "amd", _ => "other" };
+        gpu = Gpu(vendor);
         this.routes = routes ?? RouteFailover.Default;
         this.clock = clock ?? TimeProvider.System;
         http = new HttpClient(this.routes, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(10) };
     }
+
+    /// <summary>Settings that let it be sent: turned on by a choice the user made (<see cref="Settings.ActiveCheckAsked"/>).</summary>
+    public static bool Allowed(Settings s) => s is { ActiveCheck: true, ActiveCheckAsked: true, WelcomeSeen: true };
+
+    /// <summary>An install from before the choice existed: asked once, after the welcome, and off until it answers.</summary>
+    public static bool Asks(Settings s) => s.WelcomeSeen && !s.ActiveCheckAsked;
+
+    /// <summary>The choice, from the welcome's checkbox, the one-time question (Esc or closing = off) or Settings.</summary>
+    public static Settings Answered(Settings s, bool on) => s with { ActiveCheck = on, ActiveCheckAsked = true };
+
+    /// <summary>The body's "gpu": the server takes only these three, so Intel is "other".</summary>
+    public static string Gpu(GpuVendor vendor) => vendor switch { GpuVendor.Nvidia => "nvidia", GpuVendor.Amd => "amd", _ => "other" };
 
     /// <summary>The whole request body. <paramref name="last"/>: the UTC day of the last accepted check, null = never.</summary>
     public static string Body(DateOnly? last, DateOnly today, AppVersion version, string gpu)
@@ -47,7 +59,7 @@ public sealed class ActiveCheck
         {
             var today = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
             var last = Last();
-            if (last >= today || clock.GetUtcNow() < retryAt) return;
+            if (!enabled() || last >= today || clock.GetUtcNow() < retryAt) return;   // turned off while another send held it
             retryAt = clock.GetUtcNow() + TimeSpan.FromHours(1);
             using var body = new StringContent(Body(last, today, version, gpu), Encoding.UTF8, "application/json");
             using var r = await http.PostAsync(new Uri(routes.Primary, "v1/active"), body, ct);

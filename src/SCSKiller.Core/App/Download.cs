@@ -8,14 +8,18 @@ public static class Download
     static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
 
     /// <summary>The body at <paramref name="url"/>; null when it can't be had (offline, timeout, HTTP error).</summary>
-    public static string? Text(string url)
+    public static string? Text(string url) => Bytes(url) is { } b ? new StreamReader(new MemoryStream(b)).ReadToEnd() : null;
+
+    /// <summary>The body at <paramref name="url"/> as served; null when it can't be had (offline, timeout, HTTP error).</summary>
+    public static byte[]? Bytes(string url)
     {
         try
         {
             using var r = Http.Send(new HttpRequestMessage(HttpMethod.Get, url));
             if (!r.IsSuccessStatusCode) return null;
-            using var s = new StreamReader(r.Content.ReadAsStream());
-            return s.ReadToEnd();
+            using var s = new MemoryStream();
+            r.Content.ReadAsStream().CopyTo(s);
+            return s.ToArray();
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException or NotSupportedException) { return null; }
     }

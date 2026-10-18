@@ -43,6 +43,9 @@ public class StutterListTests : IDisposable
         Assert.NotNull(list.Find(G("xbox:Unknown.Family_x", "ATOMIC HEART")));
         Assert.Null(list.Find(G("steam:1", "ELDEN RING NIGHTREIGN")));                                           // not a prefix match
         Assert.Null(list.Find(G("steam:1817230", "Hi-Fi RUSH")));
+        var warThunder = list.Find(G("steam:236390", "?"));
+        Assert.NotNull(warThunder);
+        Assert.Same(warThunder, list.Find(G("gaijin:warthunder", "?")));
         Assert.All(new[] { "steam:990080", "steam:1286680", "steam:1245620", "steam:2909400", "steam:2623190", "steam:668580" },
             id => Assert.NotNull(list.Find(G(id, "?"))));
         var townfall = list.Find(G("steam:1636440", "?"))!;
@@ -63,6 +66,7 @@ public class StutterListTests : IDisposable
         Assert.NotNull(StutterList.TryParse(One(e => e["source"] = StutterList.OwnMeasurement)));
         Assert.NotNull(StutterList.TryParse(One(e => e["ids"] = new JsonArray())));
         Assert.NotNull(StutterList.TryParse(One(e => e["ids"] = new JsonArray("xbox:Bethesda.Project_3275kfvn8vcwc", "epic:a-b", "ea:198300", "purple:A2_WW_L_GA_PURPLE"))));
+        Assert.NotNull(StutterList.TryParse(One(e => e["ids"] = new JsonArray("hoyoplay:hk4e_global", "gaijin:warthunder", "riot:valorant.live"))));
     }
 
     [Fact]

@@ -11,8 +11,9 @@ namespace SCSKiller.Core.App;
 /// sha256 the hex SHA-256 of its UTF-8 bytes, sig Ed25519 over "scskiller-content-v1\n" + name + "\n" + signed_at + "\n"
 /// + sha256. Signed offline (tools/release-sign sign-content) with the rules keys, never the release keys. A body is
 /// used only when the signature verifies with a pinned key, the name is the one asked for, the body is valid, and it
-/// isn't older than the newest one accepted for that name on that channel.</summary>
-public sealed class ContentTrust(AppStore store, IReadOnlyDictionary<string, string> keys)
+/// isn't older than the newest one accepted for that name on that channel. <paramref name="only"/>: the one name these keys
+/// may sign (null: any); <paramref name="maxBytes"/>: the envelope's cap.</summary>
+public sealed class ContentTrust(AppStore store, IReadOnlyDictionary<string, string> keys, string? only = null, int maxBytes = ContentFile.MaxBytes)
 {
     /// <summary>The rules public keys (kid -> base64 raw Ed25519 key), generated offline by the maintainer
     /// (tools/release-sign keygen --for rules): rules-a signs, rules-b is the backup. build/publish.ps1 refuses a versioned
@@ -22,6 +23,10 @@ public sealed class ContentTrust(AppStore store, IReadOnlyDictionary<string, str
         ["rules-a"] = "Hm0YVaMre3b7eyz2Y9W6t2QWGFtFkVQXkPgg2968TNk=",
         ["rules-b"] = "PAx76G91Ugb7A2B3CFaGzrYawhMtd5Nsuj1ewy/IZiM=",
     };
+
+    /// <summary>The compat feed's public keys (kid -> base64 raw Ed25519 key): "feed-a" signs, "feed-b" is the next. The server
+    /// signs compat.json online with them, so they sign nothing else (<see cref="CompatFeed"/>). Empty: no compat.json is accepted.</summary>
+    public static readonly IReadOnlyDictionary<string, string> CompatKeys = new Dictionary<string, string>();
 
     static readonly SignatureAlgorithm Ed = SignatureAlgorithm.Ed25519;
     const string TimeFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'";
@@ -81,15 +86,19 @@ public sealed class ContentTrust(AppStore store, IReadOnlyDictionary<string, str
     public static string CacheFile(string cacheFile, string? channel) => channel == null ? cacheFile
         : Path.Combine(Path.GetDirectoryName(cacheFile) ?? "", $"{Path.GetFileNameWithoutExtension(cacheFile)}@{channel}.json");
 
-    /// <summary>The kept copy of one of <paramref name="channels"/> that verifies (the newest when several do), else
-    /// stable's (<paramref name="cacheFile"/>) when it verifies; null when none does. A channel's copy wins even when stable's
-    /// is newer, so an entry only in stable's reaches only stable. The copies of the other channels are deleted. Null
-    /// <paramref name="channels"/>: who reads which isn't known yet (no answer from the account), so every copy kept counts,
-    /// which is what was read when it was last known.</summary>
+    /// <summary>Game verdicts and Maximum mode: a channel's copy wins over a newer stable one, so an entry only in stable's
+    /// reaches only stable, and a channel that answers 404 has no copy. Rules and news: the newest wins, so stable's reaches
+    /// every channel.</summary>
+    static bool ChannelFirst(string name) => name is Games.GameVerdicts.Name or Games.MaximumMode.Name;
+
+    /// <summary>The kept copy that verifies among stable's (<paramref name="cacheFile"/>) and those of
+    /// <paramref name="channels"/>: the newest, or for <see cref="ChannelFirst"/> names the newest channel's, else stable's;
+    /// null when none does. The copies of the other channels are deleted. Null <paramref name="channels"/>: who reads which
+    /// isn't known yet (no answer from the account), so every copy kept counts, which is what was read when it was last known.</summary>
     public T? Cached<T>(string name, Func<string, T?> parse, string cacheFile, IReadOnlyCollection<string>? channels) where T : class
     {
         T? stable = null;
-        (T Doc, string At)? channel = null;
+        (T Doc, string At)? newest = null;
         foreach (var c in Channels.Prepend(null))
         {
             var file = CacheFile(cacheFile, c);
@@ -103,19 +112,19 @@ public sealed class ContentTrust(AppStore store, IReadOnlyDictionary<string, str
             try { json = File.ReadAllText(file); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
             if (Accept(name, json, parse, ChannelKey(name, c)) is not { } doc) continue;
-            if (c == null) stable = doc;
+            if (c == null && ChannelFirst(name)) stable = doc;
             // the fixed-width UTC format sorts as text
-            else if (ContentFile.Read<Envelope>(json)!.SignedAt is var at && (channel == null || string.CompareOrdinal(at, channel.Value.At) > 0))
-                channel = (doc, at);
+            else if (ContentFile.Read<Envelope>(json, maxBytes)!.SignedAt is var at && (newest == null || string.CompareOrdinal(at, newest.Value.At) > 0))
+                newest = (doc, at);
         }
-        return channel?.Doc ?? stable;
+        return newest?.Doc ?? stable;
     }
 
     /// <summary>Stable's copy of <paramref name="name"/>.json (/v1/content/) and, with an access <paramref name="token"/>, those
     /// of <paramref name="channels"/> (/v1/updates/&lt;channel&gt;/), each kept beside <paramref name="cacheFile"/> when it verifies
-    /// and isn't older than that channel's last; then <see cref="Cached"/>: the channel's copy, else stable's. Each copy is a
-    /// whole file. A channel that answers 404 has no copy, so its kept one is deleted. One that fails or refuses (401, 403)
-    /// keeps its last copy.</summary>
+    /// and isn't older than that channel's last; then <see cref="Cached"/>. Each copy is a whole file. A channel that fails
+    /// or refuses (401, 403) keeps its last copy, and so does one that answers 404 except for <see cref="ChannelFirst"/>
+    /// names, whose kept copy is then deleted.</summary>
     public async Task<T?> FetchAsync<T>(string name, Func<string, T?> parse, string cacheFile, IReadOnlyCollection<string>? channels, string? token,
         RouteFailover? routes, TimeSpan? budget = null) where T : class
     {
@@ -127,6 +136,7 @@ public sealed class ContentTrust(AppStore store, IReadOnlyDictionary<string, str
         for (var i = 0; i < from.Length; i++)
             if (served[i].Body is { } json && Accept(name, json, parse, ChannelKey(name, from[i])) != null)
                 ContentFile.Keep(CacheFile(cacheFile, from[i]), json);
+        if (!ChannelFirst(name)) return Cached(name, parse, cacheFile, channels);
         var none = from.Where((_, i) => served[i].Status == System.Net.HttpStatusCode.NotFound).OfType<string>();
         return Cached(name, parse, cacheFile, channels?.Except(none).ToArray());
     }
@@ -135,7 +145,8 @@ public sealed class ContentTrust(AppStore store, IReadOnlyDictionary<string, str
     string? Check(string name, string json, out string body, out DateTimeOffset at)
     {
         (body, at) = ("", default);
-        if (ContentFile.Read<Envelope>(json) is not { } e) return "malformed envelope";
+        if (only != null && name != only) return $"these keys don't sign '{name}'";
+        if (ContentFile.Read<Envelope>(json, maxBytes) is not { } e) return "malformed envelope";
         if (e.V != 1) return "unknown envelope version";
         if (e.Name != name) return $"signed for '{e.Name}'";
         if (!keys.TryGetValue(e.Kid, out var pub)) return $"unknown key '{e.Kid}'";

@@ -9,6 +9,50 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
     readonly string _dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "scskiller-frames-" + Guid.NewGuid().ToString("N")[..8])).FullName;
     public void Dispose() { try { Directory.Delete(_dir, true); } catch (IOException) { } }
 
+    static FrameReport Report(long launch, double minutes, double low, int stutters) =>
+        new(TimeSpan.FromMinutes(minutes), TimeSpan.FromSeconds(30), 1000, low,
+            [.. Enumerable.Range(0, stutters).Select(i => new Hitch(TimeSpan.FromMinutes(1 + i * 0.01), 80, HitchCause.Shader)),
+             new Hitch(TimeSpan.FromSeconds(5), 300, HitchCause.Loading), new Hitch(TimeSpan.FromMinutes(2), 60, HitchCause.Other)], [], launch);
+
+    /// <summary>The frame history keeps each launch once (updated while it grows), the newest <see cref="FrameSessions.Keep"/>,
+    /// newest first; it skips a log without a launch stamp, reads a broken file as none, and touches no other file of the
+    /// game's folder (a pinned before-and-after snapshot under sessions\ stays).</summary>
+    [Fact]
+    public void The_frame_history_keeps_the_newest_launches_and_nothing_else()
+    {
+        var store = new AppStore(Path.Combine(_dir, "data"));
+        var game = store.GameDir("steam:1");
+        var pinned = Path.Combine(Directory.CreateDirectory(Path.Combine(game, "sessions")).FullName, "1.json");
+        File.WriteAllText(pinned, "{\"pinned\":true}");
+        Assert.Empty(FrameSessions.Read(store, "steam:1"));
+
+        Assert.True(FrameSessions.Note(store, "steam:1", Report(1000, 10, 40, 3)));
+        Assert.False(FrameSessions.Note(store, "steam:1", Report(1000, 10, 40, 3)));
+        Assert.True(FrameSessions.Note(store, "steam:1", Report(1000, 12, 41, 4)));   // the same launch, grown
+        Assert.Equal([new FrameSession(1000, TimeSpan.FromMinutes(12), 41, 4)], FrameSessions.Read(store, "steam:1"));
+        Assert.False(FrameSessions.Note(store, "steam:1", Report(0, 5, 30, 1)));
+
+        for (var t = 2000L; t < 2000 + FrameSessions.Keep * 1000; t += 1000) FrameSessions.Note(store, "steam:1", Report(t, 1, 60, 0));
+        var kept = FrameSessions.Read(store, "steam:1");
+        Assert.Equal(FrameSessions.Keep, kept.Count);
+        Assert.Equal(FrameSessions.Keep * 1000 + 1000L, kept[0].LaunchUnixMs);
+        Assert.DoesNotContain(kept, e => e.LaunchUnixMs == 1000);
+        FrameSessions.Note(store, "steam:1", Report(1500, 1, 60, 0));   // older than all kept: not kept
+        Assert.DoesNotContain(FrameSessions.Read(store, "steam:1"), e => e.LaunchUnixMs == 1500);
+        Assert.Equal("{\"pinned\":true}", File.ReadAllText(pinned));
+        Assert.Equal(["1.json"], Directory.GetFiles(Path.GetDirectoryName(pinned)!).Select(Path.GetFileName));
+
+        File.WriteAllText(Path.Combine(game, "frame-history.json"), "[{\"LaunchUnixMs\": ");
+        Assert.Empty(FrameSessions.Read(store, "steam:1"));
+        File.WriteAllText(Path.Combine(game, "frame-history.json"), "[null, 5]");
+        Assert.Empty(FrameSessions.Read(store, "steam:1"));
+        File.WriteAllText(Path.Combine(game, "frame-history.json"),   // past DateTimeOffset's range, negative: left out
+            "[{\"LaunchUnixMs\": 253402300800000, \"Duration\": \"00:01:00\"}, {\"LaunchUnixMs\": 5, \"Duration\": \"-00:01:00\"}, {\"LaunchUnixMs\": 7, \"Duration\": \"00:01:00\"}]");
+        Assert.Equal([7L], FrameSessions.Read(store, "steam:1").Select(e => e.LaunchUnixMs));
+        Assert.True(FrameSessions.Note(store, "steam:1", Report(9000, 1, 60, 0)));
+        Assert.Equal([9000L, 7L], FrameSessions.Read(store, "steam:1").Select(e => e.LaunchUnixMs));
+    }
+
     /// <summary>A launch record (unix ms, us since the recorder loaded) and frames that return at <paramref name="endsMs"/>,
     /// as the proxy writes them: microsecond deltas, a skip record for a gap past 28 bits.</summary>
     internal static byte[] Launch(long unixMs, long loadedUs, IEnumerable<double> endsMs, uint chain = 0)
@@ -29,6 +73,125 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
     }
 
     static IEnumerable<double> Every10Ms(double from, double to) { for (var t = from; t < to; t += 10) yield return t; }
+
+    /// <summary>A slow frame is judged on the creates that end in it, with their time in the frame: a 10.5 s create on a
+    /// worker thread doesn't make the two slow frames it overlaps shader stutters, a create across two slow frames counts
+    /// once, for the frame it ends in, and one that ends after a frame doesn't count for it.</summary>
+    [Fact]
+    public void A_create_counts_only_for_the_slow_frame_it_ends_in()
+    {
+        var ends = new List<double>();
+        double t = 0;
+        foreach (var (at, ms) in new[] { (10_260.0, 174.0), (15_950, 100), (20_000, 100), (20_100, 100), (30_000, 80) })
+        {
+            for (; t < at; t += 10) ends.Add(t);
+            ends.Add(at);
+            t = at + ms;
+        }
+        for (; t < 80_000; t += 10) ends.Add(t);
+        var bin = Path.Combine(_dir, FrameLog.FileName);
+        File.WriteAllBytes(bin, Launch(1_000_050, 0, ends));
+        var csv = WarmedLaunch([(17_160, "R,0,0,10513.000"), (20_190, "S,0,0,180.000"), (30_150, "S,0,0,200.000")]);
+
+        var r = FrameLog.Read(bin, csv)!;
+        Assert.Equal([(10.26, HitchCause.Other), (15.95, HitchCause.Other), (20.0, HitchCause.Other), (20.1, HitchCause.Shader), (30.0, HitchCause.Other)],
+            r.Hitches.Select(h => (h.At.TotalSeconds, h.Cause)));
+    }
+
+    /// <summary>A play cap (a before and after run's length) ends the report at the frame where that much play was reached:
+    /// play time, frames, hitches, the 1% low, the graph and the creates of play count only frames before it.</summary>
+    [Fact]
+    public void A_play_cap_counts_only_the_play_before_it()
+    {
+        var ends = Every10Ms(0, 30_000).Append(30_000).Append(30_200).Concat(Every10Ms(30_210, 90_000))
+            .Append(90_000).Append(90_200).Concat(Every10Ms(90_210, 120_000)).ToList();
+        var bin = Path.Combine(_dir, FrameLog.FileName);
+        File.WriteAllBytes(bin, Launch(1_000_050, 0, ends));
+        var csv = WarmedLaunch([(30_150, "S,0,0,200.000"), (90_150, "S,0,0,200.000")]);
+
+        var whole = FrameLog.Read(bin, csv)!;
+        Assert.Equal(2, whole.Hitches.Count(h => h.Cause == HitchCause.Shader));
+        Assert.Equal(2, whole.Creates!.PlayCompiles);
+
+        var cut = FrameLog.Read(bin, csv, playCapMs: 60_000)!;
+        double at = cut.Duration.TotalMilliseconds - FrameLog.QuitMs;   // the cut: the graph's play ends there
+        Assert.InRange(at, 60_000, 60_500);
+        Assert.InRange(cut.PlaySeconds, 60, 60.2);
+        Assert.Equal(TimeSpan.FromSeconds(30), Assert.Single(cut.Hitches).At);
+        Assert.Equal(1, cut.Creates!.PlayCompiles);
+        Assert.Equal(ends.SkipLast(1).Count(s => s < at), cut.Frames);
+        Assert.True(cut.Low1PctFps > whole.Low1PctFps);
+        Assert.Equal(TimeSpan.Zero, cut.Startup);   // the first present, not the startup's end
+
+        var longer = FrameLog.Read(bin, csv, playCapMs: 600_000)!;   // shorter than the cap: whole, its startup counted too
+        Assert.Equal((whole.Duration, whole.Frames, whole.Hitches.Count), (longer.Duration, longer.Frames, longer.Hitches.Count));
+        Assert.Equal(whole.PlaySeconds + whole.Startup.TotalSeconds, longer.PlaySeconds, 3);
+    }
+
+    /// <summary>A before and after run counts from its first present for the play cap, wherever the startup ends: a cold
+    /// run's long precompile and a warm run's short start give the same window over the same frames.</summary>
+    [Fact]
+    public void A_before_and_after_run_counts_from_its_first_frame_whatever_its_startup()
+    {
+        var bin = Path.Combine(_dir, FrameLog.FileName);
+        File.WriteAllBytes(bin, Launch(1_000_050, 0, Every10Ms(0, 200_000)));
+        var reports = new List<(FrameReport Whole, FrameReport Cut)>();
+        foreach (var precompile in new[] { 100, 0 })
+        {
+            var csv = WarmedLaunch(Enumerable.Range(0, precompile * 120).Select(i => (i / 120 * 1000 + i % 120 * 8 + 1.0, "S,0,0,5.000")));
+            reports.Add((FrameLog.Read(bin, csv)!, FrameLog.Read(bin, csv, playCapMs: 60_000)!));
+        }
+        var (cold, warm) = (reports[0], reports[1]);
+        Assert.True(cold.Whole.Startup > TimeSpan.FromSeconds(90) && warm.Whole.Startup < TimeSpan.FromSeconds(5));
+        foreach (var (_, cut) in reports)
+        {
+            Assert.Equal(TimeSpan.Zero, cut.Startup);
+            Assert.InRange(cut.PlaySeconds, 60, 60.02);
+        }
+        Assert.Equal(cold.Cut.Duration, warm.Cut.Duration);
+        Assert.Equal(cold.Cut.Frames, warm.Cut.Frames);
+    }
+
+    /// <summary>A first frame of 8 s (an Unreal 5 game's load after its first present) is the first frame of a before and
+    /// after run's play: in its play time, its average and its 1% low, a loading frame and not a stutter.</summary>
+    [Fact]
+    public void A_long_first_frame_is_in_a_before_and_after_run()
+    {
+        var bin = Path.Combine(_dir, FrameLog.FileName);
+        var csv = WarmedLaunch([.. Enumerable.Range(0, 150).Select(i => (2_000 + i * 40.0, "S,1,1,0.500")), (5_000, "S,0,0,200.000")]);
+        var reports = new List<FrameReport>();
+        foreach (var first in new[] { 1_000.0, 8_990 })
+        {
+            File.WriteAllBytes(bin, Launch(1_000_050, 0, Every10Ms(9_000, 200_000).Prepend(first)));
+            reports.Add(FrameLog.Read(bin, csv, playCapMs: 60_000)!);
+        }
+        var (slow, fast) = (reports[0], reports[1]);
+        Assert.Equal(TimeSpan.FromMilliseconds(1_000), slow.Startup);
+        Assert.InRange(slow.PlaySeconds, 60, 60.02);
+        Assert.Equal(fast.Frames, slow.Frames + 799);   // 8 s of 10 ms frames the slow run has as one
+        Assert.True(slow.Low1PctFps < fast.Low1PctFps / 2);
+        Assert.Equal(HitchCause.Loading, Assert.Single(slow.Hitches, h => h.Ms >= 8_000).Cause);
+        Assert.DoesNotContain(slow.Hitches, h => h.Cause is HitchCause.Shader or HitchCause.Other);
+    }
+
+    /// <summary>The csv's last #session line is found from the end, wherever the 64 KB chunks it is read in cut it, and reading
+    /// from there gives that launch alone: the one a running game's frame log belongs to.</summary>
+    [Fact]
+    public void The_last_launch_is_read_from_the_end_of_the_csv()
+    {
+        var csv = Path.Combine(_dir, "tail.csv");
+        var first = "#session,1,a.exe\n#clock,0.0\n" + string.Concat(Enumerable.Repeat("1.0,G,0,0,5.000,k,0.1,1,1\n", 4000));
+        for (int pad = 65536 - 100; pad < 65536 - 20; pad++)
+        {
+            var text = first + "#session,2,b.exe\n#clock,0.0\n2.0,G,0,0,1.000,k,0.1,1,1\n#" + new string('x', pad) + "\n";
+            File.WriteAllText(csv, text);
+            long at = SessionLog.LastSessionAt(csv);
+            Assert.Equal(text.LastIndexOf("\n#session,", StringComparison.Ordinal) + 1, at);
+            Assert.Equal("b.exe", Assert.Single(SessionLog.Launches(csv, at)).Exe);
+        }
+        File.WriteAllText(csv, first);
+        Assert.Equal(0, SessionLog.LastSessionAt(csv));
+    }
 
     /// <summary>Slow frames get their cause from the creates that overlap them on the recorder's clock: a compile of 10 ms or
     /// more (not a RayQuery PSO at the driver's floor, not a ray tracing state object under SessionLog.StateObjectCompileMs) is a shader stutter,
@@ -244,6 +407,26 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
         Assert.Equal((0L, 1802L), (l.Compiles, l.StartupCompiles));
     }
 
+    /// <summary>A launch that compiled without a quiet window has no play: the game page says so in place of its stutters
+    /// and a 1% low of 0 fps. A launch with play keeps both.</summary>
+    [Fact]
+    public void A_launch_that_compiled_the_whole_time_says_so_instead_of_a_1_percent_low()
+    {
+        var csv = Path.Combine(_dir, "scskiller_creates.csv");
+        File.WriteAllLines(csv, ["#session,1000000,Game.exe", .. PerSecond(0, 120, 30, "S,0,0,25.000").Select(c => FormattableString.Invariant($"{c.Item1:0.0},{c.Item2}"))]);
+        var bin = Path.Combine(_dir, FrameLog.FileName);
+        File.WriteAllBytes(bin, Launch(1_000_050, 0, Every10Ms(0, 120_000)));
+        var r = FrameLog.Read(bin, csv)!;
+        Assert.Equal(0, r.PlaySeconds);
+        Assert.Equal("2 min, loading or compiling shaders the whole time.", Format.Frames(r, []));
+        Assert.Equal("loading or compiling shaders the whole time", Format.Session(FrameSessions.Of(r)));
+
+        var played = FrameLog.Read(FramesWithOneSlow(10_000, 200, 70_000), WarmedLaunch([(15_000, "S,1,1,0.500")]))!;
+        Assert.True(played.PlaySeconds > 0);
+        Assert.Equal($"1 min: no stutters from shader compiles, 1 other hitch, 1% low {played.Low1PctFps:0} fps.", Format.Frames(played, []));
+        Assert.Equal($"1% low {played.Low1PctFps:0} fps · no stutters", Format.Session(FrameSessions.Of(played)));
+    }
+
     /// <summary>One convention for both reports: a compile ending exactly at the end of startup, and the frame it fills,
     /// are startup's.</summary>
     [Fact]
@@ -304,6 +487,111 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
         Assert.Equal((0L, 1L), (l.Compiles, l.StartupCompiles));   // it quit busy: all startup
     }
 
+    /// <summary>Frame generation switched on 1 s in: the game's original swap chain until then, then frame generation's
+    /// swap chain (tagged) has the game's frames, and the swap chain it presents twice as often has the displayed ones.
+    /// The report is the game's frames; the displayed frames are every other swap chain's, with their times. A tag no
+    /// reader knows yet is skipped.</summary>
+    [Fact]
+    public void Frame_generation_reports_the_games_frames_and_keeps_the_displayed()
+    {
+        var (bytes, events) = FrameGenerationLaunch([0xF0000000u | 20]);
+        var bin = Path.Combine(_dir, FrameLog.FileName);
+        File.WriteAllBytes(bin, bytes);
+        var r = FrameLog.Read(bin, Path.Combine(_dir, "none.csv"))!;
+        Assert.Equal(99 + 100 - 1, r.Frames);
+        Assert.Equal(99 + 200, r.DisplayedFrames);
+        Assert.Equal(events.Where(e => e.Chain != 2).Select(e => Math.Round(e.T, 3)), r.Displayed!.Select(t => Math.Round(t, 3)));
+        Assert.Equal(1992, r.Duration.TotalMilliseconds, 3);   // the last game frame: no time from the tags
+        File.WriteAllBytes(bin, Launch(1_000_000, 0, Every10Ms(10, 1000)));
+        var plain = FrameLog.Read(bin, Path.Combine(_dir, "none.csv"))!;   // no frame generation
+        Assert.Equal((0L, null), (plain.DisplayedFrames, plain.Displayed));
+    }
+
+    /// <summary>Frame generation's swap chain made again 2 s in (a resize): both tagged swap chains are the game's frames,
+    /// and the swap chain they present stays the displayed one.</summary>
+    [Fact]
+    public void Frame_generation_made_again_keeps_both_its_swap_chains_as_the_games_frames()
+    {
+        var (bytes, _) = FrameGenerationLaunch(again: true);
+        var bin = Path.Combine(_dir, FrameLog.FileName);
+        File.WriteAllBytes(bin, bytes);
+        var r = FrameLog.Read(bin, Path.Combine(_dir, "none.csv"))!;
+        Assert.Equal(99 + 100 + 100 - 1, r.Frames);
+        Assert.Equal(99 + 400, r.DisplayedFrames);
+        Assert.Equal(2992, r.Duration.TotalMilliseconds, 3);
+    }
+
+    /// <summary>A downgraded app (1.2's reader, below) on a frame log with frame generation's tag: the tag is a gap of 2 ms
+    /// to it, so every frame is there, on its own swap chain, at most 2 ms late.</summary>
+    [Fact]
+    public void A_reader_from_before_tags_takes_the_frame_generation_tag_for_a_tiny_gap()
+    {
+        var (bytes, events) = FrameGenerationLaunch();
+        var old = Read12(bytes);
+        foreach (var chain in new uint[] { 0, 1, 2 })
+        {
+            var want = events.Where(e => e.Chain == chain).Select(e => e.T).ToList();
+            Assert.Equal(want.Count, old[chain].Count);
+            Assert.All(want.Zip(old[chain]), p => Assert.InRange(p.Second - p.First, -0.001, 2.001));
+        }
+    }
+
+    /// <summary>A launch as the proxy writes it with frame generation switched on 1 s in: swap chain 0 every 10 ms until
+    /// then, then frame generation's (2, tagged before its first frame) every 10 ms and the one it presents (1) every 5 ms.
+    /// <paramref name="again"/>: frame generation's swap chain made again at 2 s (3, tagged), 1 s more of both.</summary>
+    static (byte[] Bytes, List<(double T, uint Chain)> Events) FrameGenerationLaunch(uint[]? moreTags = null, bool again = false)
+    {
+        var events = Every10Ms(10, 1000).Select(t => (T: t, Chain: 0u)).Concat(Every10Ms(1000, 2000).Select(t => (T: t + 2, Chain: 2u)))
+            .Concat(Enumerable.Range(0, again ? 400 : 200).Select(i => (T: 1001 + 5.0 * i, Chain: 1u)))
+            .Concat(again ? Every10Ms(2000, 3000).Select(t => (T: t + 2, Chain: 3u)) : []).OrderBy(e => e.T).ToList();
+        var b = new List<byte>();
+        void U32(uint v) => b.AddRange(BitConverter.GetBytes(v));
+        U32(0xFFFFFFFF);
+        foreach (var v in new[] { 1_000_000L, 0L, 123456789L, 10_000_000L }) b.AddRange(BitConverter.GetBytes(v));
+        long last = 0;
+        var tagged = new HashSet<uint>();
+        foreach (var (t, chain) in events)
+        {
+            if (chain >= 2 && tagged.Add(chain))
+            {
+                U32(0xF0000000u | chain);
+                foreach (var tag in moreTags ?? []) U32(tag);
+            }
+            long us = (long)Math.Round(t * 1000);
+            U32(chain << 28 | (uint)(us - last));
+            last = us;
+        }
+        return ([.. b], events);
+    }
+
+    /// <summary>1.2's FrameLog.ReadFrames loop, every swap chain's frames of the last launch.</summary>
+    internal static Dictionary<uint, List<double>> Read12(byte[] data)
+    {
+        long t = 0;
+        double start = 0;
+        Dictionary<uint, List<double>>? chains = null;
+        for (int i = 0; i + 4 <= data.Length; i += 4)
+        {
+            uint r = BitConverter.ToUInt32(data, i);
+            if (r == 0xFFFFFFFF)
+            {
+                if (i + 36 > data.Length) break;
+                start = BitConverter.ToInt64(data, i + 12) / 1000.0;
+                (t, chains) = (0, []);
+                i += 32;
+            }
+            else if (chains == null) continue;
+            else if (r >> 28 == 15) t += (r & 0x0FFFFFFF) * 1000L;
+            else
+            {
+                t += r & 0x0FFFFFFF;
+                if (!chains.TryGetValue(r >> 28, out var c)) chains[r >> 28] = c = [];
+                c.Add(start + t / 1000.0);
+            }
+        }
+        return chains ?? [];
+    }
+
     /// <summary>Another exe's launch after the game's isn't the game's last session, as it isn't its frame report.</summary>
     [Fact]
     public void The_last_session_is_the_exes_own()
@@ -326,7 +614,7 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
     }
 
     /// <summary>A shader freeze of 5 s or more is play, in the 1% low; only a frame of 5 s with no compile (a pause) is
-    /// left out.</summary>
+    /// left out, but in a before and after run, which counts everything.</summary>
     [Fact]
     public void A_long_shader_freeze_counts_in_the_1_percent_low()
     {
@@ -337,6 +625,10 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
         var paused = FrameLog.Read(FramesWithOneSlow(30_000, 6000, 80_000), WarmedLaunch([(60_000, "S,1,1,0.500")]))!;
         Assert.Empty(paused.Hitches);
         Assert.True(paused.Low1PctFps > 90, $"1% low {paused.Low1PctFps}");
+        var counted = FrameLog.Read(FramesWithOneSlow(30_000, 6000, 80_000), WarmedLaunch([(60_000, "S,1,1,0.500")]), playCapMs: 600_000)!;
+        Assert.Equal([HitchCause.Other], counted.Hitches.Select(h => h.Cause));
+        Assert.True(counted.Low1PctFps < 20, $"1% low {counted.Low1PctFps}");
+        Assert.Equal(paused.PlaySeconds + paused.Startup.TotalSeconds + 6, counted.PlaySeconds, 3);
     }
 
     /// <summary>An ordinary hitch after the startup is play, however close: a hitch every second leaves the startup at the
@@ -522,6 +814,33 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
         Assert.Equal([10.0, 60000.1, 60000.2, 60000.3], SessionLog.Launches(csv).First().Creates.Select(c => c.T));
         File.WriteAllLines(csv, ["10.0,S,1,1,0.500", "20.0,S,1,1,0.500", "5.0,S,1,1,0.500"]); // an older proxy's restart, no markers: two launches
         Assert.Equal(1L, SessionLog.Read(csv).Last!.Requests);
+    }
+
+    /// <summary>Play time is the summed play frames (startup, the quit window and pauses left out), the average FPS their
+    /// count over it, and the create stats take only the report's launch from a csv of several, split at its startup: hits
+    /// and compiles in play, PSO compiles in startup, library loads, state objects, a RayQuery PSO at its floor ready.</summary>
+    [Fact]
+    public void Play_time_and_create_stats_are_the_reports_launch_split_at_its_startup()
+    {
+        var csv = Path.Combine(_dir, "scskiller_creates.csv");
+        string[] first = ["#session,900000,Game.exe", "#clock,0.0", "#swapchain,1920,1080,24", "10.0,S,0,0,25.000", "20.0,s,1,1,1.000", "#end,960000,60000.0"];
+        var rows = Enumerable.Range(0, 600).Select(i => (T: i * 10 / 3.0, Row: "S,0,0,4.000"))
+            .Concat([(20_000, "S,1,1,0.500"), (20_100, "S,0,0,30.000"), (20_200, "C,0,0,40.000,rq"), (20_300, "s,1,1,4.000"), (20_400, "R,1,1,10.000"),
+                (20_500, "A,0,0,70.000"), (25_000, "S,1,1,0.500")]);
+        File.WriteAllLines(csv, [.. first, "#session,1000000,Game.exe", "#clock,0.0", "#swapchain,2560,1440,28", "#future,1,2", "#overlay", "#swapchain,3840,2160,10",
+            .. rows.OrderBy(r => r.T).Select(r => FormattableString.Invariant($"{r.T:0.0},{r.Row}")), "#end,1090000,90000.0"]);
+        var bin = Path.Combine(_dir, FrameLog.FileName);
+        File.WriteAllBytes(bin, Launch(1_000_000, 0, Every10Ms(0, 40_000).Append(46_000).Concat(Every10Ms(46_010, 90_000))));   // a 6 s pause at 40 s
+        var r = FrameLog.Read(bin, csv, "Game.exe", new HashSet<string> { "rq" })!;
+        Assert.Equal(TimeSpan.FromSeconds(2), r.Startup);
+        Assert.Equal(90 - 2 - 10 - 6, r.PlaySeconds, 1);
+        Assert.Equal(100, r.AvgFps, 1);
+        Assert.Equal(new CreateStats(PlayHits: 3, PlayCompiles: 1, StartupCompiles: 600, Library: 1, StateObjectsReady: 1, StateObjectsCompiled: 1), r.Creates);
+        Assert.Equal(0.75, r.Creates!.ReadyShare);
+        var launch = SessionLog.Launches(csv).Last();
+        Assert.Equal(("3840x2160 fmt 10", true, 1090000L), (launch.SwapChain, launch.Overlay, launch.End));
+        Assert.Equal(("1920x1080 fmt 24", false), (SessionLog.Launches(csv).First().SwapChain, SessionLog.Launches(csv).First().Overlay));
+        Assert.Equal(1, SessionLog.Read(csv, rayQuery: new HashSet<string> { "rq" }).Last!.Compiles);   // the extra # lines change nothing else
     }
 
     /// <summary>SILENT HILL: Townfall's recorder files, read only: the last launch has frames and at least one hitch.</summary>

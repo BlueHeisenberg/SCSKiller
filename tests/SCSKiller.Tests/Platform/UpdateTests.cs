@@ -20,6 +20,53 @@ public class UpdateTests : IDisposable
     static byte[] Sig(string seed, string kid, string channel, byte[] feed, DateTimeOffset at) =>
         Encoding.UTF8.GetBytes(FeedTrust.Sign(Convert.FromBase64String(seed), kid, channel, feed, at));
 
+    /// <summary>Failed downloads back off 1 h, 2 h, 4 h, 12 h from the failure; a click skips the wait; 8 edge requests in 24 h stop everything.</summary>
+    [Fact]
+    public void A_failing_package_download_backs_off_and_never_passes_the_daily_cap()
+    {
+        var t = new PackageTries { At = [T], Failures = 1, FailedAt = T.AddMinutes(30) };
+        Assert.Equal(T.AddMinutes(90), UpdateFeeds.PackageHold(t, T.AddMinutes(31), false, true));
+        Assert.Null(UpdateFeeds.PackageHold(t, T.AddMinutes(90), false, true));
+        Assert.Null(UpdateFeeds.PackageHold(t, T.AddMinutes(31), true, true));
+        foreach (var (failures, hours) in new[] { (2, 2), (3, 4), (4, 12), (9, 12) })
+            Assert.Equal(T.AddHours(hours), UpdateFeeds.PackageHold(new() { Failures = failures, FailedAt = T }, T.AddSeconds(1), false, true));
+        Assert.Equal(T.AddHours(1), UpdateFeeds.PackageHold(new() { Failures = 1, FailedAt = T }, T.AddSeconds(1), false, false));   // GitHub's too
+        Assert.Null(UpdateFeeds.PackageHold(new(), T, false, true));
+
+        var day = new PackageTries { At = [.. Enumerable.Range(0, UpdateFeeds.PackagesPerDay).Select(i => T.AddHours(i))] };
+        Assert.Equal(T.AddDays(1), UpdateFeeds.PackageHold(day, T.AddHours(9), true, true));   // a click doesn't pass the cap
+        Assert.Null(UpdateFeeds.PackageHold(day, T.AddDays(1), true, true));
+        Assert.Null(UpdateFeeds.PackageHold(day, T.AddHours(9), true, false));   // GitHub has no quota
+        // a clock set back: times ahead of it don't hold anything back (else a year back would hold for a year)
+        Assert.Null(UpdateFeeds.PackageHold(day, T.AddHours(-9), true, true));
+        Assert.Null(UpdateFeeds.PackageHold(new() { Failures = 4, FailedAt = T }, T.AddHours(-1), false, true));
+
+        new AppStore(_dir).SavePackageTries(day);
+        Assert.Equal(day.At, new AppStore(_dir).LoadPackageTries().At);
+        File.WriteAllText(Path.Combine(_dir, "package-tries.json"), """{ "At": null, "Failures": 3 }""");   // never a check that throws
+        Assert.Null(UpdateFeeds.PackageHold(new AppStore(_dir).LoadPackageTries(), T, false, true));
+    }
+
+    /// <summary>A failure, another one, a success, then a failure: the wait starts over at 1 h. A request drops the ones
+    /// older than a day.</summary>
+    [Fact]
+    public void The_backoff_starts_over_after_a_successful_download()
+    {
+        var t = new PackageTries();
+        t.Failed(T);
+        Assert.Equal(T.AddHours(1), UpdateFeeds.PackageHold(t, T, false, true));
+        t.Failed(T.AddHours(1));
+        Assert.Equal(T.AddHours(3), UpdateFeeds.PackageHold(t, T.AddHours(1), false, true));
+        t.Succeeded();
+        Assert.Null(UpdateFeeds.PackageHold(t, T.AddHours(1), false, true));
+        t.Failed(T.AddHours(5));
+        Assert.Equal(T.AddHours(6), UpdateFeeds.PackageHold(t, T.AddHours(5), false, true));
+
+        t.At = [T.AddDays(-2), T.AddHours(-1)];
+        t.Requested(T);
+        Assert.Equal([T.AddHours(-1), T], t.At);
+    }
+
     /// <summary>A Velopack hook's step that throws is logged with the hook, and the steps after it still run.</summary>
     [Fact]
     public void A_failing_hook_step_is_logged_and_the_others_still_run()
@@ -157,15 +204,68 @@ public class UpdateTests : IDisposable
     [Fact]
     public void Versions_OrderBySemVerPrecedence()
     {
-        string[] ordered = ["1.4.9", "1.5.0-alpha.2", "1.5.0-alpha.10", "1.5.0-beta", "1.5.0-beta.1", "1.5.0-beta.2", "1.5.0-internal.1", "1.5.0", "1.5.1-alpha.1", "1.10.0"];
+        string[] ordered = ["1.4.9", "1.5.0-alpha.2", "1.5.0-alpha.10", "1.5.0-beta", "1.5.0-beta.1", "1.5.0-beta.2", "1.5.0-internal.1", "1.5.0-internal.2",
+            "1.5.0-internal.3", "1.5.0-internal.10", "1.5.0", "1.5.1-alpha.1", "1.10.0"];
         var parsed = ordered.Select(s => AppVersion.Parse(s)!).ToList();
         Assert.Equal(ordered, parsed.OrderBy(v => v).Select(v => v.ToString()));
         for (var i = 1; i < parsed.Count; i++) Assert.True(parsed[i - 1].CompareTo(parsed[i]) < 0, $"{parsed[i - 1]} < {parsed[i]}");
         Assert.Equal(0, AppVersion.Parse("1.5.0+a")!.CompareTo(AppVersion.Parse("1.5.0+b")));   // build metadata doesn't order
-        // internal sorts after beta: only the internal channel, which installs what its feed names, may go back
-        Assert.True(AppVersion.Parse("1.5.0-internal.1")!.CompareTo(AppVersion.Parse("1.5.0-beta.3")) > 0);
-        Assert.True(UpdateChannels.AllowsDowngrade("internal"));
-        Assert.All(new[] { "stable", "beta", "alpha" }, c => Assert.False(UpdateChannels.AllowsDowngrade(c)));
+        Assert.True(AppVersion.Parse("1.3.0-internal.20000000000000000000")!.CompareTo(AppVersion.Parse("1.3.0-internal.100000000000000000000")) < 0);   // past ulong
+        Assert.True(AppVersion.Parse("1.5.0-internal.1")!.CompareTo(AppVersion.Parse("1.5.0-beta.3")) > 0);   // internal sorts after beta
+    }
+
+    /// <summary>The internal feed still listed internal.2 while internal.3 ran: an older version never installs, nor stays
+    /// staged, whatever channel's feed names it.</summary>
+    [Fact]
+    public void An_older_feed_entry_never_installs_over_a_newer_build()
+    {
+        var running = AppVersion.Parse("1.3.0-internal.3")!;
+        foreach (var (channel, older) in new[] { ("internal", "1.3.0-internal.2"), ("internal", "1.3.0-alpha.9"), ("internal", "1.2.4"), ("alpha", "1.3.0-alpha.9"), ("beta", "1.3.0-beta.1"), ("stable", "1.2.4") })
+        {
+            var s = Staged with { Channel = channel, Version = older };
+            Assert.Equal(StartStep.Older, s.AtStart(running, handedOver: false));
+            Assert.NotEqual(StartStep.Apply, s.AtStart(running, handedOver: true));
+            Assert.False(AutoInstall.OffersRestart(s, channel, running, [channel]), $"{older} from {channel} over {running}");
+            Assert.False(AutoInstall.OffersRestart(s, channel, running, null));
+        }
+        // the same version is installed, not offered again
+        Assert.False(AutoInstall.OffersRestart(Staged with { Channel = "internal", Version = "1.3.0-internal.3" }, "internal", running, ["internal"]));
+        var newer = Staged with { Channel = "internal", Version = "1.3.0-internal.4" };
+        Assert.Equal(StartStep.Apply, newer.AtStart(running, false));
+        Assert.True(AutoInstall.OffersRestart(newer, "internal", running, ["internal"]));
+        Assert.True(AutoInstall.OffersRestart(Staged with { Channel = "internal", Version = "1.3.0" }, "internal", running, ["internal"]));   // the release passes its pre-releases
+        Assert.False(AutoInstall.OffersRestart(Staged with { Channel = "internal", Version = "1.3.0-internal.3" }, "internal", AppVersion.Parse("1.3.0")!, ["internal"]));
+
+        // "Go back to stable now": only the stable feed's download from that click, never a record read back at a start
+        var back = Staged with { Channel = "stable", Version = "1.2.4" };
+        Assert.True(AutoInstall.OffersRestart(back, "stable", running, ["internal"], backToStable: true));
+        Assert.False(AutoInstall.OffersRestart(back, "stable", running, ["internal"]));
+        Assert.False(AutoInstall.OffersRestart(back with { Channel = "internal" }, "internal", running, ["internal"], backToStable: true));
+        Assert.Equal(StartStep.Older, back.AtStart(running, false));
+
+        // Velopack picks and stages from the feed: it takes a downgrade only for that click
+        var updater = File.ReadAllText(Path.Combine(TestEnv.RepoRoot, "src", "SCSKiller.App", "Updater.cs"));
+        Assert.Contains("ExplicitChannel = channel, AllowVersionDowngrade = downgrade,", updater);
+        Assert.Contains("static Download? Usable(Download? d) => AutoInstall.OffersRestart(d?.S, App.Core.Settings.UpdateChannel, AppVersion.Current, Ent(), d?.BackToStable == true) ? d : null;", updater);
+        Assert.Contains("SignedFeedSource.Fetched), backToStable));", updater);
+        Assert.Matches(@"return new\(m, new VelopackAsset\s*\{[^}]*\}, s\);", updater);   // a record from the disk is never back-to-stable's
+    }
+
+    [Fact]
+    public void The_internal_channel_offers_updates_but_never_installs_them_by_itself()
+    {
+        var on = AppStore.DefaultSettings;
+        Assert.True(on.InstallUpdatesAutomatically);
+        Assert.Equal(AutoInstall.Internal, AutoInstall.HeldBack(on, "internal", compiling: false, offline: false, playing: false));
+        Assert.False(AutoInstall.On(on, "internal"));
+        Assert.All(new[] { "stable", "beta", "alpha" }, c => Assert.True(AutoInstall.On(on, c)));
+        var staged = Staged with { Channel = "internal", Version = "1.3.0-internal.4" };
+        Assert.True(AutoInstall.OffersRestart(staged, "internal", AppVersion.Parse("1.3.0-internal.3")!, ["internal"]));
+        Assert.Contains("Restart to update", AutoInstall.ReadyNote("1.3.0-internal.4", AutoInstall.On(on, "internal")));
+        Assert.DoesNotContain("starts or quits", AutoInstall.ReadyNote("1.3.0-internal.4", AutoInstall.On(on, "internal")));
+        var about = Path.Combine(TestEnv.RepoRoot, "src", "SCSKiller.App", "Pages", "AboutPage.xaml");   // its checkbox does nothing there
+        Assert.Contains("Visibility=\"{x:Bind Vm.ShowsAutoInstall, Mode=OneWay}\"", File.ReadAllText(about));
+        Assert.Contains("ShowsAutoInstall => ShowsCheck && Updater.Channel != UpdateChannels.Internal;", File.ReadAllText(about + ".cs"));
     }
 
     [Fact]
@@ -257,11 +357,11 @@ public class UpdateTests : IDisposable
         Staged.Save(_dir);
         var staged = StagedUpdate.Load(_dir)!;
         Assert.Equal(StartStep.Apply, staged.AtStart(AppVersion.Parse("1.2.3")!, handedOver: false));
-        Assert.Null(AutoInstall.HeldBack(AppStore.DefaultSettings, compiling: false, offline: false, playing: false));
+        Assert.Null(AutoInstall.HeldBack(AppStore.DefaultSettings, "stable", compiling: false, offline: false, playing: false));
         Assert.Equal(StartStep.Installed, staged.AtStart(AppVersion.Parse("1.2.4")!, handedOver: true));   // the hook didn't clear the marker
         Assert.Equal(StartStep.Failed, staged.AtStart(AppVersion.Parse("1.2.3")!, handedOver: true));      // never a restart loop
         Assert.Equal(StartStep.Older, staged.AtStart(AppVersion.Parse("1.3.0")!, handedOver: false));
-        Assert.Equal(StartStep.Apply, (staged with { Channel = "internal", Version = "1.2.4-internal.1" }).AtStart(AppVersion.Parse("1.2.4")!, false));
+        Assert.Equal(StartStep.Older, (staged with { Channel = "internal", Version = "1.2.4-internal.1" }).AtStart(AppVersion.Parse("1.2.4")!, false));
     }
 
     [Fact]
@@ -282,17 +382,18 @@ public class UpdateTests : IDisposable
     public void Nothing_installs_by_itself_with_the_setting_off()
     {
         var off = AppStore.DefaultSettings with { InstallUpdatesAutomatically = false };
-        Assert.Equal(AutoInstall.Off, AutoInstall.HeldBack(off, false, false, false));
-        Assert.DoesNotContain("starts or quits", AutoInstall.ReadyNote("1.2.4", off));
+        Assert.Equal(AutoInstall.Off, AutoInstall.HeldBack(off, "stable", false, false, false));
+        Assert.False(AutoInstall.On(off, "stable"));
+        Assert.DoesNotContain("starts or quits", AutoInstall.ReadyNote("1.2.4", AutoInstall.On(off, "stable")));
     }
 
     [Fact]
     public void A_compile_an_offline_session_or_a_game_holds_the_install_back()
     {
         var on = AppStore.DefaultSettings;
-        Assert.Equal(AutoInstall.Compiling, AutoInstall.HeldBack(on, compiling: true, offline: false, playing: false));
-        Assert.Equal(AutoInstall.Offline, AutoInstall.HeldBack(on, compiling: false, offline: true, playing: false));
-        Assert.Equal(AutoInstall.Playing, AutoInstall.HeldBack(on, compiling: false, offline: false, playing: true));
+        Assert.Equal(AutoInstall.Compiling, AutoInstall.HeldBack(on, "stable", compiling: true, offline: false, playing: false));
+        Assert.Equal(AutoInstall.Offline, AutoInstall.HeldBack(on, "stable", compiling: false, offline: true, playing: false));
+        Assert.Equal(AutoInstall.Playing, AutoInstall.HeldBack(on, "stable", compiling: false, offline: false, playing: true));
     }
 
     [Fact]
@@ -300,11 +401,32 @@ public class UpdateTests : IDisposable
     {
         foreach (var s in new[] { AppStore.DefaultSettings, AppStore.DefaultSettings with { InstallUpdatesAutomatically = false } })
         {
-            Assert.True(AutoInstall.OffersRestart(Staged, s.UpdateChannel, "stable", []));
-            Assert.Contains("Restart to update", AutoInstall.ReadyNote("1.2.4", s));
+            Assert.True(AutoInstall.OffersRestart(Staged, s.UpdateChannel, AppVersion.Parse("1.2.3")!, []));
+            Assert.Contains("Restart to update", AutoInstall.ReadyNote("1.2.4", AutoInstall.On(s, "stable")));
         }
-        Assert.Contains("starts or quits", AutoInstall.ReadyNote("1.2.4", AppStore.DefaultSettings));
-        Assert.False(AutoInstall.OffersRestart(null, null, "stable", []));
+        Assert.Contains("starts or quits", AutoInstall.ReadyNote("1.2.4", AutoInstall.On(AppStore.DefaultSettings, "stable")));
+        Assert.False(AutoInstall.OffersRestart(null, null, AppVersion.Parse("1.2.3")!, []));
+    }
+
+    [Fact]
+    public void BusyMutex_TestHoldsNeverShowUnderTheAppsNames()
+    {
+        const string busy = @"Local\SCSKiller.Busy", deleting = @"Local\SCSKiller.CacheDelete";
+        Assert.NotEqual(busy, Busy.Name);
+        Assert.NotEqual(deleting, ScsKiller.DeletingName);
+        Assert.Equal(Busy.Scope, Busy.ScopeFrom(Busy.Scope));
+        Assert.All([null, "", @".test-\x", ".test-" + new string('0', 31) + @"\", "x" + Busy.Scope[1..]], v => Assert.Equal("", Busy.ScopeFrom(v)));
+        bool busyBefore = Busy.IsHeld(busy), deletingBefore = Busy.IsHeld(deleting), busyDuring, deletingDuring;
+        using (Busy.Hold())
+        using (Busy.Hold(ScsKiller.DeletingName))
+        {
+            Assert.True(Busy.IsHeld());
+            Assert.True(Busy.IsHeld(ScsKiller.DeletingName));
+            (busyDuring, deletingDuring) = (Busy.IsHeld(busy), Busy.IsHeld(deleting));
+        }
+        // a name that came and went with this hold alone: an app in this session holds it for longer than the check
+        Assert.False(!busyBefore && busyDuring && !Busy.IsHeld(busy), "a test hold shows as " + busy);
+        Assert.False(!deletingBefore && deletingDuring && !Busy.IsHeld(deleting), "a test hold shows as " + deleting);
     }
 
     [Fact]
@@ -368,6 +490,37 @@ public class UpdateTests : IDisposable
         Assert.Throws<InvalidDataException>(() => Codecs.Ensure("other.dll", _ => true, dir, seed));   // no pin, no load
     }
 
+    /// <summary>Every reader loads the codecs before reading a game: a codec that can't be had must leave it to the managed
+    /// decoders, never throw (an Unreal game then fell through to the carver as "engine not supported yet").</summary>
+    [Fact]
+    public void Codecs_AFailedLoadDoesntThrowIsLoggedOnceAndIsntRetried()
+    {
+        var name = $"test-{Guid.NewGuid():N}.dll";
+        var (lines, downloads, inits) = (new List<string>(), 0, 0);
+        var log = new Lines(lines.Add);
+        bool Download(string _) { downloads++; throw new IOException("downloading https://example.invalid/codec.zip failed: blocked"); }
+        Assert.False(Codecs.TryLoad(name, Download, _ => inits++, log, Path.Combine(_dir, "codecs")));
+        Assert.False(Codecs.TryLoad(name, Download, _ => inits++, log, Path.Combine(_dir, "codecs")));
+        Assert.Equal((1, 0), (downloads, inits));
+        Assert.Contains(name, Assert.Single(lines));
+        Assert.Contains("https://example.invalid/codec.zip", lines[0]);
+
+        var dir = Path.Combine(_dir, "pinned");   // a download that isn't the pinned build: never loaded, never left under its name
+        Assert.False(Codecs.TryLoad("zlib-ng2.dll", p => { File.WriteAllText(p, "tampered"); return true; }, _ => inits++, log, dir, seedDir: _dir));
+        Assert.Equal(0, inits);
+        Assert.Contains("SHA-256", lines[1]);
+        Assert.Empty(Directory.GetFiles(dir));
+
+        // Oodle data that doesn't decode without the codec: the user sees the short line alone, the details go to the log
+        var shown = Codecs.Reason(new AggregateException(new InvalidDataException(Codecs.NoOodleDll, new InvalidDataException("cannot decompress 40 -> 64 bytes"))));
+        Assert.Equal(Codecs.NoOodleDll, shown);
+        Assert.DoesNotContain(';', shown);
+        Assert.DoesNotContain(';', Codecs.NoNativeOodle);
+        Assert.Null(Codecs.Reason(new InvalidDataException("cannot decompress 40 -> 64 bytes")));
+    }
+
+    sealed class Lines(Action<string> a) : IProgress<string> { public void Report(string value) => a(value); }
+
     [Fact]
     public void SourceCode_AndPackageUrls()
     {
@@ -417,18 +570,18 @@ public class UpdateTests : IDisposable
         var start = Body("public static async Task ApplyAtStartAsync(string[] args)");
         Assert.Contains("Staged()", start);
         Assert.Contains("case StartStep.Apply: ready = d;", start);
-        Assert.Matches(@"HeldBack\(\) is null && BeginUpdate\(\)\s*&& !await ApplyAsync\(TimeSpan\.Zero, \(m, a\) => m\.ApplyUpdatesAndRestart\(a, args\)", start);
+        Assert.Matches(@"HeldBack\(r\.Channel\) is null && BeginUpdate\(\)\s*&& !await ApplyAsync\(TimeSpan\.Zero, \(m, a\) => m\.ApplyUpdatesAndRestart\(a, args\)", start);
         var quit = Body("public static async Task ApplyOnExitAsync()");
-        Assert.True(quit.IndexOf("HeldBack()") is >= 0 and var held && held < quit.IndexOf("ApplyAsync("));
+        Assert.True(quit.IndexOf("HeldBack(d.Channel)") is >= 0 and var held && held < quit.IndexOf("ApplyAsync("));
         // a game started during Quit's wait for the check is seen right before the handover
-        Assert.Contains("m.WaitExitThenApplyUpdates(r, silent: true, restart: false), () => !GameRunning())", quit);
+        Assert.Contains("m.WaitExitThenApplyUpdates(r, silent: true, restart: false), now => !GameRunning() && AutoInstall.On(App.Core.Settings, now.Channel))", quit);
         Assert.Contains("static bool GameRunning() => App.Core is ScsKiller k ? k.GameRunning()", updater);
         // the start scans whether or not a game is known to run: before its scan, GameRunning() can only say "maybe"
-        Assert.Matches(@"Untouched\(\) && App\.Core\.Settings\.InstallUpdatesAutomatically\) await App\.Core\.ScanAsync\(", start);
-        Assert.Contains("AutoInstall.HeldBack(App.Core.Settings, Busy.IsHeld() || App.Core.Compiling, OfflineBlocks(), GameRunning())", updater);
+        Assert.Matches(@"Untouched\(\) && AutoInstall\.On\(App\.Core\.Settings, u\.Channel\)\) await App\.Core\.ScanAsync\(", start);
+        Assert.Contains("AutoInstall.HeldBack(App.Core.Settings, channel, Busy.IsHeld() || App.Core.Compiling, OfflineBlocks(), GameRunning())", updater);
         // the start knows the games before it asks whether one runs, and asks again right before the handover
         Assert.True(start.IndexOf("await App.Core.ScanAsync(") is >= 0 and var scan && scan < start.IndexOf("BeginUpdate()"));
-        Assert.Contains("() => Untouched() && !GameRunning()", start);
+        Assert.Contains("now => Untouched() && !GameRunning() && AutoInstall.On(App.Core.Settings, now.Channel)", start);   // the download actually handed over
         Assert.Contains("s.Refused(FeedTrust.ReleaseKeys)", updater);
         Assert.Contains(".SetAutoApplyOnStartup(false)", File.ReadAllText(Path.Combine(app, "UpdateHooks.cs")));
         Assert.Contains("if (ready?.Channel == channel && !SignedFeedSource.Partial) Stage(null);", updater);   // a feed missing a channel drops nothing

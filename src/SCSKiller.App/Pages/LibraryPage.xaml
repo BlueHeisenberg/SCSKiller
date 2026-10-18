@@ -49,10 +49,19 @@
                             <TextBlock Text="Add a game…" />
                         </StackPanel>
                     </Button>
+                    <DropDownButton AutomationProperties.Name="Game folders" ToolTipService.ToolTip="Folders of games no store lists: SCSKiller looks in them at every scan">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE8B7;" FontSize="14" />
+                            <TextBlock Text="Game folders" />
+                        </StackPanel>
+                        <DropDownButton.Flyout>
+                            <MenuFlyout x:Name="FoldersMenu" Placement="Bottom" Opening="OnFoldersOpening" />
+                        </DropDownButton.Flyout>
+                    </DropDownButton>
                     <Button Content="{x:Bind Vm.AddAllText, Mode=OneWay}"
                             Click="OnAddAll" IsEnabled="{x:Bind Vm.CanAddAll, Mode=OneWay}" />
                     <Grid>
-                        <Button ToolTipService.ToolTip="Queue every game known to stutter that is ready to compile" Click="OnAddRecommended" Visibility="{x:Bind Vm.CanAddRecommended, Mode=OneWay}"
+                        <Button ToolTipService.ToolTip="Queue every game that stutters without a compile and is ready for one" Click="OnAddRecommended" Visibility="{x:Bind Vm.CanAddRecommended, Mode=OneWay}"
                                 BorderBrush="{ThemeResource AccentFillColorDefaultBrush}" BorderThickness="1.5"
                                 AutomationProperties.Name="{x:Bind Vm.AddRecommendedText, Mode=OneWay}">
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -105,6 +114,10 @@
                         <TextBlock Grid.Column="1" Text="{x:Bind Vm.CacheWarnText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
                                    Foreground="{ThemeResource WarnBrush}" TextWrapping="Wrap" VerticalAlignment="Center" />
                     </Grid>
+                    <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind Vm.HasOldDriver, Mode=OneWay}">
+                        <TextBlock Text="{x:Bind Vm.OldDriverNote, Mode=OneWay}" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                        <HyperlinkButton Content="Free it" Padding="0" FontSize="12" Click="OnCache" AutomationProperties.Name="Free the cache the new driver no longer uses" />
+                    </StackPanel>
                     <HyperlinkButton Content="Change" Padding="0" FontSize="12" Click="OnSettings" Visibility="{x:Bind Vm.CanRaiseLimit, Mode=OneWay}"
                                      AutomationProperties.Name="Change the driver shader cache size" />
                 </StackPanel>
@@ -134,34 +147,60 @@
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="40" />
                     <RowDefinition />
                 </Grid.RowDefinitions>
-                <!-- A rescan with games listed: one slim line above the list, rows stay usable. -->
-                <Grid Visibility="{x:Bind Vm.ScanBusy, Mode=OneWay}" Background="{ThemeResource SubtleFillColorSecondaryBrush}" Padding="20,10" ColumnSpacing="12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition />
-                    </Grid.ColumnDefinitions>
-                    <ProgressRing Width="16" Height="16" IsActive="{x:Bind Vm.ScanBusy, Mode=OneWay}" VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="1" TextWrapping="Wrap" VerticalAlignment="Center">
-                        <Run Text="Checking for new and changed games…" FontWeight="SemiBold" /><Run Text="  " /><Run Text="{x:Bind Vm.ScanBusyNote, Mode=OneWay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    </TextBlock>
-                </Grid>
                 <!-- Search: filters as you type (name, store or engine); Esc or the clear button resets it. -->
-                <Grid Grid.Row="1" Padding="20,14,20,4" ColumnSpacing="12">
+                <Grid Padding="20,14,20,4" ColumnSpacing="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="320" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition />
                     </Grid.ColumnDefinitions>
                     <AutoSuggestBox x:Name="Search" PlaceholderText="Search by name, store or engine" QueryIcon="Find"
                                     TextChanged="OnSearch" KeyDown="OnSearchKey" AutomationProperties.Name="Search games" />
-                    <TextBlock Grid.Column="1" Text="{x:Bind Vm.ShownText, Mode=OneWay}" Visibility="{x:Bind Vm.Filtering, Mode=OneWay}"
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12">
+                        <ComboBox ItemsSource="{x:Bind local:LibraryVm.ShowLabels}" SelectedIndex="{x:Bind Vm.ShowIndex, Mode=TwoWay}"
+                                  MinWidth="200" AutomationProperties.Name="Show games by status" />
+                        <CheckBox Content="Show hidden" IsChecked="{x:Bind Vm.ShowHidden, Mode=TwoWay}" Visibility="{x:Bind Vm.HasHidden, Mode=OneWay}"
+                                  MinWidth="0" ToolTipService.ToolTip="Games you removed from the library" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="2" Text="{x:Bind Vm.ShownText, Mode=OneWay}" Visibility="{x:Bind Vm.Filtering, Mode=OneWay}"
                                Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                    <!-- the hidden games under the search, each with its way back -->
+                    <ItemsControl Grid.Row="1" Grid.ColumnSpan="4" ItemsSource="{x:Bind Vm.Hidden, Mode=OneWay}" Visibility="{x:Bind Vm.HiddenShown, Mode=OneWay}"
+                                  Margin="0,8,0,4" AutomationProperties.Name="Hidden games">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="local:HiddenRow">
+                                <StackPanel Orientation="Horizontal" Spacing="12" MinHeight="32">
+                                    <TextBlock Text="{x:Bind Name}" VerticalAlignment="Center" />
+                                    <TextBlock Text="{x:Bind Store}" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                                    <HyperlinkButton Content="Show in library" Click="OnShowGame" Padding="0" VerticalAlignment="Center"
+                                                     AutomationProperties.Name="{x:Bind ShowName}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <!-- A rescan with games listed: one line beside the search, so the list doesn't move when it comes and goes -->
+                    <Grid Grid.Column="3" ColumnSpacing="8" Visibility="{x:Bind Vm.ScanBusy, Mode=OneWay}" VerticalAlignment="Center">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition />
+                        </Grid.ColumnDefinitions>
+                        <ProgressRing Width="16" Height="16" IsActive="{x:Bind Vm.ScanBusy, Mode=OneWay}" />
+                        <TextBlock Grid.Column="1" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                   ToolTipService.ToolTip="{x:Bind Vm.ScanBusyNote, Mode=OneWay}">
+                            <Run Text="{x:Bind Vm.ScanTitle, Mode=OneWay}" FontWeight="SemiBold" />
+                        </TextBlock>
+                    </Grid>
                 </Grid>
                 <!-- Same columns as the row template below. -->
-                <Grid Grid.Row="2" Margin="20,0,20,0" ColumnSpacing="12" VerticalAlignment="Center">
+                <Grid Grid.Row="1" Margin="20,0,20,0" ColumnSpacing="12" VerticalAlignment="Center">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="2.6*" MinWidth="160" />
                         <ColumnDefinition Width="64" />
@@ -170,34 +209,43 @@
                         <ColumnDefinition Width="56" />
                         <ColumnDefinition Width="4.1*" MinWidth="355" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="Game" Style="{StaticResource Caption}" />
-                    <TextBlock Grid.Column="1" Text="Shaders" Style="{StaticResource Caption}" TextAlignment="Right" />
-                    <TextBlock Grid.Column="2" Text="Pipelines" Style="{StaticResource Caption}" TextAlignment="Right" />
-                    <TextBlock Grid.Column="3" Text="Cache" Style="{StaticResource Caption}" TextAlignment="Right" />
-                    <TextBlock Grid.Column="4" Text="Time" Style="{StaticResource Caption}" TextAlignment="Right" />
-                    <TextBlock Grid.Column="5" Text="Status" Style="{StaticResource Caption}" Margin="12,0,0,0" />
+                    <!-- Game, Pipelines and Cache sort the rows within each section; Status goes back to the default order -->
+                    <Button Style="{StaticResource SortHeader}" Click="OnSortName" ToolTipService.ToolTip="Sort by name">
+                        <TextBlock Text="{x:Bind Vm.GameHeader, Mode=OneWay}" Style="{StaticResource Caption}" />
+                    </Button>
+                    <TextBlock Grid.Column="1" Text="Shaders" Style="{StaticResource Caption}" TextAlignment="Right" VerticalAlignment="Center" />
+                    <Button Grid.Column="2" Style="{StaticResource SortHeader}" HorizontalAlignment="Right" Click="OnSortPipelines" ToolTipService.ToolTip="Sort by pipelines">
+                        <TextBlock Text="{x:Bind Vm.PipelinesHeader, Mode=OneWay}" Style="{StaticResource Caption}" />
+                    </Button>
+                    <Button Grid.Column="3" Style="{StaticResource SortHeader}" HorizontalAlignment="Right" Click="OnSortCache" ToolTipService.ToolTip="Sort by cache size">
+                        <TextBlock Text="{x:Bind Vm.CacheHeader, Mode=OneWay}" Style="{StaticResource Caption}" />
+                    </Button>
+                    <TextBlock Grid.Column="4" Text="Time" Style="{StaticResource Caption}" TextAlignment="Right" VerticalAlignment="Center" />
+                    <Button Grid.Column="5" Style="{StaticResource SortHeader}" Margin="12,0,0,0" Click="OnSortStatus" ToolTipService.ToolTip="Sort by status, as at first">
+                        <TextBlock Text="Status" Style="{StaticResource Caption}" />
+                    </Button>
                 </Grid>
-                <Rectangle Grid.Row="2" Height="1" VerticalAlignment="Bottom" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Rectangle Grid.Row="1" Height="1" VerticalAlignment="Bottom" Fill="{ThemeResource CardStrokeColorDefaultBrush}" />
 
-                <StackPanel Grid.Row="3" Visibility="{x:Bind Vm.NoMatch, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                <StackPanel Grid.Row="2" Visibility="{x:Bind Vm.NoMatch, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center"
                             Spacing="8" MaxWidth="460" Padding="24">
                     <FontIcon Glyph="&#xE721;" FontSize="28" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <TextBlock Text="{x:Bind Vm.NoMatchText, Mode=OneWay}" Style="{StaticResource Section}" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
                     <TextBlock Text="Try part of the name, a store (Steam, GOG…) or an engine (UE 5)." Style="{StaticResource Secondary}"
-                               TextWrapping="Wrap" TextAlignment="Center" />
+                               TextWrapping="Wrap" TextAlignment="Center" Visibility="{x:Bind Vm.Searching, Mode=OneWay}" />
                 </StackPanel>
 
                 <!-- First scan, nothing listed yet: a centred message in the list's place. -->
-                <StackPanel Grid.Row="3" Visibility="{x:Bind Vm.ScanEmpty, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                <StackPanel Grid.Row="2" Visibility="{x:Bind Vm.ScanEmpty, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center"
                             Spacing="12" MaxWidth="460" Padding="24">
                     <ProgressRing Width="32" Height="32" IsActive="{x:Bind Vm.ScanEmpty, Mode=OneWay}" />
-                    <TextBlock Text="Looking for your games…" Style="{StaticResource Section}" HorizontalAlignment="Center" />
-                    <TextBlock Text="{x:Bind Vm.ScanEmptyNote}" Style="{StaticResource Secondary}" TextWrapping="Wrap" TextAlignment="Center" />
+                    <TextBlock Text="{x:Bind Vm.ScanEmptyTitle, Mode=OneWay}" Style="{StaticResource Section}" HorizontalAlignment="Center" />
+                    <TextBlock Text="{x:Bind Vm.ScanEmptyNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" TextAlignment="Center" />
                 </StackPanel>
 
-                <ListView x:Name="List" Grid.Row="3" ItemsSource="{Binding Source={StaticResource GroupedGames}}" SelectionMode="None" IsItemClickEnabled="True"
+                <ListView x:Name="List" Grid.Row="2" ItemsSource="{Binding Source={StaticResource GroupedGames}}" SelectionMode="None" IsItemClickEnabled="True"
                           ItemClick="OnGameClick" AutomationProperties.Name="Games" Padding="0,4">
-                    <!-- no add/remove animation: a row is replaced on every re-evaluation, and the fade made rows vanish and come back -->
+                    <!-- no add/remove animation: a row that moves section is removed and inserted, and a fade would make it vanish and come back -->
                     <ListView.ItemContainerTransitions>
                         <TransitionCollection />
                     </ListView.ItemContainerTransitions>
@@ -229,7 +277,8 @@
                     </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="local:GameRow">
-                            <Grid ColumnSpacing="12" MinHeight="56">
+                            <!-- OneWay: a row is updated in place when its game changes -->
+                            <Grid ColumnSpacing="12" MinHeight="56" x:DefaultBindMode="OneWay">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="2.6*" MinWidth="160" />
                                     <ColumnDefinition Width="64" />
@@ -252,30 +301,33 @@
                                         <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                         <TextBlock Text="{x:Bind Sub}" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
                                         <!-- own line: next to the subtitle they'd be clipped at the default window width -->
-                                        <StackPanel Orientation="Horizontal" Spacing="4" Visibility="{x:Bind HasTagLine}" Margin="0,2,0,0">
+                                        <local:WrapPanel Spacing="4" Visibility="{x:Bind HasTagLine}" Margin="0,2,0,0">
                                         <Border Style="{StaticResource Chip}" Height="18" Padding="6,0" CornerRadius="9" Visibility="{x:Bind IsKnownStutter}"
                                                 ToolTipService.ToolTip="{x:Bind StutterTip}">
-                                            <TextBlock Text="Known to stutter" FontSize="11" Foreground="{ThemeResource WarnBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Text="Stutters without a compile" FontSize="11" Foreground="{ThemeResource WarnBrush}" VerticalAlignment="Center" />
                                         </Border>
                                         <Border Style="{StaticResource Chip}" Height="18" Padding="6,0" CornerRadius="9" Visibility="{x:Bind IsNoStutter}"
                                                 ToolTipService.ToolTip="{x:Bind NoStutterTip}">
                                             <TextBlock Text="No shader stutter" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
                                         </Border>
+                                        <Border Style="{StaticResource Chip}" Height="18" Padding="6,0" CornerRadius="9" Visibility="{x:Bind HasBaChip}">
+                                            <TextBlock Text="{x:Bind BaChip}" FontSize="11" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
+                                        </Border>
                                         <ItemsControl ItemsSource="{x:Bind Tags}" IsTabStop="False" Visibility="{x:Bind HasTags}">
                                             <ItemsControl.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <StackPanel Orientation="Horizontal" Spacing="4" />
+                                                    <local:WrapPanel Spacing="4" />
                                                 </ItemsPanelTemplate>
                                             </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate x:DataType="local:TagChip">
-                                                    <Border Style="{StaticResource Chip}" Height="18" Padding="6,0" CornerRadius="9" ToolTipService.ToolTip="{x:Bind Tip}">
+                                                    <Border Style="{StaticResource Chip}" Height="18" Padding="6,0" CornerRadius="9" ToolTipService.ToolTip="{x:Bind Tip}" x:DefaultBindMode="OneTime">
                                                         <TextBlock Text="{x:Bind Text}" FontSize="11" MaxWidth="90" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                                                     </Border>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
-                                        </StackPanel>
+                                        </local:WrapPanel>
                                     </StackPanel>
                                 </Grid>
                                 <TextBlock Grid.Column="1" Text="{x:Bind Shaders}" TextAlignment="Right" VerticalAlignment="Center" />

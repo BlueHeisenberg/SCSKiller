@@ -184,7 +184,8 @@ public class UnrealReaderTests(ITestOutputHelper output)
             var libraries = s.GetProperty("libraries").GetArrayLength();
             var aes = s.GetProperty("aes_needed").GetBoolean();
             if (libraries == 0 && aes && !e.Encrypted) continue; // we found the AES key the old tool didn't have (UnrealKeysTests)
-            Assert.Equal(libraries == 0 && aes ? "encrypted game files (needs the game's AES key)" : null, e.Unsupported);
+            if (libraries == 0 && aes) Assert.StartsWith("encrypted game files (needs the game's AES key", e.Unsupported);
+            else Assert.Null(e.Unsupported);
             Assert.Equal(libraries == 0 && aes, e.Encrypted);
             // full index of every game (IoStore included): ~1 min of all cores, so opt-in
             if (libraries == 0 || Environment.GetEnvironmentVariable("SCSKILLER_ALL_GAMES") != "1") continue;
@@ -197,7 +198,8 @@ public class UnrealReaderTests(ITestOutputHelper output)
     }
 
     /// <summary>PSV0 and RDAT tables whose record stride can't hold a record (0 here) give no bindings instead of the same
-    /// record appended a billion times.</summary>
+    /// record appended a billion times, and DXBC declarations whose extended tokens run past their length are read within it,
+    /// not into every declaration after.</summary>
     [Fact]
     public void ZeroStrideBindingTablesAreNotRepeated()
     {
@@ -221,6 +223,9 @@ public class UnrealReaderTests(ITestOutputHelper output)
             .. BitConverter.GetBytes(1), .. BitConverter.GetBytes(4), 0, 0, 0, 0,                                          // string table: one empty string
             .. BitConverter.GetBytes(3), .. BitConverter.GetBytes(32), .. BitConverter.GetBytes(1_000_000), .. BitConverter.GetBytes(0), .. new byte[24]];   // resources, stride 0
         Assert.Empty(ShaderContainer.Rdat(Container(("DXIL", BitConverter.GetBytes(6u << 16 | 0x63)), ("RDAT", rdat))).Resources);
+        // ps_5_0: 200,000 one-token dcl_constantbuffer instructions, each flagged as followed by an extended token
+        byte[] shex = [.. new uint[] { 0x50, 0 }.Concat(Enumerable.Repeat(0x81000059u, 200_000)).Concat(new uint[3]).SelectMany(BitConverter.GetBytes)];
+        Assert.Empty(ShaderContainer.Parse(Container(("SHEX", shex)), "", new(0, 0, 0, 0))!.Bindings);
     }
 
     /// <summary>An IoStore shader library with 8-byte (5.8) or 20-byte hashes reads whichever UE5 version was detected; bytes
@@ -275,7 +280,7 @@ public class UnrealReaderTests(ITestOutputHelper output)
         var r = new UnrealReader(Ff7.TempDir("fortnite"));
         var e = r.Detect(game)!;
         Assert.Equal("5.8", e.Version);
-        Assert.Equal(SCSKiller.Core.Planning.RootSig.Rule.Ue58, SCSKiller.Core.Planning.RootSig.RuleFor(e));
+        Assert.Equal(SCSKiller.Tests.Planning.Rules.Ue58, SCSKiller.Core.Planning.RootSig.RuleFor(e));
         Assert.False(SCSKiller.Core.Planning.RootSig.Verified(e));
         var index = r.Index(game, e, new Progress<string>(output.WriteLine), CancellationToken.None);
         Assert.NotEmpty(index.Shaders);
@@ -330,6 +335,129 @@ public class UnrealReaderTests(ITestOutputHelper output)
         Assert.Equal(("4.27", "GAME_HogwartsLegacy", false), reader.Detect(fork) is { } f ? (f.Version, f.Fork, f.VersionGuessed) : default);
     }
 
+    /// <summary>.utoc version 8 is written by 5.5 to 5.8: the asset registry's format version tells 5.6 (21), 5.7 (22) and 5.8
+    /// (24), and one past 5.8's is a newer Unreal, not supported yet. Without it, the exe's numeric version tells within the
+    /// range (a 5.9 one doesn't), else 5.5 stays. A .utoc version past the known ones is a newer Unreal too.</summary>
+    [Theory]
+    [InlineData(8, 21, 1, "5.6", false, null)]
+    [InlineData(8, 22, 1, "5.7", false, null)]
+    [InlineData(8, 24, 1, "5.8", false, null)]
+    [InlineData(8, 17, 1, "5.5", false, null)]
+    [InlineData(8, 22, 6, "5.7", false, null)]
+    [InlineData(8, null, 7, "5.7", false, null)]
+    [InlineData(8, null, 9, "5.5", false, null)]
+    [InlineData(8, 25, 1, "newer than 5.8", false, "Unreal newer than 5.8 isn't supported yet")]
+    [InlineData(10, 25, 1, "newer than 5.8", false, "Unreal newer than 5.8 isn't supported yet")]
+    [InlineData(11, null, 1, "newer than 5.8", false, "Unreal newer than 5.8 isn't supported yet")]
+    [InlineData(5, 22, 1, "5.1", true, null)]   // 5.0 to 5.3: a registry of 5.7 contradicts them
+    [InlineData(5, null, 3, "5.3", false, null)]
+    [InlineData(6, 22, 1, "5.4", true, null)]   // 5.4 exactly: the registry contradicts it
+    public void TheContainersRangeIsNarrowedByTheRegistryAndTheExe(int toc, int? registry, int peMinor, string version, bool guessed, string? unsupported)
+    {
+        var game = ContainersGame($"range-{toc}-{registry}-{peMinor}", toc, registry, peMinor);
+        var e = reader.Detect(game)!;
+        Assert.Equal((version, guessed, unsupported), (e.Version, e.VersionGuessed, e.Unsupported));
+        if (unsupported == null) return;
+        Assert.Equal(new PlanCheck(Readiness.Unsupported, unsupported), new SCSKiller.Core.Planning.Planner().Check(game, e, null, Ff7.Nvidia));
+        Assert.Equal(unsupported, Assert.Throws<InvalidDataException>(() => reader.Index(game, e, null, CancellationToken.None)).Message);
+    }
+
+    /// <summary>A registry past 5.8's makes a fork's game unsupported too; a .utoc whose header claims counts the file can't
+    /// hold isn't handed to CUE4Parse (it would size its arrays by them) when probing the library hash width.</summary>
+    [Fact]
+    public void NewerRegistryAndImpossibleTocCounts()
+    {
+        var fork = ContainersGame("HogwartsLegacy-newer", 3, 25, 1);
+        Assert.Equal(("newer than 5.8", "Unreal newer than 5.8 isn't supported yet"), reader.Detect(fork) is { } f ? (f.Version, f.Unsupported) : default);
+
+        var game = ContainersGame("toc-counts", 8, null, 1);
+        var toc = new byte[100];
+        toc[16] = 8;
+        toc[80] = 8;   // indexed, unencrypted
+        BitConverter.TryWriteBytes(toc.AsSpan(24), 0x40000000);   // TocEntryCount
+        File.WriteAllBytes(Path.Combine(game.InstallDir, "Proj", "Content", "Paks", "pakchunk1-Windows.utoc"),
+            [.. toc, .. System.Text.Encoding.ASCII.GetBytes("ShaderArchive-Proj-PCD3D_SM6.ushaderbytecode")]);
+        Assert.Equal(("5.5", null), reader.Detect(game) is { } e ? (e.Version, e.Unsupported) : default);
+    }
+
+    /// <summary>A build string past 5.8 (or of UE 6) is a newer Unreal, shown as read, never clamped to 5.8 and planned with its
+    /// rules. One that names UE4 in an install whose containers are UE5's is a branch name kept from before an upgrade: the
+    /// containers tell. Counts are bounded: an endless minor isn't a version. An asset registry of another version makes it a
+    /// guess.</summary>
+    [Theory]
+    [InlineData("++UE5+Release-5.9", "5.9", "Unreal 5.9 isn't supported yet")]
+    [InlineData("++UE6+Release-6.0-CL-1", "6.0", "Unreal 6.0 isn't supported yet")]
+    [InlineData("++UE5+Release-5.7", "5.7", null)]
+    [InlineData("++UE4+Release-4.27", "5.7", null)]
+    [InlineData("++UE5+Release-5.99999999999", "5.7", null)]
+    [InlineData("++UE6+Release-6.\u0661", "5.7", null)]   // an Arabic-Indic digit isn't one
+    [InlineData("++UE4+Release-5.6", "5.6", null, 8, null)]
+    [InlineData("++UE5+Release-5.8", "newer than 5.8", "Unreal newer than 5.8 isn't supported yet", 11)]
+    [InlineData("++UE5+Release-5.6", "5.6", null, 8, 22, true)]   // the registry says 5.7: a guess
+    public void ABuildStringPast58IsNotSupportedYet(string build, string version, string? unsupported, int toc = 8, int? registry = 22, bool guessed = false)
+    {
+        var game = ContainersGame($"build-{Convert.ToHexString(SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(build)))[..8]}-{toc}", toc, registry, 1);
+        File.AppendAllText(game.ExePath, build, System.Text.Encoding.Unicode);
+        var e = reader.Detect(game)!;
+        Assert.Equal((version, guessed, unsupported), (e.Version, e.VersionGuessed, e.Unsupported));
+        if (unsupported != null) Assert.Equal(Readiness.Unsupported, new SCSKiller.Core.Planning.Planner().Check(game, e, null, Ff7.Nvidia).Readiness);
+    }
+
+    /// <summary>The last guess, from the exe's numeric version, is a newer Unreal when that is past 5.8: guessed, and not
+    /// supported yet rather than encrypted (no key makes it so).</summary>
+    [Fact]
+    public void AGuessPast58IsNotSupportedYet()
+    {
+        var (game, _) = PakOnlyGame("guess-5-9", 5, 9);
+        var e = reader.Detect(game)!;
+        Assert.Equal(("5.9", true, "Unreal 5.9 isn't supported yet", false), (e.Version, e.VersionGuessed, e.Unsupported, e.Encrypted));
+    }
+
+    /// <summary>A pak-era game whose packages tell UE5 (Ready or Not) but nothing names the minor is a guessed 5.1; the exe's
+    /// numeric version names it, still a guess (a studio may stamp the game's), and the asset registry tells it.</summary>
+    [Theory]
+    [InlineData(null, 1, "5.1", true)]
+    [InlineData(null, 3, "5.3", true)]
+    [InlineData(22, 1, "5.7", false)]
+    public void Ue5ToldFromAPackageIsAGuessUnlessTheRegistryTells(int? registry, int peMinor, string version, bool guessed)
+    {
+        var (game, paks) = PakOnlyGame($"pkg-ue5-{registry}-{peMinor}", peMinor > 1 ? 5 : 1, peMinor, antiCheat: false);
+        WithoutBuildStrings(game.ExePath);
+        var package = new byte[64];
+        BitConverter.TryWriteBytes(package, 0x9E2A83C1u);
+        BitConverter.TryWriteBytes(package.AsSpan(4), -8);
+        InlineShadersTests.Pak(Path.Combine(paks, "Proj-Windows.pak"), [("Proj/Content/Maps/Entry.umap", package),
+            ("Proj/Content/ShaderArchive-Proj-PCD3D_SM6.ushaderbytecode", [2, 0, 0, 0]), .. Registry(registry)]);
+        var e = reader.Detect(game)!;
+        Assert.Equal((version, guessed), (e.Version, e.VersionGuessed));
+    }
+
+    /// <summary>The exe <see cref="PakOnlyGame"/> copies is this assembly, whose string literals include build strings.</summary>
+    static void WithoutBuildStrings(string exe)
+    {
+        var b = File.ReadAllBytes(exe);
+        var marker = System.Text.Encoding.Unicode.GetBytes("++UE");
+        for (int i; (i = b.AsSpan().IndexOf(marker)) >= 0;) b[i] = (byte)'-';
+        File.WriteAllBytes(exe, b);
+    }
+
+    static (string, byte[])[] Registry(int? version) => version is { } v ? [("Proj/AssetRegistry.bin", [.. Convert.FromHexString("E79E7F713A49B0E93291B3880781381B"), .. BitConverter.GetBytes(v), .. new byte[16]])] : [];
+
+    /// <summary>An install whose containers tell .utoc version <paramref name="toc"/> (a header-only global.utoc), whose pak holds
+    /// a shader library and the project's asset registry of format <paramref name="registry"/> (none: no registry), and
+    /// whose exe's numeric version is 5.<paramref name="peMinor"/> (1: 1.x, no Unreal version).</summary>
+    static Game ContainersGame(string name, int toc, int? registry, int peMinor)
+    {
+        var (game, paks) = PakOnlyGame(name, peMinor > 1 ? 5 : 1, peMinor, antiCheat: false);
+        WithoutBuildStrings(game.ExePath);
+        File.Delete(Path.Combine(paks, "pakchunk0-Windows.pak"));
+        var header = new byte[81];
+        header[16] = (byte)toc;
+        File.WriteAllBytes(Path.Combine(paks, "global.utoc"), header);
+        InlineShadersTests.Pak(Path.Combine(paks, "Proj-Windows.pak"), [("Proj/Content/ShaderArchive-Proj-PCD3D_SM6.ushaderbytecode", [1, 0, 0, 0]), .. Registry(registry)]);
+        return game;
+    }
+
     /// <summary>An install of one encrypted-index version 11 pak, an exe whose numeric version is major.minor.1.0 and, with
     /// <paramref name="antiCheat"/>, an XIGNCODE folder.</summary>
     static (Game Game, string Paks) PakOnlyGame(string name, int major, int minor, bool antiCheat = true)
@@ -367,20 +495,20 @@ public class UnrealReaderTests(ITestOutputHelper output)
         Assert.Equal(CUE4Parse.UE4.Versions.EGame.GAME_HogwartsLegacy,
             UnrealReader.DetectFork(Ue427, 0, "Hogwarts Legacy", "HogwartsLegacy", fromContainers: true, title: "Dead Island 2"));
         var rule = SCSKiller.Core.Planning.RootSig.RuleFor(new EngineInfo("Unreal", "4.25", Di2.ToString(), "D3D12", false, null));
-        Assert.Equal(SCSKiller.Core.Planning.RootSig.Rule.Ue425, rule);
+        Assert.Equal(SCSKiller.Tests.Planning.Rules.Ue425, rule);
         ShaderInfo S(Stage stage, int cbs) => new($"{stage}", stage, "5_0", 0, new(cbs, 0, 0, 0), [], [], []);
         var rs = SCSKiller.Core.Planning.RootSig.Serialize(
-            SCSKiller.Core.Planning.RootSig.Build(rule!.Value, new Dictionary<Stage, ShaderInfo> { [Stage.Vertex] = S(Stage.Vertex, 3), [Stage.Pixel] = S(Stage.Pixel, 2) }, false),
-            SCSKiller.Core.Planning.RootSig.StaticSamplers(rule.Value));
+            SCSKiller.Core.Planning.RootSig.Build(rule!, new Dictionary<Stage, ShaderInfo> { [Stage.Vertex] = S(Stage.Vertex, 3), [Stage.Pixel] = S(Stage.Pixel, 2) }, false),
+            SCSKiller.Core.Planning.RootSig.StaticSamplers(rule));
         Assert.Equal("8d8fee06ec8b183304303046cf42f66b4d6bcd4d", Convert.ToHexStringLower(System.Security.Cryptography.SHA1.HashData(rs)));
     }
 
     /// <summary>Wuthering Waves (anti-cheat: its exe isn't read) is Kuro's 4.26 in paks that tell 4.27: that fork by its folder
     /// (Kuro's launcher: "Wuthering Waves Game", Steam: "Wuthering Waves") or store title when only the containers told the
-    /// version, and by the exe's 4.26 build string otherwise. 4.26's rule doesn't build its root signatures: no plan without
-    /// a recording, which its anti-cheat blocks.</summary>
+    /// version, and by the exe's 4.26 build string otherwise. Its own rule (ue-kuro) plans it without a recording on NVIDIA;
+    /// AMD needs one.</summary>
     [Fact]
-    public void WutheringWavesIsKuros426ForkAndIsntPlannedWithoutARecording()
+    public void WutheringWavesIsKuros426ForkWithItsOwnRule()
     {
         const CUE4Parse.UE4.Versions.EGame Ue426 = CUE4Parse.UE4.Versions.EGame.GAME_UE4_26, Ue427 = CUE4Parse.UE4.Versions.EGame.GAME_UE4_27,
             WuWa = CUE4Parse.UE4.Versions.EGame.GAME_WutheringWaves;
@@ -391,21 +519,25 @@ public class UnrealReaderTests(ITestOutputHelper output)
         Assert.Equal(WuWa, UnrealReader.DetectFork(Ue426, Ue426, "Wuthering Waves Game", "Client-Win64-Shipping"));
         Assert.Null(UnrealReader.DetectFork(Ue427, 0, "Wuthering Waves Game", "Client-Win64-Shipping"));
         Assert.Null(UnrealReader.DetectFork(Ue427, 0, "Wuthering Waves Tools", "Client-Win64-Shipping", fromContainers: true));
+        Assert.Null(UnrealReader.DetectFork(Ue426, Ue426, "Wuthering Waves Tools", "Client-Win64-Shipping"));   // a stock 4.26 game: no prefix match
+        Assert.Null(UnrealReader.DetectFork(Ue426, Ue426, "Wuthering", "Wuthering-Win64-Shipping"));
+        Assert.Equal(WuWa, UnrealReader.DetectFork(Ue426, Ue426, "Games", "WutheringWaves-Win64-Shipping"));
 
         var engine = new EngineInfo("Unreal", "4.26", WuWa.ToString(), "D3D12", false, null);
-        Assert.Null(SCSKiller.Core.Planning.RootSig.RuleFor(engine));
-        Assert.Equal(SCSKiller.Core.Planning.RootSig.Rule.Ue426, SCSKiller.Core.Planning.RootSig.RuleFor(engine with { Fork = null }));
+        Assert.Equal("ue-kuro", SCSKiller.Core.Planning.RootSig.RuleFor(engine)?.Id);
+        Assert.Equal("ue-kuro-rt", SCSKiller.Core.Planning.RulesFile.Current.RtFor(engine)?.Id);
+        Assert.Equal(SCSKiller.Tests.Planning.Rules.Ue426, SCSKiller.Core.Planning.RootSig.RuleFor(engine with { Fork = null }));
         var game = new Game("steam:3513350", "Wuthering Waves", Store.Steam, Ff7.TempDir("wuwa"), "");
-        Assert.Equal(Readiness.NeedsRecording, new SCSKiller.Core.Planning.Planner().Check(game, engine, null, Ff7.Nvidia).Readiness);
+        Assert.Equal(Readiness.Ready, new SCSKiller.Core.Planning.Planner().Check(game, engine, null, Ff7.Nvidia).Readiness);
+        Assert.Equal(Readiness.NeedsRecording, new SCSKiller.Core.Planning.Planner().Check(game, engine, null, Ff7.Amd).Readiness);
     }
 
-    /// <summary>Wuthering Waves with Anti-Cheat Expert in its install is "needs a recording, which its anti-cheat blocks"
-    /// straight away: no AES key would make it compilable, so none is asked for. Without anti-cheat files the key is asked
-    /// for as for any encrypted game.</summary>
+    /// <summary>Wuthering Waves asks for its AES key as any encrypted game does, with or without Anti-Cheat Expert in its
+    /// install: with the key its own rule plans it.</summary>
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void WutheringWavesWithAntiCheatIsntAskedForItsKey(bool antiCheat)
+    public void WutheringWavesIsAskedForItsKey(bool antiCheat)
     {
         var install = Path.Combine(Ff7.TempDir($"wuwa-{antiCheat}"), "Wuthering Waves Game");
         var paks = Directory.CreateDirectory(Path.Combine(install, "Client", "Content", "Paks")).FullName;
@@ -415,14 +547,14 @@ public class UnrealReaderTests(ITestOutputHelper output)
         var game = new Game($"test:wuwa-{antiCheat}", "Wuthering Waves", Store.Other, install, exe);
         var e = reader.Detect(game)!;
         Assert.Equal(("4.26", "GAME_WutheringWaves"), (e.Version, e.Fork));
-        Assert.Equal(!antiCheat, e.Encrypted);
-        Assert.Equal(antiCheat ? "needs a recording, which its anti-cheat blocks" : "encrypted game files (needs the game's AES key)", e.Unsupported);
+        Assert.True(e.Encrypted);
+        Assert.Equal("encrypted game files (needs the game's AES key)", e.Unsupported);
         Assert.Equal(new PlanCheck(Readiness.Unsupported, e.Unsupported!), new SCSKiller.Core.Planning.Planner().Check(game, e, null, Ff7.Nvidia));
     }
 
     /// <summary>A version 11 .pak whose index is marked encrypted (FPakInfo of 4.26: 5 compression method names). Its index
     /// isn't read before a key is.</summary>
-    static void EncryptedIndexPak11(string path)
+    internal static void EncryptedIndexPak11(string path)
     {
         using var f = new BinaryWriter(File.Create(path));
         f.Write(new byte[16]);
@@ -631,6 +763,30 @@ public class UnrealReaderTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>The user's own pipeline cache (UserCaches) adds an exact pipeline map, and leaves the content hash the
+    /// community database finds the build by as it was.</summary>
+    [Fact]
+    public void AUserPipelineCacheAddsMapsOutsideTheContentHash()
+    {
+        var vs = Fxc("float4 main() : SV_Position { return 0; }", "vs_5_0");
+        var install = Ff7.TempDir("user-pipeline-cache");
+        var paks = Directory.CreateDirectory(Path.Combine(install, "Proj", "Content", "Paks")).FullName;
+        InlineShadersTests.Pak(Path.Combine(paks, "Proj-Windows.pak"), ("Proj/Content/ShaderArchive-Proj-PCD3D_SM5.ushaderbytecode", PakEraLibrary(vs)));
+        var user = Path.Combine(install, "Proj_PCD3D_SM5.upipelinecache");
+        File.WriteAllBytes(user, StablePipelineCacheTests.File(28, (7, 1, [Enumerable.Repeat((byte)0xCD, 20).ToArray()])));
+        var game = new Game("test:user-cache", "User cache", Store.Other, install, "");
+        var r = new UnrealReader(Ff7.TempDir("user-cache-data"));
+        ShaderIndex before, after;
+        using (var provider = Provider(paks)) before = r.IndexCore(provider, game, Ue427, null, CancellationToken.None);
+        r.UserCaches = _ => [user];
+        using (var provider = Provider(paks)) after = r.IndexCore(provider, game, Ue427, null, CancellationToken.None);
+        Assert.DoesNotContain(before.Maps, m => m.Library == "UserPipelineCache");
+        var map = Assert.Single(after.Maps, m => m.Library == "UserPipelineCache");
+        Assert.True(map.IsPipeline);
+        Assert.Equal([Assert.Single(after.Shaders.Keys)], map.Shaders);
+        Assert.Equal(before.ContentHash, after.ContentHash);
+    }
+
     /// <summary>CUE4Parse's PostMount throws IndexOutOfRangeException on a DefaultGame.ini "+CultureMappings=" without ';'
     /// (Scarlet Nexus: "Index was outside the bounds of the array"): the mount goes on without that config, and the game's
     /// libraries index.</summary>
@@ -680,8 +836,70 @@ public class UnrealReaderTests(ITestOutputHelper output)
         Assert.True(reader.SetKey(game, Key(1)));
     }
 
-    static byte[] KeyBytes(int from) => [.. Enumerable.Range(from, 32).Select(i => (byte)i)];
-    static string Key(int from) => "0x" + Convert.ToHexString(KeyBytes(from));
+    /// <summary>A pak whose index is encrypted under a non-zero key GUID (the footer's EncryptionKeyGuid): its key is taken
+    /// and the full mount opens the pak with it, so its shader library is indexed. An encrypted pak whose index lies past
+    /// its end stops neither.</summary>
+    [Fact]
+    public void AKeyUnderANonZeroGuidIsTakenAndMounted()
+    {
+        var vs = Fxc("float4 main() : SV_Position { return 0; }", "vs_5_0");
+        var install = Ff7.TempDir("keys-guid");
+        var paks = Directory.CreateDirectory(Path.Combine(install, "Proj", "Content", "Paks")).FullName;
+        EncryptedPak(Path.Combine(paks, "Proj-Windows.pak"), KeyBytes(1), guid: KeyBytes(200)[..16],
+            files: ("Proj/Content/ShaderArchive-Proj-PCD3D_SM5.ushaderbytecode", PakEraLibrary(vs)));
+        var broken = Path.Combine(paks, "Broken.pak");
+        EncryptedPak(broken, KeyBytes(1));
+        var bytes = File.ReadAllBytes(broken);
+        BitConverter.TryWriteBytes(bytes.AsSpan(bytes.Length - 36), 1L << 40);   // the footer's index offset
+        File.WriteAllBytes(broken, bytes);
+        var game = new Game("test:keys-guid", "Guid", Store.Other, install, "");
+        Assert.False(reader.SetKey(game, Key(65)));
+        Assert.True(reader.SetKey(game, Key(1)));
+        Assert.Single(reader.Index(game, Ue427, null, CancellationToken.None).Shaders);
+    }
+
+    /// <summary>Dead by Daylight XORs its decrypted pak index with 28 bytes from the pak footer (CUE4Parse's decryption for
+    /// that fork): the key check decrypts as the mount does, so the right key is taken, a wrong one refused, and the mount
+    /// reads the game's shader library.</summary>
+    [Fact]
+    public void AKeyOfAForkWithItsOwnDecryptionIsTaken()
+    {
+        var install = Directory.CreateDirectory(Path.Combine(Ff7.TempDir("keys-dbd"), "Dead by Daylight")).FullName;
+        var paks = Directory.CreateDirectory(Path.Combine(install, "DeadByDaylight", "Content", "Paks")).FullName;
+        var exe = Path.Combine(install, "DeadByDaylight.exe");
+        File.WriteAllBytes(exe, [.. "MZ"u8, .. System.Text.Encoding.Unicode.GetBytes("++UE5+Release-5.7")]);
+        var vs = Fxc("float4 main() : SV_Position { return 0; }", "vs_5_0");
+        EncryptedPak(Path.Combine(paks, "pakchunk0-Windows.pak"), KeyBytes(1), dbd: KeyBytes(100)[..28],
+            files: ("DeadByDaylight/Content/ShaderArchive-DeadByDaylight-PCD3D_SM5.ushaderbytecode", PakEraLibrary(vs)));
+        var game = new Game("test:keys-dbd", "Dead by Daylight", Store.Other, install, exe);
+        Assert.False(reader.SetKey(game, Key(65)));
+        Assert.True(reader.SetKey(game, Key(1)));
+        var e = reader.Detect(game)!;
+        Assert.Equal(nameof(CUE4Parse.UE4.Versions.EGame.GAME_DeadByDaylight), e.Fork);
+        Assert.False(e.Encrypted);
+        Assert.Single(reader.Index(game, e, null, CancellationToken.None).Shaders);
+    }
+
+    /// <summary>A readable index whose shader library entry is encrypted (Sea of Thieves): once its key is taken the game no
+    /// longer reads as encrypted, and the full mount reads the library with that key.</summary>
+    [Fact]
+    public void AKeyOpensTheEncryptedEntriesOfAReadableIndex()
+    {
+        var vs = Fxc("float4 main() : SV_Position { return 0; }", "vs_5_0");
+        var install = Ff7.TempDir("keys-readable");
+        var paks = Directory.CreateDirectory(Path.Combine(install, "Proj", "Content", "Paks")).FullName;
+        byte[] package = [.. BitConverter.GetBytes(0x9E2A83C1u), .. new byte[28]];   // PACKAGE_FILE_TAG
+        PakOfEncryptedEntries(Path.Combine(paks, "P.pak"), KeyBytes(1), ("Proj/Content/a.uasset", package),
+            ("Proj/Content/ShaderArchive-Proj-PCD3D_SM5.ushaderbytecode", PakEraLibrary(vs)));
+        var game = new Game("test:keys-readable", "Readable", Store.Other, install, Path.Combine(install, "absent.exe"));
+        Assert.True(reader.Detect(game)!.Encrypted);
+        Assert.True(reader.SetKey(game, Key(1)));
+        Assert.False(reader.Detect(game)!.Encrypted);
+        Assert.Single(reader.Index(game, Ue427, null, CancellationToken.None).Shaders);
+    }
+
+    internal static byte[] KeyBytes(int from) => [.. Enumerable.Range(from, 32).Select(i => (byte)i)];
+    internal static string Key(int from) => "0x" + Convert.ToHexString(KeyBytes(from));
 
     /// <summary>A truncated .utoc whose header marks it encrypted and indexed (FIoStoreTocHeader.ContainerFlags at byte 80):
     /// the survey lists it, CUE4Parse can't open it.</summary>
@@ -694,7 +912,7 @@ public class UnrealReaderTests(ITestOutputHelper output)
     }
 
     /// <summary>A version 7 .pak with a readable index whose entries are each encrypted with <paramref name="key"/> (AES-256,
-    /// ECB); every file's size is a multiple of 16.</summary>
+    /// ECB), padded to whole AES blocks.</summary>
     static void PakOfEncryptedEntries(string path, byte[] key, params (string Name, byte[] Data)[] files)
     {
         static void Entry(BinaryWriter w, long offset, long size) { w.Write(offset); w.Write(size); w.Write(size); w.Write(0); w.Write(new byte[20]); w.Write((byte)1); w.Write(0u); }
@@ -703,7 +921,7 @@ public class UnrealReaderTests(ITestOutputHelper output)
         aes.Key = key;
         using var f = new BinaryWriter(File.Create(path));
         var at = new List<long>();
-        foreach (var (_, data) in files) { at.Add(f.BaseStream.Position); Entry(f, 0, data.Length); f.Write(aes.EncryptEcb(data, PaddingMode.None)); }
+        foreach (var (_, data) in files) { at.Add(f.BaseStream.Position); Entry(f, 0, data.Length); f.Write(aes.EncryptEcb([.. data, .. new byte[-data.Length & 15]], PaddingMode.None)); }
         using var index = new MemoryStream();
         var iw = new BinaryWriter(index);
         FString(iw, "../../../");
@@ -714,27 +932,33 @@ public class UnrealReaderTests(ITestOutputHelper output)
         f.Write(new byte[16]); f.Write((byte)0); f.Write(0x5A6F12E1u); f.Write(7); f.Write(indexAt); f.Write(index.Length); f.Write(new byte[20]);
     }
 
-    /// <summary>A version 7 .pak of one file whose index is encrypted with <paramref name="key"/> (AES-256, ECB).</summary>
-    static void EncryptedPak(string path, byte[] key)
+    /// <summary>A version 7 .pak whose index is encrypted with <paramref name="key"/> (AES-256, ECB) under the key GUID
+    /// <paramref name="guid"/> (zero if null), holding <paramref name="files"/> unencrypted (one 4-byte package if none). With
+    /// <paramref name="dbd"/>, in Dead by Daylight's layout: the footer carries those 28 bytes, which the index is XORed with
+    /// before it is encrypted, and room for 5 compression method names.</summary>
+    internal static void EncryptedPak(string path, byte[] key, byte[]? guid = null, byte[]? dbd = null, params (string Name, byte[] Data)[] files)
     {
-        static void Entry(BinaryWriter x) { x.Write(0L); x.Write(4L); x.Write(4L); x.Write(0); x.Write(new byte[20]); x.Write((byte)0); x.Write(0u); }
+        static void Entry(BinaryWriter x, long offset, long size) { x.Write(offset); x.Write(size); x.Write(size); x.Write(0); x.Write(new byte[20]); x.Write((byte)0); x.Write(0u); }
         static void FString(BinaryWriter x, string s) { x.Write(s.Length + 1); x.Write(System.Text.Encoding.ASCII.GetBytes(s)); x.Write((byte)0); }
+        if (files.Length == 0) files = [("Proj/Content/a.uasset", new byte[4])];
+        using var f = new BinaryWriter(File.Create(path));
+        var at = new List<long>();
+        foreach (var (_, data) in files) { at.Add(f.BaseStream.Position); Entry(f, 0, data.Length); f.Write(data); }
         using var index = new MemoryStream();
         var iw = new BinaryWriter(index);
         FString(iw, "../../../");
-        iw.Write(1);
-        FString(iw, "Proj/Content/a.uasset");
-        Entry(iw);
+        iw.Write(files.Length);
+        for (var i = 0; i < files.Length; i++) { FString(iw, files[i].Name); Entry(iw, at[i], files[i].Data.Length); }
         index.SetLength((index.Length + 15) & ~15);
+        var plain = index.ToArray();
+        if (dbd != null) for (var i = 0; i < plain.Length; i++) plain[i] ^= dbd[i % dbd.Length];
         using var aes = Aes.Create();
         aes.Key = key;
-        var encrypted = aes.EncryptEcb(index.ToArray(), PaddingMode.None);
-        using var f = new BinaryWriter(File.Create(path));
-        Entry(f);
-        f.Write(new byte[4]);
+        var encrypted = aes.EncryptEcb(plain, PaddingMode.None);
         var indexAt = f.BaseStream.Position;
         f.Write(encrypted);
-        f.Write(new byte[16]); f.Write((byte)1); f.Write(0x5A6F12E1u); f.Write(7); f.Write(indexAt); f.Write((long)encrypted.Length); f.Write(new byte[20]);
+        f.Write(guid ?? new byte[16]); f.Write((byte)1); f.Write(0x5A6F12E1u); f.Write(7); f.Write(indexAt); f.Write((long)encrypted.Length); f.Write(new byte[20]);
+        if (dbd != null) { f.Write(dbd); f.Write(0u); f.Write(new byte[5 * 32]); }
     }
 
     static readonly EngineInfo Ue427 = new("Unreal", "4.27", null, "D3D12", false, null);
@@ -798,5 +1022,5 @@ public class UnrealReaderTests(ITestOutputHelper output)
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool DeviceIoControl(Microsoft.Win32.SafeHandles.SafeFileHandle h, uint code, nint inBuf, int inSize, nint outBuf, int outSize, out int returned, nint overlapped);
+    internal static extern bool DeviceIoControl(Microsoft.Win32.SafeHandles.SafeFileHandle h, uint code, nint inBuf, int inSize, nint outBuf, int outSize, out int returned, nint overlapped);
 }
