@@ -1,8 +1,12 @@
-// Version resource of d3d12.dll and scskiller_warm.exe (SCSK_RC_WARM). Same product metadata as Directory.Build.props.
+﻿// Version resource of d3d12.dll and scskiller_warm.exe (SCSK_RC_WARM). Same product metadata as Directory.Build.props.
 #include <winres.h>
 #include "version.h"
 
-#ifdef SCSK_RC_WARM
+#ifdef SCSK_RC_GTA4_WARM
+#define SCSK_DESC "SCSKiller GTA IV D3D9 shader cache warmer"
+#define SCSK_NAME "scskiller_gta4_warm.exe"
+#define SCSK_TYPE VFT_APP
+#elif defined(SCSK_RC_WARM)
 #define SCSK_DESC "SCSKiller driver shader cache warmer"
 #define SCSK_NAME "scskiller_warm.exe"
 #define SCSK_TYPE VFT_APP

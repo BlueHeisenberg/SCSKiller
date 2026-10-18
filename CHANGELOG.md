@@ -4,6 +4,8 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+- **Grand Theft Auto IV: The Complete Edition**: with FusionFix's Vulkan/DXVK renderer, SCSKiller warms the game's D3D9 Shader Model 3 shaders on NVIDIA without a recording.
+
 ## [1.3.0] - 2026-10-17
 
 **This is a very big update**, with everything from the 1.3.0 alphas and betas.

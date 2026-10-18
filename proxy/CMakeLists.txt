@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+﻿cmake_minimum_required(VERSION 3.20)
 project(SCSKiller LANGUAGES CXX ASM_MASM RC)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")  # static CRT: nothing extra to ship next to the game
@@ -12,6 +12,18 @@ set(SCSK_VERSION_MAJOR ${CMAKE_MATCH_1})
 set(SCSK_VERSION_MINOR ${CMAKE_MATCH_2})
 set(SCSK_VERSION_PATCH ${CMAKE_MATCH_3})
 configure_file(version.h.in version.h @ONLY)
+
+# GTA IV's DXVK D3D9 renderer is 32-bit. A second Win32 configure builds only this helper; the normal project stays x64.
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+  add_executable(scskiller_gta4_warm gta4warm.cpp version.rc)
+  target_compile_definitions(scskiller_gta4_warm PRIVATE SCSK_RC_GTA4_WARM)
+  target_include_directories(scskiller_gta4_warm PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+  target_link_libraries(scskiller_gta4_warm user32)
+  set_target_properties(scskiller_gta4_warm PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_CURRENT_SOURCE_DIR}/build/Release/x86
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_CURRENT_SOURCE_DIR}/build/Debug/x86)
+  return()
+endif()
 
 add_library(scskiller SHARED proxy.cpp warm11.cpp vtslots.cpp stubs.asm d3d12.def version.rc)
 set_target_properties(scskiller PROPERTIES OUTPUT_NAME d3d12)

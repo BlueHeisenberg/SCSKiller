@@ -8,6 +8,7 @@ Builds dist\SCSKiller\ and dist\SCSKiller.zip:
   native\                  scskiller_warm.exe + the proxy d3d12.dll (the app looks in native\, the CLI in ..\native\)
                            + scskiller_ags.dll (the same recorder as an AMD AGS wrapper, installed as a game's amd_ags_x64.dll)
                            + amd_ags_x64.dll (AMD AGS, downloaded by the proxy's CMake configure)
+                           + x86\scskiller_gta4_warm.exe (GTA IV D3D9/DXVK helper; GTA IV is 32-bit)
                            + segheap\scskiller_warm.exe (the same on the segment heap: NVIDIA's warm)
   THIRD-PARTY-NOTICES.md   every third-party component and its licence; notices\ holds the Microsoft packages' own notices
 
@@ -62,6 +63,14 @@ New-Item -ItemType Directory -Force $native | Out-Null
 Copy-Item (Join-Path $build "Release\scskiller_warm.exe"), (Join-Path $build "Release\d3d12.dll"), (Join-Path $build "Release\amd_ags_x64.dll"), (Join-Path $build "Release\scskiller_ags.dll") $native
 New-Item -ItemType Directory -Force (Join-Path $native "segheap") | Out-Null
 Copy-Item (Join-Path $build "Release\segheap\scskiller_warm.exe") (Join-Path $native "segheap")
+
+# GTA IV is 32-bit: build its D3D9/DXVK helper in a separate Win32 CMake tree. Its runtime output goes under the
+# regular proxy build so NativeTools.Find can also locate it in development checkouts.
+$build32 = Join-Path $build "x86-cmake"
+Run cmake @("-S", (Join-Path $repo "proxy"), "-B", $build32, "-A", "Win32", "-DSCSK_VERSION=$scskVersion")
+Run cmake @("--build", $build32, "--config", "Release", "--target", "scskiller_gta4_warm")
+New-Item -ItemType Directory -Force (Join-Path $native "x86") | Out-Null
+Copy-Item (Join-Path $build "Release\x86\scskiller_gta4_warm.exe") (Join-Path $native "x86")
 
 # 2. app + CLI
 # the SDK reuses obj\...\apphost.exe until the assembly changes, so a CETCompat change alone would ship the old flag
@@ -136,7 +145,7 @@ foreach ($n in @(
 # 5. layout check, including self-contained .NET (no "install .NET" prompt): the runtime next to each exe and
 #    runtimeconfig.json listing includedFrameworks rather than a shared framework
 $expected = "SCSKiller.exe", "oodle-data-shared.dll", "zlib-ng2.dll", "cli\scskiller.exe", "cli\scskillerw.exe",
-    "cli\oodle-data-shared.dll", "cli\zlib-ng2.dll", "native\scskiller_warm.exe", "native\segheap\scskiller_warm.exe", "native\d3d12.dll", "native\amd_ags_x64.dll", "native\scskiller_ags.dll",
+    "cli\oodle-data-shared.dll", "cli\zlib-ng2.dll", "native\scskiller_warm.exe", "native\segheap\scskiller_warm.exe", "native\x86\scskiller_gta4_warm.exe", "native\d3d12.dll", "native\amd_ags_x64.dll", "native\scskiller_ags.dll",
     "hostfxr.dll", "coreclr.dll", "cli\hostfxr.dll", "cli\coreclr.dll", "Microsoft.WindowsAppRuntime.dll", "SCSKiller.pri",
     "THIRD-PARTY-NOTICES.md", "LICENSE", "LICENSE-EXCEPTION.txt", "notices\dotnet-THIRD-PARTY-NOTICES.txt"
 if ($NoOodle) { $expected = $expected | Where-Object { $_ -notlike "*oodle-data-shared.dll" } }
