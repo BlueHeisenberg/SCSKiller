@@ -1,7 +1,8 @@
-﻿using System.IO.Compression;
+using System.IO.Compression;
 using System.Numerics;
 using System.Text.Json;
 using SCSKiller.Core.Carved;
+using SCSKiller.Core.Rage;
 using static SCSKiller.Core.Planning.PsoDb;
 
 namespace SCSKiller.Core.Planning;
@@ -100,6 +101,10 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     {
         if (engine.Unsupported != null) return new(Readiness.Unsupported, engine.Unsupported);
         if (engine.Encrypted) return new(Readiness.Unsupported, "encrypted game files");
+        if (engine.Family == Rage4Reader.Family)
+            return caps.Profile.StartsWith("nvidia", StringComparison.OrdinalIgnoreCase)
+                ? new(Readiness.Ready, "compiles GTA IV's D3D9 shaders through its DXVK Vulkan renderer")
+                : new(Readiness.Unsupported, "GTA IV D3D9/DXVK warming is currently supported on NVIDIA only");
         // GraphicsApi: "D3D12[ (why)]", "D3D11[ (why)]", "Vulkan…", or "D3D11 or D3D12" when the game offers both (UnrealRhi)
         var api = engine.GraphicsApi;
         var dx11 = api.StartsWith("D3D11") && D3D11Cache(caps);

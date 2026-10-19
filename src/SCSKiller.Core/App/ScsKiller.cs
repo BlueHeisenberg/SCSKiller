@@ -178,7 +178,7 @@ public sealed partial class ScsKiller : IScsKiller
         return new EngineReaders([("Unreal", new UnrealReader(dataDir)), (FromSoftReader.Family, new FromSoftReader(dataDir)),
             (UnityReader.Family, new UnityReader()), (ReEngine.ReEngineReader.Family, new ReEngine.ReEngineReader(dataDir)),
             (RedEngine.RedEngineReader.Family, new RedEngine.RedEngineReader()), (Dagor.DagorReader.Family, new Dagor.DagorReader()), (Northlight.NorthlightReader.Family, new Northlight.NorthlightReader()),
-            (Source2.Source2Reader.Family, new Source2.Source2Reader()), (Rage.RageReader.Family, new Rage.RageReader()),
+            (Source2.Source2Reader.Family, new Source2.Source2Reader()), (Rage.Rage4Reader.Family, new Rage.Rage4Reader()), (Rage.RageReader.Family, new Rage.RageReader()),
             (NaughtyDog.NaughtyDogReader.Family, new NaughtyDog.NaughtyDogReader()),
             (SantaMonica.SantaMonicaReader.Family, new SantaMonica.SantaMonicaReader()),
             (Nixxes.NixxesReader.Family, new Nixxes.NixxesReader()),
@@ -2136,6 +2136,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// compile still takes them)</param>
     string? StaleReason(Game g, GameRecord r, EngineInfo? e, Pending? pending = null, GpuSnapshot? gpu = null, bool status = false)
     {
+        if (e?.Family == Rage.Rage4Reader.Family) return WarmChanged(g, r, e, gpu);
         var p = pending ?? PendingOf(g, r, e);
         return WarmChanged(g, r, e, gpu)
             ?? (p.Unknown ? (p.Recorded + (p.Planned ?? 0) is > 0 and var u ? $"{u:N0} pipeline{(u == 1 ? "" : "s")} to compile again" : "compile again")
@@ -2186,7 +2187,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// without the community or official recording in use (<see cref="CheckPlans"/>); or a recording waits for the plan to
     /// tell its ray tracing (<see cref="RtPlanCheck"/>).</summary>
     bool NeedsPlanCheck(Game g, GameRecord r, EngineInfo? e) =>
-        r.WarmedAt != null && (!CurrentPlanner(r.PlanVersion, r.PlanRules, r.PlanReaderVersion, e) || r.PlanCommunity != CommunityObjects(g.Id)
+        e?.Family != Rage.Rage4Reader.Family && r.WarmedAt != null && (!CurrentPlanner(r.PlanVersion, r.PlanRules, r.PlanReaderVersion, e) || r.PlanCommunity != CommunityObjects(g.Id)
             || r.PlanOfficial != OfficialInUse(g.Id)?.Object || OtherApi(r, e) || OtherEngine(r, e) || r.PlanFiltering != Filtering(g.Id, false, e)
             || r.PlanRayTracing != RayTracing(r) && r.Plan?.Stats is { RtLibraries: > 0 } or { RtStateObjects: > 0 }) && WarmChanged(g, r, e) == null
         || RtPlanCheck(r, e);
@@ -6611,6 +6612,44 @@ public sealed partial class ScsKiller : IScsKiller
         }
         var engine = now!.Engine!;
         var game = installed!;
+        if (engine.Family == Rage.Rage4Reader.Family)
+        {
+            Stage(QueueStage.Indexing);
+            await Gate(id, ct);
+            var gameExe = Path.GetFileName(game.ExePath);
+            await WhileGameRuns(gameExe, game.Name, ct);
+            await Gate(id, ct);
+            Stage(QueueStage.Warming);
+            var result = await Rage.Rage4Warm.Run(game, Store.GameDir(id), Log, ct);
+            if (result.Failed != 0)
+            {
+                Stage(QueueStage.Failed, $"{result.Failed:N0} GTA IV shaders failed to warm");
+                return;
+            }
+            Log?.Report($"compile {game.Name}: done in {result.Seconds:0.00}s, {result.Done:N0} of {result.Total:N0} D3D9 shaders created through DXVK, 0 failed");
+            var rageRec = Store.LoadGame(id);
+            var rageGpu = Snapshot();
+            var readerVersion = _reader.ReaderVersion(engine);
+            var rules = RulesFile.Current.Hash(engine);
+            (rageRec.WarmedDriverId, rageRec.WarmedDriverVersion) = (rageGpu.Id, rageGpu.Gpu.DriverVersion);
+            (rageRec.WarmedAt, rageRec.LastWarmTime) = (DateTimeOffset.Now, TimeSpan.FromSeconds(result.Seconds));
+            (rageRec.LastWarmFailed, rageRec.LastWarmSkipped, rageRec.LastWarmCrashed, rageRec.LastWarmDriverSkipped, rageRec.LastWarmUnbuilt) = (0, 0, 0, 0, 0);
+            rageRec.WarmedExeName = gameExe;
+            (rageRec.WarmedGameVersion, rageRec.WarmedExeStamp, rageRec.WarmedIndexStamp) = (game.Version, ExeStamp(game), IndexStamp(game));
+            rageRec.WarmedIndexHash = ShaderIndex.EmptyContentHash;
+            rageRec.IndexContentHash = ShaderIndex.EmptyContentHash;
+            (rageRec.IndexGameVersion, rageRec.IndexExeStamp, rageRec.ShaderCount) = (game.Version, ExeStamp(game), result.Total);
+            (rageRec.PlanVersion, rageRec.WarmedPlanVersion) = (Planner.Version, Planner.Version);
+            (rageRec.PlanReaderVersion, rageRec.WarmedReaderVersion) = (readerVersion, readerVersion);
+            (rageRec.PlanRules, rageRec.WarmedPlanRules) = (rules, rules);
+            rageRec.PlanApi = ApiKey(engine.GraphicsApi);
+            rageRec.PlanEngine = EngineKey(engine);
+            rageRec.CompileFailedBuild = null;
+            Store.SaveGame(id, rageRec);
+            Refresh(game, ct);
+            Stage(QueueStage.Done);
+            return;
+        }
         bool whenIdle;
         lock (_lock) whenIdle = _whenIdle.Contains(id);
         var rec = Store.LoadGame(id);
