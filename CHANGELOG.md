@@ -4,6 +4,9 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+- A game's page no longer reads the game's files and the process list on the UI thread each time a game or the queue
+  changes, so it stays responsive while a scan or a compile runs.
+
 ## [1.3.0] - 2026-10-17
 
 **This is a very big update**, with everything from the 1.3.0 alphas and betas.

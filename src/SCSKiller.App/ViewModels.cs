@@ -687,7 +687,7 @@ public sealed class DetailVm(string id) : Bindable
         var now = App.Core.Games.FirstOrDefault(g => g.Game.Id == id);
         if (now != null && s.Playing && !now.Playing) ReadCaches();   // the game exited: its Windows and pipeline caches grew
         if (now != null && (now != s || Row.Icon != Icons.Get(now.Game.ExePath))) { s = now; Row = new GameRow(now); }   // or its icon failed: the tile
-        blocked = Blocked(id);
+        ReadBlocked();
         Changed();
     }
 
@@ -795,7 +795,17 @@ public sealed class DetailVm(string id) : Bindable
         Changed();
     }
     // Before and after recording (doc 6.5): one button in the status card, its note under it, a menu beside it once started
-    string? blocked = Blocked(id);
+    // read off the UI thread: the game's record, the process list and, for a shared driver cache, every other game's record.
+    // The button stays off until the first read is in.
+    string? blocked;
+    bool blockedKnown;
+    BackgroundRead<string?>? blockedRead;
+    void ReadBlocked() => (blockedRead ??= new(() => Blocked(id), b =>
+    {
+        if (blockedKnown && b == blocked) return;
+        (blocked, blockedKnown) = (b, true);
+        Changed();
+    })).Request();
     static string? Blocked(string id)
     {
         if (!App.Core.Settings.BeforeAfter) return null;
@@ -807,7 +817,7 @@ public sealed class DetailVm(string id) : Bindable
         catch (Exception e) { return BeforeAfterUi.Describe(e); }
     }
     BeforeAfterInfo? Ba => s.BeforeAfter;
-    (bool Shown, bool Enabled, string Note) BaStart => BeforeAfter.StartButton(App.Core.Settings.BeforeAfter, blocked);
+    (bool Shown, bool Enabled, string Note) BaStart => BeforeAfter.StartButton(App.Core.Settings.BeforeAfter, blockedKnown ? blocked : "");
     public bool ShowBa => Ba != null ? App.Core.Settings.BeforeAfter : BaStart.Shown;
     public bool BaHasMenu => ShowBa && Ba != null;
     public bool BaVoided => BeforeAfterUi.Voided(Ba);
