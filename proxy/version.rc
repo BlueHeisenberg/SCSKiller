@@ -25,6 +25,10 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
+#ifndef SCSK_RC_WARM
+            // Tells a tool that makes <exe>.local folders (Arc Cache) that this proxy runs beside one (load_system_copy).
+            VALUE "Comments", "exe.local-aware"
+#endif
             VALUE "CompanyName", "The SCSKiller authors"
             VALUE "FileDescription", SCSK_DESC
             VALUE "FileVersion", SCSK_FILEVERSION_STR

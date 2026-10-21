@@ -4,6 +4,9 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+- The recorder works in games with an `<exe>.local` folder (Arc Cache's per-game Intel driver copy). Before, such a game
+  got the recorder back in place of DirectX and couldn't start.
+
 ## [1.3.0] - 2026-10-17
 
 **This is a very big update**, with everything from the 1.3.0 alphas and betas.

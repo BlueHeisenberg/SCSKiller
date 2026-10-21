@@ -1361,6 +1361,9 @@ public sealed partial class ScsKiller : IScsKiller
         .. new[] { "recording.all.db", "recording.all.db.key" }.Select(f => Path.Combine(Store.GameDir(g.Id), f))];   // until migrated
 
     static readonly string[] RecorderDataFiles = ["scskiller.db", "scskiller_creates.csv", "scskiller.log", FrameLog.FileName];
+    /// <summary>The proxy's folder with copies of the system d3d12.dll (d3d11.dll) and D3D12Core.dll, made beside an
+    /// &lt;exe&gt;.local folder (proxy.cpp load_system_copy).</summary>
+    public const string SystemCopyFolder = "scskiller-system";
 
     readonly ConcurrentDictionary<string, (long Bin, DateTime Written, long Csv, PlayWindow? Played, FrameReport? Report)> _frames = new();
     readonly ConcurrentDictionary<string, string?> _trimmedLogged = new();
@@ -6183,6 +6186,10 @@ public sealed partial class ScsKiller : IScsKiller
         foreach (var f in RecorderDataFiles.Concat(Recordings.AppFiles))   // a locked file doesn't keep the others
             try { File.Delete(Path.Combine(dir, f)); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { first ??= e; }
+        var copies = new DirectoryInfo(Path.Combine(dir, SystemCopyFolder));
+        if (copies.Exists && !copies.Attributes.HasFlag(FileAttributes.ReparsePoint))   // never follow a link out of the folder
+            try { copies.Delete(true); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { first ??= e; }
         if (first != null) throw first;
         if (!keepMarker) File.Delete(Path.Combine(dir, LedgerStamp));   // last: what is left stays its copy's
         return true;
@@ -7779,7 +7786,7 @@ public sealed partial class ScsKiller : IScsKiller
     internal Func<string?> VacReadError { get; set; } = () => Vac.ReadError();
 
     /// <summary>The files the app and the proxy write next to the exe: none is an anti-cheat marker.</summary>
-    internal static readonly HashSet<string> RecorderOwnFiles = new([.. RecorderDataFiles, .. Recordings.AppFiles, Dll12, Dll11, "scskiller.ini", ChainName, ChainName11, AgsRealName, ArmedFile,
+    internal static readonly HashSet<string> RecorderOwnFiles = new([.. RecorderDataFiles, .. Recordings.AppFiles, Dll12, Dll11, "scskiller.ini", ChainName, ChainName11, AgsRealName, ArmedFile, SystemCopyFolder,
         Dll12 + TempSuffix, Dll11 + TempSuffix, AgsName + TempSuffix, "scskiller.ini" + TempSuffix, LedgerStamp, LedgerStamp + TempSuffix], StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The file types a game or a mod writes as it runs that anti-cheat never ships as: logs, settings and presets,
