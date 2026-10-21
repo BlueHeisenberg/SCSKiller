@@ -42,7 +42,11 @@ the compile queue and the recorder's lifecycle.
 
 **Recorder** (`proxy/proxy.cpp`, built as `d3d12.dll`). Forwards every export to the system DLL. Only in an admitted
 launch (see [Rules](#rules)) does it hook the device and record what the game creates. As `d3d11.dll`, in a DirectX 11
-game on AMD, it records input layouts. Otherwise it is a pure pass-through that writes nothing in the game folder.
+game on AMD, it records input layouts. Otherwise it is a pure pass-through that writes nothing in the game folder,
+except beside an `<exe>.local` folder (with DevOverrideEnable, as Arc Cache makes for its per-game Intel driver copy):
+the loader then matches DLLs by base name and hands the proxy itself back for the system DLL, so it loads a copy of
+that DLL (and of `D3D12Core.dll`) from `scskiller-system\` beside it, copied again when System32's change. The version
+resource says `exe.local-aware` (Comments) for tools that make such folders; removing the recorder deletes the folder.
 
 **scskiller_warm.exe** (`proxy/warm.cpp`, `proxy/warm11.cpp`). Stages a copy of itself named like the game's exe, plus
 the recorder DLL and the work folder's databases, in a new folder, and runs it. In that copy the DLL runs in warm mode

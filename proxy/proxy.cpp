@@ -5207,6 +5207,31 @@ static std::wstring own_dir(HMODULE self) {
     return same_file(L"\\\\?\\GLOBALROOT" + mapped, exe_dir + mapped.substr(mapped.find_last_of(L'\\') + 1)) ? exe_dir : dir;
 }
 
+// With an <exe>.local folder and DevOverrideEnable (Arc Cache makes both for its per-game Intel driver copy), the loader
+// matches DLLs by base name: the System32 d3d12.dll (d3d11.dll) loaded by full path comes back as this proxy, whose
+// exports would then call themselves. A copy of the system dll under another name serves instead, in the folder
+// scskiller-system beside this dll (the app's SystemCopyFolder), with System32's D3D12Core.dll for D3D12: the runtime
+// loads that one from its own folder when the exe brings no Agility SDK. A folder of their own, since a game's
+// D3D12Core.dll may sit next to its exe (D3D12SDKPath "."). Copied again when System32's change (a Windows update):
+// CopyFileW keeps the write time, so size and time tell. Measured with a test exe beside a game's .local copy: the
+// device is created and the GPU driver loads from <exe>.local, with the inbox runtime and with an Agility SDK.
+// Kernel32 only: this runs under the loader lock.
+static bool fresh_copy(const std::wstring& from, const std::wstring& to) {
+    WIN32_FILE_ATTRIBUTE_DATA a{}, b{};
+    if (!GetFileAttributesExW(from.c_str(), GetFileExInfoStandard, &a)) return false;
+    bool same = GetFileAttributesExW(to.c_str(), GetFileExInfoStandard, &b) && a.nFileSizeHigh == b.nFileSizeHigh &&
+                a.nFileSizeLow == b.nFileSizeLow && !CompareFileTime(&a.ftLastWriteTime, &b.ftLastWriteTime);
+    return same || CopyFileW(from.c_str(), to.c_str(), FALSE);  // in use by another run of an older copy: fail closed
+}
+static HMODULE load_system_copy(const std::wstring& system_dir, const wchar_t* sys_dll) {
+    std::wstring dir = g_dir + L"scskiller-system\\", name = sys_dll;
+    name = name.substr(0, name.size() - 4) + L".scskiller-system.dll";  // d3d12.scskiller-system.dll
+    if (!CreateDirectoryW(dir.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) return nullptr;
+    if (!g_api11 && !fresh_copy(system_dir + L"\\D3D12Core.dll", dir + L"D3D12Core.dll")) return nullptr;
+    if (!fresh_copy(system_dir + L"\\" + sys_dll, dir + name)) return nullptr;
+    return LoadLibraryW((dir + name).c_str());
+}
+
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     if (reason == DLL_PROCESS_DETACH) {
         // reserved != nullptr: the process is terminating (not a plain FreeLibrary). Best effort, no lock: the loader lock
@@ -5232,7 +5257,8 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     const char* create_export = g_api11 ? "D3D11CreateDevice" : "D3D12CreateDevice";
     GetSystemDirectoryW(p, MAX_PATH);
     g_real = LoadLibraryW((std::wstring(p) + L"\\" + sys_dll).c_str());
-    if (!g_real) return FALSE;
+    if (g_real == self) g_real = load_system_copy(p, sys_dll);  // an <exe>.local folder handed this dll back
+    if (!g_real || g_real == self) return FALSE;
     // next=<file name>: a mod's d3d12.dll (d3d11.dll) renamed next to us (the app's "record alongside"); every export goes
     // to it first. A bare file name only. If it doesn't load or has no device create, the system dll serves alone.
     wchar_t next[64];
