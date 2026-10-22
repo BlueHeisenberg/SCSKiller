@@ -171,7 +171,9 @@ public sealed partial class ScsKiller : IScsKiller
     public static string? SharedPackDir(string dataDir, GpuVendor v) => PackGpu(v) is { } gpu ? Path.Combine(dataDir, "community", "packs", gpu) : null;
 
     /// <summary>Unreal first, then the engines whose archives the carver can't see into (FromSoftware, Unity, RE Engine,
-    /// REDengine 3, Dagor, Source 2, RAGE, Naughty Dog, Santa Monica, Nixxes, Tank, Decima, Luminous, ForzaTech) or whose pipelines and root signatures it doesn't know (Northlight), then the generic raw DXBC/DXIL carver.</summary>
+    /// REDengine 3, Dagor, Source 2, RAGE, Naughty Dog, Santa Monica, Nixxes, Tank, Decima, Luminous, ForzaTech, BlackSpace) or whose pipelines and root signatures it doesn't know (Northlight), then the generic raw DXBC/DXIL carver.
+    /// BlackSpace before it: the few .padxil files its archives store uncompressed are raw containers the carver could take
+    /// for the whole game.</summary>
     public static IEngineReader DefaultReaders(string? dataDir = null)
     {
         dataDir ??= AppStore.DefaultDir;
@@ -187,6 +189,7 @@ public sealed partial class ScsKiller : IScsKiller
             (Decima.DecimaReader.Family, new Decima.DecimaReader(dataDir)),
             (Luminous.LuminousReader.Family, new Luminous.LuminousReader()),
             (ForzaTech.ForzaTechReader.Family, new ForzaTech.ForzaTechReader()),
+            (BlackSpace.BlackSpaceReader.Family, new BlackSpace.BlackSpaceReader()),
             .. CarvedReader.Families.Select(f => (f, (IEngineReader)carved))]);
     }
 
