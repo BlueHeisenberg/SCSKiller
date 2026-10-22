@@ -1,0 +1,32 @@
+LIBRARY d3d12
+EXPORTS
+    stub_Ordinal99                                   @99 NONAME
+    SetAppCompatStringPointer = stub_SetAppCompatStringPointer @100
+    D3D12CreateDevice = Proxy_D3D12CreateDevice      @101
+    D3D12GetDebugInterface = stub_D3D12GetDebugInterface @102
+    D3D12CoreCreateLayeredDevice = stub_D3D12CoreCreateLayeredDevice @103
+    D3D12CoreGetLayeredDeviceSize = stub_D3D12CoreGetLayeredDeviceSize @104
+    D3D12CoreRegisterLayers = stub_D3D12CoreRegisterLayers @105
+    D3D12CreateRootSignatureDeserializer = stub_D3D12CreateRootSignatureDeserializer @106
+    D3D12CreateVersionedRootSignatureDeserializer = stub_D3D12CreateVersionedRootSignatureDeserializer @107
+    D3D12DeviceRemovedExtendedData = stub_D3D12DeviceRemovedExtendedData @108
+    D3D12EnableExperimentalFeatures = stub_D3D12EnableExperimentalFeatures @109
+    D3D12GetInterface = Proxy_D3D12GetInterface      @110
+    D3D12PIXEventsReplaceBlock = stub_D3D12PIXEventsReplaceBlock @111
+    D3D12PIXGetThreadInfo = stub_D3D12PIXGetThreadInfo @112
+    D3D12PIXNotifyWakeFromFenceSignal = stub_D3D12PIXNotifyWakeFromFenceSignal @113
+    D3D12PIXReportCounter = stub_D3D12PIXReportCounter @114
+    D3D12SerializeRootSignature = stub_D3D12SerializeRootSignature @115
+    D3D12SerializeVersionedRootSignature = stub_D3D12SerializeVersionedRootSignature @116
+    GetBehaviorValue = stub_GetBehaviorValue         @117
+    SCSKiller_Stats                                  @200
+    SCSKiller_StartWarm                              @201
+    SCSKiller_WarmOptions                            @202
+    SCSKiller_Progress                               @203
+    SCSKiller_Control                                @204
+    SCSKiller_WarmRt                                 @205
+    SCSKiller_Retry                                  @206
+    SCSKiller_WarmMemory                             @207
+    SCSKiller_WarmCrash                              @208
+    SCSKiller_Crashes                                @209
+    SCSKiller_WarmPass                               @210
