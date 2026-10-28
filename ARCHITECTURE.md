@@ -22,7 +22,7 @@ the compile queue and the recorder's lifecycle.
   finds in the user's folders of games (each folder in one is a game). `GameFiles` picks the real
   exe and is the only anti-cheat detector. `Vac` decides Valve Anti-Cheat. `ReShade` classifies shader mods.
 - *Engine readers* (`Unreal/`, `Unity/`, `FromSoft/`, `ReEngine/`, `RedEngine/`, `Northlight/`, `Dagor/`, `Rage/`,
-  `Source2/`, `NaughtyDog/`, `SantaMonica/`, `Nixxes/`, `Tank/`, `Decima/`, `Luminous/`, `ForzaTech/`, and `Carved/` for any
+  `Source2/`, `NaughtyDog/`, `SantaMonica/`, `Nixxes/`, `Tank/`, `Decima/`, `Luminous/`, `ForzaTech/`, `BlackSpace/`, and `Carved/` for any
   game shipping raw DXBC/DXIL): each lists the build's shaders as a `ShaderIndex` grouped in shader maps (shaders that can be drawn
   together) and reads their bytes on demand. A shader is the SHA-1 of its container (`ShaderContainer.Parse`).
 - *Planner* (`Planning/`): `Planner` and `PlanBuilder` turn index, recording and caps into a plan. `RootSig` rebuilds
