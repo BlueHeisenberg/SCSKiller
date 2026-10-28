@@ -23,7 +23,7 @@ public sealed class RedEngineReader : IEngineReader
     /// <summary>The library name of a technique's ray tracing hit group map: its closest hit library, then its any hit library
     /// when it has one (<see cref="RedRayTracing"/>).</summary>
     public const string HitGroups = "hitgroups";
-    const string Materials = @"content\content0\shaderdx12_0.cache", Static = @"content\content0\staticshaderDx12_0.cache";
+    static readonly string Materials = Path.Combine("content", "content0", "shaderdx12_0.cache"), Static = Path.Combine("content", "content0", "staticshaderDx12_0.cache");
 
     /// <summary>Techniques whose shaders Detect inflates, at most, to find one usable pipeline.</summary>
     const int DetectTechniques = 64;

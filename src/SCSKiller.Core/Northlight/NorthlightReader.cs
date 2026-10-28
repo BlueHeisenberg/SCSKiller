@@ -22,7 +22,7 @@ public sealed class NorthlightReader : IEngineReader
     public const string Family = "Northlight", Version = "DX12";
     public const string Libraries = "libraries";
     public const string Platform11 = "D3D11";
-    const string Dir = @"data\shaders\build\pc_dxil", Dir11 = @"data\shaders\build\pc_dx11";
+    static readonly string Dir = Path.Combine("data", "shaders", "build", "pc_dxil"), Dir11 = Path.Combine("data", "shaders", "build", "pc_dx11");
 
     /// <summary>Effect files Detect reads, smallest first, to find one VS+PS record.</summary>
     const int DetectFiles = 8;

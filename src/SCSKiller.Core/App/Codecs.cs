@@ -24,7 +24,7 @@ public static class Codecs
 
     /// <summary>The pinned Oodle build runs AVX2, BMI2 and MOVBE code with no CPU check, which kills the process on a CPU
     /// without them. Without it CUE4Parse decodes Oodle data in managed code.</summary>
-    public static bool NativeOodle => Avx2.IsSupported && Bmi2.X64.IsSupported;
+    public static bool NativeOodle => OperatingSystem.IsWindows() && Avx2.IsSupported && Bmi2.X64.IsSupported;
 
     public const string NoNativeOodle = "This CPU lacks AVX2 and BMI2, which the Oodle codec needs.";
 
@@ -56,6 +56,7 @@ public static class Codecs
     /// they'd race on the same download).</summary>
     public static void Load(bool zlib = true)
     {
+        if (!OperatingSystem.IsWindows()) return;
         lock (Gate)
         {
             if (NativeOodle && OodleHelper.Instance == null) TryLoad(OodleHelper.OodleFileName, DownloadOodle, p => OodleHelper.Initialize(p), Log);

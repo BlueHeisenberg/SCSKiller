@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using SCSKiller.Core.Carved;
 using static SCSKiller.Core.Unreal.ShaderContainer;
@@ -359,14 +360,92 @@ public static unsafe class RootSig
         return Dxbc.Part(blob, "RTS0"u8) is { IsEmpty: false } rts ? rts.ToArray() : throw new InvalidDataException("no RTS0 part");
     }
 
-    static readonly delegate* unmanaged<void*, nint*, nint*, int> SerializeFn = (delegate* unmanaged<void*, nint*, nint*, int>)NativeLibrary.GetExport(
-        NativeLibrary.Load(Path.Combine(Environment.SystemDirectory, "d3d12.dll")), "D3D12SerializeVersionedRootSignature"); // System32: never a proxy d3d12.dll next to the app
+    static readonly delegate* unmanaged<void*, nint*, nint*, int> SerializeFn =
+        OperatingSystem.IsWindows()
+            ? (delegate* unmanaged<void*, nint*, nint*, int>)NativeLibrary.GetExport(
+                NativeLibrary.Load(Path.Combine(Environment.SystemDirectory, "d3d12.dll")), "D3D12SerializeVersionedRootSignature")
+            : null;
 
     /// <summary>The runtime refused the description (E_INVALIDARG: overlapping registers, a bad sampler, ...).</summary>
     public sealed class SerializeException(string message) : InvalidOperationException(message);
 
+    public static byte[] WrapDxbc(byte[] rts0)
+    {
+        uint totalSize = (uint)(32 + 4 + 8 + rts0.Length);
+        var b = new byte[totalSize];
+        "DXBC"u8.CopyTo(b);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(20), 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(24), totalSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(28), 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(32), 36);
+        "RTS0"u8.CopyTo(b.AsSpan(36));
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(40), (uint)rts0.Length);
+        rts0.CopyTo(b, 44);
+        return b;
+    }
+
+    public static byte[] EncodeRts0(Desc d, byte[] samplers)
+    {
+        var rows = d.Rows;
+        var payload = new List<uint>();
+        var at = 24 + 12 * rows.Count;
+        var parms = new List<uint>();
+        uint ver = d.Version10 ? 1u : 2u;
+
+        foreach (var r in rows)
+        {
+            parms.AddRange([r[0], r[1], (uint)(at + 4 * payload.Count)]);
+            if (r[0] == 0)
+            {
+                var count = (r.Length - 2) / 5;
+                payload.AddRange([(uint)count, (uint)(at + 4 * payload.Count + 8)]);
+                for (var j = 0; j < count; j++)
+                {
+                    uint type = r[2 + 5 * j];
+                    uint num = r[2 + 5 * j + 1];
+                    uint baseReg = r[2 + 5 * j + 2];
+                    uint space = r[2 + 5 * j + 3];
+                    uint flags = r[2 + 5 * j + 4];
+                    uint offset = d.RangeOffsets ? flags : count == 1 ? r.Length == 8 ? r[7] : Append : d.AppendRanges ? Append : 0;
+
+                    if (d.Version10)
+                        payload.AddRange([type, num, baseReg, space, offset]);
+                    else
+                        payload.AddRange([type, num, baseReg, space, flags, offset]);
+                }
+            }
+            else if (r[0] == 1)
+            {
+                payload.AddRange([r[2], r[3], r[4]]);
+            }
+            else
+            {
+                if (d.Version10)
+                    payload.AddRange([r[2], r[3]]);
+                else
+                    payload.AddRange([r[2], r[3], r[4]]);
+            }
+        }
+
+        var b = new byte[at + 4 * payload.Count + samplers.Length];
+        uint[] head = [ver, (uint)rows.Count, 24, (uint)(samplers.Length / 52), (uint)(at + 4 * payload.Count), d.Flags];
+        for (var i = 0; i < head.Length; i++) BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(4 * i), head[i]);
+        for (var i = 0; i < parms.Count; i++) BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(24 + 4 * i), parms[i]);
+        for (var i = 0; i < payload.Count; i++) BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(at + 4 * i), payload[i]);
+        samplers.CopyTo(b, at + 4 * payload.Count);
+
+        var wrapped = WrapDxbc(b);
+        if (!Dxbc.RootSignatureValid(wrapped))
+            throw new SerializeException("Root signature validation failed");
+
+        return wrapped;
+    }
+
     public static byte[] Serialize(Desc d, byte[] samplers)
     {
+        if (SerializeFn == null)
+            return EncodeRts0(d, samplers);
+
         // x64 layouts: D3D12_ROOT_PARAMETER(1) = 32 bytes (type @0, union @8, visibility @24), D3D12_DESCRIPTOR_RANGE1 = 6 x u32
         // (1.0: 5, no flags), D3D12_VERSIONED_ROOT_SIGNATURE_DESC = version @0, NumParameters @8, pParameters @16,
         // NumStaticSamplers @24, pStaticSamplers @32, Flags @40 (the same for 1.0 and 1.1).
@@ -442,6 +521,36 @@ public static unsafe class RootSig
             var q = (int)(so + SamplerSize(ver) * s);
             if (ver == 3 && BitConverter.ToUInt32(b, q + 52) != 0) throw new SerializeException("a 1.2 static sampler with flags has no 1.0 form");
             b.AsSpan(q, 52).CopyTo(samplers.AsSpan(52 * (int)s));
+        }
+
+        if (SerializeFn == null)
+        {
+            var atOffset = 24 + 12 * (int)n;
+            var parmsList = new List<uint>();
+            var payloadList = new List<uint>();
+            for (var i = 0u; i < n; i++)
+            {
+                var (type, payload) = (U(at + 12 * i), U(at + 12 * i + 8));
+                parmsList.AddRange([type, U(at + 12 * i + 4), (uint)(atOffset + 4 * payloadList.Count)]);
+                if (type == 0)
+                {
+                    var rangeCount = U(payload);
+                    payloadList.AddRange([rangeCount, (uint)(atOffset + 4 * payloadList.Count + 8)]);
+                    for (var r = 0; r < (int)rangeCount * 5; r++)
+                        payloadList.Add(ranges[first[i] + r]);
+                }
+                else for (var k = 0u; k < (type == 1 ? 3u : 2u); k++) payloadList.Add(U(payload + 4 * k));
+            }
+            var b10 = new byte[atOffset + 4 * payloadList.Count + samplers.Length];
+            uint[] head10 = [1, n, 24, ns, (uint)(atOffset + 4 * payloadList.Count), U(20)];
+            for (var i = 0; i < head10.Length; i++) BinaryPrimitives.WriteUInt32LittleEndian(b10.AsSpan(4 * i), head10[i]);
+            for (var i = 0; i < parmsList.Count; i++) BinaryPrimitives.WriteUInt32LittleEndian(b10.AsSpan(24 + 4 * i), parmsList[i]);
+            for (var i = 0; i < payloadList.Count; i++) BinaryPrimitives.WriteUInt32LittleEndian(b10.AsSpan(atOffset + 4 * i), payloadList[i]);
+            samplers.CopyTo(b10, atOffset + 4 * payloadList.Count);
+            var wrapped10 = WrapDxbc(b10);
+            if (!Dxbc.RootSignatureValid(wrapped10))
+                throw new SerializeException("Root signature 1.0 validation failed");
+            return wrapped10;
         }
         var rangeArray = ranges.Count > 0 ? ranges.ToArray() : new uint[1];
         var parms = new byte[Math.Max(1, n) * 32];
