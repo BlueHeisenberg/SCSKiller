@@ -74,7 +74,10 @@ jobs:
           cd "$RUNNER_TEMP/windows"
           grep '  SCSKiller.zip$' SHA256SUMS-unsigned.txt | sha256sum -c -
           mkdir -p "$GITHUB_WORKSPACE/dist"
-          unzip -q SCSKiller.zip 'SCSKiller/native/*' -d "$GITHUB_WORKSPACE/dist"
+          # the zip's names use backslashes (Windows PowerShell's Compress-Archive): unzip converts them, warns and exits 1
+          x=$(mktemp -d) && { unzip -q SCSKiller.zip -d "$x" || [ $? -eq 1 ]; }
+          mkdir -p "$GITHUB_WORKSPACE/dist/SCSKiller" && mv "$x/SCSKiller/native" "$GITHUB_WORKSPACE/dist/SCSKiller/"
+          test -f "$GITHUB_WORKSPACE/dist/SCSKiller/native/d3d12.dll"
           cp SHA256SUMS-unsigned.txt "$GITHUB_WORKSPACE/dist/"
 
       - name: Linux layer (sniper SDK)
