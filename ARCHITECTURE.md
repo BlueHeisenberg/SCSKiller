@@ -287,9 +287,10 @@ exe's folder. A `Z:` path that doesn't come back as the root (a `\` in a name, w
 signed. A recorder
 belongs to the copy it names, an unmarked one to the installed copy; any other copy never adopts, stamps, updates,
 removes, moves or imports it or its files (`ScsKiller.Foreign`, checked by every write there through
-`ScsKiller.RefuseForeign`) and never takes it over. Anti-cheat or VAC in its game takes the recorder itself out all the
+`ScsKiller.RefuseForeign`) until it wants that game's recorder (its switch on, or Record all games): then it takes it over,
+its marker replaced (deleted by the installed copy) and its proxy replaced by this build's (`ScsKiller.Claim`). Anti-cheat or VAC in its game takes the recorder itself out all the
 same (`ScsKiller.ForeignTakeOut`), never its session files, and not one that may arm a session at the user's own risk.
-Its game's switch shows off there, even
+Until then its game's switch shows off there, even
 when the copy's record (a data folder copied from another's) says it placed it. The one exception is
 a 1.2.5 portable's unmarked recorder: its record marks it its own while every file there is the bytes the record names and no
 record in the installed copy's data folder names that folder or fails to read (`ScsKiller.NamedByInstalled`). The marker goes last, with the recorder's data files, and stays while an ini removal or a rollback is pending

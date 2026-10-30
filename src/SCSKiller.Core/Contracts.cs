@@ -384,7 +384,7 @@ public sealed record GameState(
     bool Playing = false,       // always false in the CLI (no game watcher)
     RecorderOverride RecorderOverride = RecorderOverride.Default,
     bool RecorderEffective = false,   // should be installed (it may not be yet: RecorderNote)
-    bool RecorderForeign = false,     // another SCSKiller copy placed the recorder in its folder: off here, never taken over
+    bool RecorderForeign = false,     // another SCSKiller copy placed the recorder in its folder: taken over once this copy wants it
     string? RecorderSkip = null,      // ScsKiller.Skip*; null = compatible
     string? RecorderNote = null,      // the last reconcile's pending or failed change; null = none
     string? RecorderFailure = null,   // the last install or update's failure while the recorder is wanted (GameRecord.RecorderFailure); null = none

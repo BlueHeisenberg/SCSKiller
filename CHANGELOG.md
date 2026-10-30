@@ -4,6 +4,17 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-10-30
+
+**Improved**
+
+- Problem reports include how well SCSKiller rebuilds the game's root signatures from a recording.
+
+**Fixed**
+
+- Turning Record while I play on takes over a recorder another SCSKiller copy or an older version put in the game's
+  folder, instead of switching back off.
+
 ## [1.4.2] - 2026-10-30
 
 **This is a very big update**, the first stable release of 1.4, with everything from the 1.4.0 alphas and betas.

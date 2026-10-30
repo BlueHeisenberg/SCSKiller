@@ -799,9 +799,9 @@ public sealed class FakeScsKiller : IScsKiller
             int i = games.FindIndex(x => x.Game.Id == gameId);
             if (value == RecorderOverride.On && games[i].AntiCheat != AntiCheat.None) throw new InvalidOperationException($"{games[i].Game.Name} uses anti-cheat, so recording is not allowed.");
             bool on = ScsKiller.RecorderEffective(value, Settings.RecordAllGames, games[i].AntiCheat != AntiCheat.None ? ScsKiller.SkipAntiCheat : null);
-            if (games[i].RecorderForeign) on = false;   // another copy's recorder is never taken over
+            if (games[i].RecorderForeign && value != RecorderOverride.On) on = false;   // only On takes another copy's recorder over
             games[i] = g = games[i] with { RecorderOverride = value, RecorderEffective = on, RecorderInstalled = on,
-                RecorderNote = games[i].RecorderForeign ? games[i].RecorderNote : null };
+                RecorderForeign = games[i].RecorderForeign && value != RecorderOverride.On, RecorderNote = games[i].RecorderForeign && value != RecorderOverride.On ? games[i].RecorderNote : null };
         }
         GameChanged?.Invoke(g);
     }

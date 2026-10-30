@@ -1678,7 +1678,7 @@ public sealed partial class ScsKiller : IScsKiller
         var elsewhere = by == null && (foreign || Foreign(RecordedAt(s.Game, rec)));
         var db = Length(Path.Combine(exeDir, "scskiller.db"));
         var offline = OfflineEntry(s.Game, s.AntiCheat, s.Engine) != null && GameVerdicts.Current.Unsupported(s.Game, s.Engine) == null;
-        var effective = by != null ? shared : !elsewhere && RecorderWanted(o, RecordsByDefault(Settings, s), skip, PairFrames11(s.Engine, rec, Vendor.Caps));
+        var effective = by != null ? shared : RecorderWanted(o, RecordsByDefault(Settings, s), skip, PairFrames11(s.Engine, rec, Vendor.Caps));
         return s with { RecorderOverride = o, RecorderSkip = skip, RecorderEffective = effective,
             RecorderForeign = elsewhere, RecorderFailure = effective && by == null ? rec.RecorderFailure : null,
             RecorderNote = _recorderNotes.GetValueOrDefault(s.Game.Id)
@@ -6809,22 +6809,32 @@ public sealed partial class ScsKiller : IScsKiller
 
     /// <summary>Makes a recorder without a marker that this data folder's record placed (a 1.2.5 portable's, from before
     /// markers) this copy's: its first marker goes in, never over one put there meanwhile, its scskiller.ini is tracked as
-    /// this copy's, and the reconcile after it updates it as any. Not while the game runs, nor when it chains to a mod.</summary>
-    void Claim(Game g, GameRecord rec)
+    /// this copy's, and the reconcile after it updates it as any. Not while the game runs, nor when it chains to a mod.
+    /// <paramref name="takeOver"/>: any other copy's recorder, which this copy wants, its marker replaced and its proxy
+    /// replaced by this build's (<see cref="GameRecord.RecorderClaimed"/>).</summary>
+    void Claim(Game g, GameRecord rec, bool takeOver = false)
     {
         var dirs = new[] { g, RecordedAt(g, rec) }.Select(x => Path.GetDirectoryName(x.ExePath)!).Distinct(StringComparer.OrdinalIgnoreCase).Where(Foreign).ToList();
         if (dirs.Count == 0) return;
         if (_removedFromAll) throw new RemovedFromAllException();   // a claim arms the recorder as an install would
-        if (!GameFolderWrite(g)) throw new InvalidOperationException($"{g.Name} is running: close it first");
+        if (!GameFolderWrite(g) || !GameFolderWrite(RecordedAt(g, rec))) throw new InvalidOperationException($"{g.Name} is running: close it first");
         if (dirs.FirstOrDefault(Chained) is { } chained) throw new InvalidOperationException($"the recorder in {chained} chains to a mod");
         // that copy's layer stays registered whatever this one does, so its ini stays that copy's too
         if (VulkanLayer.AppId(g) is { } appId && VulkanLayer.Others(appId, VulkanManifest(appId)).Count > 0)
             throw new InvalidOperationException("another SCSKiller copy's Vulkan recorder is registered for this game");
+        if (takeOver)   // before any marker changes: a claim cut off after one still replaces the proxy
+        {
+            (rec.RecorderClaimed, rec.KeysPending) = (true, true);
+            Store.SaveGame(g.Id, rec);
+        }
         foreach (var dir in dirs)
         {
-            CreateLedger(Path.Combine(dir, LedgerStamp), LedgerText(LedgerDir));
+            var stamp = Path.Combine(dir, LedgerStamp);
+            if (!takeOver) CreateLedger(stamp, LedgerText(LedgerDir));
+            else if (WritesLedger) Place(stamp, Text(LedgerText(LedgerDir)), replace: true);
+            else File.Delete(stamp);   // the installed copy's recorders carry no marker
             // the installed copy may have taken it since the check, before the marker: then it stays the installed copy's
-            if (NamedByInstalled(dir) || !PlacedAsRecorded(dir, rec))
+            if (!takeOver && (NamedByInstalled(dir) || !PlacedAsRecorded(dir, rec)))
             {
                 Unstamp(dir);
                 throw new InvalidOperationException("it changed while it was checked");
@@ -6832,7 +6842,8 @@ public sealed partial class ScsKiller : IScsKiller
             var ini = Path.Combine(dir, "scskiller.ini");
             if (File.Exists(ini) && File.ReadAllText(ini).StartsWith(RecorderIni, StringComparison.Ordinal))
                 SetIni(Store, dir, e => (e ?? new IniOwner(dir)) with { Tracked = Sha256(ini), Users = false, Remove = false, Install = g.InstallDir });
-            RecorderLog($"{g.Name}: marked the recorder this data folder placed before markers as this copy's ({dir})");
+            RecorderLog(takeOver ? $"{g.Name}: took over the recorder another SCSKiller copy placed ({dir})"
+                : $"{g.Name}: marked the recorder this data folder placed before markers as this copy's ({dir})");
         }
         rec.KeysPending = true;   // the keys file was written before the marker: written again
         _recorderNotes.TryRemove(g.Id, out _);
@@ -6889,7 +6900,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// <see cref="RemoveRecordersFromAllGames(CancellationToken)"/> ran: <see cref="RemovedFromAllNote"/>. Removals and Off go on.</summary>
     sealed class RemovedFromAllException() : InvalidOperationException(RemovedFromAllNote);
 
-    public const string ForeignNote = "placed by another SCSKiller copy, so it may still record. Turn it off in that copy to remove it";
+    public const string ForeignNote = "placed by another SCSKiller copy, so it may still record. Turn it on here to take it over";
 
     /// <summary>True when the game was re-evaluated; a running game's change waits for it to exit.</summary>
     bool Reconcile(GameState s)
@@ -6914,11 +6925,23 @@ public sealed partial class ScsKiller : IScsKiller
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException) { RecorderLog($"{g.Name}: couldn't mark the recorder in {dir} as this copy's: {e.Message}"); }   // left as another copy's
         }
+        // another copy's recorder this copy wants (the switch, Record all games) becomes this copy's
+        string? notTaken = null;
+        if ((Foreign(g) || Foreign(RecordedAt(g, rec))) && !LeftOut(g)
+            && RecorderWanted(rec.Recorder ?? RecorderOverride.Default, RecordsByDefault(Settings, s), s.RecorderSkip, PairFrames11(s.Engine, rec, Vendor.Caps)))
+            try
+            {
+                Claim(g, rec, takeOver: true);
+                Store.SaveGame(id, rec);
+                Refresh(g);   // its page still shows the folder as another copy's
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException) { notTaken = "couldn't take over the recorder another SCSKiller copy placed: " + e.Message; }
         if (Foreign(g) || Foreign(RecordedAt(g, rec)))   // never adopted, armed, updated or emptied here
         {
-            if (_recorderNotes.GetValueOrDefault(id) == ForeignNote) return false;
-            _recorderNotes[id] = ForeignNote;
-            RecordersLog(Store.DataDir, $"{g.Name}: recorder {ForeignNote}");
+            var foreignNote = notTaken ?? ForeignNote;
+            if (_recorderNotes.GetValueOrDefault(id) == foreignNote) return false;
+            _recorderNotes[id] = foreignNote;
+            RecordersLog(Store.DataDir, $"{g.Name}: recorder {foreignNote}");
             Refresh(g);
             return true;
         }

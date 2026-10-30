@@ -1,6 +1,6 @@
 # A version tag builds, tests and packages exactly like build.yml, then creates a DRAFT GitHub Release with the
-# UNSIGNED zip, SHA256SUMS-unsigned.txt, the Linux release (build.yml's vpk pack in the private repo's runner, in the
-# artifact with the zip) and the CHANGELOG.md section. CI stops there:
+# UNSIGNED zip, SHA256SUMS-unsigned.txt, the Linux release (build.yml's vpk pack: in the private repo's runner, in the
+# artifact with the zip, in the public repo its linux job's SCSKiller-linux) and the CHANGELOG.md section. CI stops there:
 # the release step (run locally) downloads these bytes, checks them, signs them (cloud HSM: no signing key or
 # certificate in CI, ever), runs vpk pack for Windows, signs both feeds with the offline key and publishes. Nothing
 # here publishes, and nothing here signs: the Linux feed goes into the draft unsigned.
@@ -40,19 +40,25 @@ jobs:
         with:
           name: SCSKiller-unsigned   # SCSKiller.zip + SHA256SUMS-unsigned.txt, and release-linux/ from the private repo
 
-      # The Linux release is built on the private repo's self-hosted runner (WSL): a public stable tag has none
+      - if: ${{ !github.event.repository.private }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
+        with:
+          name: SCSKiller-linux      # build.yml's linux job: the AppImage, the full package, its feed and sums
+          path: release-linux
+
       - name: Check the zip and the Linux release against the sums
-        env:
-          PRIVATE: ${{ github.event.repository.private }}
         run: |
           grep '  SCSKiller.zip$' SHA256SUMS-unsigned.txt | sha256sum -c -
-          if [ "$PRIVATE" = true ] || [ -e release-linux ]; then (cd release-linux && sha256sum -c --strict SHA256SUMS-linux.txt); fi
+          (cd release-linux && sha256sum -c --strict SHA256SUMS-linux.txt)
 
       # Provenance in Sigstore's public log: stable builds on the public repo only.
       - if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8   # v4.2.2
         with:
-          subject-path: SCSKiller.zip
+          subject-path: |
+            SCSKiller.zip
+            release-linux/SCSKiller-x86_64.AppImage
+            release-linux/*-linux-full.nupkg
 
       - name: Release notes from CHANGELOG.md
         env:
@@ -70,6 +76,5 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           pre=(); [[ "$TAG" == *-* ]] && pre=(--prerelease)
-          linux=(); [ -e release-linux ] && linux=(release-linux/*)
-          gh release create "$TAG" SCSKiller.zip SHA256SUMS-unsigned.txt "${linux[@]}" --draft --verify-tag "${pre[@]}" \
+          gh release create "$TAG" SCSKiller.zip SHA256SUMS-unsigned.txt release-linux/* --draft --verify-tag "${pre[@]}" \
             --title "SCSKiller $TAG" --notes-file notes.md
