@@ -50,11 +50,11 @@ public sealed record AppPlatform
     public static AppPlatform Linux(Func<bool> steam) => new()
     {
         // the flags left off are features Linux doesn't have yet, each turned on once it does
-        Name = "Linux", Stores = ["Steam", "Heroic", "Lutris"], UpdatingStores = "Steam", SystemTheme = "Use system setting", Runtime = "Proton", Tray = true, StartAtSignIn = true, DriverUpdateModes = true,
+        Name = "Linux", Stores = ["Steam", "Heroic", "Lutris", "Faugus"], UpdatingStores = "Steam", SystemTheme = "Use system setting", Runtime = "Proton", Tray = true, StartAtSignIn = true, DriverUpdateModes = true,
         // no input idle time: the background compile starts at once and pauses only for a game
         IdleRebuildNote = "Rebuilds in the background and pauses while a game runs",
-        NoGamesNote = () => steam() ? "SCSKiller lists the Windows games you installed with Steam, Heroic or Lutris, and the ones you added to Steam with Proton."
-            : "SCSKiller lists the Windows games of Steam, Heroic and Lutris.",
+        NoGamesNote = () => steam() ? "SCSKiller lists the Windows games you installed with Steam, Heroic, Lutris or Faugus, and the ones you added to Steam with Proton."
+            : "SCSKiller lists the Windows games of Steam, Heroic, Lutris and Faugus.",
         SteamLaunchLine = true, RecordAntiCheatGames = true,
         // Steam's shortcut gives the game a Proton prefix, which a game added by hand wouldn't have
         AddGamesNote = "To add another Windows game, use Add a Non-Steam Game in Steam. SCSKiller lists it at the next scan.",

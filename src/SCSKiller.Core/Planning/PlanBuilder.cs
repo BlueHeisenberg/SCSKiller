@@ -179,7 +179,7 @@ sealed class PlanBuilder
         var dlls = Middleware.Detect(game);
         if (dlls.Count == 0) return;
         // a game the user added, by hand, to Steam or to Lutris, never fills a pack: packs are shared, and its recording's origin is unknown
-        if (recs.Count > 0 && packs != null && game.Store != Store.Manual && !SteamShortcuts.Is(game.Id) && !LutrisSource.Is(game.Id))
+        if (recs.Count > 0 && packs != null && game.Store != Store.Manual && !SteamShortcuts.Is(game.Id) && !LutrisSource.Is(game.Id) && !FaugusSource.Is(game.Id))
             foreach (var p in packs.Promote(recs, recBlobs, bc, dlls, game.Id, caps.Profile.StartsWith("amd") ? "amd" : caps.Profile.StartsWith("nvidia") ? "nvidia" : null, layered))
                 log?.Report($"middleware: {p.Records} recorded PSOs are {p.Dll.Name}'s ({p.Dll.Vendor}, {p.ContentHash[..12]}), {p.New} new in its pack");
         var seen = new HashSet<string>();

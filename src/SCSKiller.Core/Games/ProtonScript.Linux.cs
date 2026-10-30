@@ -98,6 +98,12 @@ sealed partial class ProtonScript
             if (i >= had.Length || i >= lines.Count) return "its prefix's config_info isn't what its Proton writes: start it once from Steam";
             var (source, value, kind) = lines[i];
             if (had[i] == value || had[i] == "/run/host" + value) continue;
+            if (kind == Kind.Steam && had[i].Length == 0 && steam.Length > 0)
+            {
+                steam = "";
+                return ConfigInfoChange(compatData, version, ref steam);
+            }
+            if (kind == Kind.Steam && had[i].Length == 0) continue;
             if (kind == Kind.Steam && Libc.RealPath(had[i]) is { } real && real == Libc.RealPath(value))
             {
                 steam = had[i];

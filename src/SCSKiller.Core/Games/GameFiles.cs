@@ -817,7 +817,7 @@ public static partial class GameFiles
                     at?.Invoke(d);
                     return kind;
                 }
-            if (game.Store == Store.Manual || SteamShortcuts.Is(game.Id) || LutrisSource.Is(game.Id))
+            if (game.Store == Store.Manual || SteamShortcuts.Is(game.Id) || LutrisSource.Is(game.Id) || FaugusSource.Is(game.Id))
                 for (var d = Path.GetDirectoryName(install); d != null && Path.GetPathRoot(d) != d && !ManualSource.IsLibrary(d); d = Path.GetDirectoryName(d))
                 {
                     if (ignore != AntiCheat.Other && RootMarker(d) is { } marker)

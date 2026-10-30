@@ -6,7 +6,7 @@ namespace SCSKiller.Core.Warming;
 
 static partial class WarmHost
 {
-    public const string NotSteamError = "compiling on Linux works only for games Steam, Heroic or Lutris runs with Wine or Proton",
+    public const string NotSteamError = "compiling on Linux works only for games Steam, Heroic, Lutris or Faugus runs with Wine or Proton",
         NotSteamVulkanError = "compiling Vulkan games on Linux works only for games Steam runs",
         InFlatpakError = "the Flatpak version of SCSKiller can't compile or record Flatpak Steam games yet",
         FlatpakVulkanError = "compiling Vulkan games from the Flatpak Steam isn't available yet",
