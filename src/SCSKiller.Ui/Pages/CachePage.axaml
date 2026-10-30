@@ -1,0 +1,97 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:SCSKiller.Ui.Controls"
+             xmlns:m="using:SCSKiller.Ui.Models"
+             xmlns:ui="using:SCSKiller.Ui"
+             x:Class="SCSKiller.Ui.Pages.CachePage"
+             x:DataType="m:CacheVm">
+
+    <ScrollViewer x:Name="Scroller">
+        <StackPanel Margin="36,28,36,28" Spacing="16">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Cache" Classes="Title" />
+                    <TextBlock Text="{Binding Total}" Classes="Secondary" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Top">
+                    <Button Content="Clear everything" Click="OnClearEverything" IsEnabled="{Binding CanClearEverything}" />
+                    <Button Content="Refresh" Click="OnRefresh" />
+                </StackPanel>
+            </Grid>
+
+            <c:InfoBar IsVisible="{Binding HasResult}" Message="{Binding Result}" Severity="{Binding ResultSeverity}" IsClosable="False" />
+            <c:InfoBar IsVisible="{Binding HasOldDriver}" Message="{Binding OldDriverText}" Severity="Informational" IsClosable="False">
+                <c:InfoBar.ActionButton>
+                    <Button Content="{Binding FreeText}" Click="OnFreeOldDriver" IsEnabled="{Binding CanDelete}" />
+                </c:InfoBar.ActionButton>
+            </c:InfoBar>
+
+            <Border Classes="Card" Padding="20">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Where the driver keeps its cache" Classes="Section" />
+                    <TextBlock Text="Games read their cache from here, and new caches are written here. The driver has no setting to move it."
+                               Classes="Caption" TextWrapping="Wrap" />
+                    <TextBlock Text="SCSKiller doesn't know where this GPU's driver keeps its cache." IsVisible="{Binding NoFolders}" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding Folders}">
+                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="12" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="m:CacheFolderRow">
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="{Binding Label}" />
+                                        <SelectableTextBlock Text="{Binding Path}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding Note}" IsVisible="{Binding HasNote}" Foreground="{DynamicResource WarnBrush}" Classes="Caption" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding Size}" VerticalAlignment="Center" />
+                                    <Button Grid.Column="2" Content="Open folder" Tag="{Binding Path}" Click="OnOpenFolder" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <ItemsControl ItemsSource="{Binding Groups}">
+                <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="8" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="m:CacheGroupRow">
+                        <Expander IsExpanded="{Binding Expanded, Mode=OneTime}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                            <Expander.Header>
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12" Margin="0,8">
+                                    <TextBlock Text="{Binding Title}" Classes="Section" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Size}" Classes="Section" VerticalAlignment="Center" />
+                                    <Button Grid.Column="2" Content="Delete all" Click="OnDeleteGroup" IsEnabled="{Binding Enabled}" />
+                                </Grid>
+                            </Expander.Header>
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="{Binding Caption}" Classes="Caption" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding Note}" IsVisible="{Binding HasNote}" Foreground="{DynamicResource WarnBrush}" Classes="Caption" TextWrapping="Wrap" />
+                                <ItemsControl ItemsSource="{Binding Items}">
+                                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="6" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="m:CacheItemRow">
+                                            <Grid ColumnDefinitions="24,*,Auto,Auto,Auto" ColumnSpacing="12">
+                                                <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Library}" FontSize="16" IsVisible="{Binding NoIcon}"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.6" />
+                                                <Image Source="{Binding Icon, Converter={x:Static ui:Converters.Image}}" Width="24" Height="24" />
+                                                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Note}" IsVisible="{Binding HasNote}" Classes="Caption" TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <HyperlinkButton Grid.Column="2" Content="Open folder" Click="OnOpenFolder" Padding="0"
+                                                                 IsVisible="{Binding HasFolder}" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="3" Text="{Binding Size}" VerticalAlignment="Center" />
+                                                <HyperlinkButton Grid.Column="4" Content="Delete" Click="OnDeleteItem" Padding="0"
+                                                                 IsEnabled="{Binding Enabled}" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Expander>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

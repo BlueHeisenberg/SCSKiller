@@ -3,10 +3,15 @@
 // format and copied in: no shader, root signature or PSO, so nothing goes through the recorder's device hooks or into the
 // driver's cache.
 #pragma once
+#ifdef _WIN32
 #include <windows.h>
 #include <dxgiformat.h>
 #include <dxgicommon.h>
 #include <DirectXPackedVector.h>
+#else
+#include <cwctype>
+struct RECT { long left, top, right, bottom; };
+#endif
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -153,6 +158,7 @@ inline void paint(const Layout& L, const char* t, double frac, const Graph& g, b
 
 // What a back buffer's pixels get: SDR 8-bit (RGBA or BGRA) or 10-bit, HDR10 (PQ, BT.2020) or scRGB (FP16, linear).
 enum Out { kNone, kRgba8, kBgra8, kRgb10, kPq10, kScRgb };
+#ifdef _WIN32
 // cs_known: the colour space is our SetColorSpace1 hook's, so a 10-bit buffer's can be told. An FP16 swap chain is scRGB.
 inline Out out_of(DXGI_FORMAT f, int cs, bool cs_known) {
     switch (f) {
@@ -168,6 +174,17 @@ inline Out out_of(DXGI_FORMAT f, int cs, bool cs_known) {
     }
 }
 inline bool drawn_format(DXGI_FORMAT f) { return out_of(f, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, true) != kNone; }
+inline uint16_t half(float v) { return DirectX::PackedVector::XMConvertFloatToHalf(v); }
+#else
+// v in a half's normal range or 0, rounded to nearest even as XMConvertFloatToHalf rounds
+inline uint16_t half(float v) {
+    uint32_t b;
+    memcpy(&b, &v, 4);
+    if (!(b & 0x7fffffff)) return (uint16_t)(b >> 16);
+    uint32_t h = (b >> 16 & 0x8000) | ((b >> 23 & 255) - 112) << 10 | (b & 0x7fffff) >> 13, rest = b & 0x1fff;
+    return (uint16_t)(h + (rest > 0x1000 || (rest == 0x1000 && (h & 1))));
+}
+#endif
 inline int bytes(Out o) { return o == kScRgb ? 8 : 4; }
 
 // SDR white in HDR: BT.2408's reference white.
@@ -183,7 +200,7 @@ inline Luts make_luts() {
     for (int v = 0; v < 256; ++v) {
         double c = v / 255.0, x = c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
         l.lin[v] = (float)x, l.ten[v] = (uint16_t)std::lround(c * 1023);
-        l.half[v] = DirectX::PackedVector::XMConvertFloatToHalf((float)(x * kWhiteNits / 80));
+        l.half[v] = half((float)(x * kWhiteNits / 80));
     }
     for (int i = 0; i < 4096; ++i) {
         double y = std::pow(i / 4095.0 * kWhiteNits / 10000, 0.1593017578125);
@@ -211,7 +228,7 @@ inline void convert(const uint32_t* src, long spitch, long w, long h, Out o, uin
                 float R = L.lin[r], G = L.lin[g], B = L.lin[b];
                 auto q = [&](float v) { return (uint32_t)L.pq[std::lround(std::clamp(v, 0.0f, 1.0f) * 4095)]; };
                 ((uint32_t*)d)[x] = q(0.6274f * R + 0.3293f * G + 0.0433f * B) | q(0.0691f * R + 0.9195f * G + 0.0114f * B) << 10 |
-                                    q(0.0164f * R + 0.0880f * G + 0.9056f * B) << 20 | 3u << 30;
+                                    q(0.0164f * R + 0.0880f * G + 0.8956f * B) << 20 | 3u << 30;
             }
         }
     }

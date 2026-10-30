@@ -2,7 +2,8 @@
     x:Class="SCSKiller.App.Pages.AboutPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:local="using:SCSKiller.App.Pages">
+    xmlns:local="using:SCSKiller.App.Pages"
+    xmlns:app="using:SCSKiller.Core.App">
 
     <ScrollViewer>
         <StackPanel Padding="36,28,36,28" Spacing="16">
@@ -18,7 +19,7 @@
                     <StackPanel Grid.Column="1" Spacing="4">
                         <TextBlock Text="SCSKiller" Style="{StaticResource Section}" FontSize="20" />
                         <TextBlock Text="Shader Compilation Stutter Killer" Style="{StaticResource Secondary}" />
-                        <TextBlock Text="{x:Bind Vm.Version}" Style="{StaticResource Caption}" IsTextSelectionEnabled="True" />
+                        <TextBlock Text="{x:Bind Vm.Version, Mode=OneWay}" Style="{StaticResource Caption}" IsTextSelectionEnabled="True" />
                         <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0" Visibility="{x:Bind Vm.ShowsCheck}">
                             <Button Content="Check for updates" Click="OnCheckForUpdates" IsEnabled="{x:Bind Vm.CanCheck, Mode=OneWay}" />
                             <TextBlock Text="{x:Bind Vm.UpdateNote, Mode=OneWay}" Style="{StaticResource Caption}" VerticalAlignment="Center" TextWrapping="Wrap" />
@@ -51,6 +52,31 @@
                     </StackPanel>
                 </Grid>
             </Border>
+
+            <StackPanel Spacing="8">
+                <TextBlock Text="Problem reports you sent" Style="{StaticResource Section}" />
+                <TextBlock Text="Reports sent from earlier versions aren't listed." Style="{StaticResource Secondary}" TextWrapping="Wrap"
+                           Visibility="{x:Bind Vm.NoProblems, Mode=OneWay}" />
+                <ItemsControl ItemsSource="{x:Bind Vm.Problems, Mode=OneWay}" IsTabStop="False">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Spacing="4" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="app:SentProblem">
+                            <Grid ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{x:Bind Id}" IsTextSelectionEnabled="True" FontFamily="Cascadia Mono, Consolas" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text="{x:Bind Detail}" Style="{StaticResource Secondary}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
 
             <StackPanel Spacing="8">
                 <TextBlock Text="Use at your own risk" Style="{StaticResource Section}" />

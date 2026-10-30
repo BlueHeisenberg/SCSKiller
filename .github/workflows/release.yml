@@ -1,7 +1,9 @@
 # A version tag builds, tests and packages exactly like build.yml, then creates a DRAFT GitHub Release with the
-# UNSIGNED zip, SHA256SUMS-unsigned.txt and the CHANGELOG.md section. CI stops there:
+# UNSIGNED zip, SHA256SUMS-unsigned.txt, the Linux release (build.yml's vpk pack in the private repo's runner, in the
+# artifact with the zip) and the CHANGELOG.md section. CI stops there:
 # the release step (run locally) downloads these bytes, checks them, signs them (cloud HSM: no signing key or
-# certificate in CI, ever), runs vpk pack, signs the feed with the offline key and publishes. Nothing here publishes.
+# certificate in CI, ever), runs vpk pack for Windows, signs both feeds with the offline key and publishes. Nothing
+# here publishes, and nothing here signs: the Linux feed goes into the draft unsigned.
 #
 # Channel by repo: the private repo releases beta/alpha tags (with '-', v1.5.0-beta.1), the public repo stable
 # tags (v1.5.0). server-v* tags are not v* and belong to a separate private Linux workflow (not written yet).
@@ -36,10 +38,15 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
         with:
-          name: SCSKiller-unsigned   # SCSKiller.zip + SHA256SUMS-unsigned.txt
+          name: SCSKiller-unsigned   # SCSKiller.zip + SHA256SUMS-unsigned.txt, and release-linux/ from the private repo
 
-      - name: Check the zip against the sums
-        run: grep '  SCSKiller.zip$' SHA256SUMS-unsigned.txt | sha256sum -c -
+      # The Linux release is built on the private repo's self-hosted runner (WSL): a public stable tag has none
+      - name: Check the zip and the Linux release against the sums
+        env:
+          PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          grep '  SCSKiller.zip$' SHA256SUMS-unsigned.txt | sha256sum -c -
+          if [ "$PRIVATE" = true ] || [ -e release-linux ]; then (cd release-linux && sha256sum -c --strict SHA256SUMS-linux.txt); fi
 
       # Provenance in Sigstore's public log: stable builds on the public repo only.
       - if: ${{ !github.event.repository.private }}
@@ -63,5 +70,6 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           pre=(); [[ "$TAG" == *-* ]] && pre=(--prerelease)
-          gh release create "$TAG" SCSKiller.zip SHA256SUMS-unsigned.txt --draft --verify-tag "${pre[@]}" \
+          linux=(); [ -e release-linux ] && linux=(release-linux/*)
+          gh release create "$TAG" SCSKiller.zip SHA256SUMS-unsigned.txt "${linux[@]}" --draft --verify-tag "${pre[@]}" \
             --title "SCSKiller $TAG" --notes-file notes.md

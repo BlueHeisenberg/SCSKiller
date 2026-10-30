@@ -9,14 +9,8 @@ namespace SCSKiller.Core.App;
 /// not next to the exe: every update replaces the install folder, and public packages don't ship Oodle. A copy next to the
 /// exe (a zip or dev build) seeds it; otherwise it is downloaded there from its GitHub release. A file is loaded
 /// only if its SHA-256 is the pinned one: a new build of either DLL comes with a CUE4Parse update and a new pin.</summary>
-public static class Codecs
+public static partial class Codecs
 {
-    public static readonly IReadOnlyDictionary<string, string> Pinned = new Dictionary<string, string>
-    {
-        ["oodle-data-shared.dll"] = "cba19529d0a3b5ec9c630e95652af01e123ae29a34a8a5f7507f5bcf23d9e82b",   // OodleUE 2026-06-04-1357, clang-cl-x64-release
-        ["zlib-ng2.dll"] = "454be2f3d10f804ace577198401431db5e95d0286b59589bc28a40085388e7c2",           // Zlib-ng.NET 1.0.0
-    };
-
     public static string Dir => DirOverride ?? Path.Combine(AppStore.DefaultDir, "codecs");
     // the tests' build-owned cache: they never read the app's data folder
     internal static string? DirOverride;
@@ -29,8 +23,6 @@ public static class Codecs
     public const string NoNativeOodle = "This CPU lacks AVX2 and BMI2, which the Oodle codec needs.";
 
     public const string NoOodleDll = "Couldn't download the Oodle codec. Check your antivirus or firewall.";
-
-    public const string OodleUrl = "https://github.com/WorkingRobot/OodleUE/releases/download/2026-06-04-1357/clang-cl-x64-release.zip";
 
     /// <summary>The line a user sees for an error a missing codec caused (<see cref="NoOodleDll"/>, <see cref="NoNativeOodle"/>:
     /// the details are its inner exception), else null.</summary>
@@ -80,7 +72,7 @@ public static class Codecs
             catch (Exception e) when (e is not OutOfMemoryException)
             {
                 Failed.Add(path);
-                log?.Report($"codec {name} not loaded, decoding in managed code: {e}");
+                log?.Report($"codec {name} not loaded, decoding in managed code: {e.Message}");
                 return false;
             }
         }
@@ -89,14 +81,16 @@ public static class Codecs
     public static bool DownloadOodle(string path)
     {
         using var zip = new ZipArchive(Get(OodleUrl));
-        using var dll = (zip.GetEntry("bin/" + OodleHelper.OodleFileName) ?? throw new InvalidDataException($"{OodleUrl} has no {OodleHelper.OodleFileName}")).Open();
+        using var dll = (zip.GetEntry(OodleZipEntry) ?? throw new InvalidDataException($"{OodleUrl} has no {OodleHelper.OodleFileName}")).Open();
         Save(dll, path);
         return true;
     }
 
-    public static bool DownloadZlib(string path)
+    public static bool DownloadZlib(string path) => DownloadZlib(path, Get);
+
+    internal static bool DownloadZlib(string path, Func<string, MemoryStream> get)
     {
-        using var dll = new GZipStream(Get(ZlibHelper.DOWNLOAD_URL), CompressionMode.Decompress);
+        using var dll = new GZipStream(get(ZlibUrl), CompressionMode.Decompress);
         Save(dll, path);
         return true;
     }

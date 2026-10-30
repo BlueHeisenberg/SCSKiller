@@ -30,7 +30,7 @@ for ($i = 0; $i -lt $appShares.Count; $i++) { $shares["app$($i + 1)"] = Any $app
 $shares['app-rest'] = (@($app) + $taken) -join '&'
 $shares['overlay'] = 'FullyQualifiedName~Platform.OverlayIniTests.'
 $shares['rest'] = 'FullyQualifiedName!~Platform.AppTests.&FullyQualifiedName!~Platform.OverlayIniTests.'
-$alone = @('Platform.AppTests.A_fresh_copy_with_its_own_data_folder_changes_nothing_of_the_installed_copys')
+$alone = @()
 foreach ($name in @($shares.Keys)) { $shares[$name] = (@("($($shares[$name]))") + ($alone | ForEach-Object { "FullyQualifiedName!~$_" })) -join '&' }
 
 $out = Join-Path ([IO.Path]::GetTempPath()) ("scskiller-test-shares-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -61,6 +61,6 @@ function Run($names) {
 $failed = @()
 Run @($shares.Keys)
 $shares['alone'] = '(' + (($alone | ForEach-Object { "FullyQualifiedName~$_" }) -join '|') + ')'
-Run @('alone')
+if ($alone) { Run @('alone') }
 Remove-Item -Recurse -Force $out
 if ($failed) { "failed: $($failed -join ', ')"; exit 1 }

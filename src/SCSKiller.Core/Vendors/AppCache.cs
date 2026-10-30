@@ -1,88 +1,52 @@
-﻿using System.Runtime.InteropServices;
-using Microsoft.Win32.SafeHandles;
-
-namespace SCSKiller.Core.Vendors;
+﻿namespace SCSKiller.Core.Vendors;
 
 /// <summary>What the <see cref="IAppCache"/> implementations share: which processes have a file open, and an
 /// all-or-nothing delete. Only file attributes and handles are touched, never content.</summary>
-public static class AppCacheFiles
+public static partial class AppCacheFiles
 {
-    /// <summary>Keys of <paramref name="files"/> (path, key) opened by a running process with this exe file name (from the
-    /// process snapshot: none opened).</summary>
-    public static IReadOnlySet<string> KeysOpenBy(string exeFileName, IEnumerable<(string Path, string Key)> files)
-    {
-        var pids = Processes().Where(p => p.Exe.Equals(exeFileName, StringComparison.OrdinalIgnoreCase))
-            .Select(p => (nuint)p.Pid).ToHashSet();
-        var keys = new HashSet<string>();
-        if (pids.Count == 0) return keys;
-        foreach (var (path, key) in files)
-            if (!keys.Contains(key) && ProcessesUsing(path).Overlaps(pids)) keys.Add(key);
-        return keys;
-    }
-
     /// <summary>The processes whose open files count. Tests: their own process tree, so another test run on the PC with
     /// the same process names never counts.</summary>
     internal static Func<List<(int Pid, int Parent, string Exe)>> Processes { get; set; } = Warming.ProcessTree.Snapshot;
-
-    /// <summary>Deletes all <paramref name="files"/> or none: InvalidOperationException ("files in use by ...") when one
-    /// is open (the driver holds a running app's files). All files are opened exclusively first, so nothing can open them
-    /// between the check and the delete. Returns how many were deleted.</summary>
-    public static int DeleteAll(IReadOnlyList<FileInfo> files)
-    {
-        var held = new List<FileStream>();
-        try
-        {
-            foreach (var f in files)
-                try { held.Add(new FileStream(f.FullName, FileMode.Open, FileAccess.Read, FileShare.Delete)); }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-                {
-                    var users = ProcessesUsing(f.FullName).Select(Describe).ToList();
-                    throw new InvalidOperationException($"files in use by {(users.Count > 0 ? string.Join(", ", users) : "another process")} ({f.Name})", e);
-                }
-            foreach (var f in files) if (f.IsReadOnly) f.IsReadOnly = false;   // Delete refuses a read-only file: none is deleted before all can be
-            foreach (var f in files) f.Delete();   // gone once our handles close
-            return files.Count;
-        }
-        finally { foreach (var h in held) h.Dispose(); }
-    }
 
     /// <summary>The folder exists and its files can be listed: false for a link (a junction to another drive) whose target is
     /// gone, which Directory.Exists still reports as there.</summary>
     public static bool Readable(string dir) => Directory.Exists(dir) && Games.GameFiles.FinalPath(dir) != null;
 
-    /// <summary>A cache folder of <paramref name="cache"/> that is a link whose target is missing; null when none is.</summary>
-    public static string? MissingTarget(IAppCache? cache) =>
-        (cache switch { NvidiaAppCache nv => [nv.Dir], AmdAppCache amd => new[] { amd.DxcDir, amd.DxDir }, _ => [] })
-            .FirstOrDefault(d => Directory.Exists(d) && !Readable(d));
+    /// <summary>Steam's own shader cache files under a game's redirect (its pre-caching's, and what it merged from other
+    /// players): deleted only when the delete names them as Steam's (<see cref="DeleteAll"/>), whatever else lists them.</summary>
+    internal static bool SteamOwn(string fileName) => fileName.StartsWith("steam_shader_cache", StringComparison.OrdinalIgnoreCase)
+        || fileName.StartsWith("steamapp_merged_shader_cache", StringComparison.OrdinalIgnoreCase);
 
-    static string Describe(nuint pid) =>
-        Warming.ProcessTree.Snapshot().FirstOrDefault(p => (nuint)p.Pid == pid).Exe is { } exe ? $"{exe} (pid {pid})" : $"pid {pid}";   // exited meanwhile
-
-    public static HashSet<nuint> ProcessesUsing(string path) => Using(path) ?? [];
-
-    /// <summary>A process has the file open; null when that can't be told.</summary>
-    public static bool? InUse(string path) => Using(path) is { } pids ? pids.Count > 0 : null;
-
-    static HashSet<nuint>? Using(string path)
+    static void RefuseSteams(IReadOnlyList<FileInfo> files, IReadOnlySet<string>? steams)
     {
-        var pids = new HashSet<nuint>();
-        using var h = CreateFileW(path, 0x80 /* FILE_READ_ATTRIBUTES */, 7 /* share all */, 0, 3 /* OPEN_EXISTING */, 0, 0);
-        if (h.IsInvalid) return null;
-        var buf = new nuint[64];   // FILE_PROCESS_IDS_USING_FILE_INFORMATION: count, pad, pids
-        for (int status; ; buf = new nuint[buf.Length * 4])
-        {
-            status = NtQueryInformationFile(h, out _, buf, buf.Length * nint.Size, 47 /* FileProcessIdsUsingFileInformation */);
-            if (status == unchecked((int)0xC0000004) /* STATUS_INFO_LENGTH_MISMATCH */ && buf.Length < 1 << 16) continue;
-            if (status < 0) return null;
-            break;
-        }
-        for (int i = 0; i < (int)(uint)buf[0]; i++) pids.Add(buf[1 + i]);
-        return pids;
+        if (files.FirstOrDefault(f => SteamOwn(f.Name) && steams?.Contains(f.FullName) != true) is { } f) throw new InvalidOperationException($"{f.Name} is Steam's shader cache, not deleted");
     }
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    static extern SafeFileHandle CreateFileW(string path, uint access, uint share, nint security, uint disposition, uint flags, nint template);
-    [DllImport("ntdll.dll")]
-    static extern int NtQueryInformationFile(SafeFileHandle h, out IoStatusBlock iosb, [Out] nuint[] info, int length, int infoClass);
-    struct IoStatusBlock { public nint Status, Information; }
+    /// <summary>Keys of the vendor's own Vulkan cache folder (NVIDIA's GLCache, AMD's VkCache): "vk:" and the file's path below
+    /// the folder without its extension, lower case, so NVIDIA's .bin and .toc of one app key are one key. No name format is
+    /// read into them: a key is a game's when a process named like it holds its file open, as with the DirectX keys.</summary>
+    public const string VulkanPrefix = "vk:";
+
+    public static bool IsVulkanKey(string key) => key.StartsWith(VulkanPrefix, StringComparison.Ordinal);
+
+    /// <summary>Every file of a Vulkan cache folder with one of the driver's <paramref name="extensions"/>, with its key
+    /// (<see cref="VulkanPrefix"/>), never through a link; none when the folder can't be listed.</summary>
+    internal static IEnumerable<(string Path, string Key)> VulkanFiles(string? dir, params string[] extensions)
+    {
+        if (dir == null || !Readable(dir)) return [];
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir));
+        return Directory.EnumerateFiles(root, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint })
+            .Select(f => (Path: f, Key: VulkanKey(root, f, extensions)!)).Where(f => f.Key != null);
+    }
+
+    /// <summary>The key (<see cref="VulkanPrefix"/>) of a file below a Vulkan cache folder with one of the driver's
+    /// <paramref name="extensions"/>; null for any other file.</summary>
+    public static string? VulkanKey(string dir, string path, params string[] extensions) =>
+        extensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase) && Games.GameFiles.Inside(dir, path)
+            ? VulkanPrefix + Path.ChangeExtension(Path.GetRelativePath(Path.GetFullPath(dir), Path.GetFullPath(path)), null).Replace('\\', '/').ToLowerInvariant() : null;
+
+    /// <summary>A cache folder of <paramref name="cache"/> that is a link whose target is missing; null when none is.</summary>
+    public static string? MissingTarget(IAppCache? cache) =>
+        (cache switch { NvidiaAppCache nv => [nv.Dir], AmdAppCache amd => new[] { amd.DxcDir, amd.DxDir }, IntelAppCache intel => [intel.Dir], _ => [] })
+            .FirstOrDefault(d => Directory.Exists(d) && !Readable(d));
 }

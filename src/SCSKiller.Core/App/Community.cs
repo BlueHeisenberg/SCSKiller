@@ -32,14 +32,15 @@ public sealed record CommunityDownload(string Object, string ContentHash, int Ps
 /// 'M' header (format 1, the epoch); 'E' entry: content hash -> object (the last one wins); 'P' the same for a middleware
 /// pack, by its pack hash; 'X' the same for an entry's full cut (500,000 records, 'L' not counted), read only where
 /// <see cref="Find"/> is asked for it; 'D' the same for a game build's D3D11 draws, by the pack hash of its draws key
-/// (<see cref="HashOnly.DrawsKey"/>); 'A' alias: SHA-1 of the store build key -> content hash; 'T' tombstone: withdraws an
-/// entry (both cuts), pack or draws until a later 'E', 'X', 'P' or 'D', and the official recording of that hash; 'O' official recording: content hash ->
+/// (<see cref="HashOnly.DrawsKey"/>); 'V' the same for a Steam build's Vulkan pipelines, by the pack hash of its Vulkan key
+/// (<see cref="HashOnly.VulkanKey"/>); 'A' alias: SHA-1 of the store build key -> content hash; 'T' tombstone: withdraws an
+/// entry (both cuts), pack, draws or Vulkan entry until a later 'E', 'X', 'P', 'D' or 'V', and the official recording of that hash; 'O' official recording: content hash ->
 /// object, byte 1 its visibility (the last one wins), an all-zero object withdrawing the official recording only.
 /// Unknown kinds are skipped.</summary>
 public sealed class CommunityManifest
 {
     public const int RecordSize = 80;
-    readonly Dictionary<string, CommunityEntry> entries = [], fulls = [], packs = [], draws = [];
+    readonly Dictionary<string, CommunityEntry> entries = [], fulls = [], packs = [], draws = [], vulkans = [];
     readonly Dictionary<string, string> aliases = [];
     readonly Dictionary<string, OfficialEntry> officials = [];
     public uint Epoch { get; }
@@ -60,8 +61,8 @@ public sealed class CommunityManifest
             var hash = Convert.ToHexStringLower(r.Slice(4, 20));
             switch ((char)r[0])
             {
-                case 'E' or 'X' or 'P' or 'D':
-                    (r[0] switch { (byte)'E' => m.entries, (byte)'X' => m.fulls, (byte)'P' => m.packs, _ => m.draws })[hash] = new(hash, Convert.ToHexStringLower(r.Slice(24, 32)), BinaryPrimitives.ReadUInt32LittleEndian(r[56..]),
+                case 'E' or 'X' or 'P' or 'D' or 'V':
+                    (r[0] switch { (byte)'E' => m.entries, (byte)'X' => m.fulls, (byte)'P' => m.packs, (byte)'V' => m.vulkans, _ => m.draws })[hash] = new(hash, Convert.ToHexStringLower(r.Slice(24, 32)), BinaryPrimitives.ReadUInt32LittleEndian(r[56..]),
                         (int)Math.Min(int.MaxValue, BinaryPrimitives.ReadUInt32LittleEndian(r[60..])), BinaryPrimitives.ReadUInt16LittleEndian(r[2..]), r[0] == 'X');
                     break;
                 case 'O' when !r.Slice(24, 32).ContainsAnyExcept((byte)0):
@@ -77,6 +78,7 @@ public sealed class CommunityManifest
                     m.fulls.Remove(hash);
                     m.packs.Remove(hash);
                     m.draws.Remove(hash);
+                    m.vulkans.Remove(hash);
                     m.officials.Remove(hash);
                     break;
             }
@@ -97,10 +99,24 @@ public sealed class CommunityManifest
     public CommunityEntry? FindDraws(string contentHash) =>
         ShaderIndex.IsEmpty(contentHash) ? null : draws.GetValueOrDefault(HashOnly.PackHash(HashOnly.DrawsKey(contentHash)));
 
+    /// <summary>The Vulkan entry of a Steam build, by its store build key ("&lt;Game.Id&gt;@&lt;Game.Version&gt;").</summary>
+    public CommunityEntry? FindVulkan(string storeBuildKey) => vulkans.GetValueOrDefault(HashOnly.PackHash(HashOnly.VulkanKey(storeBuildKey)));
+
     /// <summary>By content hash when given (a fresh index), else by the game's store build. <paramref name="full"/>: the
     /// entry's 'X' when it has one.</summary>
     public CommunityEntry? Find(Game g, string? contentHash, bool full = false) =>
         (full ? Lookup(fulls, g, contentHash) : null) ?? Lookup(entries, g, contentHash);
+
+    public const int MaxLegacyHashes = 2;
+
+    /// <summary><see cref="Find"/> by the content hash, else the alias, as long as the index has no
+    /// <paramref name="legacyHashes"/>. With them (an earlier version may have shared the build under one): the richest of the
+    /// content hash's, at most <see cref="MaxLegacyHashes"/> legacy ones' and the alias's entries, by uploaders then PSOs, the
+    /// content hash's on a tie.</summary>
+    public CommunityEntry? FindRichest(Game g, string? contentHash, IReadOnlyList<string>? legacyHashes, bool full = false) =>
+        contentHash == null || legacyHashes is not { Count: > 0 } ? Find(g, contentHash, full) ?? Find(g, null, full)
+        : legacyHashes.Take(MaxLegacyHashes).Prepend(contentHash).Select(h => Find(g, h, full)).Append(Find(g, null, full))
+            .OfType<CommunityEntry>().MaxBy(e => (e.Uploaders, e.Psos));
 
     /// <summary>The official recording of a build, matched as <see cref="Find"/> matches.</summary>
     public OfficialEntry? FindOfficial(Game g, string? contentHash) => Lookup(officials, g, contentHash);
@@ -216,30 +232,41 @@ public sealed class Community
 
     /// <summary>Downloads <paramref name="e"/> into <paramref name="gameDir"/>\community.db (a compact recording, + community.json) when an access
     /// token with "db" is at hand. Null when not entitled, while backing off after a 429/503, or on any failure
-    /// (<see cref="Problem"/>); what was downloaded before stays.</summary>
-    public Task<CommunityDownload?> DownloadAsync(CommunityEntry e, string gameDir, CancellationToken ct = default) =>
-        Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "community", null, ct, e.Full);
+    /// (<see cref="Problem"/>); what was downloaded before stays. <paramref name="hold"/>(replace): true when the caller keeps the
+    /// replace of the files to run later under the game's recording lock.</summary>
+    public Task<CommunityDownload?> DownloadAsync(CommunityEntry e, string gameDir, CancellationToken ct = default, Func<Action, bool>? hold = null) =>
+        Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "community", null, ct, hold, e.Full);
 
     /// <summary>Downloads the D3D11 draws entry <paramref name="e"/> into <paramref name="gameDir"/>\draws.db (+ draws.json), as
     /// <see cref="DownloadAsync"/>.</summary>
-    public Task<CommunityDownload?> DownloadDrawsAsync(CommunityEntry e, string gameDir, CancellationToken ct = default) =>
-        Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "draws", null, ct);
+    public Task<CommunityDownload?> DownloadDrawsAsync(CommunityEntry e, string gameDir, CancellationToken ct = default, Func<Action, bool>? hold = null) =>
+        Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "draws", null, ct, hold);
+
+    /// <summary>Downloads the Vulkan entry <paramref name="e"/> into <paramref name="gameDir"/>\<see cref="VulkanFile"/> (+ vulkan.json),
+    /// as <see cref="DownloadAsync"/>.</summary>
+    public Task<CommunityDownload?> DownloadVulkanAsync(CommunityEntry e, string gameDir, CancellationToken ct = default, Func<Action, bool>? hold = null) =>
+        Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "vulkan", null, ct, hold);
+
+    /// <summary>A Vulkan entry's download in a game's folder: a Fossilize archive (<see cref="Vulkan.Foz.FromShared"/>).</summary>
+    public const string VulkanFile = "vulkan.foz";
+
+    static string FileOf(string name) => name == "vulkan" ? VulkanFile : name + ".db";
 
     /// <summary>Downloads the official recording <paramref name="e"/> into <paramref name="gameDir"/>\official.db (+ official.json)
     /// when this install may: everyone with no token at all, patreon with "db", prio with "prio"; else as <see cref="DownloadAsync"/>.</summary>
-    public Task<CommunityDownload?> DownloadOfficialAsync(OfficialEntry e, string gameDir, CancellationToken ct = default) => e.Visibility switch
+    public Task<CommunityDownload?> DownloadOfficialAsync(OfficialEntry e, string gameDir, CancellationToken ct = default, Func<Action, bool>? hold = null) => e.Visibility switch
     {
         // a server that gates every object on "db" refuses it: not asked again until the manifest changes
         OfficialVisibility.Everyone when freeRefusedAt == (manifest?.Length ?? 0) => Task.FromResult<CommunityDownload?>(null),
-        OfficialVisibility.Everyone => Download(e.Object, e.Size, e.ContentHash, null, gameDir, "official", e.Visibility, ct),
-        OfficialVisibility.Patreon => Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "official", e.Visibility, ct),
+        OfficialVisibility.Everyone => Download(e.Object, e.Size, e.ContentHash, null, gameDir, "official", e.Visibility, ct, hold),
+        OfficialVisibility.Patreon => Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "official", e.Visibility, ct, hold),
         OfficialVisibility.Prio when TokenWith is { } with =>
-            Download(e.Object, e.Size, e.ContentHash, (fresh, c) => with("prio", fresh, c), gameDir, "official", e.Visibility, ct),
+            Download(e.Object, e.Size, e.ContentHash, (fresh, c) => with("prio", fresh, c), gameDir, "official", e.Visibility, ct, hold),
         _ => Task.FromResult<CommunityDownload?>(null),
     };
 
     async Task<CommunityDownload?> Download(string obj, long size, string contentHash, Func<bool, CancellationToken, Task<string?>>? token,
-        string gameDir, string name, OfficialVisibility? visibility, CancellationToken ct, bool full = false)
+        string gameDir, string name, OfficialVisibility? visibility, CancellationToken ct, Func<Action, bool>? hold, bool full = false)
     {
         if (clock.GetUtcNow() < backoffUntil) return null;
         try
@@ -280,6 +307,16 @@ public sealed class Community
                     file = await Bounded(new BrotliStream(new MemoryStream(packed), CompressionMode.Decompress), MaxRaw, ct);
                     checkedPsos = file == null ? null : Check(file, draws: true);
                 }
+                else if (name == "vulkan")
+                {
+                    (file, checkedPsos) = (null, null);
+                    try
+                    {
+                        if (HashOnly.Decompress(packed, MaxRaw, HashOnly.RemoteLimit) is { Count: <= HashOnly.MaxEntryRecords } recs && Vulkan.Foz.FromShared(recs, out var n) is { } foz)
+                            (file, checkedPsos) = (foz, n);
+                    }
+                    catch (InvalidDataException) { }
+                }
                 else checkedPsos = CheckPacked(packed, out file, full);
                 if (checkedPsos is not { } psos)
                 {
@@ -287,13 +324,15 @@ public sealed class Community
                     return null;
                 }
                 var got = new CommunityDownload(obj, contentHash, psos, clock.GetUtcNow(), visibility, full);
-                using (Recordings.Lock(Path.Combine(gameDir, "recording.db"), ct: ct))   // not while a compile (any process's) reads the recordings it prepares
+                void Replace()
                 {
                     // a db left without its json is never used: an 'X' must not stay labelled as the 'E' it replaced
                     if (name == "community") File.Delete(Path.Combine(gameDir, "community.json"));
-                    AppStore.WriteAtomic(Path.Combine(gameDir, name + ".db"), file!);
+                    AppStore.WriteAtomic(Path.Combine(gameDir, FileOf(name)), file!);
                     Write(Path.Combine(gameDir, name + ".json"), got);
                 }
+                using (Recordings.Lock(Path.Combine(gameDir, "recording.db"), ct: ct))   // not while a compile (any process's) reads the recordings it prepares
+                    if (hold?.Invoke(Replace) != true) Replace();   // asked under the lock a compile reads the downloads under
                 Problem = null;
                 return got;
             }
@@ -375,11 +414,14 @@ public sealed class Community
     /// <summary>What <see cref="DownloadDrawsAsync"/> left in a game's folder; null when nothing (or it's unreadable).</summary>
     public static CommunityDownload? DownloadedDraws(string gameDir) => Downloaded(gameDir, "draws");
 
+    /// <summary>What <see cref="DownloadVulkanAsync"/> left in a game's folder; null when nothing (or it's unreadable).</summary>
+    public static CommunityDownload? DownloadedVulkan(string gameDir) => Downloaded(gameDir, "vulkan");
+
     /// <summary>What <see cref="DownloadOfficialAsync"/> left in a game's folder; null when nothing (or it's unreadable).</summary>
     public static CommunityDownload? DownloadedOfficial(string gameDir) => Downloaded(gameDir, "official");
 
     static CommunityDownload? Downloaded(string gameDir, string name) =>
-        File.Exists(Path.Combine(gameDir, name + ".db")) ? Read<CommunityDownload>(Path.Combine(gameDir, name + ".json")) : null;
+        File.Exists(Path.Combine(gameDir, FileOf(name))) ? Read<CommunityDownload>(Path.Combine(gameDir, name + ".json")) : null;
 
     /// <summary>The PSO count of a hash-only recording that is safe to plan from, else null: only <see cref="HashOnly.Tags"/>
     /// (an 'N' or 'L' about a record it has), read to the last byte; every PSO and state object parses, and a state object has its root

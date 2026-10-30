@@ -39,7 +39,7 @@
                                Style="{StaticResource Caption}" TextWrapping="Wrap" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Bottom">
-                    <Button Style="{StaticResource AccentButtonStyle}" Click="OnStart"
+                    <Button Style="{StaticResource AccentButtonStyle}" Click="OnStart" AutomationProperties.Name="Compile queue"
                             Visibility="{x:Bind Vm.Idle, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanStart, Mode=OneWay}">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <FontIcon Glyph="&#xE945;" FontSize="14" />
@@ -52,6 +52,8 @@
                 </StackPanel>
             </Grid>
 
+            <InfoBar Severity="Warning" IsClosable="False" IsOpen="{x:Bind Vm.RuntimeWarn, Mode=OneWay}" Visibility="{x:Bind Vm.RuntimeWarn, Mode=OneWay}"
+                     Message="{x:Bind Vm.RuntimeWarnText, Mode=OneWay}" />
             <InfoBar Severity="Warning" IsClosable="False" IsOpen="{x:Bind Vm.CacheWarn, Mode=OneWay}" Visibility="{x:Bind Vm.CacheWarn, Mode=OneWay}"
                      Message="{x:Bind Vm.CacheWarnText, Mode=OneWay}">
                 <InfoBar.ActionButton>
@@ -69,7 +71,7 @@
                             <ColumnDefinition MinWidth="160" />
                             <ColumnDefinition Width="96" />
                             <ColumnDefinition Width="80" />
-                            <ColumnDefinition Width="216" />
+                            <ColumnDefinition Width="320" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="1" Grid.ColumnSpan="3" Text="Game (in run order)" Style="{StaticResource Caption}" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="4" Text="Time" Style="{StaticResource Caption}" TextAlignment="Right" VerticalAlignment="Center" />
@@ -99,7 +101,7 @@
                             <ColumnDefinition MinWidth="160" />
                             <ColumnDefinition Width="96" />
                             <ColumnDefinition Width="80" />
-                            <ColumnDefinition Width="216" />
+                            <ColumnDefinition Width="320" />
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
                             <RowDefinition />
@@ -145,7 +147,7 @@
                                         <ColumnDefinition MinWidth="160" />
                                         <ColumnDefinition Width="96" />
                                         <ColumnDefinition Width="80" />
-                                        <ColumnDefinition Width="216" />
+                                        <ColumnDefinition Width="320" />
                                     </Grid.ColumnDefinitions>
                                     <FontIcon Glyph="&#xE76F;" FontSize="14" Foreground="{ThemeResource TextFillColorTertiaryBrush}" ToolTipService.ToolTip="Drag to reorder" />
                                     <Border Grid.Column="1" Width="24" Height="24" CornerRadius="12" Background="{ThemeResource ControlFillColorSecondaryBrush}">
@@ -167,6 +169,8 @@
                                     <StackPanel Grid.Column="6" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="2">
                                         <Button Content="Move to top" Style="{StaticResource RowButton}" FontSize="13" IsEnabled="{x:Bind CanUp}" Click="OnTop"
                                                 AutomationProperties.Name="{x:Bind TopLabel}" />
+                                        <Button Content="Move to bottom" Style="{StaticResource RowButton}" FontSize="13" IsEnabled="{x:Bind CanDown}" Click="OnBottom"
+                                                AutomationProperties.Name="{x:Bind BottomLabel}" />
                                         <Button Style="{StaticResource RowButton}" Padding="0" IsEnabled="{x:Bind CanUp}" Click="OnUp"
                                                 AutomationProperties.Name="{x:Bind UpLabel}" ToolTipService.ToolTip="Move up">
                                             <FontIcon Glyph="&#xE70E;" FontSize="14" />
@@ -203,7 +207,7 @@
                                             <ColumnDefinition MinWidth="160" />
                                             <ColumnDefinition Width="96" />
                                             <ColumnDefinition Width="80" />
-                                            <ColumnDefinition Width="216" />
+                                            <ColumnDefinition Width="320" />
                                         </Grid.ColumnDefinitions>
                                         <FontIcon Grid.Column="1" Glyph="{x:Bind Glyph}" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                         <Grid Grid.Column="2" Width="32" Height="32" Opacity="0.55">

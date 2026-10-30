@@ -93,6 +93,7 @@ public sealed partial class SettingsPage : Page
     /// <summary>--screenshots: the Patreon card at the top.</summary>
     public void ScrollToPatreon() => PatreonCard.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 0, VerticalOffset = -16, AnimationDesired = false });
     public void ScrollToNewShaders() => NewShadersHeader.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 0, VerticalOffset = 40, AnimationDesired = false });
+    public void ScrollToTraversal() => TraversalLabel.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 0, VerticalOffset = 300, AnimationDesired = false });
 
     // SetCacheLimit is a global driver setting that needs admin: only after the user's explicit OK.
     async void OnApply(object _, RoutedEventArgs __)

@@ -3,8 +3,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
-using SCSKiller.Core.Games;
 using SCSKiller.Core.Carved;
+using SCSKiller.Core.Games;
 using SCSKiller.Core.Unreal;
 
 namespace SCSKiller.Core.Northlight;
@@ -43,12 +43,12 @@ public sealed class NorthlightReader : IEngineReader
 
     public EngineInfo? Detect(Game game)
     {
-        var dir = Path.Combine(game.InstallDir, Dir);
+        var dir = GameFiles.Find(game.InstallDir, Dir);
         if (!Directory.Exists(dir) || CarvedReader.IsNorthlight2(game.InstallDir)) return null; // Northlight 2 builds its root signatures otherwise
         foreach (var f in Effects(dir).OrderBy(f => f.Length).Take(DetectFiles))
             if (Records(Read(f.FullName), default) is { } recs && recs.Any(r => r.Select(c => c.Kind).Order().SequenceEqual([0, 1])))
                 // Control runs on either API (Steam: an exe per API); its files don't say which one is played
-                return new EngineInfo(Family, Version, null, Effects(Path.Combine(game.InstallDir, Dir11)).Any() ? UnrealRhi.Ambiguous : "D3D12", false, null);
+                return new EngineInfo(Family, Version, null, Effects(GameFiles.Find(game.InstallDir, Dir11)).Any() ? UnrealRhi.Ambiguous : "D3D12", false, null);
         return null;
     }
 
@@ -63,10 +63,10 @@ public sealed class NorthlightReader : IEngineReader
         int records = 0, visited = 0, pooled = 0, unlinked = 0, malformed = 0, overCap = 0, bad = 0;
         using var content = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
         foreach (var (dir, dx11) in new[] { (Dir, false), (Dir11, true) })
-        foreach (var f in Effects(Path.Combine(game.InstallDir, dir)).OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase))
+        foreach (var f in Effects(GameFiles.Find(game.InstallDir, dir)).OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase))
         {
             ct.ThrowIfCancellationRequested();
-            var rel = Path.GetRelativePath(game.InstallDir, f.FullName);
+            var rel = GameFiles.Rel(game.InstallDir, f.FullName, f.DirectoryName!, dir);
             var b = Read(f.FullName);
             if (Records(b, ct) is not { } recs) continue;
             content.AppendData(Encoding.UTF8.GetBytes(ContentStamps.Of(rel, f.FullName)));
@@ -191,7 +191,7 @@ public sealed class NorthlightReader : IEngineReader
     }
 
     static IEnumerable<FileInfo> Effects(string dir) =>
-        Directory.Exists(dir) ? new DirectoryInfo(dir).EnumerateFiles("*.obj", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 }) : [];
+        Directory.Exists(dir) ? GameFiles.EnumerateFiles(new DirectoryInfo(dir), "*.obj", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 }) : [];
 
     /// <summary>The file's bytes when it starts with the effect magic and is at most <see cref="MaxFile"/>; else empty.</summary>
     static byte[] Read(string path)

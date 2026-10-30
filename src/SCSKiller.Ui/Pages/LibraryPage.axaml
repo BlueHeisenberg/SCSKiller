@@ -1,0 +1,341 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="using:SCSKiller.Ui"
+             xmlns:c="using:SCSKiller.Ui.Controls"
+             xmlns:m="using:SCSKiller.Ui.Models"
+             x:Class="SCSKiller.Ui.Pages.LibraryPage"
+             x:DataType="m:LibraryVm">
+
+    <Grid Margin="36,28,36,28" RowDefinitions="Auto,Auto,*" RowSpacing="20">
+        <StackPanel Spacing="12">
+            <Grid RowDefinitions="Auto,Auto" RowSpacing="12">
+                <StackPanel Spacing="4">
+                    <!-- bottoms on the title's baseline: the summary's margin is the two fonts' descent difference -->
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                        <TextBlock Text="Library" Classes="Title" VerticalAlignment="Bottom" />
+                        <TextBlock Grid.Column="1" Text="{Binding Summary}" Classes="Secondary" Margin="0,0,0,4"
+                                   VerticalAlignment="Bottom" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                    </Grid>
+                    <TextBlock Text="{Binding RefreshNote}" IsVisible="{Binding HasRefreshNote}" Classes="Secondary" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding AddGamesNote, Mode=OneTime}" IsVisible="{Binding HasAddGamesNote, Mode=OneTime}" Classes="Secondary" TextWrapping="Wrap" />
+                </StackPanel>
+                <WrapPanel Grid.Row="1" ItemSpacing="12" LineSpacing="12" ItemsAlignment="End">
+                    <Button x:Name="RefreshButton" Click="OnRefresh" AutomationProperties.Name="Refresh"
+                            ToolTip.Tip="Re-reads every game's cache size, recordings and status, and finds new games. Shift+click also re-checks every game's engine and anti-cheat (slower).">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <c:ProgressRing Width="16" Height="16" IsActive="{Binding Refreshing}" IsVisible="{Binding Refreshing}" />
+                            <TextBlock Text="Refresh" />
+                        </StackPanel>
+                    </Button>
+                    <Button AutomationProperties.Name="Add a game" Click="OnAddGame" IsVisible="{Binding CanAddGames, Mode=OneTime}"
+                            ToolTip.Tip="Add a game no store lists (another launcher, or a game in a folder of its own) by picking its .exe">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Add}" FontSize="14" VerticalAlignment="Center" />
+                            <TextBlock Text="Add a game…" />
+                        </StackPanel>
+                    </Button>
+                    <DropDownButton x:Name="FoldersButton" AutomationProperties.Name="Game folders" ToolTip.Tip="Folders of games no store lists: SCSKiller looks in them at every scan"
+                                    IsVisible="{Binding CanAddGames, Mode=OneTime}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Folder}" FontSize="14" VerticalAlignment="Center" />
+                            <TextBlock Text="Game folders" />
+                        </StackPanel>
+                        <DropDownButton.Flyout>
+                            <MenuFlyout Placement="Bottom" Opening="OnFoldersOpening" />
+                        </DropDownButton.Flyout>
+                    </DropDownButton>
+                    <Button Content="{Binding AddAllText}" Click="OnAddAll" IsEnabled="{Binding CanAddAll}" />
+                    <Panel>
+                        <Button ToolTip.Tip="Queue every game that stutters without a compile and is ready for one" Click="OnAddRecommended"
+                                IsVisible="{Binding CanAddRecommended}" BorderBrush="{DynamicResource AccentFillColorDefaultBrush}" BorderThickness="1.5"
+                                AutomationProperties.Name="{Binding AddRecommendedText}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Star}" FontSize="14" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                                <TextBlock Text="{Binding AddRecommendedText}" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                            </StackPanel>
+                        </Button>
+                        <Button IsEnabled="False" IsVisible="{Binding CannotAddRecommended}" BorderThickness="1.5"
+                                AutomationProperties.Name="{Binding AddRecommendedText}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Star}" FontSize="14" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding AddRecommendedText}" />
+                            </StackPanel>
+                        </Button>
+                    </Panel>
+                    <Button Classes="accent" Click="OnCompileQueue" AutomationProperties.Name="{Binding CompileQueueText}" IsEnabled="{Binding CanCompileQueue}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Bolt}" FontSize="14" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding CompileQueueText}" />
+                        </StackPanel>
+                    </Button>
+                </WrapPanel>
+            </Grid>
+            <c:InfoBar Severity="Error" IsVisible="{Binding HasError}" Message="{Binding Error}" IsClosable="False" />
+            <c:InfoBar Severity="Informational" IsVisible="{Binding HasGpuNotice}" Message="{Binding GpuNotice}" CloseButtonClick="OnDismissGpuNotice" />
+        </StackPanel>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,*,*" ColumnSpacing="12">
+            <Border Classes="Card">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Shader cache" Classes="Secondary" />
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="{Binding CacheUsed}" Classes="Big" />
+                        <TextBlock Text="{Binding CacheLimitText}" Classes="Secondary" VerticalAlignment="Bottom" Margin="0,0,0,3" />
+                    </StackPanel>
+                    <ProgressBar Value="{Binding CachePercent}" AutomationProperties.Name="Driver shader cache use" />
+                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6" IsVisible="{Binding CacheWarn}">
+                        <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Warning}" FontSize="14" Foreground="{DynamicResource WarnBrush}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding CacheWarnText}" Classes="CaptionText" Foreground="{DynamicResource WarnBrush}"
+                                   TextWrapping="Wrap" VerticalAlignment="Center" />
+                    </Grid>
+                    <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasOldDriver}">
+                        <TextBlock Text="{Binding OldDriverNote}" Classes="Caption" VerticalAlignment="Center" />
+                        <HyperlinkButton Content="Free it" Padding="0" FontSize="12" Click="OnCache" AutomationProperties.Name="Free the cache the new driver no longer uses" />
+                    </StackPanel>
+                    <HyperlinkButton Content="Change" Padding="0" FontSize="12" Click="OnSettings" IsVisible="{Binding CanRaiseLimit}"
+                                     AutomationProperties.Name="Change the driver shader cache size" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="1" Classes="Card">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="After a driver update" Classes="Secondary" />
+                    <TextBlock Text="{Binding DriverMode}" Classes="Big" />
+                    <TextBlock Text="{Binding DriverModeNote}" Classes="Caption" TextWrapping="Wrap" />
+                    <HyperlinkButton Content="Change" Padding="0" FontSize="12" Click="OnSettings" IsVisible="{Binding CanChangeDriverMode, Mode=OneTime}"
+                                     AutomationProperties.Name="Change what happens after a driver update" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="2" Classes="Card">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Compile speed" Classes="Secondary" />
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="{Binding Threads}" Classes="Big" />
+                        <TextBlock Text="{Binding ThreadsOf}" Classes="Secondary" VerticalAlignment="Bottom" Margin="0,0,0,3" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding SpeedNote}" Classes="Caption" TextWrapping="Wrap" />
+                    <HyperlinkButton Content="Change" Padding="0" FontSize="12" Click="OnSettings" AutomationProperties.Name="Change compile speed" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="2" Classes="Card" Padding="0">
+            <Grid RowDefinitions="Auto,40,*">
+                <!-- Search: filters as you type (name, store or engine); Esc or the clear button resets it. -->
+                <Grid Margin="20,14,20,4" ColumnDefinitions="320,Auto,Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="12">
+                    <TextBox x:Name="Search" PlaceholderText="Search by name, store or engine" TextChanged="OnSearch" KeyDown="OnSearchKey"
+                             AutomationProperties.Name="Search games">
+                        <TextBox.Styles>
+                            <Style Selector="TextBox#Search Button.Clear">
+                                <Setter Property="IsVisible" Value="False" />
+                            </Style>
+                            <Style Selector="TextBox#Search:focus:not(:empty) Button.Clear">
+                                <Setter Property="IsVisible" Value="True" />
+                            </Style>
+                        </TextBox.Styles>
+                        <TextBox.InnerRightContent>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Classes="Clear" Theme="{StaticResource FluentTextBoxButton}" Command="{Binding #Search.Clear}"
+                                        ToolTip.Tip="Clear" AutomationProperties.Name="Clear search">
+                                    <PathIcon Data="{StaticResource TextBoxClearButtonData}" Width="10" Height="10" />
+                                </Button>
+                                <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Search}" FontSize="14" Margin="0,0,12,0" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                        </TextBox.InnerRightContent>
+                    </TextBox>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12">
+                        <ComboBox ItemsSource="{x:Static m:LibraryVm.ShowLabels}" SelectedIndex="{Binding ShowIndex, Mode=TwoWay}"
+                                  MinWidth="200" AutomationProperties.Name="Show games by status" />
+                        <CheckBox Content="Show hidden" IsChecked="{Binding ShowHidden, Mode=TwoWay}" IsVisible="{Binding HasHidden}"
+                                  MinWidth="0" ToolTip.Tip="Games you removed from the library" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="2" Text="{Binding ShownText}" IsVisible="{Binding Filtering}" Classes="Caption" VerticalAlignment="Center" />
+                    <!-- the hidden games under the search, each with its way back -->
+                    <ItemsControl Grid.Row="1" Grid.ColumnSpan="4" ItemsSource="{Binding Hidden}" IsVisible="{Binding HiddenShown}"
+                                  Margin="0,8,0,4" AutomationProperties.Name="Hidden games">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="m:HiddenRow">
+                                <StackPanel Orientation="Horizontal" Spacing="12" MinHeight="32">
+                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding Store}" Classes="Caption" VerticalAlignment="Center" />
+                                    <HyperlinkButton Content="Show in library" Click="OnShowGame" Padding="0" VerticalAlignment="Center"
+                                                     AutomationProperties.Name="{Binding ShowName}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <!-- A rescan with games listed: one line beside the search, so the list doesn't move when it comes and goes -->
+                    <Grid Grid.Column="3" ColumnDefinitions="Auto,*" ColumnSpacing="8" IsVisible="{Binding ScanBusy}" VerticalAlignment="Center">
+                        <c:ProgressRing Width="16" Height="16" IsActive="{Binding ScanBusy}" />
+                        <TextBlock Grid.Column="1" Text="{Binding ScanTitle}" FontWeight="SemiBold" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center" ToolTip.Tip="{Binding ScanBusyNote}" />
+                    </Grid>
+                </Grid>
+                <!-- Same columns as the row template below. -->
+                <Grid Grid.Row="1" Margin="20,0,20,0" ColumnSpacing="12" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2.6*" MinWidth="160" />
+                        <ColumnDefinition Width="64" />
+                        <ColumnDefinition Width="72" />
+                        <ColumnDefinition Width="72" />
+                        <ColumnDefinition Width="56" />
+                        <ColumnDefinition Width="4.1*" MinWidth="355" />
+                    </Grid.ColumnDefinitions>
+                    <!-- Game, Pipelines and Cache sort the rows within each section; Status goes back to the default order -->
+                    <Button Classes="SortHeader" Click="OnSortName" ToolTip.Tip="Sort by name">
+                        <TextBlock Text="{Binding GameHeader}" Classes="Caption" />
+                    </Button>
+                    <TextBlock Grid.Column="1" Text="Shaders" Classes="Caption" TextAlignment="Right" VerticalAlignment="Center" />
+                    <Button Grid.Column="2" Classes="SortHeader" HorizontalAlignment="Right" Click="OnSortPipelines" ToolTip.Tip="Sort by pipelines">
+                        <TextBlock Text="{Binding PipelinesHeader}" Classes="Caption" />
+                    </Button>
+                    <Button Grid.Column="3" Classes="SortHeader" HorizontalAlignment="Right" Click="OnSortCache" ToolTip.Tip="Sort by each game's driver and Windows shader cache">
+                        <TextBlock Text="{Binding CacheHeader}" Classes="Caption" />
+                    </Button>
+                    <TextBlock Grid.Column="4" Text="Time" Classes="Caption" TextAlignment="Right" VerticalAlignment="Center" />
+                    <Button Grid.Column="5" Classes="SortHeader" Margin="12,0,0,0" Click="OnSortStatus" ToolTip.Tip="Sort by status, as at first">
+                        <TextBlock Text="Status" Classes="Caption" />
+                    </Button>
+                </Grid>
+                <Border Grid.Row="1" Height="1" VerticalAlignment="Bottom" Background="{DynamicResource CardStrokeColorDefaultBrush}" />
+
+                <StackPanel Grid.Row="2" IsVisible="{Binding NoMatch}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Spacing="8" MaxWidth="412" Margin="24">
+                    <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Search}" FontSize="28" HorizontalAlignment="Center"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Text="{Binding NoMatchText}" Classes="Section" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
+                    <TextBlock Text="{Binding SearchHint, Mode=OneTime}" Classes="Secondary"
+                               TextWrapping="Wrap" TextAlignment="Center" IsVisible="{Binding Searching}" />
+                </StackPanel>
+
+                <!-- First scan, nothing listed yet: a centred message in the list's place. -->
+                <StackPanel Grid.Row="2" IsVisible="{Binding ScanEmpty}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Spacing="12" MaxWidth="412" Margin="24">
+                    <c:ProgressRing Width="32" Height="32" IsActive="{Binding ScanEmpty}" />
+                    <TextBlock Text="{Binding ScanEmptyTitle}" Classes="Section" HorizontalAlignment="Center" />
+                    <TextBlock Text="{Binding ScanEmptyNote}" Classes="Secondary" TextWrapping="Wrap" TextAlignment="Center" />
+                </StackPanel>
+
+                <!-- A scan found no games: which ones SCSKiller lists, or why it found none. -->
+                <StackPanel Grid.Row="2" IsVisible="{Binding NoGames}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Spacing="8" MaxWidth="412" Margin="24">
+                    <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Library}" FontSize="28" HorizontalAlignment="Center"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Text="No games found" Classes="Section" HorizontalAlignment="Center" />
+                    <TextBlock Text="{Binding NoGamesNote}" Classes="Secondary" TextWrapping="Wrap" TextAlignment="Center" />
+                </StackPanel>
+
+                <ScrollViewer x:Name="List" Grid.Row="2" AutomationProperties.Name="Games">
+                    <!-- one section per store, with its game count -->
+                    <ItemsControl ItemsSource="{Binding Groups}" Margin="0,4">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="m:StoreGroup">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="20,12,20,0">
+                                        <TextBlock Text="{Binding Store}" Classes="BodyStrong" />
+                                        <TextBlock Text="{Binding CountText}" Classes="Caption" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <Border Height="1" Margin="12,12,12,0" Background="{DynamicResource DividerStrokeColorDefaultBrush}" />
+                                    <ItemsControl ItemsSource="{Binding}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="m:GameRow">
+                                                <Button Classes="Row" Click="OnGameClick">
+                                                    <AutomationProperties.Name>
+                                                        <MultiBinding StringFormat="{}{0}, {1}, {2}">
+                                                            <Binding Path="Name" />
+                                                            <Binding Path="StatusText" />
+                                                            <Binding Path="FullNote" />
+                                                        </MultiBinding>
+                                                    </AutomationProperties.Name>
+                                                    <Grid ColumnSpacing="12" MinHeight="56">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="2.6*" MinWidth="160" />
+                                                            <ColumnDefinition Width="64" />
+                                                            <ColumnDefinition Width="72" />
+                                                            <ColumnDefinition Width="72" />
+                                                            <ColumnDefinition Width="56" />
+                                                            <ColumnDefinition Width="4.1*" MinWidth="355" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <Grid ColumnDefinitions="36,*" ColumnSpacing="12">
+                                                            <Border Width="36" Height="36" CornerRadius="8" Background="{Binding Tile, Converter={x:Static ui:Converters.ArgbBrush}}"
+                                                                    IsVisible="{Binding NoIcon}">
+                                                                <TextBlock Text="{Binding Initials}" FontSize="13" FontWeight="Bold" Foreground="White"
+                                                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                            </Border>
+                                                            <Image Source="{Binding Icon, Converter={x:Static ui:Converters.Image}}" Width="32" Height="32" />
+                                                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2" Margin="0,6">
+                                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="{Binding Sub}" Classes="Caption" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                                                                <!-- own line: next to the subtitle they'd be clipped at the default window width -->
+                                                                <WrapPanel ItemSpacing="4" LineSpacing="4" IsVisible="{Binding HasTagLine}" Margin="0,2,0,0">
+                                                                    <Border Classes="Chip" Height="18" Padding="6,0" CornerRadius="9" IsVisible="{Binding IsKnownStutter}"
+                                                                            ToolTip.Tip="{Binding StutterTip}">
+                                                                        <TextBlock Text="Stutters without a compile" FontSize="11" Foreground="{DynamicResource WarnBrush}" VerticalAlignment="Center" />
+                                                                    </Border>
+                                                                    <Border Classes="Chip" Height="18" Padding="6,0" CornerRadius="9" IsVisible="{Binding IsNoStutter}"
+                                                                            ToolTip.Tip="{Binding NoStutterTip}">
+                                                                        <TextBlock Text="No shader stutter" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                                                    </Border>
+                                                                    <Border Classes="Chip" Height="18" Padding="6,0" CornerRadius="9" IsVisible="{Binding HasBaChip}">
+                                                                        <TextBlock Text="{Binding BaChip}" FontSize="11" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
+                                                                    </Border>
+                                                                    <ItemsControl ItemsSource="{Binding Tags}" IsTabStop="False" IsVisible="{Binding HasTags}">
+                                                                        <ItemsControl.ItemsPanel>
+                                                                            <ItemsPanelTemplate>
+                                                                                <WrapPanel ItemSpacing="4" LineSpacing="4" />
+                                                                            </ItemsPanelTemplate>
+                                                                        </ItemsControl.ItemsPanel>
+                                                                        <ItemsControl.ItemTemplate>
+                                                                            <DataTemplate x:DataType="m:TagChip">
+                                                                                <Border Classes="Chip" Height="18" Padding="6,0" CornerRadius="9" ToolTip.Tip="{Binding Tip}">
+                                                                                    <TextBlock Text="{Binding Text}" FontSize="11" MaxWidth="{Binding Width}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                                                                </Border>
+                                                                            </DataTemplate>
+                                                                        </ItemsControl.ItemTemplate>
+                                                                    </ItemsControl>
+                                                                </WrapPanel>
+                                                            </StackPanel>
+                                                        </Grid>
+                                                        <TextBlock Grid.Column="1" Text="{Binding Shaders}" TextAlignment="Right" VerticalAlignment="Center" />
+                                                        <TextBlock Grid.Column="2" Text="{Binding Pipelines}" TextAlignment="Right" VerticalAlignment="Center" />
+                                                        <TextBlock Grid.Column="3" Text="{Binding Cache}" c:StyleKey.Class="{Binding CacheStyle}" ToolTip.Tip="{Binding CacheTip}"
+                                                                   TextAlignment="Right" VerticalAlignment="Center" />
+                                                        <TextBlock Grid.Column="4" Text="{Binding Time}" TextAlignment="Right" VerticalAlignment="Center" />
+                                                        <!-- the status takes what its row's buttons leave: MinWidth 355 = a 12 gap after Time + 140 of status + the widest pair, Running + Add to queue -->
+                                                        <Grid Grid.Column="5" ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="12,0,0,0">
+                                                            <StackPanel VerticalAlignment="Center" Spacing="2" Margin="0,6" Background="Transparent" ToolTip.Tip="{Binding RowTip}">
+                                                                <TextBlock x:Name="Status" c:StyleKey.Class="{Binding StatusStyle}" FontSize="13" TextTrimming="CharacterEllipsis">
+                                                                    <!-- WinUI's 10 px ● in Segoe UI: other fonts draw it bigger -->
+                                                                    <InlineUIContainer><Ellipse Width="5" Height="5" Fill="{Binding #Status.Foreground}" /></InlineUIContainer><Run Text="  " /><Run Text="{Binding StatusText}" />
+                                                                </TextBlock>
+                                                                <TextBlock Text="{Binding RowNote}" IsVisible="{Binding HasRowNote}" Classes="Caption" Margin="16,0,0,0"
+                                                                           TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                                                            </StackPanel>
+                                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Spacing="6">
+                                                                <!-- tooltip on a hit-testable wrapper: a disabled button shows none -->
+                                                                <Panel Background="Transparent" ToolTip.Tip="{Binding PlayTip}" IsVisible="{Binding CanLaunch}">
+                                                                    <Button Content="{Binding PlayText}" IsEnabled="{Binding CanPlay}" Click="OnPlay" />
+                                                                </Panel>
+                                                                <Panel>
+                                                                    <Button Content="{Binding AddText}" IsVisible="{Binding IsAdd}" IsEnabled="{Binding CanAdd}" Click="OnAdd" />
+                                                                    <Button Content="Details" IsVisible="{Binding IsDetails}" Click="OnDetails" />
+                                                                    <Button Content="Record" Classes="Warn" IsVisible="{Binding IsRecord}" IsEnabled="{Binding CanRecord}" Click="OnRecord" />
+                                                                    <Button Content="Why?" IsVisible="{Binding IsWhy}" Click="OnWhy" />
+                                                                </Panel>
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Grid>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

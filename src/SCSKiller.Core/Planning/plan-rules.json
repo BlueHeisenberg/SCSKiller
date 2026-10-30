@@ -102,6 +102,24 @@
       }
     },
     {
+      "id": "ue-wukong",
+      "requires": ["rs.stock.v1"],
+      "match": {"family": "Unreal", "from": "5.0", "to": "5.0", "fork": "GAME_BlackMythWukong"},
+      "rootSignature": {
+        "stock": {
+          "stages": ["PS", "VS", "GS", "MS", "AS"],
+          "maxSrvs": 64,
+          "maxSamplers": 16,
+          "uavStages": ["PS", "CS"],
+          "tablesWhenUsed": true,
+          "ags": true,
+          "diagnostic": true,
+          "heapFlags": true
+        },
+        "staticSamplers": {"register": 0, "space": 1000}
+      }
+    },
+    {
       "id": "ue-5.1",
       "requires": ["rs.stock.v1"],
       "match": {"family": "Unreal", "from": "5.1", "to": "5.3"},
@@ -395,6 +413,13 @@
               ]}}
         ]
       }
+    },
+    {
+      "id": "snowdrop-helix",
+      "requires": ["rs.select.v1", "stagesets.v1"],
+      "match": {"family": "Snowdrop", "fork": "helix"},
+      "rootSignature": {"select": ["snowdrop"]},
+      "stageSets": [["VS"], ["VS", "PS"], ["CS"]]
     },
     {
       "id": "re-pragmata",
@@ -883,10 +908,35 @@
       }
     },
     {
+      "id": "blackspace-vi",
+      "requires": ["vi.v1"],
+      "match": {"family": "BlackSpace"},
+      "viewInstancing": {
+        "note": "Crimson Desert: every recorded PSO with an SV_ViewID shader (297, in these 7 passes) has 2 views, render target array slices 0 and 1",
+        "views": [[0, 0], [0, 1]],
+        "libraries": ["scenedynamicshadowbindless", "effectdynamicshadowtranslucentbindless", "scenecharactershadowbindless", "sceneeffectshadowbindless",
+          "charactershadowtranslucent", "dynamicobjectcapturewide", "scenedynamicshadowtranslucentbindless"]
+      }
+    },
+    {
+      "id": "blackspace-passes",
+      "requires": ["passnames.v1"],
+      "match": {"family": "BlackSpace"},
+      "passNames": {
+        "06570694": "CopyBackSceneDepth", "15ea2d27": "SkyMaterial", "169232a9": "SceneGeometryWireframeRenderPass",
+        "1c75290b": "TerrainRegionCapture", "2e53103e": "ScreenSpaceAutomaticPlacement", "4a7a1d6e": "DirectML",
+        "5200be8f": "GPUSorting", "543ed2b4": "HydraulicErosion", "5c9fbee9": "UISplineRender",
+        "7ff42eab": "RainDropletRenderPass", "86a28943": "CopySceneDepthToSSDMDepth", "9cee1d0a": "Panorama",
+        "9f3321a2": "SkyMaterialEnvironment", "a5ee5f72": "StaticShadowImpostorGroup", "b2d270b6": "TestRenderPassForProfiling",
+        "bad96668": "GeneratePropagationMask", "c14259a4": "CopySceneColorMS", "c25672fe": "MassPlacementCaptureUV",
+        "dde4f984": "CopyStencilSSDM", "fcbba8fb": "ProcessForColorBlind"
+      }
+    },
+    {
       "id": "amd-ags",
       "requires": ["amd.ags.v1"],
       "match": {"family": "Any"},
-      "ags": {"profiles": {"Phoenix": "d32786a7", "OakGame": "f2f80824", "Griffin": "38810766", "GoWR": "b7653b10"}, "proven": ["Townfall", "Griffin"]}
+      "ags": {"profiles": {"Phoenix": "d32786a7", "OakGame": "f2f80824", "Griffin": "38810766", "Split": "eed2a692", "GoWR": "b7653b10"}, "proven": ["Townfall", "Griffin"]}
     },
     {
       "id": "nv-aftermath",

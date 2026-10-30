@@ -1,0 +1,216 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="using:SCSKiller.Ui.Controls"
+             x:Class="SCSKiller.Ui.App"
+             Name="SCSKiller">
+    <Application.Styles>
+        <FluentTheme />
+        <StyleInclude Source="/Styles.axaml" />
+    </Application.Styles>
+
+    <Application.Resources>
+        <ResourceDictionary>
+            <!-- Windows' default accent palette, the system's in place of it on a real window (Platform/Accent) -->
+            <Color x:Key="SystemAccentColor">#0078D4</Color>
+            <Color x:Key="SystemAccentColorLight1">#0091F8</Color>
+            <Color x:Key="SystemAccentColorLight2">#4CC2FF</Color>
+            <Color x:Key="SystemAccentColorLight3">#99EBFF</Color>
+            <Color x:Key="SystemAccentColorDark1">#0067C0</Color>
+            <Color x:Key="SystemAccentColorDark2">#003E92</Color>
+            <Color x:Key="SystemAccentColorDark3">#001A68</Color>
+            <!-- WinUI's theme colours, which the Fluent theme for Avalonia doesn't define. -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Dark">
+                    <!-- Amber from the mockup (#ffb454) in dark; a darker amber keeps 4.5:1 contrast on light cards. -->
+                    <SolidColorBrush x:Key="WarnBrush" Color="#FFB454" />
+                    <SolidColorBrush x:Key="SolidBackgroundFillColorBaseBrush" Color="#202020" />
+                    <SolidColorBrush x:Key="LayerFillColorDefaultBrush" Color="#4C3A3A3A" />
+                    <SolidColorBrush x:Key="LayerFillColorAltBrush" Color="#0DFFFFFF" />
+                    <SolidColorBrush x:Key="OverlayPaneBrush" Color="#2C2C2C" />
+                    <SolidColorBrush x:Key="CardBackgroundFillColorDefaultBrush" Color="#0DFFFFFF" />
+                    <SolidColorBrush x:Key="CardStrokeColorDefaultBrush" Color="#19000000" />
+                    <SolidColorBrush x:Key="SurfaceStrokeColorDefaultBrush" Color="#66757575" />
+                    <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#C5FFFFFF" />
+                    <SolidColorBrush x:Key="TextFillColorTertiaryBrush" Color="#87FFFFFF" />
+                    <SolidColorBrush x:Key="TextFillColorDisabledBrush" Color="#5DFFFFFF" />
+                    <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="{DynamicResource SystemAccentColorLight3}" />
+                    <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="{DynamicResource SystemAccentColorLight2}" />
+                    <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="{DynamicResource SystemAccentColorLight2}" Opacity="0.9" />
+                    <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="{DynamicResource SystemAccentColorLight2}" Opacity="0.8" />
+                    <SolidColorBrush x:Key="AccentFillColorDisabledBrush" Color="#28FFFFFF" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#000000" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorSecondaryBrush" Color="#80000000" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorDisabledBrush" Color="#87FFFFFF" />
+                    <SolidColorBrush x:Key="ControlFillColorDefaultBrush" Color="#0FFFFFFF" />
+                    <SolidColorBrush x:Key="ControlFillColorSecondaryBrush" Color="#15FFFFFF" />
+                    <SolidColorBrush x:Key="ControlFillColorTertiaryBrush" Color="#08FFFFFF" />
+                    <SolidColorBrush x:Key="ControlFillColorDisabledBrush" Color="#0BFFFFFF" />
+                    <SolidColorBrush x:Key="ControlStrokeColorDefaultBrush" Color="#12FFFFFF" />
+                    <SolidColorBrush x:Key="ControlStrongStrokeColorDefaultBrush" Color="#8BFFFFFF" />
+                    <!-- the elevation borders: a darker or lighter bottom edge, as WinUI draws them -->
+                    <LinearGradientBrush x:Key="ControlElevationBorderBrush" StartPoint="0,0" EndPoint="0,3" TransformOrigin="50%,50%">
+                        <LinearGradientBrush.Transform><ScaleTransform ScaleY="-1" /></LinearGradientBrush.Transform>
+                        <GradientStop Offset="0.33" Color="#18FFFFFF" />
+                        <GradientStop Offset="1" Color="#12FFFFFF" />
+                    </LinearGradientBrush>
+                    <LinearGradientBrush x:Key="AccentControlElevationBorderBrush" StartPoint="0,0" EndPoint="0,3" TransformOrigin="50%,50%">
+                        <LinearGradientBrush.Transform><ScaleTransform ScaleY="-1" /></LinearGradientBrush.Transform>
+                        <GradientStop Offset="0.33" Color="#23000000" />
+                        <GradientStop Offset="1" Color="#14FFFFFF" />
+                    </LinearGradientBrush>
+                    <LinearGradientBrush x:Key="TextControlElevationBorderBrush" StartPoint="0,0" EndPoint="0,2" TransformOrigin="50%,50%">
+                        <LinearGradientBrush.Transform><ScaleTransform ScaleY="-1" /></LinearGradientBrush.Transform>
+                        <GradientStop Offset="1" Color="#8BFFFFFF" />
+                        <GradientStop Offset="1" Color="#12FFFFFF" />
+                    </LinearGradientBrush>
+                    <LinearGradientBrush x:Key="TextControlElevationBorderFocusedBrush" StartPoint="0,0" EndPoint="0,2" TransformOrigin="50%,50%">
+                        <LinearGradientBrush.Transform><ScaleTransform ScaleY="-1" /></LinearGradientBrush.Transform>
+                        <GradientStop Offset="1" Color="{DynamicResource SystemAccentColorLight2}" />
+                        <GradientStop Offset="1" Color="#12FFFFFF" />
+                    </LinearGradientBrush>
+                    <SolidColorBrush x:Key="ControlStrongStrokeColorDisabledBrush" Color="#28FFFFFF" />
+                    <SolidColorBrush x:Key="ControlStrongFillColorDisabledBrush" Color="#3FFFFFFF" />
+                    <SolidColorBrush x:Key="ControlFillColorInputActiveBrush" Color="#B31E1E1E" />
+                    <SolidColorBrush x:Key="ControlAltFillColorSecondaryBrush" Color="#19000000" />
+                    <SolidColorBrush x:Key="ControlAltFillColorTertiaryBrush" Color="#0BFFFFFF" />
+                    <SolidColorBrush x:Key="ControlAltFillColorQuarternaryBrush" Color="#12FFFFFF" />
+                    <SolidColorBrush x:Key="SurfaceStrokeColorFlyoutBrush" Color="#33000000" />
+                    <SolidColorBrush x:Key="AccentTextFillColorSecondaryBrush" Color="{DynamicResource SystemAccentColorLight3}" />
+                    <SolidColorBrush x:Key="AccentTextFillColorTertiaryBrush" Color="{DynamicResource SystemAccentColorLight2}" />
+                    <SolidColorBrush x:Key="AccentTextFillColorDisabledBrush" Color="#5DFFFFFF" />
+                    <SolidColorBrush x:Key="SubtleFillColorTransparentBrush" Color="#00FFFFFF" />
+                    <SolidColorBrush x:Key="SubtleFillColorSecondaryBrush" Color="#0FFFFFFF" />
+                    <SolidColorBrush x:Key="SubtleFillColorTertiaryBrush" Color="#0AFFFFFF" />
+                    <SolidColorBrush x:Key="DividerStrokeColorDefaultBrush" Color="#15FFFFFF" />
+                    <SolidColorBrush x:Key="SystemFillColorCriticalBrush" Color="#FF99A4" />
+                    <SolidColorBrush x:Key="SystemFillColorCriticalBackgroundBrush" Color="#442726" />
+                    <SolidColorBrush x:Key="SystemFillColorCautionBrush" Color="#FCE100" />
+                    <SolidColorBrush x:Key="SystemFillColorCautionBackgroundBrush" Color="#433519" />
+                    <SolidColorBrush x:Key="SystemFillColorSuccessBrush" Color="#6CCB5F" />
+                    <SolidColorBrush x:Key="SystemFillColorSuccessBackgroundBrush" Color="#393D1B" />
+                    <SolidColorBrush x:Key="SystemFillColorAttentionBackgroundBrush" Color="#08FFFFFF" />
+                    <SolidColorBrush x:Key="CardBackgroundFillColorSecondaryBrush" Color="#08FFFFFF" />
+                    <!-- WinUI's Expander: a card-coloured header whose fill stays on hover, only the chevron's changes -->
+                    <StaticResource x:Key="ExpanderHeaderBackground" ResourceKey="CardBackgroundFillColorDefaultBrush" />
+                    <StaticResource x:Key="ExpanderHeaderBackgroundPointerOver" ResourceKey="CardBackgroundFillColorDefaultBrush" />
+                    <StaticResource x:Key="ExpanderHeaderBackgroundPressed" ResourceKey="CardBackgroundFillColorDefaultBrush" />
+                    <StaticResource x:Key="ExpanderHeaderBorderBrush" ResourceKey="CardStrokeColorDefaultBrush" />
+                    <StaticResource x:Key="ExpanderHeaderBorderBrushPointerOver" ResourceKey="CardStrokeColorDefaultBrush" />
+                    <StaticResource x:Key="ExpanderHeaderBorderBrushPressed" ResourceKey="CardStrokeColorDefaultBrush" />
+                    <StaticResource x:Key="ExpanderHeaderForeground" ResourceKey="TextFillColorPrimaryBrush" />
+                    <StaticResource x:Key="ExpanderHeaderForegroundPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
+                    <StaticResource x:Key="ExpanderHeaderForegroundPressed" ResourceKey="TextFillColorPrimaryBrush" />
+                    <StaticResource x:Key="ExpanderChevronBackground" ResourceKey="SubtleFillColorTransparentBrush" />
+                    <StaticResource x:Key="ExpanderChevronBackgroundPointerOver" ResourceKey="SubtleFillColorSecondaryBrush" />
+                    <StaticResource x:Key="ExpanderChevronBackgroundPressed" ResourceKey="SubtleFillColorTertiaryBrush" />
+                    <StaticResource x:Key="ExpanderChevronBorderBrush" ResourceKey="SubtleFillColorTransparentBrush" />
+                    <StaticResource x:Key="ExpanderChevronBorderBrushPointerOver" ResourceKey="SubtleFillColorTransparentBrush" />
+                    <StaticResource x:Key="ExpanderChevronBorderBrushPressed" ResourceKey="SubtleFillColorTransparentBrush" />
+                    <StaticResource x:Key="ExpanderChevronForeground" ResourceKey="TextFillColorPrimaryBrush" />
+                    <StaticResource x:Key="ExpanderChevronForegroundPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
+                    <StaticResource x:Key="ExpanderChevronForegroundPressed" ResourceKey="TextFillColorPrimaryBrush" />
+                    <StaticResource x:Key="ExpanderContentBackground" ResourceKey="CardBackgroundFillColorSecondaryBrush" />
+                    <StaticResource x:Key="ExpanderContentBorderBrush" ResourceKey="CardStrokeColorDefaultBrush" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="WarnBrush" Color="#8A5100" />
+                    <SolidColorBrush x:Key="SolidBackgroundFillColorBaseBrush" Color="#F3F3F3" />
+                    <SolidColorBrush x:Key="LayerFillColorDefaultBrush" Color="#80FFFFFF" />
+                    <SolidColorBrush x:Key="LayerFillColorAltBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="OverlayPaneBrush" Color="#FCFCFC" />
+                    <SolidColorBrush x:Key="CardBackgroundFillColorDefaultBrush" Color="#B3FFFFFF" />
+                    <SolidColorBrush x:Key="CardStrokeColorDefaultBrush" Color="#0F000000" />
+                    <SolidColorBrush x:Key="SurfaceStrokeColorDefaultBrush" Color="#66757575" />
+                    <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#E4000000" />
+                    <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#9E000000" />
+                    <SolidColorBrush x:Key="TextFillColorTertiaryBrush" Color="#72000000" />
+                    <SolidColorBrush x:Key="TextFillColorDisabledBrush" Color="#5C000000" />
+                    <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="{DynamicResource SystemAccentColorDark2}" />
+                    <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="{DynamicResource SystemAccentColorDark1}" />
+                    <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="{DynamicResource SystemAccentColorDark1}" Opacity="0.9" />
+                    <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="{DynamicResource SystemAccentColorDark1}" Opacity="0.8" />
+                    <SolidColorBrush x:Key="AccentFillColorDisabledBrush" Color="#37000000" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorSecondaryBrush" Color="#B3FFFFFF" />
+                    <SolidColorBrush x:Key="TextOnAccentFillColorDisabledBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="ControlFillColorDefaultBrush" Color="#B3FFFFFF" />
+                    <SolidColorBrush x:Key="ControlFillColorSecondaryBrush" Color="#80F9F9F9" />
+                    <SolidColorBrush x:Key="ControlFillColorTertiaryBrush" Color="#4DF9F9F9" />
+                    <SolidColorBrush x:Key="ControlFillColorDisabledBrush" Color="#4DF9F9F9" />
+                    <SolidColorBrush x:Key="ControlStrokeColorDefaultBrush" Color="#0F000000" />
+                    <SolidColorBrush x:Key="ControlStrongStrokeColorDefaultBrush" Color="#72000000" />
+                    <!-- the elevation borders: a darker or lighter bottom edge, as WinUI draws them -->
+                    <LinearGradientBrush x:Key="ControlElevationBorderBrush" StartPoint="0,0" EndPoint="0,3" TransformOrigin="50%,50%">
+                        <LinearGradientBrush.Transform><ScaleTransform ScaleY="-1" /></LinearGradientBrush.Transform>
+                        <GradientStop Offset="0.33" Color="#29000000" />
+                        <GradientStop Offset="1" Color="#0F000000" />
+                    </LinearGradientBrush>
+                    <LinearGradientBrush x:Key="AccentControlElevationBorderBrush" StartPoint="0,0" EndPoint="0,3" TransformOrigin="50%,50%">
+                        <LinearGradientBrush.Transform><ScaleTransform ScaleY="-1" /></LinearGradientBrush.Transform>
+                        <GradientStop Offset="0.33" Color="#66000000" />
+                        <GradientStop Offset="1" Color="#14FFFFFF" />
+                    </LinearGradientBrush>
+                    <LinearGradientBrush x:Key="TextControlElevationBorderBrush" StartPoint="0,0" EndPoint="0,2" TransformOrigin="50%,50%">
+                        <LinearGradientBrush.Transform><ScaleTransform ScaleY="-1" /></LinearGradientBrush.Transform>
+                        <GradientStop Offset="1" Color="#72000000" />
+                        <GradientStop Offset="1" Color="#0F000000" />
+                    </LinearGradientBrush>
+                    <LinearGradientBrush x:Key="TextControlElevationBorderFocusedBrush" StartPoint="0,0" EndPoint="0,2" TransformOrigin="50%,50%">
+                        <LinearGradientBrush.Transform><ScaleTransform ScaleY="-1" /></LinearGradientBrush.Transform>
+                        <GradientStop Offset="1" Color="{DynamicResource SystemAccentColorDark1}" />
+                        <GradientStop Offset="1" Color="#0F000000" />
+                    </LinearGradientBrush>
+                    <SolidColorBrush x:Key="ControlStrongStrokeColorDisabledBrush" Color="#37000000" />
+                    <SolidColorBrush x:Key="ControlStrongFillColorDisabledBrush" Color="#51000000" />
+                    <SolidColorBrush x:Key="ControlFillColorInputActiveBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="ControlAltFillColorSecondaryBrush" Color="#06000000" />
+                    <SolidColorBrush x:Key="ControlAltFillColorTertiaryBrush" Color="#0F000000" />
+                    <SolidColorBrush x:Key="ControlAltFillColorQuarternaryBrush" Color="#18000000" />
+                    <SolidColorBrush x:Key="SurfaceStrokeColorFlyoutBrush" Color="#0F000000" />
+                    <SolidColorBrush x:Key="AccentTextFillColorSecondaryBrush" Color="{DynamicResource SystemAccentColorDark3}" />
+                    <SolidColorBrush x:Key="AccentTextFillColorTertiaryBrush" Color="{DynamicResource SystemAccentColorDark1}" />
+                    <SolidColorBrush x:Key="AccentTextFillColorDisabledBrush" Color="#5C000000" />
+                    <SolidColorBrush x:Key="SubtleFillColorTransparentBrush" Color="#00FFFFFF" />
+                    <SolidColorBrush x:Key="SubtleFillColorSecondaryBrush" Color="#09000000" />
+                    <SolidColorBrush x:Key="SubtleFillColorTertiaryBrush" Color="#06000000" />
+                    <SolidColorBrush x:Key="DividerStrokeColorDefaultBrush" Color="#0F000000" />
+                    <SolidColorBrush x:Key="SystemFillColorCriticalBrush" Color="#C42B1C" />
+                    <SolidColorBrush x:Key="SystemFillColorCriticalBackgroundBrush" Color="#FDE7E9" />
+                    <SolidColorBrush x:Key="SystemFillColorCautionBrush" Color="#9D5D00" />
+                    <SolidColorBrush x:Key="SystemFillColorCautionBackgroundBrush" Color="#FFF4CE" />
+                    <SolidColorBrush x:Key="SystemFillColorSuccessBrush" Color="#0F7B0F" />
+                    <SolidColorBrush x:Key="SystemFillColorSuccessBackgroundBrush" Color="#DFF6DD" />
+                    <SolidColorBrush x:Key="SystemFillColorAttentionBackgroundBrush" Color="#80F6F6F6" />
+                    <SolidColorBrush x:Key="CardBackgroundFillColorSecondaryBrush" Color="#80F6F6F6" />
+                    <StaticResource x:Key="ExpanderHeaderBackground" ResourceKey="CardBackgroundFillColorDefaultBrush" />
+                    <StaticResource x:Key="ExpanderHeaderBackgroundPointerOver" ResourceKey="CardBackgroundFillColorDefaultBrush" />
+                    <StaticResource x:Key="ExpanderHeaderBackgroundPressed" ResourceKey="CardBackgroundFillColorDefaultBrush" />
+                    <StaticResource x:Key="ExpanderHeaderBorderBrush" ResourceKey="CardStrokeColorDefaultBrush" />
+                    <StaticResource x:Key="ExpanderHeaderBorderBrushPointerOver" ResourceKey="CardStrokeColorDefaultBrush" />
+                    <StaticResource x:Key="ExpanderHeaderBorderBrushPressed" ResourceKey="CardStrokeColorDefaultBrush" />
+                    <StaticResource x:Key="ExpanderHeaderForeground" ResourceKey="TextFillColorPrimaryBrush" />
+                    <StaticResource x:Key="ExpanderHeaderForegroundPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
+                    <StaticResource x:Key="ExpanderHeaderForegroundPressed" ResourceKey="TextFillColorPrimaryBrush" />
+                    <StaticResource x:Key="ExpanderChevronBackground" ResourceKey="SubtleFillColorTransparentBrush" />
+                    <StaticResource x:Key="ExpanderChevronBackgroundPointerOver" ResourceKey="SubtleFillColorSecondaryBrush" />
+                    <StaticResource x:Key="ExpanderChevronBackgroundPressed" ResourceKey="SubtleFillColorTertiaryBrush" />
+                    <StaticResource x:Key="ExpanderChevronBorderBrush" ResourceKey="SubtleFillColorTransparentBrush" />
+                    <StaticResource x:Key="ExpanderChevronBorderBrushPointerOver" ResourceKey="SubtleFillColorTransparentBrush" />
+                    <StaticResource x:Key="ExpanderChevronBorderBrushPressed" ResourceKey="SubtleFillColorTransparentBrush" />
+                    <StaticResource x:Key="ExpanderChevronForeground" ResourceKey="TextFillColorPrimaryBrush" />
+                    <StaticResource x:Key="ExpanderChevronForegroundPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
+                    <StaticResource x:Key="ExpanderChevronForegroundPressed" ResourceKey="TextFillColorPrimaryBrush" />
+                    <StaticResource x:Key="ExpanderContentBackground" ResourceKey="CardBackgroundFillColorSecondaryBrush" />
+                    <StaticResource x:Key="ExpanderContentBorderBrush" ResourceKey="CardStrokeColorDefaultBrush" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+
+            <CornerRadius x:Key="ControlCornerRadius">4</CornerRadius>
+            <Thickness x:Key="ButtonPadding">11,5,11,6</Thickness>
+            <Thickness x:Key="TextControlBorderThemeThicknessFocused">1,1,1,2</Thickness>
+            <x:Double x:Key="TextControlPlaceholderOpacity">1</x:Double>
+            <CornerRadius x:Key="OverlayCornerRadius">8</CornerRadius>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

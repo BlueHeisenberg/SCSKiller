@@ -23,7 +23,10 @@ public static class Collections
     public static IReadOnlyList<IReadOnlyList<CollectionGame>> Current { get; } = [.. All.Where(c => !InOwnFolders(c))];
 
     // Parse requires every entry to name an exe
-    static bool InOwnFolders(IReadOnlyList<CollectionGame> c) => Path.GetFileName(c[0].Exes[0]) != c[0].Exes[0];
+    static bool InOwnFolders(IReadOnlyList<CollectionGame> c) => !IsName(c[0].Exes[0]);
+
+    // the file's paths are Windows-form
+    static bool IsName(string exe) => Path.GetFileName(GameFiles.Under("", exe)) == exe;
 
     internal static List<IReadOnlyList<CollectionGame>> Parse(string json)
     {
@@ -33,12 +36,12 @@ public static class Collections
         foreach (var c in file.Collections)
         {
             if (c.Games.Length < 2) throw new InvalidDataException("collections.json: a collection of one game");
-            var own = c.Games[0].Exes is [var first, ..] && Path.GetFileName(first) != first;
+            var own = c.Games[0].Exes is [var first, ..] && !IsName(first);
             foreach (var e in c.Games)
                 if (!ContentFile.Text(e.Id, 128) || !ContentFile.Text(e.Name, 128) || !ids.Add(e.Id)
                     || e != c.Games[0] && !e.Id.StartsWith(c.Games[0].Id + ":", StringComparison.Ordinal)
                     || e.Exes.Length == 0 || e.Exes.Any(x => !x.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-                        || (own ? !x.StartsWith(e.Data + "\\", StringComparison.OrdinalIgnoreCase) || x.Split('\\', '/').Contains("..") : Path.GetFileName(x) != x))
+                        || (own ? !x.StartsWith(e.Data + "\\", StringComparison.OrdinalIgnoreCase) || x.Split('\\', '/').Contains("..") : !IsName(x)))
                     || !ContentFile.Text(e.Data, 260) || Path.IsPathRooted(e.Data) || e.Data.Split('\\', '/').Contains(".."))
                     throw new InvalidDataException($"collections.json: {e.Id}");
             all.Add([.. c.Games.Select(e => new CollectionGame(e.Id, e.Name, e.Exes, e.Data))]);
@@ -67,7 +70,7 @@ public static class Collections
     /// recorder there may be armed for.</summary>
     public static IEnumerable<string> ExesBeside(string exe) =>
         Current.Where(c => c.Any(e => e.Exes.Contains(Path.GetFileName(exe), StringComparer.OrdinalIgnoreCase)))
-            .SelectMany(c => c.SelectMany(e => e.Exes)).Select(x => Path.Combine(Path.GetDirectoryName(exe)!, x));
+            .SelectMany(c => c.SelectMany(e => e.Exes)).Select(x => GameFiles.Find(Path.GetDirectoryName(exe)!, x));
 
     /// <summary>The games a store lists for its app <paramref name="app"/>: one per game of the collection with the app's id
     /// whose exe the install has; none when it's no collection's, or the install lacks the first game's exes.</summary>
@@ -77,8 +80,8 @@ public static class Collections
         var own = InOwnFolders(c);
         var games = new List<Game>();
         foreach (var e in c)
-            if (e.Exes.Select(x => Path.Combine(app.InstallDir, x)).FirstOrDefault(File.Exists) is { } exe)
-                games.Add(app with { Id = e.Id, Name = e.Name, ExePath = exe, InstallDir = own ? Path.Combine(app.InstallDir, e.Data) : app.InstallDir });
+            if (e.Exes.Select(x => GameFiles.Find(app.InstallDir, x)).FirstOrDefault(File.Exists) is { } exe)
+                games.Add(app with { Id = e.Id, Name = e.Name, ExePath = exe, InstallDir = own ? GameFiles.Find(app.InstallDir, e.Data) : app.InstallDir });
         return games.Count > 0 && games[0].Id == c[0].Id ? games : [];
     }
 
@@ -86,7 +89,7 @@ public static class Collections
     /// else, or when <paramref name="g"/>'s install folder isn't that data folder (a record from before), its install folder.</summary>
     public static string AppDir(Game g) =>
         All.Where(InOwnFolders).SelectMany(c => c).FirstOrDefault(e => e.Id == g.Id) is { } e
-        && Path.TrimEndingDirectorySeparator(g.InstallDir) is var dir && dir.EndsWith('\\' + e.Data, StringComparison.OrdinalIgnoreCase)
+        && Path.TrimEndingDirectorySeparator(g.InstallDir) is var dir && dir.EndsWith(Path.DirectorySeparatorChar + GameFiles.Under("", e.Data), StringComparison.OrdinalIgnoreCase)
             ? dir[..^(e.Data.Length + 1)]
             : g.InstallDir;
 }

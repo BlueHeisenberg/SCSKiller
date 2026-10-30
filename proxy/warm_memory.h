@@ -32,3 +32,19 @@ inline char warm_memory_tick(WarmMemory& m, double mb, double held, bool low, do
     if (mb < limit - 0.2 * m.budget && !low && m.allowed < m.threads && now - m.changed > 30000) return ++m.allowed, m.last = 'u', m.changed = now, 'u';
     return 0;
 }
+
+// A fresh process frees what the driver keeps per pipeline (NVIDIA: all of it until exit): the warm ends and a new process
+// goes on from its first unfinished item once this process grew by a third of the PC's RAM since its start, or once the PC is
+// low on memory while it grew by a third of its budget and is still above where it was 5-10 min before (a process that
+// stopped growing never restarts). Measured: Counter-Strike 2's D3D11 warm on AMD, 48 GB shared with the GPU, grows 0.55 GB
+// per 1,000 items to 27.6 GB private / 35.7 GB working set with 6 GB free at ~48k of 140,906 items; Marvel Rivals on 32 GB,
+// 7.7 -> 29 GB private and 0.4-4 GB free over 9 h.
+struct WarmRestart {
+    double mark_mb = -1, mark_t = 0, was_mb = -1;
+};
+
+inline bool warm_restart_tick(WarmRestart& r, double mb, double start_mb, double budget, double ram_mb, bool low, double now) {
+    if (r.mark_mb < 0 || now - r.mark_t >= 300000) r.was_mb = now - r.mark_t < 600000 ? r.mark_mb : -1, r.mark_mb = mb, r.mark_t = now;  // older: a pause
+    double grown = mb - start_mb;
+    return (ram_mb > 0 && grown >= ram_mb / 3) || (low && grown >= budget / 3 && r.was_mb >= 0 && mb > r.was_mb);
+}

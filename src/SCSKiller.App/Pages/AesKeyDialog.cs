@@ -3,17 +3,17 @@ using Microsoft.UI.Xaml.Controls;
 
 namespace SCSKiller.App.Pages;
 
-/// <summary>The user's own AES key for an encrypted Unreal game: checked against the game's files and stored on this PC only.</summary>
+/// <summary>The user's own AES key for an encrypted Unreal game, or a BlackSpace game's key: checked against the game's
+/// files and stored on this PC only.</summary>
 static class AesKeyDialog
 {
     /// <summary>True once a key that opens the game's files is stored; the caller then re-reads the game.
     /// <paramref name="reason"/>: the Library's Why?, shown above the key.</summary>
-    public static async Task<bool> ShowAsync(XamlRoot root, string id, string title, string? reason = null)
+    public static async Task<bool> ShowAsync(XamlRoot root, string id, string title, string? reason = null, bool aes = true)
     {
-        var box = new TextBox { PlaceholderText = "0x followed by 64 hex digits", Header = "AES key" };
-        var panel = new StackPanel { Spacing = 12, Children = { new TextBlock { TextWrapping = TextWrapping.Wrap, Text =
-            "SCSKiller couldn't find this game's key in its exe (protected exes hide it). If you have the key, paste it here: " +
-            "it's checked against the game's files and kept on this PC only." }, box } };
+        var box = new TextBox { PlaceholderText = "0x followed by 64 hex digits", Header = aes ? "AES key" : "Game key" };
+        var panel = new StackPanel { Spacing = 12, Children = { new TextBlock { TextWrapping = TextWrapping.Wrap, Text = (aes ? AesIntro : GameKeyIntro) +
+            " If you have the key, paste it here: it's checked against the game's files and kept on this PC only." }, box } };
         if (reason != null) panel.Children.Insert(0, new TextBlock { Text = reason, TextWrapping = TextWrapping.Wrap });
         var dialog = new ContentDialog
         {
@@ -28,4 +28,7 @@ static class AesKeyDialog
         if (!ok) await App.ShowAsync(new ContentDialog { XamlRoot = root, Title = "That key didn't work", Content = problem ?? "It doesn't open this game's files.", CloseButtonText = "OK" });
         return ok;
     }
+
+    const string AesIntro = "SCSKiller couldn't find this game's key in its exe (protected exes hide it).";
+    const string GameKeyIntro = "With this game's key, SCSKiller compiles it without a recording.";
 }

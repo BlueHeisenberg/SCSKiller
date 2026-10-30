@@ -12,7 +12,7 @@ public static class FrameSessions
     static readonly long MaxUnixMs = DateTimeOffset.MaxValue.ToUnixTimeMilliseconds();
 
     public static FrameSession Of(FrameReport r) =>
-        new(r.LaunchUnixMs, r.Duration, r.Low1PctFps, r.Hitches.Count(h => h.Cause == HitchCause.Shader));
+        new(r.LaunchUnixMs, r.Duration, r.Low1PctFps, r.Hitches.Count(h => h.Cause == HitchCause.Shader), r.D3D11);
 
     /// <summary>Newest first; none when the file is missing or unreadable.</summary>
     public static IReadOnlyList<FrameSession> Read(AppStore store, string gameId) => Load(PathOf(store, gameId));

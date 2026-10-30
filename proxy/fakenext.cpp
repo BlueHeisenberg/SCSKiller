@@ -7,7 +7,7 @@
 #include <windows.h>
 #define D3D12CreateDevice D3D12CreateDevice_h  // d3d12.h declares it without dllexport
 #include <d3d12.h>
-#include <dxgi1_2.h>
+#include <dxgi1_6.h>
 #undef D3D12CreateDevice
 #include <algorithm>
 #include <atomic>
@@ -315,22 +315,73 @@ static HRESULT opti_create1(REFIID riid, void** pp) {
 // a FOR_HWND frame generation swap chain desc (type 0x30006) gets a stand-in swap chain, its vtable read-only data here,
 // whose Present presents the real one on the calling thread (FSR 3 generating nothing, as in menus), then twice from
 // another thread (a rendered and a generated frame).
+// As FidelityFX's: the game renders into replacement buffers on its queue; each present waits for that queue, then copies
+// the buffer into the real swap chain's on frame generation's present queue.
 struct FgChain {
     const void* const* vt;
     IDXGISwapChain1* real;
+    ID3D12CommandQueue *game, *present;
+    ID3D12Fence* fence;
+    UINT64 value;
+    ID3D12Resource* rep[2];
+    UINT idx;
+    ID3D12CommandAllocator* alloc;
+    ID3D12GraphicsCommandList* list;
+    HANDLE done;
+    bool broken;  // the GPU wasn't seen past the last copy: its allocator is never reset again
 };
-static HRESULT STDMETHODCALLTYPE fg_qi(FgChain*, REFIID, void** pp) { return *pp = nullptr, E_NOINTERFACE; }
+static HRESULT STDMETHODCALLTYPE fg_qi(FgChain* c, REFIID riid, void** pp) {  // as FidelityFX's: an IDXGISwapChain4 itself
+    const IID* mine[] = {&__uuidof(IUnknown), &__uuidof(IDXGIObject), &__uuidof(IDXGIDeviceSubObject), &__uuidof(IDXGISwapChain),
+                         &__uuidof(IDXGISwapChain1), &__uuidof(IDXGISwapChain2), &__uuidof(IDXGISwapChain3), &__uuidof(IDXGISwapChain4)};
+    for (const IID* i : mine)
+        if (riid == *i) return *pp = c, S_OK;
+    return *pp = nullptr, E_NOINTERFACE;
+}
 static ULONG STDMETHODCALLTYPE fg_ref(FgChain*) { return 1; }
 static HRESULT STDMETHODCALLTYPE fg_none(FgChain*) { return E_NOTIMPL; }
+static HRESULT STDMETHODCALLTYPE fg_buffer(FgChain* c, UINT i, REFIID riid, void** pp) { return i < 2 ? c->rep[i]->QueryInterface(riid, pp) : E_INVALIDARG; }
+static UINT STDMETHODCALLTYPE fg_index(FgChain* c) { return c->idx; }
 static HRESULT STDMETHODCALLTYPE fg_present(FgChain* c, UINT sync, UINT flags) {
-    HRESULT hr = c->real->Present(sync, flags);
+    ID3D12Resource* dst = nullptr;
+    IDXGISwapChain3* r3 = nullptr;
+    HRESULT hr = c->broken ? E_FAIL : c->real->QueryInterface(IID_PPV_ARGS(&r3));
+    if (SUCCEEDED(hr)) hr = r3->GetBuffer(r3->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&dst)), r3->Release();
+    if (SUCCEEDED(hr)) hr = c->alloc->Reset();
+    if (SUCCEEDED(hr)) hr = c->list->Reset(c->alloc, nullptr);
+    if (FAILED(hr)) return hr;
+    D3D12_RESOURCE_BARRIER b[2] = {};
+    b[0].Transition = {c->rep[c->idx], D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE};
+    b[1].Transition = {dst, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST};
+    c->list->ResourceBarrier(2, b);
+    c->list->CopyResource(dst, c->rep[c->idx]);
+    for (auto& x : b) std::swap(x.Transition.StateBefore, x.Transition.StateAfter);
+    c->list->ResourceBarrier(2, b);
+    dst->Release();
+    if (FAILED(hr = c->list->Close()) || FAILED(hr = c->game->Signal(c->fence, ++c->value)) || FAILED(hr = c->present->Wait(c->fence, c->value)))
+        return c->broken = true, hr;
+    ID3D12CommandList* l = c->list;
+    c->present->ExecuteCommandLists(1, &l);
+    hr = c->real->Present(sync, flags);
+    if (FAILED(c->present->Signal(c->fence, ++c->value)) || FAILED(c->fence->SetEventOnCompletion(c->value, c->done)) ||
+        WaitForSingleObject(c->done, 5000) != WAIT_OBJECT_0)
+        return c->broken = true, E_FAIL;
+    c->idx ^= 1;
     std::thread([&] { for (int i = 0; i < 2 && SUCCEEDED(hr); ++i) hr = c->real->Present(sync, flags); }).join();
     return hr;
 }
-static const void* const kFgVt[23] = {(const void*)fg_qi, (const void*)fg_ref, (const void*)fg_ref, (const void*)fg_none, (const void*)fg_none,
-    (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_present, (const void*)fg_none, (const void*)fg_none,
-    (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_none,
-    (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_none, (const void*)fg_none};
+// this module's data, as FidelityFX's vtable is; every other method forwarded to the real swap chain (private data too, as
+// FidelityFX's does)
+static const void* g_fg_vt[40];
+static const void* const* fg_vt() {
+    static bool made = [] {
+        void** t = forward_vtable();
+        for (int i = 0; i < 40; ++i) g_fg_vt[i] = t[i];
+        g_fg_vt[0] = (const void*)fg_qi, g_fg_vt[1] = g_fg_vt[2] = (const void*)fg_ref, g_fg_vt[8] = (const void*)fg_present;
+        g_fg_vt[9] = (const void*)fg_buffer, g_fg_vt[36] = (const void*)fg_index;
+        return true;
+    }();
+    return made ? g_fg_vt : nullptr;
+}
 struct FgForHwnd;
 static HRESULT fg_create(IDXGIFactory2* f2, ID3D12CommandQueue* q, FgForHwnd* d, IDXGISwapChain1** pp);
 struct FgForHwnd {
@@ -357,10 +408,20 @@ extern "C" uint32_t fake_ffx_create(void** ctx, FgForHwnd* d, const void*) {  //
     IDXGIFactory2* f2 = nullptr;
     ID3D12CommandQueue* q = nullptr;
     D3D12_COMMAND_QUEUE_DESC qd = {};
-    auto c = new FgChain{kFgVt, nullptr};
+    auto c = new FgChain{fg_vt(), nullptr, d->queue};
     bool ok = SUCCEEDED(d->queue->GetDevice(IID_PPV_ARGS(&dev))) && SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q))) &&
+              SUCCEEDED(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&c->fence))) && ((c->present = q) != nullptr) &&
               (GetEnvironmentVariableW(L"SCSKILLER_SELFTEST_FG_UNNAMED", nullptr, 0) || SUCCEEDED(q->SetName(L"AMD FSR PresentQueue"))) &&
               SUCCEEDED(d->factory->QueryInterface(IID_PPV_ARGS(&f2))) && SUCCEEDED(fg_create(f2, q, d, &c->real));
+    ID3D12Resource* b = nullptr;
+    ok = ok && SUCCEEDED(c->real->GetBuffer(0, IID_PPV_ARGS(&b)));
+    D3D12_HEAP_PROPERTIES hp = {D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC rd = ok ? b->GetDesc() : D3D12_RESOURCE_DESC{};
+    if (b) b->Release();
+    for (auto& r : c->rep) ok = ok && SUCCEEDED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_PRESENT, nullptr, IID_PPV_ARGS(&r)));
+    ok = ok && SUCCEEDED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&c->alloc))) &&
+         SUCCEEDED(dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, c->alloc, nullptr, IID_PPV_ARGS(&c->list))) && SUCCEEDED(c->list->Close()) &&
+         (c->done = CreateEventW(nullptr, FALSE, FALSE, nullptr)) != nullptr;
     if (!ok) return delete c, 1;
     *d->swapchain = (IUnknown*)c;
     *ctx = c;

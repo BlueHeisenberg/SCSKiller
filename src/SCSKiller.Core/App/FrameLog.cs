@@ -156,7 +156,7 @@ public static class FrameLog
             frames.Count, low, hitches, peaks, l.UnixMs,
             PlaySeconds: playSeconds, AvgFps: playSeconds > 0 ? play.Count / playSeconds : 0,
             Creates: session != null ? SessionLog.CreatesOf(session, rayQuery, Math.Min(startup, end), cut) : null,
-            DisplayedFrames: l.Displayed?.Count ?? 0, Displayed: l.Displayed);
+            DisplayedFrames: l.Displayed?.Count ?? 0, Displayed: l.Displayed, D3D11: session?.D3D11 == true);
         if (session != null) Contexts.AddOrUpdate(report, new LaunchContext(session.SwapChain, session.Overlay, session.End != null, session.D3D11, session.FrameGen));
         return report;
     }

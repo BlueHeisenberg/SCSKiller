@@ -17,9 +17,8 @@ static class BeforeAfterUi
 
     /// <summary>The intro (doc 6.5): the steps (folded behind "How it works" once seen), the play time and the sound.
     /// Null = cancelled, or <see cref="Intro.HowItWorks"/>. <paramref name="frames11"/>: the pair puts a frames-only
-    /// d3d11.dll into the game (<see cref="Core.App.ScsKiller.Frames11"/>). <paramref name="countdown"/>: the recorder can draw the
-    /// in-game countdown (<see cref="Core.App.ScsKiller.CountdownDraws"/>).</summary>
-    public static async Task<(int Minutes, bool Sound, bool Overlay)?> IntroAsync(XamlRoot root, string game, Intro mode, bool frames11 = false, bool countdown = true)
+    /// d3d11.dll into the game (<see cref="Core.App.ScsKiller.Frames11"/>). <paramref name="max"/>: Max compile is offered for the after run.</summary>
+    public static async Task<(int Minutes, bool Sound, bool Overlay, bool Max)?> IntroAsync(XamlRoot root, string game, Intro mode, bool frames11 = false, bool max = false)
     {
         var s = App.Core.Settings;
         bool full = mode == Intro.HowItWorks || !s.BeforeAfterIntroSeen;
@@ -42,9 +41,11 @@ static class BeforeAfterUi
         var time = new RadioButtons { Header = "Play time", MaxColumns = 2, Items = { "5 minutes", "10 minutes" }, SelectedIndex = 0 };
         time.SelectionChanged += (_, _) => { minutes = time.SelectedIndex == 1 ? 10 : 5; Steps(); };
         var sound = new CheckBox { Content = "Play a sound when the time is up", IsChecked = s.BeforeAfterSound };
-        var overlay = new CheckBox { Content = "Show the countdown in the game", IsChecked = s.BeforeAfterOverlay, Visibility = countdown ? Visibility.Visible : Visibility.Collapsed };
-        ToolTipService.SetToolTip(overlay, "A small panel at the top right of the game: the time left, your frame times and, on DirectX 12, each shader compilation stutter. SCSKiller counts down here either way. It isn't shown with FSR or XeSS frame generation on.");
-        var checks = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom, Children = { sound, overlay } };
+        var overlay = new CheckBox { Content = "Show the countdown in the game", IsChecked = s.BeforeAfterOverlay };
+        ToolTipService.SetToolTip(overlay, "A small panel at the top right of the game: the time left, your frame times and, on DirectX 12 and Vulkan, each shader compilation stutter. SCSKiller counts down here either way. It isn't shown with FSR or XeSS frame generation on.");
+        var maxRun = new CheckBox { Content = "Max compile for the after run", IsChecked = s.BeforeAfterMax, Visibility = max ? Visibility.Visible : Visibility.Collapsed };
+        ToolTipService.SetToolTip(maxRun, DetailVm.MaxCompileWhy);
+        var checks = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom, Children = { sound, overlay, maxRun } };
         var choices = new Grid { ColumnSpacing = 24, ColumnDefinitions = { new(), new() { Width = GridLength.Auto } }, Children = { time, checks } };
         Grid.SetColumn(checks, 1);
         if (mode == Intro.HowItWorks) choices.Visibility = Visibility.Collapsed;
@@ -92,8 +93,8 @@ static class BeforeAfterUi
         var result = await App.ShowAsync(dialog);
         Showing = null;
         if (mode == Intro.HowItWorks || result != ContentDialogResult.Primary) return null;
-        App.Core.Settings = App.Core.Settings with { BeforeAfterIntroSeen = true, BeforeAfterSound = sound.IsChecked == true, BeforeAfterOverlay = countdown ? overlay.IsChecked == true : s.BeforeAfterOverlay };
-        return (minutes, sound.IsChecked == true, countdown && overlay.IsChecked == true);
+        App.Core.Settings = App.Core.Settings with { BeforeAfterIntroSeen = true, BeforeAfterSound = sound.IsChecked == true, BeforeAfterOverlay = overlay.IsChecked == true, BeforeAfterMax = max ? maxRun.IsChecked == true : s.BeforeAfterMax };
+        return (minutes, sound.IsChecked == true, overlay.IsChecked == true, max && maxRun.IsChecked == true);
     }
 
     /// <summary>The intro, then the before run: the caches cleared (off the UI thread, it deletes files) and the game
@@ -102,13 +103,14 @@ static class BeforeAfterUi
     {
         var g = Game(id);
         bool frames11 = Core.App.ScsKiller.Frames11(g.Engine, App.Core.Vendor.Caps);
-        if (await IntroAsync(root, g.Game.Name, over ? Intro.StartOver : Intro.Start, frames11, Core.App.ScsKiller.CountdownDraws(g)) is not { } choice) return null;
+        bool max = Core.App.ScsKiller.MaxCompileAdds(App.Core.Vendor.Caps, g.Engine);
+        if (await IntroAsync(root, g.Game.Name, over ? Intro.StartOver : Intro.Start, frames11, max) is not { } choice) return null;
         try
         {
             await Task.Run(() =>
             {
                 if (over) App.Core.EndBeforeAfter(id, compile: false);
-                App.Core.StartBeforeAfter(id, choice.Minutes, choice.Overlay);
+                App.Core.StartBeforeAfter(id, choice.Minutes, choice.Overlay, choice.Max);
             });
         }
         catch (Exception e) { return Describe(e); }
@@ -177,27 +179,15 @@ static class BeforeAfterUi
 
     public static string Describe(Exception e) => !string.IsNullOrWhiteSpace(e.Message) ? e.Message : e.GetType().Name;
 
-    // the stage last seen per game, and whether its run's sound played
-    static readonly Dictionary<string, (BeforeAfterStage? Stage, bool Sounded)> seen = [];
-
     public static void Watch()
     {
-        foreach (var g in App.Core.Games) seen[g.Game.Id] = (g.BeforeAfter?.Stage, false);
-        App.Core.GameChanged += g => App.Main.DispatcherQueue.TryEnqueue(() => OnChanged(g));
-    }
-
-    static void OnChanged(GameState g)
-    {
-        var (id, now) = (g.Game.Id, g.BeforeAfter);
-        bool had = seen.TryGetValue(id, out var was);
-        bool sounded = had && was.Stage == now?.Stage && was.Sounded;
-        if (now is { Stage: BeforeAfterStage.BeforePlaying or BeforeAfterStage.AfterPlaying } p && !sounded && p.PlayedSeconds >= p.Minutes * 60)
+        var watch = new Core.App.BeforeAfterWatch(App.Core.Games);
+        App.Core.GameChanged += g => App.Main.DispatcherQueue.TryEnqueue(() =>
         {
-            sounded = true;
-            if (App.Core.Settings.BeforeAfterSound) MessageBeep(MB_ICONASTERISK);   // the system's Asterisk sound, async, plays over a game
-        }
-        seen[id] = (now?.Stage, sounded);
-        if (had && was.Stage is not (null or BeforeAfterStage.Done) && now?.Stage == BeforeAfterStage.Done) _ = ReportWindow.OpenAsync(id);
+            var (sound, report) = watch.Changed(g);
+            if (sound && App.Core.Settings.BeforeAfterSound) MessageBeep(MB_ICONASTERISK);   // the system's Asterisk sound, async, plays over a game
+            if (report) _ = ReportWindow.OpenAsync(g.Game.Id);
+        });
     }
 
     const uint MB_ICONASTERISK = 0x40;

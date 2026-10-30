@@ -1,5 +1,4 @@
 using System.Text.RegularExpressions;
-using Microsoft.Win32;
 using SCSKiller.Core.Games;
 
 namespace SCSKiller.Core.Unreal;
@@ -263,7 +262,7 @@ public static class UnrealRhi
         foreach (var rel in EngineIni.Select(p => p.Replace("{P}", project)).Where(p => !configs.Keys.Any(k => k.Equals(p, StringComparison.OrdinalIgnoreCase))))
             try
             {
-                var file = Path.Combine(root, rel);
+                var file = GameFiles.Find(root, rel);
                 if (File.Exists(file)) (all ??= new(configs, StringComparer.OrdinalIgnoreCase))[rel] = File.ReadAllText(file);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { }
@@ -338,7 +337,7 @@ public static class UnrealRhi
         var byProject = def switch
         {
             "DefaultGraphicsRHI_DX11" => "D3D11", "DefaultGraphicsRHI_DX12" => "D3D12", "DefaultGraphicsRHI_Vulkan" => "Vulkan",
-            _ => engineMajor >= 5 ? "D3D12" : "D3D11",
+            _ => engineMajor >= 5 || project.Equals("OakGame", StringComparison.OrdinalIgnoreCase) ? "D3D12" : "D3D11",   // Borderlands 3 ships with DX12 on
         };
         var why = def != null ? $"DefaultGraphicsRHI={def}" + (def == "DefaultGraphicsRHI_Default" ? $" (UE{engineMajor} default)" : "") : $"no DefaultGraphicsRHI (UE{engineMajor} default)";
 
@@ -471,11 +470,14 @@ public static class UnrealRhi
     static string ExeStem(Game game) => Regex.Replace(Path.GetFileNameWithoutExtension(game.ExePath), @"-Win(64|GDK)-Shipping$", "", RegexOptions.IgnoreCase);
 
     /// <summary>The Steam launch options the user set for the game ("" if none, or not a Steam game): the newest
-    /// userdata\*\config\localconfig.vdf, the app's block.</summary>
-    public static string LaunchOptions(Game game)
+    /// userdata\*\config\localconfig.vdf, the app's block; a non-Steam game's from Steam's shortcuts (<see cref="SteamShortcuts"/>).</summary>
+    public static string LaunchOptions(Game game) => LaunchOptions(game, SteamRoot);
+
+    internal static string LaunchOptions(Game game, string steamRoot)
     {
+        if (SteamShortcuts.AppId(game.Id) is { } shortcut) return SteamShortcuts.Find(steamRoot, shortcut)?.LaunchOptions ?? "";
         if (SteamSource.AppId(game.Id) is not { } app) return "";
-        var userdata = Path.Combine(SteamRoot, "userdata");
+        var userdata = Path.Combine(steamRoot, "userdata");
         var vdf = Directory.Exists(userdata)
             ? Directory.EnumerateDirectories(userdata).Select(u => new FileInfo(Path.Combine(u, "config", "localconfig.vdf"))).Where(f => f.Exists).MaxBy(f => f.LastWriteTimeUtc)
             : null;
@@ -519,7 +521,7 @@ public static class UnrealRhi
         var install = Path.GetFullPath(game.InstallDir).TrimEnd('\\', '/');
         bool StartsTheGame(string exe)
         {
-            var p = Path.GetFullPath(Path.Combine(install, exe));
+            var p = Path.GetFullPath(GameFiles.Under(install, exe));
             return p.Equals(Path.GetFullPath(game.ExePath), StringComparison.OrdinalIgnoreCase)
                 || Path.GetDirectoryName(p)!.Equals(install, StringComparison.OrdinalIgnoreCase) && Path.GetFileNameWithoutExtension(p).Equals(ExeStem(game), StringComparison.OrdinalIgnoreCase);
         }
@@ -533,5 +535,5 @@ public static class UnrealRhi
         return (entries.Select(Text).ToList(), def);
     }
 
-    static string SteamRoot => Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) as string ?? @"C:\Program Files (x86)\Steam";
+    static string SteamRoot => SteamSource.Root();
 }

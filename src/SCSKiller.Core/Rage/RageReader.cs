@@ -3,8 +3,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
-using SCSKiller.Core.Games;
 using SCSKiller.Core.Carved;
+using SCSKiller.Core.Games;
 using SCSKiller.Core.Unreal;
 
 namespace SCSKiller.Core.Rage;
@@ -66,7 +66,7 @@ public sealed class RageReader : IEngineReader
         {
             using var fs = Cursor.Open(f.FullName);
             if (fs == null) continue;
-            var rel = Path.GetRelativePath(game.InstallDir, f.FullName);
+            var rel = GameFiles.Rel(game.InstallDir, f.FullName, f.DirectoryName!, UpdateDir);
             var found = false;
             Scan(fs, long.MaxValue, ref read, at =>
             {
@@ -167,8 +167,8 @@ public sealed class RageReader : IEngineReader
     /// <summary>The archives of the update folder (not its DLC packs, which hold no library).</summary>
     static IEnumerable<FileInfo> Archives(Game game)
     {
-        var dir = new DirectoryInfo(Path.Combine(game.InstallDir, UpdateDir));
-        return dir.Exists ? dir.EnumerateFiles("*.rpf", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 }) : [];
+        var dir = new DirectoryInfo(GameFiles.Find(game.InstallDir, UpdateDir));
+        return dir.Exists ? GameFiles.EnumerateFiles(dir, "*.rpf", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 }) : [];
     }
 
     /// <summary>Positional reads through a window (no FileStream: its position check fails once the handle is read directly).</summary>

@@ -1,0 +1,163 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="using:SCSKiller.Ui"
+        xmlns:c="using:SCSKiller.Ui.Controls"
+        x:Class="SCSKiller.Ui.ReportWindow"
+        Icon="/Assets/app.ico" Width="1164" Height="900"
+        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+        Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+    <Panel x:Name="Root">
+        <ScrollViewer x:Name="Scroller">
+            <StackPanel x:Name="Body" Margin="28,20,28,28" Spacing="16" MaxWidth="1240">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                    <TextBlock x:Name="Heading" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <Button Click="OnSave" AutomationProperties.Name="Save image">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Save}" FontSize="14" VerticalAlignment="Center" />
+                                <TextBlock Text="Save image" />
+                            </StackPanel>
+                        </Button>
+                        <Button Click="OnCopy" AutomationProperties.Name="Copy image">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Copy}" FontSize="14" VerticalAlignment="Center" />
+                                <TextBlock Text="Copy image" />
+                            </StackPanel>
+                        </Button>
+                        <Button Classes="accent" AutomationProperties.Name="Share">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Share}" FontSize="14" VerticalAlignment="Center" />
+                                <TextBlock Text="Share" />
+                                <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.ChevronDown}" FontSize="8" VerticalAlignment="Center" Margin="0,0,-3,0" />
+                            </StackPanel>
+                            <Button.Flyout>
+                                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                    <MenuItem Header="Post on X" Click="OnX" />
+                                    <MenuItem Header="Post on Reddit" Click="OnReddit" />
+                                    <MenuItem Header="Copy for Discord" Click="OnDiscord" />
+                                    <MenuItem Header="Copy text" Click="OnCopyText" />
+                                </MenuFlyout>
+                            </Button.Flyout>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+
+                <c:InfoBar x:Name="Status" IsVisible="False" CloseButtonClick="OnStatusClose" />
+
+                <!-- the share card: exported as the image (1200 × 675), dark whatever the app's theme -->
+                <Viewbox StretchDirection="DownOnly" HorizontalAlignment="Left">
+                    <ThemeVariantScope RequestedThemeVariant="Dark">
+                        <Border x:Name="Card" Width="1200" Height="675" Padding="48,34,48,30"
+                                Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                                TextElement.Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+                            <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="14">
+                                <Grid>
+                                    <StackPanel Orientation="Horizontal" Spacing="16">
+                                        <Panel Width="56" Height="56" VerticalAlignment="Center">
+                                            <Border x:Name="CardTile" CornerRadius="10" IsVisible="False">
+                                                <TextBlock x:Name="CardInitials" FontSize="20" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </Border>
+                                            <Image x:Name="CardIcon" Width="56" Height="56" />
+                                        </Panel>
+                                        <StackPanel Spacing="2" VerticalAlignment="Center">
+                                            <TextBlock x:Name="CardGame" FontSize="30" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="808" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="CardSub" FontSize="16" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Spacing="2">
+                                        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                                            <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Bolt}" FontSize="22" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Text="SCSKiller" FontSize="22" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                        <TextBlock x:Name="CardVersions" Classes="Caption" FontSize="14" HorizontalAlignment="Right" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <!-- the headline tiles: their labels and values are BeforeAfter.Report's -->
+                                <Grid Grid.Row="1" ColumnDefinitions="*,*,*" ColumnSpacing="16">
+                                    <Border Classes="Card" Padding="20,12">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock x:Name="LabelStutters" Classes="Caption" LetterSpacing="0.72" />
+                                            <TextBlock x:Name="TileStutters" FontSize="34" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Grid.Column="1" Classes="Card" Padding="20,12">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock x:Name="LabelReady" Classes="Caption" LetterSpacing="0.72" />
+                                            <TextBlock x:Name="TileReady" FontSize="34" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Grid.Column="2" Classes="Card" Padding="20,12">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock x:Name="LabelWorst" Classes="Caption" LetterSpacing="0.72" />
+                                            <TextBlock x:Name="TileWorst" FontSize="34" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <!-- small multiples: each run its own play range, one seconds-per-pixel and one y scale -->
+                                <StackPanel Grid.Row="2" Spacing="6" VerticalAlignment="Center">
+                                    <TextBlock Text="Before" FontWeight="SemiBold" />
+                                    <StackPanel HorizontalAlignment="Left" Spacing="2">
+                                        <c:FrameGraph x:Name="BeforeGraph" Height="104" />
+                                        <Grid x:Name="BeforeAxis">
+                                            <TextBlock Text="0:00" Classes="Caption" />
+                                            <TextBlock x:Name="BeforeEnd" Classes="Caption" HorizontalAlignment="Right" />
+                                        </Grid>
+                                    </StackPanel>
+                                    <TextBlock Text="After" FontWeight="SemiBold" Margin="0,4,0,0" />
+                                    <StackPanel HorizontalAlignment="Left" Spacing="2">
+                                        <c:FrameGraph x:Name="AfterGraph" Height="104" />
+                                        <Grid x:Name="AfterAxis">
+                                            <TextBlock Text="0:00" Classes="Caption" />
+                                            <TextBlock x:Name="AfterEnd" Classes="Caption" HorizontalAlignment="Right" />
+                                        </Grid>
+                                    </StackPanel>
+                                </StackPanel>
+
+                                <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="16">
+                                    <TextBlock x:Name="CardFooter" Classes="Caption" FontSize="14" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                                        <StackPanel x:Name="LegendShader" Orientation="Horizontal" Spacing="5">
+                                            <Ellipse Width="8" Height="8" Fill="{DynamicResource WarnBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Text="shader compilation stutter" Classes="Caption" FontSize="14" />
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                            <Ellipse Width="8" Height="8" Fill="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                            <TextBlock x:Name="LegendOther" Text="other hitch" Classes="Caption" FontSize="14" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" Text="scskiller.com" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </ThemeVariantScope>
+                </Viewbox>
+
+                <CheckBox x:Name="ShowGpu" Content="Show my GPU on the image" Click="OnShowGpu" />
+
+                <Border Classes="Card" Padding="20,16">
+                    <StackPanel Spacing="12">
+                        <Grid x:Name="Details" ColumnSpacing="24" RowSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*" />
+                                <ColumnDefinition Width="Auto" MinWidth="110" />
+                                <ColumnDefinition Width="Auto" MinWidth="110" />
+                                <ColumnDefinition Width="3*" />
+                            </Grid.ColumnDefinitions>
+                        </Grid>
+                        <Rectangle Height="1" Fill="{DynamicResource CardStrokeColorDefaultBrush}" />
+                        <StackPanel x:Name="Notes" Spacing="6" />
+                    </StackPanel>
+                </Border>
+
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                    <Button x:Name="RecordAgain" Content="Record the after run again" Click="OnRecordAgain" />
+                    <Button Content="Start over" Click="OnStartOver" />
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+
+        <c:DialogLayer x:Name="DialogLayer" />
+    </Panel>
+</Window>

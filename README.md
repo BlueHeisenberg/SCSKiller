@@ -110,10 +110,9 @@ delete the folder, so the recorder leaves the game folders.
 <!-- UNSIGNED NOTICE: delete this block once releases are signed. -->
 > [!IMPORTANT]
 > **Releases aren't code-signed yet**, so the first run will probably show SmartScreen's "Windows protected your PC".
-> Click **More info**, then **Run anyway**. Updates never show it. Signing through the SignPath Foundation is in
-> progress. To check a download, compare its SHA-256 with the one in the release notes (PowerShell:
-> `Get-FileHash <file>`). Smart App Control (Windows 11) blocks unsigned apps outright: if it's on, wait for a signed
-> release.
+> Click **More info**, then **Run anyway**. Updates never show it. To check a download, compare its SHA-256 with the
+> one in the release notes (PowerShell: `Get-FileHash <file>`). Smart App Control (Windows 11) blocks unsigned apps
+> outright, with no Run anyway.
 <!-- END UNSIGNED NOTICE -->
 
 ## How to use it

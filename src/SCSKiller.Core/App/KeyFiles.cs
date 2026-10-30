@@ -7,7 +7,7 @@ namespace SCSKiller.Core.App;
 /// the same: its size, write time, change time and file id, and a hash of its first and last 4 KB. Every writer SCSKiller owns also calls
 /// <see cref="Forget"/>. At most <see cref="MaxKeys"/> keys stay cached, the least recently used sets going first; a
 /// larger set is read each time.</summary>
-public static class KeyFiles
+public static partial class KeyFiles
 {
     /// <summary>About 30 MB of key strings (126 B a key). Settable for tests: the bound changes what is read again, never a result.</summary>
     public static long MaxKeys { get; internal set; } = 250_000;
@@ -130,31 +130,12 @@ public static class KeyFiles
         }
     }
 
-    /// <summary>The file's NTFS change time, volume serial and file id, read without its data: any write or replacement
+    /// <summary>The file's change time (NTFS's, or the inode's), volume or device and file id, read without its data: any write or replacement
     /// moves the change time, which tools that set file times (an archive's extraction) can't set back. "" when the file
     /// can't be opened; a part the file system doesn't give is left empty.</summary>
-    public static string Identity(string path)
-    {
-        using var h = CreateFileW(path, 0x80 /* FILE_READ_ATTRIBUTES: no sharing conflict */, 7, 0, 3 /* OPEN_EXISTING */, 0, 0);
-        return h.IsInvalid ? "" : Identity(h);
-    }
+    public static partial string Identity(string path);
 
-    static string Identity(Microsoft.Win32.SafeHandles.SafeFileHandle h)
-    {
-        var changed = GetFileInformationByHandleEx(h, 0 /* FileBasicInfo */, out BasicInfo b, Marshal.SizeOf<BasicInfo>()) ? b.Changed.ToString() : "";
-        var id = GetFileInformationByHandleEx(h, 18 /* FileIdInfo */, out IdInfo i, Marshal.SizeOf<IdInfo>()) ? $"{i.Volume:x}-{i.High:x16}{i.Low:x16}" : "";
-        return $"{changed}/{id}";
-    }
-
-    [StructLayout(LayoutKind.Sequential)] struct BasicInfo { public long Created, Accessed, Written, Changed; public uint Attributes; }
-    [StructLayout(LayoutKind.Sequential)] struct IdInfo { public ulong Volume, Low, High; }
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(string name, uint access, uint share, nint security, uint disposition, uint flags, nint template);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool GetFileInformationByHandleEx(Microsoft.Win32.SafeHandles.SafeFileHandle h, int infoClass, out BasicInfo info, int size);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool GetFileInformationByHandleEx(Microsoft.Win32.SafeHandles.SafeFileHandle h, int infoClass, out IdInfo info, int size);
+    private static partial string Identity(Microsoft.Win32.SafeHandles.SafeFileHandle h);
 
     static readonly HashSet<string> Damaged = [];
 

@@ -98,12 +98,16 @@ public sealed class News
         trust.FetchAsync(Name, TryParse, cacheFile, channels, token, routes, budget);
 }
 
-/// <summary>news-seen.json, local only: the X.Y.Z whose What's new was shown, the news items read and dismissed.</summary>
-public sealed record NewsSeen(string? WhatsNew = null, string[]? Read = null, string[]? Dismissed = null);
+/// <summary>news-seen.json, local only: the X.Y.Z whose What's new was shown, the news items read and dismissed, and those
+/// already shown as a notification (null: none yet, so the backlog isn't).</summary>
+public sealed record NewsSeen(string? WhatsNew = null, string[]? Read = null, string[]? Dismissed = null, string[]? Toasted = null);
 
 public static class NewsState
 {
     const int Keep = 200;
+
+    /// <summary>The --screenshots notifications' item: news.json may have none.</summary>
+    public static NewsItem Sample { get; } = new("sample", "2026-10-22", "News from SCSKiller", "The first line of a news item shows here");
 
     /// <summary>The items not dismissed, and the ids of those unread.</summary>
     public static (IReadOnlyList<NewsItem> Shown, IReadOnlySet<string> Unread) Of(AppStore store, IEnumerable<NewsItem> items)
@@ -119,6 +123,29 @@ public static class NewsState
 
     public static void Dismiss(AppStore store, string id, IReadOnlyCollection<string> feed) =>
         Update(store, s => s with { Dismissed = Add(s.Dismissed, [id], feed), Read = Add(s.Read, [id], feed) });
+
+    const int MaxToasts = 3, BacklogDays = 14;
+
+    /// <summary>The notifications now due for <paramref name="shown"/> (<see cref="Of"/>), newest first, marked as shown in the
+    /// same update: each item once ever. The first time, the unread ones older than <see cref="BacklogDays"/> days are marked
+    /// without showing. At most <see cref="MaxToasts"/> items, <c>More</c> counts the rest, which one line covers.</summary>
+    public static (IReadOnlyList<NewsItem> Show, int More) ToastDue(AppStore store, IEnumerable<NewsItem> shown, IReadOnlyCollection<string> feed, DateOnly today)
+    {
+        lock (Lock)
+        {
+            var seen = store.LoadNewsSeen();
+            var due = shown.Where(i => seen.Read?.Contains(i.Id) != true && seen.Toasted?.Contains(i.Id) != true).ToList();
+            var old = seen.Toasted == null ? due.Where(i => News.Day(i.Date) < today.AddDays(-BacklogDays)).ToList() : [];
+            var fresh = due.Except(old).ToList();
+            if (due.Count > 0) store.SaveNewsSeen(seen with { Toasted = Add(seen.Toasted, due.Select(i => i.Id), feed) });
+            return (fresh.Take(MaxToasts).ToList(), Math.Max(0, fresh.Count - MaxToasts));
+        }
+    }
+
+    /// <summary>A notification's second line: the body up to its first newline.</summary>
+    public static string FirstLine(string body) => body.Split('\n', 2)[0].Trim();
+
+    public static string MoreLine(int n) => $"{n} more news item{(n == 1 ? "" : "s")} in SCSKiller";
 
     static readonly object Lock = new();
 

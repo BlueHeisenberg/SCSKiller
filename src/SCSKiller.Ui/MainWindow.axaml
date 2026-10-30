@@ -1,0 +1,135 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="using:SCSKiller.Ui"
+        xmlns:c="using:SCSKiller.Ui.Controls"
+        x:Class="SCSKiller.Ui.MainWindow"
+        Title="SCSKiller" Icon="/Assets/app.ico"
+        Width="1264" Height="872" MinWidth="1056" MinHeight="632"
+        ExtendClientAreaToDecorationsHint="True" ExtendClientAreaTitleBarHeightHint="48"
+        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+        Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+    <Window.Resources>
+        <!-- Windows' caption button size, as beside WinUI's title bar -->
+        <x:Double x:Key="CaptionButtonWidth">46</x:Double>
+        <x:Double x:Key="CaptionButtonHeight">32</x:Double>
+    </Window.Resources>
+    <Window.Styles>
+        <!-- the title row draws the title, the caption buttons sit at the top as Windows' do. :has-titlebar makes these
+             outrank the decorations' template. -->
+        <Style Selector="WindowDrawnDecorations:has-titlebar /template/ Panel#PART_TitleTextPanel">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <Style Selector="WindowDrawnDecorations:has-titlebar /template/ Button">
+            <Setter Property="VerticalAlignment" Value="Top" />
+        </Style>
+        <Style Selector="WindowDrawnDecorations:has-titlebar /template/ StackPanel#PART_OverlayPanel">
+            <Setter Property="Spacing" Value="0" />
+        </Style>
+        <!-- Windows has no full screen caption button -->
+        <Style Selector="WindowDrawnDecorations:has-titlebar /template/ Button#PART_FullScreenButton">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+    </Window.Styles>
+    <Panel x:Name="Root">
+        <Grid RowDefinitions="48,*">
+            <!-- WinUI's title bar, in the client area: a drag area, its buttons take their clicks. macOS's window buttons sit left. -->
+            <Grid Background="Transparent" WindowDecorationProperties.ElementRole="TitleBar" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto"
+                  Margin="{OnPlatform '0', macOS='72,0,0,0'}">
+                <Button Classes="Subtle" Width="40" Height="36" Margin="4,0,0,0" Padding="0" Click="OnPaneToggle" AutomationProperties.Name="Toggle Navigation"
+                        HorizontalContentAlignment="Center" VerticalContentAlignment="Center" WindowDecorationProperties.ElementRole="User">
+                    <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Menu}" />
+                </Button>
+                <TextBlock Grid.Column="1" Classes="Icon" Text="{x:Static ui:Glyphs.Bolt}" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}"
+                           Margin="6,0,0,0" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="2" Text="SCSKiller" FontSize="12" FontWeight="SemiBold" Margin="16,0,0,0" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="3" Text="Shader Compilation Stutter Killer" Classes="Caption" Margin="8,0,0,0" VerticalAlignment="Center" />
+                <!-- RightHeader: left of the caption buttons (ShowCaptionInset) -->
+                <StackPanel x:Name="RightHeader" Grid.Column="5" Orientation="Horizontal" Spacing="4" WindowDecorationProperties.ElementRole="User">
+                <!-- a downloaded update (Updater): quiet, never a dialog -->
+                <Button x:Name="UpdateButton" IsVisible="False" Click="OnRestartToUpdate" Padding="10,3" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Restart}" FontSize="13" VerticalAlignment="Center" />
+                        <TextBlock x:Name="UpdateText" Text="Restart to update" FontSize="13" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="BellButton" Classes="Subtle" Width="46" Padding="0" VerticalAlignment="Stretch"
+                        HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                        ToolTip.Tip="Notifications" AutomationProperties.Name="Notifications">
+                    <!-- sized to hold the badge, which hangs off the glyph's top-right corner -->
+                    <Panel Width="32" Height="32">
+                        <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Bell}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Border x:Name="BellBadge" IsVisible="False" HorizontalAlignment="Right" VerticalAlignment="Top" MinWidth="16" Height="16"
+                                CornerRadius="8" Padding="4,0" Background="{DynamicResource AccentFillColorDefaultBrush}">
+                            <TextBlock x:Name="BellCount" FontSize="11" Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </Panel>
+                    <Button.Flyout>
+                        <Flyout Placement="BottomEdgeAlignedRight" Opening="OnBellOpening" />
+                    </Button.Flyout>
+                </Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- the pane opens only once the pages have the room they have at the minimum window width with it compact -->
+            <SplitView x:Name="Nav" Grid.Row="1" OpenPaneLength="248" CompactPaneLength="48" DisplayMode="CompactInline" IsPaneOpen="True"
+                       PaneBackground="Transparent">
+                <SplitView.Pane>
+                    <Grid RowDefinitions="*,Auto,Auto" Margin="0,4,0,0">
+                        <StackPanel>
+                            <Button x:Name="LibraryItem" Classes="Nav" AutomationProperties.Name="Library" Click="OnNavClick">
+                                <Panel>
+                                    <Border Classes="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Background="{DynamicResource AccentFillColorDefaultBrush}" />
+                                    <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Library}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                    <TextBlock Text="Library" Margin="44,0,0,0" VerticalAlignment="Center" />
+                                </Panel>
+                            </Button>
+                            <Button x:Name="QueueItem" Classes="Nav" AutomationProperties.Name="Compile queue" Click="OnNavClick">
+                                <Panel>
+                                    <Border Classes="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Background="{DynamicResource AccentFillColorDefaultBrush}" />
+                                    <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.List}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                    <TextBlock Text="Compile queue" Margin="44,0,0,0" VerticalAlignment="Center" />
+                                </Panel>
+                            </Button>
+                            <Button x:Name="CacheItem" Classes="Nav" AutomationProperties.Name="Cache" Click="OnNavClick">
+                                <Panel>
+                                    <Border Classes="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Background="{DynamicResource AccentFillColorDefaultBrush}" />
+                                    <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Drive}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                    <TextBlock Text="Cache" Margin="44,0,0,0" VerticalAlignment="Center" />
+                                </Panel>
+                            </Button>
+                            <Button x:Name="SettingsItem" Classes="Nav" AutomationProperties.Name="Settings" Click="OnNavClick">
+                                <Panel>
+                                    <Border Classes="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Background="{DynamicResource AccentFillColorDefaultBrush}" />
+                                    <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Settings}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                    <TextBlock Text="Settings" Margin="44,0,0,0" VerticalAlignment="Center" />
+                                </Panel>
+                            </Button>
+                        </StackPanel>
+                        <Border Grid.Row="1" Classes="Card" Margin="4,0,4,4" Padding="12,8" IsVisible="{Binding #Nav.IsPaneOpen}">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="GPU" Classes="Caption" />
+                                <TextBlock x:Name="GpuName" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock x:Name="GpuDriver" Classes="Caption" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                        <Button x:Name="AboutItem" Grid.Row="2" Classes="Nav" AutomationProperties.Name="About" Margin="4,2,4,6" Click="OnNavClick">
+                            <Panel>
+                                <Border Classes="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Background="{DynamicResource AccentFillColorDefaultBrush}" />
+                                <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Info}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                <TextBlock Text="About" Margin="44,0,0,0" VerticalAlignment="Center" />
+                            </Panel>
+                        </Button>
+                    </Grid>
+                </SplitView.Pane>
+                <Border Background="{DynamicResource LayerFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1,1,0,0" CornerRadius="8,0,0,0" ClipToBounds="True">
+                    <ContentControl x:Name="ContentFrame" />
+                </Border>
+            </SplitView>
+        </Grid>
+
+        <!-- a ContentDialog over the window, one at a time -->
+        <c:DialogLayer x:Name="DialogLayer" />
+    </Panel>
+</Window>

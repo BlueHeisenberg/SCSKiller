@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
@@ -10,17 +11,22 @@ public sealed class GaijinSource : IGameSource
 {
     public Store Store => Store.Other;
 
-    public IReadOnlyList<Game> Discover()
+    public IReadOnlyList<Game> Discover() => OperatingSystem.IsWindows() ? Installed() : [];
+
+    [SupportedOSPlatform("windows")]
+    static List<Game> Installed()
     {
         var games = new List<Game>();
         using var root = Registry.CurrentUser.OpenSubKey(@"Software\Gaijin");
         if (root == null) return games;
         foreach (var project in root.GetSubKeyNames())
-        {
-            using var key = root.OpenSubKey(project);
-            if (key?.GetValue("InstallDir") is not string install || !Directory.Exists(install) || Exe(install) is not { } exe) continue;
-            games.Add(new Game($"gaijin:{project.ToLowerInvariant()}", Regex.Replace(project, "(?<=[a-z])(?=[A-Z])", " "), Store.Other, install, exe));
-        }
+            try
+            {
+                using var key = root.OpenSubKey(project);
+                if (key?.GetValue("InstallDir") is not string install || !Directory.Exists(install) || Exe(install) is not { } exe) continue;
+                games.Add(new Game($"gaijin:{project.ToLowerInvariant()}", Regex.Replace(project, "(?<=[a-z])(?=[A-Z])", " "), Store.Other, install, exe));
+            }
+            catch (Exception e) when (e is not OperationCanceledException) { GameFiles.Skip("Gaijin", $"gaijin:{project}", e); }
         return games;
     }
 
@@ -33,7 +39,7 @@ public sealed class GaijinSource : IGameSource
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
         var rel = lines.Select(l => l.Split('=', 2)).FirstOrDefault(p => p.Length == 2 && p[0].Trim().Equals("64BitExe", StringComparison.OrdinalIgnoreCase))?[1].Trim();
         if (string.IsNullOrEmpty(rel) || Path.IsPathRooted(rel)) return null;
-        var exe = Path.GetFullPath(Path.Combine(install, rel));
+        var exe = Path.GetFullPath(GameFiles.Under(install, rel));
         return GameFiles.Inside(install, exe) && File.Exists(exe) ? exe : null;
     }
 }

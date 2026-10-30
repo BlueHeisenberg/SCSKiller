@@ -18,7 +18,8 @@ public sealed class EpicSource(string? manifestsDir = null, string? launcherDir 
         var games = new List<Game>();
         var installs = Installs(launcherDir ?? (manifestsDir == null ? DefaultLauncherDir : null));
         foreach (var i in installs)
-            if (i.Complete && GameFiles.FindExe(i.Dir, i.Exe) is { } exe) games.Add(new Game($"epic:{i.App}", i.Title, Store.Epic, i.Dir, exe, i.Version));
+            try { if (i.Complete && GameFiles.FindExe(i.Dir, i.Exe) is { } exe) games.Add(new Game($"epic:{i.App}", i.Title, Store.Epic, i.Dir, exe, i.Version)); }
+            catch (Exception e) when (e is not OperationCanceledException) { GameFiles.Skip("Epic", $"epic:{i.App}", e); }
         var current = installs.Select(i => i.App).ToHashSet();   // the launcher leaves the classic one's manifests behind
         var dir = manifestsDir ?? DefaultManifestsDir;
         if (Directory.Exists(dir))
@@ -36,6 +37,7 @@ public sealed class EpicSource(string? manifestsDir = null, string? launcherDir 
                     games.Add(new Game($"epic:{app}", S("DisplayName") ?? app, Store.Epic, install, exe, S("AppVersionString")));
                 }
                 catch (JsonException) { }   // half-written manifest while the launcher installs
+                catch (Exception e) when (e is not OperationCanceledException) { GameFiles.Skip("Epic", item, e); }
             }
         return games.DistinctBy(g => g.Id).ToList();
     }

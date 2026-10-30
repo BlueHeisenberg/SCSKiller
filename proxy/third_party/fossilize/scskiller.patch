@@ -1,0 +1,1177 @@
+--- a/cli/fossilize_replay.cpp
++++ b/cli/fossilize_replay.cpp
+@@ -63,6 +63,53 @@
+ using namespace Fossilize;
+ using namespace std;
+ 
++// SCSKiller (fossilize_replay_windows.hpp, fossilize_replay_linux.hpp): a stop that never kills a process, and the list
++// of what was created
++static bool scsk_stopped();
++static void scsk_created(ResourceTag tag, Hash hash);
++static void scsk_failed(ResourceTag tag, Hash hash, VkResult result);
++static void scsk_unparsed(ResourceTag tag, Hash hash);
++static void scsk_invalid(ResourceTag tag, Hash hash);
++static void scsk_unsupported(ResourceTag tag, Hash hash);
++#ifdef SCSK_TEST_HOOKS
++static void scsk_test_fault(Hash hash);
++#endif
++
++// SCSKiller: the shader modules --spirv-val rejected and the ones the device doesn't support. A pipeline naming one gets
++// no create info and is listed as invalid, or else as unsupported.
++static mutex scsk_rejected_lock;
++static unordered_set<Hash> scsk_rejected, scsk_unsupported_modules;
++
++static void scsk_reject(Hash module)
++{
++	lock_guard<mutex> holder{scsk_rejected_lock};
++	scsk_rejected.insert(module);
++}
++
++static void scsk_reject_unsupported(Hash module)
++{
++	lock_guard<mutex> holder{scsk_rejected_lock};
++	scsk_unsupported_modules.insert(module);
++}
++
++// before resolve_shader_modules: the stages still hold their modules' hashes
++static void scsk_check_stages(ResourceTag tag, Hash hash, const VkPipelineShaderStageCreateInfo *stages, uint32_t count)
++{
++	bool rejected = false, unsupported = false;
++	{
++		lock_guard<mutex> holder{scsk_rejected_lock};
++		for (uint32_t i = 0; i < count && !rejected; i++)
++		{
++			rejected = scsk_rejected.count((Hash) stages[i].module) != 0;
++			unsupported = unsupported || scsk_unsupported_modules.count((Hash) stages[i].module) != 0;
++		}
++	}
++	if (rejected)
++		scsk_invalid(tag, hash);
++	else if (unsupported)
++		scsk_unsupported(tag, hash);
++}
++
+ #ifndef FOSSILIZE_REPLAY_WRAPPER_ENV
+ #define FOSSILIZE_REPLAY_WRAPPER_ENV "FOSSILIZE_REPLAY_WRAPPER"
+ #endif
+@@ -984,6 +1031,9 @@
+ 		{
+ 			LOGW("Entry (%u: %016" PRIx64 ") does not exist, this might be benign depending on where the archive comes from.\n",
+ 			     unsigned(work_item.tag), work_item.hash);
++			if (work_item.tag == RESOURCE_GRAPHICS_PIPELINE || work_item.tag == RESOURCE_COMPUTE_PIPELINE ||
++			    work_item.tag == RESOURCE_RAYTRACING_PIPELINE)
++				scsk_unparsed(work_item.tag, work_item.hash);  // unreadable (a bad payload or CRC): as unparsable
+ 			if (work_item.tag == RESOURCE_SHADER_MODULE && opts.control_block)
+ 				opts.control_block->parsed_module_failures.fetch_add(1, std::memory_order_relaxed);
+ 			return false;
+@@ -995,6 +1045,9 @@
+ 		{
+ 			LOGW("Entry (%u: %016" PRIx64 ") does not exist, this might be benign depending on where the archive comes from.\n",
+ 			     unsigned(work_item.tag), work_item.hash);
++			if (work_item.tag == RESOURCE_GRAPHICS_PIPELINE || work_item.tag == RESOURCE_COMPUTE_PIPELINE ||
++			    work_item.tag == RESOURCE_RAYTRACING_PIPELINE)
++				scsk_unparsed(work_item.tag, work_item.hash);  // unreadable (a bad payload or CRC): as unparsable
+ 			return false;
+ 		}
+ 
+@@ -1016,6 +1069,9 @@
+ 		{
+ 			LOGW("Did not replay blob (tag: %d, hash: 0x%016" PRIx64 "). See previous logs for context.\n",
+ 			     work_item.tag, work_item.hash);
++			if (work_item.tag == RESOURCE_GRAPHICS_PIPELINE || work_item.tag == RESOURCE_COMPUTE_PIPELINE ||
++			    work_item.tag == RESOURCE_RAYTRACING_PIPELINE)
++				scsk_unparsed(work_item.tag, work_item.hash);
+ 
+ 			if (opts.control_block)
+ 			{
+@@ -1270,6 +1326,7 @@
+ 		if (!device->get_feature_filter().graphics_pipeline_is_supported(work_item.create_info.graphics_create_info))
+ 		{
+ 			LOGW("Graphics pipeline %016" PRIx64 " is not supported by current device, skipping.\n", work_item.hash);
++			scsk_unsupported(work_item.tag, work_item.hash);
+ 			return false;
+ 		}
+ 
+@@ -1309,6 +1366,7 @@
+ 		if (!device->get_feature_filter().compute_pipeline_is_supported(work_item.create_info.compute_create_info))
+ 		{
+ 			LOGW("Compute pipeline %016" PRIx64 " is not supported by current device, skipping.\n", work_item.hash);
++			scsk_unsupported(work_item.tag, work_item.hash);
+ 			return false;
+ 		}
+ 
+@@ -1359,6 +1417,7 @@
+ 		if (!device->get_feature_filter().raytracing_pipeline_is_supported(work_item.create_info.raytracing_create_info))
+ 		{
+ 			LOGW("Raytracing pipeline %016" PRIx64 " is not supported by current device, skipping.\n", work_item.hash);
++			scsk_unsupported(work_item.tag, work_item.hash);
+ 			return false;
+ 		}
+ 
+@@ -1463,6 +1522,7 @@
+ 
+ 	void complete_work_item(const PipelineWorkItem &work_item) const
+ 	{
++		scsk_created(work_item.tag, work_item.hash);
+ 		if (work_item_is_dependency(work_item))
+ 		{
+ 			*work_item.hash_map_entry.pipeline = *work_item.output.pipeline;
+@@ -1556,7 +1616,13 @@
+ 		}
+ 		else
+ 		{
+-			LOGE("Failed to create graphics pipeline for hash 0x%016" PRIx64 ".\n", work_item.hash);
++			LOGE("Failed to create graphics pipeline for hash 0x%016" PRIx64 " (VkResult %d).\n", work_item.hash, int(result));
++			if (primary)
++			{
++				scsk_failed(work_item.tag, work_item.hash, result);
++				if (opts.control_block)  // SCSKiller: a refused pipeline is done too
++					opts.control_block->skipped_graphics.fetch_add(1, std::memory_order_relaxed);
++			}
+ 		}
+ 	}
+ 
+@@ -1620,7 +1686,13 @@
+ 		}
+ 		else
+ 		{
+-			LOGE("Failed to create compute pipeline for hash 0x%016" PRIx64 ".\n", work_item.hash);
++			LOGE("Failed to create compute pipeline for hash 0x%016" PRIx64 " (VkResult %d).\n", work_item.hash, int(result));
++			if (primary)
++			{
++				scsk_failed(work_item.tag, work_item.hash, result);
++				if (opts.control_block)  // SCSKiller: a refused pipeline is done too
++					opts.control_block->skipped_compute.fetch_add(1, std::memory_order_relaxed);
++			}
+ 		}
+ 	}
+ 
+@@ -1684,7 +1756,13 @@
+ 		}
+ 		else
+ 		{
+-			LOGE("Failed to create raytracing pipeline for hash 0x%016" PRIx64 ".\n", work_item.hash);
++			LOGE("Failed to create raytracing pipeline for hash 0x%016" PRIx64 " (VkResult %d).\n", work_item.hash, int(result));
++			if (primary)
++			{
++				scsk_failed(work_item.tag, work_item.hash, result);
++				if (opts.control_block)  // SCSKiller: a refused pipeline is done too
++					opts.control_block->skipped_raytracing.fetch_add(1, std::memory_order_relaxed);
++			}
+ 		}
+ 	}
+ 
+@@ -1699,6 +1777,9 @@
+ 	{
+ 		if (!run_creation_work_item_setup(resolver, work_item))
+ 			return;
++#ifdef SCSK_TEST_HOOKS
++		scsk_test_fault(work_item.hash);
++#endif
+ 
+ 		bool valid_type = true;
+ 
+@@ -1799,7 +1880,8 @@
+ 
+ 			if (work_item.parse_only)
+ 				run_parse_work_item(per_thread_replayer[work_item.memory_context_index], json_buffer, work_item);
+-			else
++			// stopped: the rest of the queue drains without creating, so every process ends as when it is done
++			else if (!scsk_stopped())
+ 				run_creation_work_item(pipeline_resolver, work_item);
+ 
+ 			idle_start_time = chrono::steady_clock::now();
+@@ -2446,6 +2528,7 @@
+ 			if (!ret)
+ 			{
+ 				LOGW("Failed to validate SPIR-V module: %0" PRIX64 ", skipping!\n", hash);
++				scsk_reject(hash);
+ 				*module = VK_NULL_HANDLE;
+ 				lock_guard<mutex> lock(internal_enqueue_mutex);
+ 				//LOGI("Inserting shader module %016llx.\n", static_cast<unsigned long long>(hash));
+@@ -2464,6 +2547,7 @@
+ 		if (!device->get_feature_filter().shader_module_is_supported(create_info))
+ 		{
+ 			LOGW("Shader module %0" PRIx64 " is not supported on this device.\n", hash);
++			scsk_reject_unsupported(hash);
+ 			*module = VK_NULL_HANDLE;
+ 
+ 			lock_guard<mutex> lock(internal_enqueue_mutex);
+@@ -2866,8 +2950,9 @@
+ 		return ret;
+ 	}
+ 
+-	void resolve_shader_modules(VkGraphicsPipelineCreateInfo *info)
++	void resolve_shader_modules(VkGraphicsPipelineCreateInfo *info, Hash hash)
+ 	{
++		scsk_check_stages(RESOURCE_GRAPHICS_PIPELINE, hash, info->pStages, info->stageCount);
+ 		for (uint32_t i = 0; i < info->stageCount; i++)
+ 		{
+ 			auto result = shader_modules.find_object((Hash) info->pStages[i].module);
+@@ -2875,8 +2960,9 @@
+ 		}
+ 	}
+ 
+-	void resolve_shader_modules(VkRayTracingPipelineCreateInfoKHR *info)
++	void resolve_shader_modules(VkRayTracingPipelineCreateInfoKHR *info, Hash hash)
+ 	{
++		scsk_check_stages(RESOURCE_RAYTRACING_PIPELINE, hash, info->pStages, info->stageCount);
+ 		for (uint32_t i = 0; i < info->stageCount; i++)
+ 		{
+ 			auto result = shader_modules.find_object((Hash) info->pStages[i].module);
+@@ -2884,8 +2970,9 @@
+ 		}
+ 	}
+ 
+-	void resolve_shader_modules(VkComputePipelineCreateInfo *info)
++	void resolve_shader_modules(VkComputePipelineCreateInfo *info, Hash hash)
+ 	{
++		scsk_check_stages(RESOURCE_COMPUTE_PIPELINE, hash, &info->stage, 1);
+ 		auto result = shader_modules.find_object((Hash) info->stage.module);
+ 		const_cast<VkComputePipelineCreateInfo*>(info)->stage.module = result.first;
+ 	}
+@@ -3263,7 +3350,7 @@
+ 				                 {
+ 					                 if (item.info)
+ 					                 {
+-						                 resolve_shader_modules(item.info);
++						                 resolve_shader_modules(item.info, item.hash);
+ 						                 enqueue_pipeline(item.hash, item.info, item.pipeline,
+ 						                                  item.index + hash_offset + start_index, memory_index);
+ 					                 }
+@@ -3386,7 +3473,7 @@
+ 							                sync_worker_memory_context(PARENT_PIPELINE_MEMORY_CONTEXT);
+ 						                }
+ 
+-						                resolve_shader_modules(parent.info);
++						                resolve_shader_modules(parent.info, parent.hash);
+ 						                resolve_pipelines(parent, pipelines);
+ 						                enqueue_pipeline(parent.hash, parent.info,
+ 						                                 parent.pipeline,
+@@ -3425,7 +3512,7 @@
+ 					                 // compiling them twice.
+ 					                 if (i->info && parents.count(i->hash) == 0)
+ 					                 {
+-						                 resolve_shader_modules(i->info);
++						                 resolve_shader_modules(i->info, i->hash);
+ 						                 resolve_pipelines(*i, pipelines);
+ 						                 enqueue_pipeline(i->hash, i->info, i->pipeline,
+ 						                                  i->index + hash_offset + start_index, memory_index);
+@@ -4741,14 +4828,8 @@
+ 	}
+ 
+ #ifndef NO_ROBUST_REPLAYER
+-	// We cannot safely deal with multiple threads here, force one thread.
+-	if (slave_process)
+-	{
+-		if (replayer_opts.num_threads > 1)
+-			LOGE("Cannot use more than one thread per slave process. Forcing 1 thread.\n");
+-		replayer_opts.num_threads = 1;
+-	}
+-
++	// SCSKiller: the one worker process keeps every thread, as Linux's forked worker does (the crash and timeout
++	// handlers report every thread's pipeline in flight)
+ 	if (replayer_opts.num_threads < 1)
+ 		replayer_opts.num_threads = 1;
+ #endif
+--- a/cli/fossilize_replay_windows.hpp
++++ b/cli/fossilize_replay_windows.hpp
+@@ -30,6 +30,116 @@
+ #include "fossilize_external_replayer.hpp"
+ #include <inttypes.h>
+ 
++// SCSKiller: SCSKILLER_REPLAY_STOP names an event: once it is set no pipeline is created any more, and the replay ends
++// as a complete one does (devices destroyed, exit 0), never killed. SCSKILLER_REPLAY_CREATED names a folder where each
++// process appends what it created to created.<pid>.txt, one "<tag> <hash>" line a pipeline, written as it is created,
++// what the driver refused to create to failed.<pid>.txt, what didn't parse to unparsed.<pid>.txt, what names a module
++// that failed SPIR-V validation to invalid.<pid>.txt, and what the device's features don't support to
++// unsupported.<pid>.txt. The master runs one worker process with all the threads: every process under one exe name
++// writes the same NVIDIA cache file, and only part of what several write survives.
++static HANDLE scsk_stop_event()
++{
++	wchar_t name[256];
++	DWORD n = GetEnvironmentVariableW(L"SCSKILLER_REPLAY_STOP", name, 256);
++	return n && n < 256 ? OpenEventW(SYNCHRONIZE, FALSE, name) : nullptr;
++}
++
++// SCSKiller: a refusal with VK_ERROR_DEVICE_LOST goes to lost.<pid>.txt, and nothing more is created, as on a stop
++static std::atomic<bool> scsk_lost;
++
++static bool scsk_stopped()
++{
++	static HANDLE stop = scsk_stop_event();
++	return scsk_lost.load(std::memory_order_relaxed) || (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0);
++}
++
++static FILE *scsk_list_file(const wchar_t *what)
++{
++	wchar_t dir[MAX_PATH];
++	DWORD n = GetEnvironmentVariableW(L"SCSKILLER_REPLAY_CREATED", dir, MAX_PATH);
++	if (!n || n >= MAX_PATH)
++		return nullptr;
++	wchar_t path[MAX_PATH + 32];
++	swprintf(path, MAX_PATH + 32, L"%ls\\%ls.%lu.txt", dir, what, GetCurrentProcessId());
++	return _wfopen(path, L"ab");
++}
++
++static void scsk_list(FILE *file, std::mutex &lock, ResourceTag tag, Hash hash)
++{
++	if (!file)
++		return;
++	std::lock_guard<std::mutex> holder{lock};
++	fprintf(file, "%u %016" PRIx64 "\n", unsigned(tag), hash);
++	fflush(file);
++}
++
++static void scsk_created(ResourceTag tag, Hash hash)
++{
++	static std::mutex lock;
++	static FILE *file = scsk_list_file(L"created");
++	scsk_list(file, lock, tag, hash);
++}
++
++static void scsk_failed(ResourceTag tag, Hash hash, VkResult result)
++{
++	static std::mutex lock, lost_lock;
++	static FILE *file = scsk_list_file(L"failed");
++	if (result != VK_ERROR_DEVICE_LOST)
++		return scsk_list(file, lock, tag, hash);
++	static FILE *lost = scsk_list_file(L"lost");
++	scsk_list(lost, lost_lock, tag, hash);
++	scsk_lost.store(true, std::memory_order_relaxed);
++}
++
++static void scsk_unparsed(ResourceTag tag, Hash hash)
++{
++	static std::mutex lock;
++	static FILE *file = scsk_list_file(L"unparsed");
++	scsk_list(file, lock, tag, hash);
++}
++
++static void scsk_invalid(ResourceTag tag, Hash hash)
++{
++	static std::mutex lock;
++	static FILE *file = scsk_list_file(L"invalid");
++	scsk_list(file, lock, tag, hash);
++}
++
++static void scsk_unsupported(ResourceTag tag, Hash hash)
++{
++	static std::mutex lock;
++	static FILE *file = scsk_list_file(L"unsupported");
++	scsk_list(file, lock, tag, hash);
++}
++
++#ifdef SCSK_TEST_HOOKS
++// SCSKILLER_REPLAY_CRASH / SCSKILLER_REPLAY_HANG=<16 hex>: the create of that pipeline faults / never returns, in
++// every process that reaches it. SCSKILLER_REPLAY_WAIT: never returns only in the first process that reaches it, the
++// one that creates the file SCSKILLER_REPLAY_WAIT_ONCE names
++static bool scsk_test_is(const char *var, Hash hash)
++{
++	char want[32];
++	DWORD n = GetEnvironmentVariableA(var, want, sizeof(want));
++	return n && n < sizeof(want) && strtoull(want, nullptr, 16) == hash;
++}
++
++static void scsk_test_fault(Hash hash)
++{
++	if (scsk_test_is("SCSKILLER_REPLAY_CRASH", hash))
++		*(volatile int *)nullptr = 0;
++	if (scsk_test_is("SCSKILLER_REPLAY_HANG", hash))
++		Sleep(INFINITE);
++	char once[MAX_PATH];
++	DWORD n = GetEnvironmentVariableA("SCSKILLER_REPLAY_WAIT_ONCE", once, sizeof(once));
++	if (scsk_test_is("SCSKILLER_REPLAY_WAIT", hash) && n && n < sizeof(once))
++	{
++		HANDLE f = CreateFileA(once, GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
++		if (f != INVALID_HANDLE_VALUE)
++			CloseHandle(f), Sleep(INFINITE);
++	}
++}
++#endif
++
+ static bool write_all(HANDLE file, const char *str)
+ {
+ 	size_t len = strlen(str);
+@@ -238,7 +348,7 @@
+ 			}
+ 		}
+ 	}
+-	else
++	else if (strncmp(cmd, "BEGIN_HEARTBEAT", 15) != 0 && strncmp(cmd, "HEARTBEAT", 9) != 0)  // SCSKiller: no watchdog here
+ 		LOGE("Got unexpected message from child: %s\n", cmd);
+ }
+ 
+@@ -418,7 +528,8 @@
+ 	}
+ 
+ 	cmdline += " --slave-process";
+-	cmdline += " --num-threads 1";
++	cmdline += " --num-threads ";
++	cmdline += to_string(Global::base_replayer_options.num_threads);
+ 	cmdline += " --graphics-pipeline-range ";
+ 	cmdline += to_string(start_graphics_index);
+ 	cmdline += " ";
+@@ -745,22 +856,13 @@
+ 	Global::device_options = opts;
+ 	Global::base_replayer_options = replayer_opts;
+ 	Global::databases = databases;
+-	unsigned processes = replayer_opts.num_threads;
+-
+-	// We need to poll for up to 3 handles per process.
+-	constexpr unsigned max_num_processes = MAXIMUM_WAIT_OBJECTS / 3;
+-	if (Global::base_replayer_options.num_threads > max_num_processes)
+-	{
+-		LOGE("Will hit MAXIMUM_WAIT_OBJECTS limit, restricting number of processes to %u.\n", max_num_processes);
+-		processes = max_num_processes;
+-	}
++	unsigned processes = 1;  // SCSKiller: one worker process with every thread (above)
+ 
+ 	Global::shm_name = shm_name;
+ 	Global::shm_mutex_name = shm_mutex_name;
+ 
+ 	// Split shader cache overhead across all processes.
+ 	Global::base_replayer_options.shader_cache_size_mb /= max(processes, 1u);
+-	Global::base_replayer_options.num_threads = 1;
+ 
+ 	Global::job_handle = CreateJobObjectA(nullptr, nullptr);
+ 	if (!Global::job_handle)
+@@ -1073,7 +1175,7 @@
+ 	}
+ }
+ 
+-static void crash_handler(ThreadedReplayer &replayer, ThreadedReplayer::PerThreadData &per_thread)
++static void crash_handler(ThreadedReplayer &replayer, ThreadedReplayer::PerThreadData &per_thread, bool teardown = true)
+ {
+ 	char buffer[64];
+ 
+@@ -1110,7 +1212,8 @@
+ 			ExitProcess(2);
+ 	}
+ 
+-	replayer.emergency_teardown();
++	if (teardown)
++		replayer.emergency_teardown();
+ }
+ 
+ static std::atomic_flag crash_handler_flag;
+@@ -1211,10 +1314,13 @@
+ 			if (!write_all(crash_handle, "CRASH\n"))
+ 				ExitProcess(2);
+ 
++			// SCSKiller: every thread's pipeline in flight, the stuck one among them (none finished for the timeout)
+ 			if (global_replayer)
+ 			{
+-				auto &per_thread = global_replayer->per_thread_data.back();
+-				crash_handler(*global_replayer, per_thread);
++				for (auto &per_thread : global_replayer->per_thread_data)
++					if (per_thread.current_graphics_pipeline || per_thread.current_compute_pipeline || per_thread.current_raytracing_pipeline)
++						crash_handler(*global_replayer, per_thread, false);
++				global_replayer->emergency_teardown();
+ 			}
+ 
+ 			// Clean exit instead of reporting the segfault.
+--- a/fossilize_external_replayer_windows.hpp
++++ b/fossilize_external_replayer_windows.hpp
+@@ -135,7 +135,7 @@
+ 
+ 	progress.raytracing.total = shm_block->total_raytracing.load(std::memory_order_relaxed);
+ 	progress.raytracing.parsed = shm_block->parsed_raytracing.load(std::memory_order_relaxed);
+-	progress.raytracing.parsed_fail = shm_block->parsed_raytracing.load(std::memory_order_relaxed);
++	progress.raytracing.parsed_fail = shm_block->parsed_raytracing_failures.load(std::memory_order_relaxed);
+ 	progress.raytracing.skipped = shm_block->skipped_raytracing.load(std::memory_order_relaxed);
+ 	progress.raytracing.cached = shm_block->cached_raytracing.load(std::memory_order_relaxed);
+ 	progress.raytracing.completed = shm_block->successful_raytracing.load(std::memory_order_relaxed);
+--- a/layer/device.cpp
++++ b/layer/device.cpp
+@@ -21,6 +21,7 @@
+  */
+ 
+ #include "device.hpp"
++#include "scskiller_layer.hpp"
+ #include "instance.hpp"
+ #include "path.hpp"
+ #include "utils.hpp"
+@@ -87,6 +88,8 @@
+ 		pInstanceTable->GetPhysicalDeviceProperties(gpu, &props2.properties);
+ 	}
+ 
+-	recorder = pInstance->getStateRecorderForDevice(&props2, pInstance->getApplicationInfo(), device_pnext);
++	// SCSKiller: a refused process gets no recorder and no database, and no command of the device is wrapped
++	if (scsk_layer_recording())
++		recorder = pInstance->getStateRecorderForDevice(&props2, pInstance->getApplicationInfo(), device_pnext);
+ }
+ }
+--- a/layer/instance.cpp
++++ b/layer/instance.cpp
+@@ -38,6 +38,10 @@
+ #include "fossilize_inttypes.h"
+ #include "fossilize_errors.hpp"
+ 
++// SCSKiller: the recorder is configured by admission alone, never by the environment a launcher or user can set
++#include "scskiller_layer.hpp"
++#define getenv(name) scsk_layer_getenv(name)
++
+ namespace Fossilize
+ {
+ // We only need one global application info filter.
+@@ -373,7 +377,7 @@
+ 		LOGI("Overriding serialization path: \"%s\".\n", logPath.c_str());
+ 	}
+ #else
+-	serializationPath = "fossilize";
++	serializationPath = scsk_layer_dump_path();  // SCSKiller: in the recorder folder, set by admission
+ 	const char *path = getenv(FOSSILIZE_DUMP_PATH_ENV);
+ 	if (path)
+ 	{
+--- a/layer/dispatch.cpp
++++ b/layer/dispatch.cpp
+@@ -21,6 +21,7 @@
+  */
+ #define VK_NO_PROTOTYPES // VALVE: So that vulkan_core.h definitions lacking dllexport don't conflict with our exported functions
+ #include "dispatch_helper.hpp"
++#include "scskiller_layer.hpp"
+ #include "utils.hpp"
+ #include "device.hpp"
+ #include "instance.hpp"
+@@ -177,6 +178,14 @@
+ 		auto *device = createLayerData(getDispatchKey(*pDevice), deviceData);
+ 		device->init(gpu, *pDevice, layer, device_pnext, initDeviceTable(*pDevice, fpGetDeviceProcAddr, deviceDispatch));
+ 	}
++	scsk_layer_device(pCreateInfo);
++	{
++		// SCSKiller: the overlay's device, its own command buffers given the loader's dispatch
++		auto *loader = getChainInfo(pCreateInfo, VK_LOADER_DATA_CALLBACK);
++		scsk_layer_device_made(gpu, *pDevice, layer->getInstance(), reinterpret_cast<void *>(fpGetInstanceProcAddr),
++		                       reinterpret_cast<void *>(fpGetDeviceProcAddr),
++		                       loader ? reinterpret_cast<void *>(loader->u.pfnSetDeviceLoaderData) : nullptr);
++	}
+ 
+ 	return VK_SUCCESS;
+ }
+@@ -184,6 +193,7 @@
+ static VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
+                                                      const VkAllocationCallbacks *pAllocator, VkInstance *pInstance)
+ {
++	scsk_layer_admit();
+ 	auto *chainInfo = getChainInfo(pCreateInfo, VK_LAYER_LINK_INFO);
+ 
+ 	auto fpGetInstanceProcAddr = chainInfo->u.pLayerInfo->pfnNextGetInstanceProcAddr;
+@@ -224,6 +234,7 @@
+ 		layer->init(*pInstance, pCreateInfo->pApplicationInfo,
+ 		            initInstanceTable(*pInstance, fpGetInstanceProcAddr, instanceDispatch), fpGetInstanceProcAddr);
+ 	}
++	scsk_layer_instance(pCreateInfo);
+ 
+ 	return VK_SUCCESS;
+ }
+@@ -876,7 +887,7 @@
+ 	return final_res;
+ }
+ 
+-static VKAPI_ATTR VkResult VKAPI_CALL CreateGraphicsPipelines(VkDevice device, VkPipelineCache pipelineCache,
++static VKAPI_ATTR VkResult VKAPI_CALL CreateGraphicsPipelinesUntimed(VkDevice device, VkPipelineCache pipelineCache,
+                                                               uint32_t createInfoCount,
+                                                               const VkGraphicsPipelineCreateInfo *pCreateInfos,
+                                                               const VkAllocationCallbacks *pAllocator,
+@@ -1014,7 +1025,7 @@
+ 	return final_res;
+ }
+ 
+-static VKAPI_ATTR VkResult VKAPI_CALL CreateComputePipelines(VkDevice device, VkPipelineCache pipelineCache,
++static VKAPI_ATTR VkResult VKAPI_CALL CreateComputePipelinesUntimed(VkDevice device, VkPipelineCache pipelineCache,
+                                                              uint32_t createInfoCount,
+                                                              const VkComputePipelineCreateInfo *pCreateInfos,
+                                                              const VkAllocationCallbacks *pAllocator,
+@@ -1179,7 +1190,7 @@
+ 	return final_res;
+ }
+ 
+-static VKAPI_ATTR VkResult VKAPI_CALL CreateRayTracingPipelinesKHR(
++static VKAPI_ATTR VkResult VKAPI_CALL CreateRayTracingPipelinesKHRUntimed(
+ 		VkDevice device, VkDeferredOperationKHR deferredOperation,
+ 		VkPipelineCache pipelineCache, uint32_t createInfoCount,
+ 		const VkRayTracingPipelineCreateInfoKHR *pCreateInfos,
+@@ -1235,6 +1246,39 @@
+ 	return result;
+ }
+ 
++// SCSKiller: per-create timings for scskiller_creates.csv
++static VKAPI_ATTR VkResult VKAPI_CALL CreateGraphicsPipelines(VkDevice device, VkPipelineCache pipelineCache, uint32_t createInfoCount,
++                                                              const VkGraphicsPipelineCreateInfo *pCreateInfos,
++                                                              const VkAllocationCallbacks *pAllocator, VkPipeline *pPipelines)
++{
++	const double t0 = scsk_layer_now();
++	VkResult res = CreateGraphicsPipelinesUntimed(device, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
++	scsk_layer_created('G', createInfoCount, t0, scsk_layer_now());
++	return res;
++}
++
++static VKAPI_ATTR VkResult VKAPI_CALL CreateComputePipelines(VkDevice device, VkPipelineCache pipelineCache, uint32_t createInfoCount,
++                                                             const VkComputePipelineCreateInfo *pCreateInfos,
++                                                             const VkAllocationCallbacks *pAllocator, VkPipeline *pPipelines)
++{
++	const double t0 = scsk_layer_now();
++	VkResult res = CreateComputePipelinesUntimed(device, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
++	scsk_layer_created('C', createInfoCount, t0, scsk_layer_now());
++	return res;
++}
++
++static VKAPI_ATTR VkResult VKAPI_CALL CreateRayTracingPipelinesKHR(VkDevice device, VkDeferredOperationKHR deferredOperation,
++                                                                   VkPipelineCache pipelineCache, uint32_t createInfoCount,
++                                                                   const VkRayTracingPipelineCreateInfoKHR *pCreateInfos,
++                                                                   const VkAllocationCallbacks *pAllocator, VkPipeline *pPipelines)
++{
++	const double t0 = scsk_layer_now();
++	VkResult res = CreateRayTracingPipelinesKHRUntimed(device, deferredOperation, pipelineCache, createInfoCount, pCreateInfos,
++	                                                   pAllocator, pPipelines);
++	scsk_layer_created('R', createInfoCount, t0, scsk_layer_now());
++	return res;
++}
++
+ static PFN_vkVoidFunction interceptCoreInstanceCommand(const char *pName)
+ {
+ 	static const struct
+@@ -1265,6 +1309,8 @@
+ 		{ "vkGetPhysicalDeviceProperties2KHR", reinterpret_cast<PFN_vkVoidFunction>(GetPhysicalDeviceProperties2KHR) },
+ 	};
+ 
++	if (!scsk_layer_recording())  // SCSKiller: refused, the layer only passes through
++		return nullptr;
+ 	for (auto &cmd : instanceCommands)
+ 		if (strcmp(cmd.name, pName) == 0)
+ 			return cmd.proc;
+@@ -1278,6 +1324,7 @@
+ 	void *key = getDispatchKey(device);
+ 	auto *layer = getLayerData(key, deviceData);
+ 
++	scsk_layer_device_gone(device);
+ 	layer->getTable()->DestroyDevice(device, pAllocator);
+ 	destroyLayerData(key, deviceData);
+ }
+@@ -1492,6 +1539,57 @@
+ 			LOGW_LEVEL("Recording pipeline use failed.\n");
+ }
+ 
++// SCSKiller: the frames file, scskiller_frames.bin, and the overlay; the results as the driver returned them
++static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *pCreateInfo,
++                                                         const VkAllocationCallbacks *pAllocator, VkSwapchainKHR *pSwapchain)
++{
++	auto *layer = get_device_layer(device);
++	VkSwapchainCreateInfoKHR copy;
++	const VkSwapchainCreateInfoKHR *ci = scsk_layer_swapchain_info(device, pCreateInfo, &copy);
++	VkResult res = layer->getTable()->CreateSwapchainKHR(device, ci, pAllocator, pSwapchain);
++	if (res != VK_SUCCESS && ci != pCreateInfo)  // the overlay's usage refused: the game's own create
++		res = layer->getTable()->CreateSwapchainKHR(device, ci = pCreateInfo, pAllocator, pSwapchain);
++	if (res == VK_SUCCESS)
++	{
++		scsk_layer_swapchain((uint64_t)*pSwapchain, (uint64_t)pCreateInfo->surface);
++		scsk_layer_swapchain_made(device, (uint64_t)*pSwapchain, ci, ci != pCreateInfo);
++	}
++	return res;
++}
++
++static VKAPI_ATTR void VKAPI_CALL DestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain, const VkAllocationCallbacks *pAllocator)
++{
++	auto *layer = get_device_layer(device);
++	scsk_layer_swapchain_gone(device, (uint64_t)swapchain);
++	layer->getTable()->DestroySwapchainKHR(device, swapchain, pAllocator);
++}
++
++static VKAPI_ATTR void VKAPI_CALL GetDeviceQueue(VkDevice device, uint32_t family, uint32_t index, VkQueue *pQueue)
++{
++	auto *layer = get_device_layer(device);
++	layer->getTable()->GetDeviceQueue(device, family, index, pQueue);
++	scsk_layer_queue(device, family, *pQueue);
++}
++
++static VKAPI_ATTR void VKAPI_CALL GetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2 *pInfo, VkQueue *pQueue)
++{
++	auto *layer = get_device_layer(device);
++	if (!layer->getTable()->GetDeviceQueue2)
++		return;
++	layer->getTable()->GetDeviceQueue2(device, pInfo, pQueue);
++	scsk_layer_queue(device, pInfo->queueFamilyIndex, *pQueue);
++}
++
++static VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *pPresentInfo)
++{
++	// a queue's dispatch key is its device's
++	auto *layer = get_device_layer(reinterpret_cast<VkDevice>(queue));
++	VkPresentInfoKHR copy;
++	VkResult res = layer->getTable()->QueuePresentKHR(queue, scsk_layer_present(queue, pPresentInfo, &copy));
++	scsk_layer_presented(pPresentInfo, res);
++	return res;
++}
++
+ static PFN_vkVoidFunction interceptDeviceCommand(Instance *instance, const char *pName)
+ {
+ 	static const struct
+@@ -1518,10 +1616,19 @@
+ 		{ "vkCreateRayTracingPipelinesKHR", reinterpret_cast<PFN_vkVoidFunction>(CreateRayTracingPipelinesKHR) },
+ 		{ "vkCreatePipelineBinariesKHR", reinterpret_cast<PFN_vkVoidFunction>(CreatePipelineBinariesKHR) },
+ 		{ "vkCmdBindPipeline", reinterpret_cast<PFN_vkVoidFunction>(CmdBindPipeline), false, true },
++		{ "vkCreateSwapchainKHR", reinterpret_cast<PFN_vkVoidFunction>(CreateSwapchainKHR) },
++		{ "vkQueuePresentKHR", reinterpret_cast<PFN_vkVoidFunction>(QueuePresentKHR) },
++		{ "vkDestroySwapchainKHR", reinterpret_cast<PFN_vkVoidFunction>(DestroySwapchainKHR) },
++		{ "vkGetDeviceQueue", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceQueue) },
++		{ "vkGetDeviceQueue2", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceQueue2) },
+ 	};
+ 
+ 	for (auto &cmd : coreDeviceCommands)
+ 	{
++		// SCSKiller: refused, only what the layer's own device data needs
++		if (!scsk_layer_recording() && strcmp(cmd.name, "vkGetDeviceProcAddr") && strcmp(cmd.name, "vkDestroyDevice"))
++			continue;
++
+ 		if (cmd.is_sampler && !instance->recordsImmutableSamplers())
+ 			continue;
+ 
+--- a/layer/dispatch_helper.hpp
++++ b/layer/dispatch_helper.hpp
+@@ -68,6 +68,11 @@
+ 	PFN_vkGetShaderModuleCreateInfoIdentifierEXT GetShaderModuleCreateInfoIdentifierEXT;
+ 	PFN_vkCreatePipelineBinariesKHR CreatePipelineBinariesKHR;
+ 	PFN_vkCmdBindPipeline CmdBindPipeline;
++	PFN_vkCreateSwapchainKHR CreateSwapchainKHR;  // SCSKiller: the frames file
++	PFN_vkQueuePresentKHR QueuePresentKHR;
++	PFN_vkDestroySwapchainKHR DestroySwapchainKHR;  // SCSKiller: the overlay
++	PFN_vkGetDeviceQueue GetDeviceQueue;
++	PFN_vkGetDeviceQueue2 GetDeviceQueue2;
+ };
+ 
+ using InstanceTable = std::unordered_map<void *, std::unique_ptr<VkLayerInstanceDispatchTable>>;
+--- a/layer/dispatch_helper.cpp
++++ b/layer/dispatch_helper.cpp
+@@ -46,6 +46,11 @@
+ 	table->GetShaderModuleCreateInfoIdentifierEXT = (PFN_vkGetShaderModuleCreateInfoIdentifierEXT)gpa(device, "vkGetShaderModuleCreateInfoIdentifierEXT");
+ 	table->CreatePipelineBinariesKHR = (PFN_vkCreatePipelineBinariesKHR)gpa(device, "vkCreatePipelineBinariesKHR");
+ 	table->CmdBindPipeline = (PFN_vkCmdBindPipeline)gpa(device, "vkCmdBindPipeline");
++	table->CreateSwapchainKHR = (PFN_vkCreateSwapchainKHR)gpa(device, "vkCreateSwapchainKHR");
++	table->QueuePresentKHR = (PFN_vkQueuePresentKHR)gpa(device, "vkQueuePresentKHR");
++	table->DestroySwapchainKHR = (PFN_vkDestroySwapchainKHR)gpa(device, "vkDestroySwapchainKHR");
++	table->GetDeviceQueue = (PFN_vkGetDeviceQueue)gpa(device, "vkGetDeviceQueue");
++	table->GetDeviceQueue2 = (PFN_vkGetDeviceQueue2)gpa(device, "vkGetDeviceQueue2");
+ }
+ 
+ void layerInitInstanceDispatchTable(VkInstance instance, VkLayerInstanceDispatchTable *table,
+--- a/cli/fossilize_replay_linux.hpp
++++ b/cli/fossilize_replay_linux.hpp
+@@ -41,6 +41,109 @@
+ #include "platform/futex_wrapper_linux.hpp"
+ #include <inttypes.h>
+ 
++// SCSKiller: SCSKILLER_REPLAY_STOP names a file: once it exists no pipeline is created any more, and the replay ends as
++// a complete one does (devices destroyed, exit 0), never killed. SCSKILLER_REPLAY_CREATED names a folder for the lists
++// of what each process created, what the driver refused, what didn't parse, what names a module that failed SPIR-V
++// validation and what the device's features don't support, as in fossilize_replay_windows.hpp. The master runs one
++// worker process with all the threads, as there.
++// SCSKiller: a refusal with VK_ERROR_DEVICE_LOST goes to lost.<pid>.txt, and nothing more is created, as on a stop
++static std::atomic<bool> scsk_lost;
++
++static bool scsk_stopped()
++{
++	static const char *stop = getenv("SCSKILLER_REPLAY_STOP");
++	return scsk_lost.load(std::memory_order_relaxed) || (stop && *stop && access(stop, F_OK) == 0);
++}
++
++static FILE *scsk_list_file(const char *what)
++{
++	const char *dir = getenv("SCSKILLER_REPLAY_CREATED");
++	if (!dir || !*dir)
++		return nullptr;
++	char path[PATH_MAX];
++	if (snprintf(path, sizeof(path), "%s/%s.%d.txt", dir, what, int(getpid())) >= int(sizeof(path)))
++		return nullptr;
++	return fopen(path, "abe");
++}
++
++static void scsk_list(FILE *file, std::mutex &lock, ResourceTag tag, Hash hash)
++{
++	if (!file)
++		return;
++	std::lock_guard<std::mutex> holder{lock};
++	fprintf(file, "%u %016" PRIx64 "\n", unsigned(tag), hash);
++	fflush(file);
++}
++
++static void scsk_created(ResourceTag tag, Hash hash)
++{
++	static std::mutex lock;
++	static FILE *file = scsk_list_file("created");
++	scsk_list(file, lock, tag, hash);
++}
++
++static void scsk_failed(ResourceTag tag, Hash hash, VkResult result)
++{
++	static std::mutex lock, lost_lock;
++	static FILE *file = scsk_list_file("failed");
++	if (result != VK_ERROR_DEVICE_LOST)
++		return scsk_list(file, lock, tag, hash);
++	static FILE *lost = scsk_list_file("lost");
++	scsk_list(lost, lost_lock, tag, hash);
++	scsk_lost.store(true, std::memory_order_relaxed);
++}
++
++static void scsk_unparsed(ResourceTag tag, Hash hash)
++{
++	static std::mutex lock;
++	static FILE *file = scsk_list_file("unparsed");
++	scsk_list(file, lock, tag, hash);
++}
++
++static void scsk_invalid(ResourceTag tag, Hash hash)
++{
++	static std::mutex lock;
++	static FILE *file = scsk_list_file("invalid");
++	scsk_list(file, lock, tag, hash);
++}
++
++static void scsk_unsupported(ResourceTag tag, Hash hash)
++{
++	static std::mutex lock;
++	static FILE *file = scsk_list_file("unsupported");
++	scsk_list(file, lock, tag, hash);
++}
++
++#ifdef SCSK_TEST_HOOKS
++// SCSKILLER_REPLAY_CRASH, SCSKILLER_REPLAY_HANG, SCSKILLER_REPLAY_WAIT and SCSKILLER_REPLAY_WAIT_ONCE as in
++// fossilize_replay_windows.hpp
++static bool scsk_test_is(const char *var, Hash hash)
++{
++	const char *want = getenv(var);
++	return want && *want && strtoull(want, nullptr, 16) == hash;
++}
++
++static void scsk_test_fault(Hash hash)
++{
++	if (scsk_test_is("SCSKILLER_REPLAY_CRASH", hash))
++		*(volatile int *)nullptr = 0;
++	if (scsk_test_is("SCSKILLER_REPLAY_HANG", hash))
++		for (;;)
++			pause();
++	const char *once = getenv("SCSKILLER_REPLAY_WAIT_ONCE");
++	if (scsk_test_is("SCSKILLER_REPLAY_WAIT", hash) && once && *once)
++	{
++		int f = open(once, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
++		if (f >= 0)
++		{
++			close(f);
++			for (;;)
++				pause();
++		}
++	}
++}
++#endif
++
+ static bool write_all(int fd, const char *str)
+ {
+ 	// write is async-signal safe, but not stdio.
+@@ -268,7 +371,8 @@
+ 	}
+ 	else if (strncmp(cmd, "BEGIN_HEARTBEAT", 15) == 0)
+ 	{
+-		begin_heartbeat();
++		// SCSKiller: no watchdog, as on Windows: on SIGCONT after a pause of the whole group it ends the worker
++		// mid-pipeline, and a stuck pipeline ends by --timeout-seconds
+ 	}
+ 	else if (strncmp(cmd, "HEARTBEAT", 9) == 0)
+ 	{
+@@ -981,11 +1085,10 @@
+ 	Global::device_options = opts;
+ 	Global::base_replayer_options = replayer_opts;
+ 	Global::databases = databases;
+-	unsigned processes = replayer_opts.num_threads;
++	unsigned processes = 1;  // SCSKiller: one worker process with every thread (above)
+ 
+ 	// Split shader cache overhead across all processes.
+-	Global::base_replayer_options.shader_cache_size_mb /= max(Global::base_replayer_options.num_threads, 1u);
+-	Global::base_replayer_options.num_threads = 1;
++	Global::base_replayer_options.shader_cache_size_mb /= max(processes, 1u);
+ 
+ 	// Try to map the shared control block.
+ 	if (shmem_fd >= 0)
+@@ -1387,7 +1490,7 @@
+ 		if (strlen(child_processes[0].module_uuid_path) != 0)
+ 		{
+ 			std::vector<std::string> paths;
+-			for (size_t idx = 0; idx < replayer_opts.num_threads; idx++)
++			for (size_t idx = 0, count = child_processes.size(); idx < count; idx++)
+ 			{
+ 				if (strlen(child_processes[idx].module_uuid_path) == 0)
+ 				{
+@@ -1468,7 +1571,7 @@
+ 	}
+ }
+ 
+-static void crash_handler(ThreadedReplayer &replayer, ThreadedReplayer::PerThreadData &per_thread)
++static void crash_handler(ThreadedReplayer &replayer, ThreadedReplayer::PerThreadData &per_thread, bool teardown = true)
+ {
+ 	char buffer[64];
+ 
+@@ -1505,7 +1608,8 @@
+ 			_exit(2);
+ 	}
+ 
+-	replayer.emergency_teardown();
++	if (teardown)
++		replayer.emergency_teardown();
+ }
+ 
+ static void crash_handler(int)
+@@ -1588,6 +1692,18 @@
+ 
+ static void timeout_handler()
+ {
++	// SCSKiller: every thread's pipeline in flight, the stuck one among them (none finished for the timeout)
++	if (crash_fd >= 0 && global_replayer)
++	{
++		if (!write_all(crash_fd, "CRASH\n"))
++			_exit(2);
++		for (auto &per_thread : global_replayer->per_thread_data)
++			if (per_thread.current_graphics_pipeline || per_thread.current_compute_pipeline || per_thread.current_raytracing_pipeline)
++				crash_handler(*global_replayer, per_thread, false);
++		global_replayer->emergency_teardown();
++		_exit(2);
++	}
++
+ 	if (global_replayer->thread_pool.size() > 1)
+ 	{
+ 		LOGE("Using timeout handling with more than one worker thread, cannot know which thread is the culprit.\n");
+--- a/fossilize_external_replayer_linux.hpp
++++ b/fossilize_external_replayer_linux.hpp
+@@ -274,7 +274,7 @@
+ 
+ 	progress.raytracing.total = shm_block->total_raytracing.load(std::memory_order_relaxed);
+ 	progress.raytracing.parsed = shm_block->parsed_raytracing.load(std::memory_order_relaxed);
+-	progress.raytracing.parsed_fail = shm_block->parsed_raytracing.load(std::memory_order_relaxed);
++	progress.raytracing.parsed_fail = shm_block->parsed_raytracing_failures.load(std::memory_order_relaxed);
+ 	progress.raytracing.skipped = shm_block->skipped_raytracing.load(std::memory_order_relaxed);
+ 	progress.raytracing.cached = shm_block->cached_raytracing.load(std::memory_order_relaxed);
+ 	progress.raytracing.completed = shm_block->successful_raytracing.load(std::memory_order_relaxed);
+--- a/cli/device.cpp
++++ b/cli/device.cpp
+@@ -25,11 +25,66 @@
+ #include <vector>
+ #include <algorithm>
+ #include <string.h>
++#include <stdlib.h>
++#include <string>
+ 
+ using namespace std;
+ 
+ namespace Fossilize
+ {
++// SCSKiller: SCSKILLER_REPLAY_DEVICE holds the game's own device as its recorder's #vkdevice line records it
++// ("<extensions>,<queues>,<features>", proxy/scskiller_layer.hpp). Set, the device is created with exactly those extensions
++// and feature bits: a driver that keys its pipeline cache on the enabled device (AMD) reaches the game's entries only so.
++struct GameDevice
++{
++	bool set = false;
++	vector<string> extensions;
++	vector<pair<uint32_t, string>> features;  // a feature struct's sType and its VkBool32 members as '0'/'1'
++};
++
++static vector<string> words(const string &s)
++{
++	vector<string> w;
++	for (size_t i = 0; i < s.size();)
++	{
++		size_t j = s.find(' ', i);
++		if (j == string::npos)
++			j = s.size();
++		if (j > i)
++			w.push_back(s.substr(i, j - i));
++		i = j + 1;
++	}
++	return w;
++}
++
++static GameDevice game_device()
++{
++	GameDevice d;
++	const char *env = getenv("SCSKILLER_REPLAY_DEVICE");
++	if (!env || !*env)
++		return d;
++	const string s = env;
++	const size_t a = s.find(','), b = a == string::npos ? a : s.find(',', a + 1);
++	if (b == string::npos)
++	{
++		LOGW("SCSKILLER_REPLAY_DEVICE isn't a #vkdevice line, the replayer's own device is used.\n");
++		return d;
++	}
++	d.set = true;
++	d.extensions = words(s.substr(0, a));
++	for (auto &f : words(s.substr(b + 1)))
++	{
++		const size_t colon = f.find(':');
++		const string bits = colon == string::npos ? "" : f.substr(colon + 1);
++		// "?": a struct the recorder couldn't read, which the device then goes without
++		if (bits.empty() || bits.size() > 512 || bits.find_first_not_of("01") != string::npos)
++			LOGW("The game's feature struct %s can't be rebuilt, left out.\n", f.c_str());
++		else
++			d.features.emplace_back(uint32_t(strtoul(f.c_str(), nullptr, 10)), bits);
++	}
++	return d;
++}
++
+ static bool find_layer(const vector<VkLayerProperties> &layers, const char *layer)
+ {
+ 	auto itr = find_if(begin(layers), end(layers), [&](const VkLayerProperties &prop) -> bool {
+@@ -438,6 +493,22 @@
+ 		if (filter_extension(ext.extensionName, opts.want_amd_shader_info, device_ext_props, api_version))
+ 			active_device_extensions.push_back(ext.extensionName);
+ 
++	// The device gets the game's own extensions, the feature filter keeps every supported one: the game created its
++	// pipelines on its device, so none is filtered out over a feature its device left off (Detroit's DrawParameters).
++	const GameDevice game = game_device();
++	vector<const char *> game_extensions;
++	for (auto &name : game.extensions)
++	{
++		auto itr = find_if(begin(device_ext_props), end(device_ext_props), [&](const VkExtensionProperties &prop) {
++			return name == prop.extensionName;
++		});
++		if (itr == end(device_ext_props))
++			LOGW("The game's device extension %s isn't supported by this driver, left out.\n", name.c_str());
++		else if (find(begin(game_extensions), end(game_extensions), itr->extensionName) == end(game_extensions))
++			game_extensions.push_back(itr->extensionName);
++	}
++	const vector<const char *> &device_extensions = game.set ? game_extensions : active_device_extensions;
++
+ 	bool has_device_features2 = find_extension(exts, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+ 
+ 	VkPhysicalDeviceFeatures2 gpu_features2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+@@ -545,6 +616,72 @@
+ 	                          active_device_extensions.data(), &active_extension_count);
+ 	active_device_extensions.resize(active_extension_count);
+ 
++	// The game's feature chain as it recorded it, each bit kept only where this driver still has it. A struct is given
++	// room for the largest the driver may write for its sType whatever bits were recorded, and named once.
++	VkPhysicalDeviceFeatures2 game_pdf2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
++	VkPhysicalDeviceFeatures2 have_pdf2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
++	vector<pair<uint32_t, string>> game_features;
++	vector<vector<uint64_t>> game_structs, have_structs;
++	if (game.set)
++	{
++		for (auto &f : game.features)
++		{
++			if (find_if(begin(game_features), end(game_features), [&](const pair<uint32_t, string> &g) { return g.first == f.first; }) != end(game_features))
++				LOGW("The game's feature struct %u is named twice, the first kept.\n", f.first);
++			else if (f.first == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 || has_device_features2)
++				game_features.push_back(f);
++		}
++		const size_t room = 4096 / sizeof(uint64_t);  // past any feature struct: the bits only ever fill its start
++		for (auto &f : game_features)
++			if (f.first != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2)
++				for (auto *list : { &game_structs, &have_structs })
++				{
++					list->emplace_back(room);
++					reinterpret_cast<VkBaseOutStructure *>(list->back().data())->sType = VkStructureType(f.first);
++				}
++		auto link = [](VkPhysicalDeviceFeatures2 &head, vector<vector<uint64_t>> &list) {
++			void **next = &head.pNext;
++			for (auto &block : list)
++			{
++				*next = block.data();
++				next = reinterpret_cast<void **>(&reinterpret_cast<VkBaseOutStructure *>(block.data())->pNext);
++			}
++		};
++		link(game_pdf2, game_structs);
++		link(have_pdf2, have_structs);
++		if (has_device_features2)
++			vkGetPhysicalDeviceFeatures2KHR(gpu, &have_pdf2);
++		else
++			vkGetPhysicalDeviceFeatures(gpu, &have_pdf2.features);
++
++		size_t at = 0;
++		for (auto &f : game_features)
++		{
++			VkBool32 *want, *have;
++			size_t count = f.second.size();
++			if (f.first == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2)
++			{
++				want = &game_pdf2.features.robustBufferAccess;
++				have = &have_pdf2.features.robustBufferAccess;
++				count = min(count, sizeof(VkPhysicalDeviceFeatures) / sizeof(VkBool32));
++			}
++			else
++			{
++				want = reinterpret_cast<VkBool32 *>(reinterpret_cast<VkBaseOutStructure *>(game_structs[at].data()) + 1);
++				have = reinterpret_cast<VkBool32 *>(reinterpret_cast<VkBaseOutStructure *>(have_structs[at].data()) + 1);
++				at++;
++			}
++			for (size_t i = 0; i < count; i++)
++			{
++				want[i] = f.second[i] == '1' && have[i] ? VK_TRUE : VK_FALSE;
++				if (f.second[i] == '1' && !have[i])
++					LOGW("The game's feature %u of struct %u isn't supported by this driver, left out.\n", unsigned(i), f.first);
++			}
++		}
++
++		pipeline_stats = false;
++	}
++
+ 	// Just pick one graphics queue.
+ 	// FIXME: Does shader compilation depend on which queues we have enabled?
+ 	// FIXME: Potentially separate code-gen if COMPUTE queue needs different optimizations, etc ...
+@@ -566,19 +703,26 @@
+ 		}
+ 	}
+ 
+-	supports_pipeline_feedback = find_if(begin(active_device_extensions), end(active_device_extensions), [](const char *ext) {
++	supports_pipeline_feedback = find_if(begin(device_extensions), end(device_extensions), [](const char *ext) {
+ 		return strcmp(ext, VK_EXT_PIPELINE_CREATION_FEEDBACK_EXTENSION_NAME) == 0;
+-	}) != end(active_device_extensions);
++	}) != end(device_extensions);
+ 
+-	supports_pipeline_cache_control = find_if(begin(active_device_extensions), end(active_device_extensions), [](const char *ext) {
++	supports_pipeline_cache_control = find_if(begin(device_extensions), end(device_extensions), [](const char *ext) {
+ 		return strcmp(ext, VK_EXT_PIPELINE_CREATION_CACHE_CONTROL_EXTENSION_NAME) == 0;
+-	}) != end(active_device_extensions);
++	}) != end(device_extensions);
+ 
+-	amd_shader_info = find_if(begin(active_device_extensions), end(active_device_extensions), [](const char *ext) {
++	amd_shader_info = find_if(begin(device_extensions), end(device_extensions), [](const char *ext) {
+ 		return strcmp(ext, VK_AMD_SHADER_INFO_EXTENSION_NAME) == 0;
+-	}) != end(active_device_extensions);
++	}) != end(device_extensions);
+ 
+ 	supports_module_identifiers = features.shader_module_identifier.shaderModuleIdentifier == VK_TRUE;
++	if (game.set)
++	{
++		supports_module_identifiers = false;
++		for (auto &block : game_structs)
++			if (reinterpret_cast<VkBaseOutStructure *>(block.data())->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MODULE_IDENTIFIER_FEATURES_EXT)
++				supports_module_identifiers = *reinterpret_cast<VkBool32 *>(reinterpret_cast<VkBaseOutStructure *>(block.data()) + 1) == VK_TRUE;
++	}
+ 
+ 	VkPhysicalDevicePipelineBinaryFeaturesKHR pipeline_binary_features =
+ 		{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_BINARY_FEATURES_KHR, gpu_features2.pNext, VK_TRUE };
+@@ -586,7 +730,7 @@
+ 	// Workaround really stupid NVIDIA bug where they corrupt the non-volatile RBX register
+ 	// when calling vkGetPipelineKeyKHR leading to random crashes ... <_<
+ 	const char *env = getenv("FOSSILIZE_LOG_PIPELINE_BINARY_KEY");
+-	if (env && strcmp(env, "1") == 0)
++	if (env && strcmp(env, "1") == 0 && !game.set)
+ 	{
+ 		supports_pipeline_binary = find_if(begin(active_device_extensions), end(active_device_extensions), [](const char *ext) {
+ 			return strcmp(ext, VK_KHR_PIPELINE_BINARY_EXTENSION_NAME) == 0;
+@@ -596,13 +740,14 @@
+ 			gpu_features2.pNext = &pipeline_binary_features;
+ 	}
+ 
++	VkPhysicalDeviceFeatures2 &enabled_pdf2 = game.set ? game_pdf2 : gpu_features2;
+ 	VkDeviceCreateInfo device_info = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+-	device_info.pNext = has_device_features2 ? &gpu_features2 : nullptr;
+-	device_info.pEnabledFeatures = has_device_features2 ? nullptr : &gpu_features2.features;
++	device_info.pNext = has_device_features2 ? &enabled_pdf2 : nullptr;
++	device_info.pEnabledFeatures = has_device_features2 ? nullptr : &enabled_pdf2.features;
+ 	device_info.pQueueCreateInfos = &queue_info;
+ 	device_info.queueCreateInfoCount = 1;
+-	device_info.enabledExtensionCount = uint32_t(active_device_extensions.size());
+-	device_info.ppEnabledExtensionNames = active_device_extensions.empty() ? nullptr : active_device_extensions.data();
++	device_info.enabledExtensionCount = uint32_t(device_extensions.size());
++	device_info.ppEnabledExtensionNames = device_extensions.empty() ? nullptr : device_extensions.data();
+ 
+ 	if (device_info.ppEnabledLayerNames)
+ 		for (uint32_t i = 0; i < device_info.enabledLayerCount; i++)

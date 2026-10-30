@@ -77,7 +77,7 @@ public static class InlineShaders
         if (len == 0) return null;
         try
         {
-            var code = format == 'Z' ? Inflate(d, at, n) : n == size ? d[at..(at + n)] : UnrealReader.Decompress(d[at..(at + n)], size);
+            var code = format == 'Z' ? Inflate(d, at, n) : n == size ? d[at..(at + n)] : UnrealReader.Decompress(d, at, n, size);
             return ShaderContainer.Offset(code, out _) >= 0 ? code : null;
         }
         catch (Exception) { return null; } // not compressed data after all

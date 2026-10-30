@@ -14,7 +14,7 @@ namespace SCSKiller.Core.Planning;
 /// REDengine 3's are one per kind of pipeline and Northlight's one graphics and one compute, fixed descriptions; Dagor's are
 /// built from each shader's header (<see cref="Dagor.DagorRootSig"/>). Which rule an engine version gets, and each rule's
 /// parameters and descriptions, are data (plan-rules.json, <see cref="RulesFile"/>); the constructions are here.</summary>
-public static unsafe class RootSig
+public static unsafe partial class RootSig
 {
     /// <summary>The rule a game's engine builds with (<see cref="RulesFile.Current"/>); null = none known. A fork without a rule
     /// of its own gets its base version's stock rule, which the fork may have changed (FF7's did).</summary>
@@ -30,8 +30,9 @@ public static unsafe class RootSig
     public static readonly byte[] Ue426Samplers = UeSamplers(0, 1000);
 
     /// <summary>The static samplers a rule's root signatures carry (UE 4.25: the same six at s1000-s1005 in space 0; before: none).</summary>
-    public static byte[] StaticSamplers(PlanRule r) =>
-        r.RootSignature?.Samplers is { } raw ? MemoryMarshal.AsBytes(raw.SelectMany(x => x).ToArray().AsSpan()).ToArray()
+    public static byte[] StaticSamplers(PlanRule r, EngineInfo? e = null) =>
+        Selects(r, "snowdrop") ? Snowdrop.SnowdropRootSig.Samplers(e?.MaxAnisotropy ?? Snowdrop.SnowdropRootSig.DefaultAnisotropy)
+        : r.RootSignature?.Samplers is { } raw ? MemoryMarshal.AsBytes(raw.SelectMany(x => x).ToArray().AsSpan()).ToArray()
         : r.RootSignature?.StaticSamplers is { } s ? UeSamplers(s.Register, s.Space) : [];
 
     internal static byte[] UeSamplers(uint reg, uint space)
@@ -56,7 +57,7 @@ public static unsafe class RootSig
     /// table's ranges all start at offset 0 (they alias one heap region, see <see cref="BindlessTables"/>), or with
     /// <paramref name="AppendRanges"/> each at OFFSET_APPEND (one after the other). <paramref name="Version10"/>: serialized
     /// as a version 1.0 root signature (range and root descriptor flags dropped); with <paramref name="RangeOffsets"/> each
-    /// range's fifth value is its offset from the table's start. <see cref="Key"/> identifies it.</summary>
+    /// range's last value is its offset from the table's start, after its flags in 1.1 (six values a range). <see cref="Key"/> identifies it.</summary>
     public sealed record Desc(uint Flags, List<uint[]> Rows, bool AppendRanges = false, bool Version10 = false, bool RangeOffsets = false)
     {
         public string Key => $"{Flags}|{string.Join(';', Rows.Select(r => string.Join(',', r)))}{(AppendRanges ? "|append" : "")}{(Version10 ? "|1.0" : "")}{(RangeOffsets ? "|offsets" : "")}";
@@ -74,6 +75,7 @@ public static unsafe class RootSig
         if (rs.Re is { } re) return BuildRe(re, stages, nvidia);
         if (Selects(r, "dagor")) return Dagor.DagorRootSig.Build(stages);
         if (Selects(r, "dagorCbvRanges")) return Dagor.DagorRootSig.Build(stages, cbvRanges: true);
+        if (Selects(r, "snowdrop")) return Snowdrop.SnowdropRootSig.Build(stages);
         return Selects(r, "ff7") ? BuildUe(stages) : BuildStock(r, rs.Stock!, stages, meshTier, maxSrvs, nvExtension);
     }
 
@@ -359,9 +361,6 @@ public static unsafe class RootSig
         return Dxbc.Part(blob, "RTS0"u8) is { IsEmpty: false } rts ? rts.ToArray() : throw new InvalidDataException("no RTS0 part");
     }
 
-    static readonly delegate* unmanaged<void*, nint*, nint*, int> SerializeFn = (delegate* unmanaged<void*, nint*, nint*, int>)NativeLibrary.GetExport(
-        NativeLibrary.Load(Path.Combine(Environment.SystemDirectory, "d3d12.dll")), "D3D12SerializeVersionedRootSignature"); // System32: never a proxy d3d12.dll next to the app
-
     /// <summary>The runtime refused the description (E_INVALIDARG: overlapping registers, a bad sampler, ...).</summary>
     public sealed class SerializeException(string message) : InvalidOperationException(message);
 
@@ -372,7 +371,8 @@ public static unsafe class RootSig
         // NumStaticSamplers @24, pStaticSamplers @32, Flags @40 (the same for 1.0 and 1.1).
         var n = d.Rows.Count;
         var stride = d.Version10 ? 5 : 6;
-        var ranges = new uint[Math.Max(1, d.Rows.Where(r => r[0] == 0).Sum(r => (r.Length - 2) / 5)) * stride];
+        var per = d.RangeOffsets ? stride : 5;   // values a row gives each range
+        var ranges = new uint[Math.Max(1, d.Rows.Where(r => r[0] == 0).Sum(r => (r.Length - 2) / per)) * stride];
         var parms = new byte[Math.Max(1, n) * 32];
         var desc = new byte[48];
         var samp = samplers.Length > 0 ? samplers : new byte[1];
@@ -387,13 +387,13 @@ public static unsafe class RootSig
                 *(uint*)(p + 24) = r[1];
                 if (r[0] == 0)
                 {
-                    var count = (r.Length - 2) / 5;
+                    var count = (r.Length - 2) / per;
                     *(uint*)(p + 8) = (uint)count;
                     *(uint**)(p + 16) = next;
                     for (var j = 0; j < count; j++, next += stride)
                     {
-                        for (var k = 0; k < stride - 1; k++) next[k] = r[2 + 5 * j + k];
-                        next[stride - 1] = d.RangeOffsets ? r[2 + 5 * j + 4] : count == 1 ? r.Length == 8 ? r[7] : Append : d.AppendRanges ? Append : 0;
+                        for (var k = 0; k < stride - 1; k++) next[k] = r[2 + per * j + k];
+                        next[stride - 1] = d.RangeOffsets ? r[2 + per * j + per - 1] : count == 1 ? r.Length == 8 ? r[7] : Append : d.AppendRanges ? Append : 0;
                     }
                 }
                 else for (var k = 0; k < (d.Version10 && r[0] != 1 ? 2 : 3); k++) ((uint*)(p + 8))[k] = r[2 + k];
@@ -472,16 +472,6 @@ public static unsafe class RootSig
         }
     }
 
-    static byte[] Call(byte* desc)
-    {
-        nint blob = 0, err = 0;
-        var hr = SerializeFn(desc, &blob, &err);
-        if (err != 0) Release(err);
-        if (hr < 0) throw new SerializeException($"D3D12SerializeVersionedRootSignature failed 0x{hr:x8}");
-        var vt = *(nint**)blob; // ID3DBlob: GetBufferPointer = slot 3, GetBufferSize = slot 4
-        var bytes = new ReadOnlySpan<byte>(((delegate* unmanaged<nint, void*>)vt[3])(blob), (int)((delegate* unmanaged<nint, nuint>)vt[4])(blob)).ToArray();
-        Release(blob);
-        return bytes;
-        static void Release(nint unk) => ((delegate* unmanaged<nint, uint>)(*(nint**)unk)[2])(unk);
-    }
+    /// <summary>D3D12SerializeVersionedRootSignature on a D3D12_VERSIONED_ROOT_SIGNATURE_DESC.</summary>
+    internal static partial byte[] Call(byte* desc);
 }

@@ -39,6 +39,7 @@ public sealed class NixxesReader : IEngineReader
     /// <param name="Entry">the PSARC entry; <see cref="Whole"/>: the DSAR file's stream; <see cref="Plain"/>: the file itself</param>
     public sealed record Loc(string Path, int Entry, long Offset, int Size);
     const int Whole = -1, Plain = -2;
+    const string Psarcs = @"cache_pc\psarc";
 
     /// <summary>Where each container is (by SHA-1), per game id, from the last Index. In memory only, like the carver's;
     /// ReadShaders re-indexes when it runs without an Index in the same process.</summary>
@@ -47,9 +48,9 @@ public sealed class NixxesReader : IEngineReader
     /// <summary>The layout of the install, from its folders only; null = none of them.</summary>
     public static string? Layout(string installDir)
     {
-        if (Directory.Exists(Path.Combine(installDir, "cache_pc", "psarc"))) return SuckerPunch;
-        if (File.Exists(Path.Combine(installDir, "toc")) && File.Exists(Path.Combine(installDir, "d", "materialgraph"))) return Insomniac;
-        if (Files(Path.Combine(installDir, "data"), "bundles.*.nxa").Any()) return Stingray;
+        if (Directory.Exists(GameFiles.Find(installDir, Psarcs))) return SuckerPunch;
+        if (File.Exists(GameFiles.Find(installDir, "toc")) && File.Exists(GameFiles.Find(installDir, @"d\materialgraph"))) return Insomniac;
+        if (Files(GameFiles.Find(installDir, "data"), "bundles.*.nxa").Any()) return Stingray;
         return null;
     }
 
@@ -97,7 +98,7 @@ public sealed class NixxesReader : IEngineReader
         {
             ct.ThrowIfCancellationRequested();
             if (new FileInfo(f.Path) is { Exists: true } fi)
-                content.AppendData(Encoding.UTF8.GetBytes(ContentStamps.Of(Path.GetRelativePath(game.InstallDir, f.Path), fi.FullName)));
+                content.AppendData(Encoding.UTF8.GetBytes(ContentStamps.Of(f.Rel, fi.FullName)));
             var opened = Each(f, game.InstallDir, detect: false, meter, (entry, library, src) =>
             {
                 var pool = new List<string>();
@@ -170,7 +171,7 @@ public sealed class NixxesReader : IEngineReader
             var kind = byEntry.Keys.Max() >= 0 ? Archive : byEntry.Keys.First();
             // anti-cheat may have arrived since the index: its binaries are never opened
             if (kind == Plain && (antiCheat ??= GameFiles.DetectAntiCheat(game) != AntiCheat.None)) continue;
-            Each(new SourceFile(file.Key, kind, ""), game.InstallDir, detect: false, null, (entry, _, src) =>
+            Each(new SourceFile(file.Key, kind, "", GameFiles.Rel(game.InstallDir, file.Key)), game.InstallDir, detect: false, null, (entry, _, src) =>
             {
                 if (!byEntry.TryGetValue(entry, out var wanted)) return true;
                 foreach (var (sha, at) in wanted)
@@ -194,7 +195,8 @@ public sealed class NixxesReader : IEngineReader
 
     /// <param name="Kind"><see cref="Archive"/>: a PSARC, each .xpps entry a source; <see cref="Whole"/>: a DSAR file's
     /// stream; <see cref="Plain"/>: the file itself</param>
-    sealed record SourceFile(string Path, int Kind, string Library);
+    /// <param name="Rel">its path under the install as Windows spells it</param>
+    sealed record SourceFile(string Path, int Kind, string Library, string Rel);
     const int Archive = 0;
 
     /// <summary>Calls <paramref name="use"/> (entry, pool name, bytes) on each source of the file while it returns true:
@@ -208,7 +210,7 @@ public sealed class NixxesReader : IEngineReader
                 using (var a = Psarc.Open(f.Path, meter))
                 {
                     if (a == null) return false;
-                    var rel = Path.GetRelativePath(installDir, f.Path);
+                    var rel = f.Rel;
                     var entries = only?.Where(i => i > 0 && i < a.Count).ToList() ?? [.. Enumerable.Range(1, a.Count - 1)
                         .Where(i => a.Names[i]?.EndsWith(".xpps", StringComparison.OrdinalIgnoreCase) == true)
                         .OrderBy(i => detect ? a.Size(i) : 0).ThenBy(i => a.Names[i], StringComparer.Ordinal)];
@@ -246,24 +248,27 @@ public sealed class NixxesReader : IEngineReader
         switch (layout)
         {
             case SuckerPunch:
-                foreach (var f in Order(Files(Path.Combine(dir, "cache_pc", "psarc"), "*.psarc"))) yield return new SourceFile(f.FullName, Archive, "");
+                var psarcs = GameFiles.Find(dir, Psarcs);
+                foreach (var f in Order(Files(psarcs, "*.psarc"))) yield return new SourceFile(f.FullName, Archive, "", GameFiles.Rel(dir, f.FullName, psarcs, Psarcs));
                 break;
             case Insomniac:
                 foreach (var name in new[] { "material", "materialgraph" })
-                    if (File.Exists(Path.Combine(dir, "d", name))) yield return new SourceFile(Path.Combine(dir, "d", name), Whole, $@"d\{name}");
+                    if (GameFiles.Find(dir, $@"d\{name}") is var path && File.Exists(path))
+                        yield return new SourceFile(path, Whole, $@"d\{name}", GameFiles.Rel(dir, path, path, $@"d\{name}"));
                 if (!detect && File.Exists(game.ExePath) && GameFiles.DetectAntiCheat(game) == AntiCheat.None)
-                    yield return new SourceFile(game.ExePath, Plain, Path.GetRelativePath(dir, game.ExePath));
+                    yield return new SourceFile(game.ExePath, Plain, GameFiles.Rel(dir, game.ExePath), GameFiles.Rel(dir, game.ExePath));
                 break;
             case Stingray:
-                foreach (var f in Order(Files(Path.Combine(dir, "data"), "bundles.*.nxa")))
-                    yield return new SourceFile(f.FullName, Whole, Path.GetRelativePath(dir, f.FullName));
+                var data = GameFiles.Find(dir, "data");
+                foreach (var f in Order(Files(data, "bundles.*.nxa")))
+                    if (GameFiles.Rel(dir, f.FullName, data, "data") is var rel) yield return new SourceFile(f.FullName, Whole, rel, rel);
                 break;
         }
     }
 
     static List<FileInfo> Files(string dir, string pattern)
     {
-        try { return Directory.Exists(dir) ? [.. new DirectoryInfo(dir).EnumerateFiles(pattern, new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 })] : []; }
+        try { return Directory.Exists(dir) ? [.. GameFiles.EnumerateFiles(new DirectoryInfo(dir), pattern, new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 })] : []; }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
     }
 

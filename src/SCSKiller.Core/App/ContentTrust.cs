@@ -86,10 +86,10 @@ public sealed class ContentTrust(AppStore store, IReadOnlyDictionary<string, str
     public static string CacheFile(string cacheFile, string? channel) => channel == null ? cacheFile
         : Path.Combine(Path.GetDirectoryName(cacheFile) ?? "", $"{Path.GetFileNameWithoutExtension(cacheFile)}@{channel}.json");
 
-    /// <summary>Game verdicts and Maximum mode: a channel's copy wins over a newer stable one, so an entry only in stable's
+    /// <summary>Game verdicts, Maximum mode and game exes: a channel's copy wins over a newer stable one, so an entry only in stable's
     /// reaches only stable, and a channel that answers 404 has no copy. Rules and news: the newest wins, so stable's reaches
     /// every channel.</summary>
-    static bool ChannelFirst(string name) => name is Games.GameVerdicts.Name or Games.MaximumMode.Name;
+    static bool ChannelFirst(string name) => name is Games.GameVerdicts.Name or Games.MaximumMode.Name or Games.GameExes.Name;
 
     /// <summary>The kept copy that verifies among stable's (<paramref name="cacheFile"/>) and those of
     /// <paramref name="channels"/>: the newest, or for <see cref="ChannelFirst"/> names the newest channel's, else stable's;

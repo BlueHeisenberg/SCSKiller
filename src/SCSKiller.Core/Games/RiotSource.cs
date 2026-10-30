@@ -28,27 +28,30 @@ public sealed class RiotSource(string? metadataDir = null, Func<string, string?>
         if (!Directory.Exists(dir)) return [];
         var games = new List<Game>();
         foreach (var sub in Directory.EnumerateDirectories(dir))
-        {
-            var key = Path.GetFileName(sub);
-            if (key.Split('.') is not [var product, var patchline] || product == "riot_client") continue;
-            string install, exe;
-            var known = Products.GetValueOrDefault(product);
             try
             {
-                if (InstallPath.Match(File.ReadAllText(Path.Combine(sub, key + ".product_settings.yaml"))) is not { Success: true } m || m.Groups[1].Value.Length == 0) continue;
-                install = GameFiles.DirKey(m.Groups[1].Value);
-                if (known.Exe != null && !File.Exists(Path.Combine(install, known.Exe))) continue;   // still installing
-                if (GameFiles.FindExe(install, known.Exe) is not { } found) continue;
-                exe = found;
+                var key = Path.GetFileName(sub);
+                if (key.Split('.') is not [var product, var patchline] || product == "riot_client") continue;
+                string install, exe;
+                var known = Products.GetValueOrDefault(product);
+                try
+                {
+                    if (InstallPath.Match(File.ReadAllText(Path.Combine(sub, key + ".product_settings.yaml"))) is not { Success: true } m || m.Groups[1].Value.Length == 0) continue;
+                    install = GameFiles.DirKey(m.Groups[1].Value);
+                    if (known.Exe != null && !File.Exists(Path.Combine(install, known.Exe))) continue;   // still installing
+                    if (GameFiles.FindExe(install, known.Exe) is not { } found) continue;
+                    exe = found;
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { continue; }
+                var name = (registry ?? Uninstall)($@"Riot Game {key}") is { } shown && !string.IsNullOrWhiteSpace(shown) ? shown.Trim() : known.Name ?? product;
+                if (patchline != "live" && !name.Contains(patchline, StringComparison.OrdinalIgnoreCase)) name += $" ({patchline.ToUpperInvariant()})";
+                games.Add(new Game($"riot:{key}", name, Store.Other, install, exe));
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { continue; }
-            var name = (registry ?? Uninstall)($@"Riot Game {key}") is { } shown && !string.IsNullOrWhiteSpace(shown) ? shown.Trim() : known.Name ?? product;
-            if (patchline != "live" && !name.Contains(patchline, StringComparison.OrdinalIgnoreCase)) name += $" ({patchline.ToUpperInvariant()})";
-            games.Add(new Game($"riot:{key}", name, Store.Other, install, exe));
-        }
+            catch (Exception e) when (e is not OperationCanceledException) { GameFiles.Skip("Riot Client", sub, e); }
         return games;
     }
 
-    static string? Uninstall(string entry) => EaSource.ReadRegistry($@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\{entry}\DisplayName")
+    static string? Uninstall(string entry) => !OperatingSystem.IsWindows() ? null
+        : EaSource.ReadRegistry($@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\{entry}\DisplayName")
         ?? EaSource.ReadRegistry($@"HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Uninstall\{entry}\DisplayName");
 }

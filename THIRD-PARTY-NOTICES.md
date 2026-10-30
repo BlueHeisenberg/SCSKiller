@@ -12,8 +12,7 @@ SCSKiller's own licence: GPL-3.0-or-later (LICENSE), with an additional permissi
 | Microsoft.Bcl.Memory | 10.0.12 | MIT | © Microsoft Corporation | https://github.com/dotnet/runtime | [L1](#l1) |
 | System.IO.Hashing | 10.0.10 | MIT | © Microsoft Corporation | https://github.com/dotnet/runtime | [L1](#l1) |
 | System.Numerics.Tensors | 10.0.10 | MIT | © Microsoft Corporation | https://github.com/dotnet/runtime | [L1](#l1) |
-| Windows App SDK (Runtime 2.5.1, WinUI 2.3.9, Foundation 2.3.12, Base 2.0.4, Interactive Experiences 2.1.9) | 2.5.1 | LicenseRef-Microsoft-WindowsAppSDK | © Microsoft Corporation | https://github.com/microsoft/windowsappsdk | [L2](#l2) |
-| Microsoft Edge WebView2 SDK | 1.0.3719.77 | BSD-3-Clause | Copyright (C) Microsoft Corporation | https://aka.ms/webview | [L3](#l3) |
+| Windows App SDK (Runtime 2.5.1, Foundation 2.3.12, Base 2.0.4, Interactive Experiences 2.1.9) | 2.5.1 | LicenseRef-Microsoft-WindowsAppSDK | © Microsoft Corporation | https://github.com/microsoft/windowsappsdk | [L2](#l2) |
 | Microsoft.Windows.SDK.NET (C#/WinRT projection, WinRT.Runtime) | 10.0.26100.57 | LicenseRef-Microsoft-WindowsSDK | © Microsoft Corporation | https://aka.ms/WinSDKLicenseURL | - |
 | CUE4Parse | 1.2.2.202609 | Apache-2.0 | Copyright (c) 2026 FabianFG | https://github.com/FabianFG/CUE4Parse | [L4](#l4) |
 | Blake3.NET | 3.0.2 | BSD-2-Clause | Copyright (c) 2020, Alexandre Mutel | https://github.com/xoofx/Blake3.NET | [L5](#l5) |
@@ -41,32 +40,57 @@ SCSKiller's own licence: GPL-3.0-or-later (LICENSE), with an additional permissi
 | Zlib-ng.NET | 1.2.0 | MIT | Copyright (c) 2025 NotOfficer | https://github.com/NotOfficer/Zlib-ng.NET | [L10](#l10) |
 | ZstdSharp.Port | 0.8.8 | MIT | Copyright (c) 2021 Oleg Stepanischev | https://github.com/oleg-st/ZstdSharp | [L24](#l24) |
 | ValvePak | 6.0.0.182 | MIT | Copyright (c) 2008 Rick (rick 'at' gibbed 'dot' us), Copyright (c) 2016 ValvePak Contributors | https://github.com/ValveResourceFormat/ValvePak | [L30](#l30) |
-| zlib-ng (zlib-ng2.dll) | 2.3.2 | Zlib | (C) 1995-2024 Jean-loup Gailly and Mark Adler | https://github.com/zlib-ng/zlib-ng | [L25](#l25) |
-| Oodle Data (oodle-data-shared.dll) | 2.9.x (OodleUE build 2026-06-04-1357) | LicenseRef-Oodle-Proprietary | Epic Games Tools LLC (RAD Game Tools) | https://www.radgametools.com/oodle.htm | - |
+| zlib-ng (zlib-ng2.dll, libz-ng.so) | 2.3.2 | Zlib | (C) 1995-2024 Jean-loup Gailly and Mark Adler | https://github.com/zlib-ng/zlib-ng | [L25](#l25) |
+| Oodle Data (oodle-data-shared.dll, liboodle-data-shared.so) | 2.9.x (OodleUE build 2026-06-04-1357) | LicenseRef-Oodle-Proprietary | Epic Games Tools LLC (RAD Game Tools) | https://www.radgametools.com/oodle.htm | - |
 | Velopack | 1.2.158 | MIT | Copyright © 2021 Caelan Sayler, © 2024 Velopack Ltd. | https://github.com/velopack/velopack | [L26](#l26) |
 | NSec.Cryptography | 26.4.0 | MIT | Copyright (c) 2026 Klaus Hartke | https://nsec.rocks | [L27](#l27) |
-| libsodium (libsodium.dll) | 1.0.22 | ISC | Copyright (c) 2013-2026 Frank Denis | https://libsodium.org | [L28](#l28) |
+| libsodium (libsodium.dll, libsodium.so) | 1.0.22 | ISC | Copyright (c) 2013-2026 Frank Denis | https://libsodium.org | [L28](#l28) |
 | Vulkan-Headers (proxy/third_party/vulkan) | 1.4 (source tree) | Apache-2.0 | Copyright 2015-2026 The Khronos Group Inc. | https://github.com/KhronosGroup/Vulkan-Headers | [L4](#l4) |
 | AMD GPU Services (amd_ags_x64.dll) | 6.3.1 | MIT | Copyright (c) 2025 Advanced Micro Devices, Inc. | https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK | [L29](#l29) |
 | Inter (font, in d3d12.dll) | 4.1 | OFL-1.1 | Copyright (c) 2016 The Inter Project Authors | https://github.com/rsms/inter | [L31](#l31) |
+| Fluent UI System Icons (font) | 1.1.344 | MIT | Copyright (c) 2020 Microsoft Corporation | https://github.com/microsoft/fluentui-system-icons | [L32](#l32) |
+| Selawik (font) | 1.01 | OFL-1.1 | Copyright 2015, Microsoft Corporation | https://github.com/microsoft/Selawik | [L33](#l33) |
+| Avalonia (Avalonia*.dll) | 12.1.4 | MIT | Copyright 2013-2026 © The AvaloniaUI Project | https://github.com/AvaloniaUI/Avalonia | [L40](#l40) |
+| Inter (font, in Avalonia.Fonts.Inter.dll) | 3.019 | OFL-1.1 | Copyright 2020 The Inter Project Authors | https://github.com/rsms/inter | [L31](#l31) |
+| SkiaSharp (SkiaSharp.dll, libSkiaSharp.dll, libSkiaSharp.so) | 3.119.4 | MIT | Copyright (c) 2015-2016 Xamarin, Inc., Copyright (c) 2017-2018 Microsoft Corporation | https://go.microsoft.com/fwlink/?linkid=868515 | [L41](#l41) |
+| HarfBuzzSharp (HarfBuzzSharp.dll, libHarfBuzzSharp.dll, libHarfBuzzSharp.so) | 8.3.1.3 | MIT | Copyright (c) 2015-2016 Xamarin, Inc., Copyright (c) 2017-2018 Microsoft Corporation | https://go.microsoft.com/fwlink/?linkid=868515 | [L41](#l41) |
+| ANGLE (av_libglesv2.dll, Avalonia.Angle.Windows.Natives) | 2.1.27548.20260419 | BSD-3-Clause | Copyright 2018 The ANGLE Project Authors | https://chromium.googlesource.com/angle/angle | [L3](#l3) |
+| MicroCom.Runtime | 0.11.6 | MIT | Copyright 2021 © Nikita Tsukanov | https://github.com/kekekeks/MicroCom | [L42](#l42) |
+| Tmds.DBus.Protocol | 0.94.1 | MIT | Tom Deseyn | https://github.com/tmds/Tmds.DBus | [L43](#l43) |
+| Fossilize (fossilize-replay.exe, scskiller_warm.exe, VkLayer_scskiller.dll, libVkLayer_scskiller.so, patched) | 556da9ff (source) | MIT | Copyright (c) 2018 Hans-Kristian Arntzen | https://github.com/ValveSoftware/Fossilize | [L34](#l34) |
+| miniz (in fossilize-replay.exe, scskiller_warm.exe, VkLayer_scskiller.dll, libVkLayer_scskiller.so) | Fossilize 556da9ff (source) | MIT | Copyright 2013-2014 RAD Game Tools and Valve Software, Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC | https://github.com/richgel999/miniz | [L35](#l35) |
+| RapidJSON (in fossilize-replay.exe, scskiller_warm.exe, VkLayer_scskiller.dll, libVkLayer_scskiller.so) | 8f4c021f (source) | MIT | Copyright (C) 2015 THL A29 Limited, a Tencent company, and Milo Yip | https://github.com/Tencent/rapidjson | [L36](#l36) |
+| volk (in fossilize-replay.exe) | 8a2387af (source) | MIT | Copyright (c) 2018-2026 Arseny Kapoulkine | https://github.com/zeux/volk | [L37](#l37) |
+| SPIRV-Headers (in fossilize-replay.exe) | 49654312 (source) | MIT | Copyright (c) 2015-2024 The Khronos Group Inc. | https://github.com/KhronosGroup/SPIRV-Headers | [L38](#l38) |
+| SPIRV-Tools (in the Linux fossilize-replay) | 2025.1-rc1 (the Steam Runtime sniper SDK's, static) | Apache-2.0 | Copyright 2015-2017 The Khronos Group Inc., 2016-2017 Google Inc., 2017 LunarG Inc., 2016-2018 Valve Corporation, 2017-2018 Pierre Moreau | https://github.com/KhronosGroup/SPIRV-Tools | [L4](#l4) |
+| dirent (in fossilize-replay.exe, scskiller_warm.exe, VkLayer_scskiller.dll) | c885633e (source) | MIT | Copyright (c) 1998-2019 Toni Ronkko | https://github.com/tronkko/dirent | [L39](#l39) |
 
 ### Notes
 
 - **.NET runtime (self-contained)**: Its own third-party notices ship as notices\dotnet-THIRD-PARTY-NOTICES.txt.
-- **Windows App SDK (Runtime 2.5.1, WinUI 2.3.9, Foundation 2.3.12, Base 2.0.4, Interactive Experiences 2.1.9)**: Its notices ship as notices\WindowsAppSDK-NOTICE.txt and notices\WinUI-NOTICE.txt.
-- **Microsoft Edge WebView2 SDK**: Its notices ship as notices\WebView2-NOTICE.txt.
+- **Windows App SDK (Runtime 2.5.1, Foundation 2.3.12, Base 2.0.4, Interactive Experiences 2.1.9)**: Its notices ship as notices\WindowsAppSDK-NOTICE.txt.
 - **Microsoft.Windows.SDK.NET (C#/WinRT projection, WinRT.Runtime)**: Part of the .NET SDK's Windows targeting pack. The package has no licence file. Its terms are at https://aka.ms/WinSDKLicenseURL.
 - **CommunityToolkit.HighPerformance**: Its notices ship as notices\CommunityToolkit-ThirdPartyNotices.txt.
-- **zlib-ng (zlib-ng2.dll)**: Native codec next to both exes, from the Zlib-ng.NET release assets, checked against a pinned SHA-256.
-- **Oodle Data (oodle-data-shared.dll)**: Proprietary software of Epic Games Tools (RAD Game Tools), with no published licence text. SCSKiller has no agreement with Epic or RAD. CUE4Parse downloads it from github.com/WorkingRobot/OodleUE (builds of the Oodle Data source that ships with Unreal Engine, no licence file there), checked against a pinned SHA-256. Releases leave it out (build/publish.ps1 -NoOodle) and the app downloads it on first use. Whether a build that includes it may be redistributed hasn't been established.
+- **zlib-ng (zlib-ng2.dll, libz-ng.so)**: Native codec next to the app's and the CLI's executables, from the Zlib-ng.NET release assets, checked against a pinned SHA-256.
+- **Oodle Data (oodle-data-shared.dll, liboodle-data-shared.so)**: Proprietary software of Epic Games Tools (RAD Game Tools), with no published licence text. SCSKiller has no agreement with Epic or RAD. CUE4Parse downloads it from github.com/WorkingRobot/OodleUE (builds of the Oodle Data source that ships with Unreal Engine, no licence file there), checked against a pinned SHA-256. Releases leave it out (build/publish.ps1 -NoOodle) and the app downloads it on first use. Whether a build that includes it may be redistributed hasn't been established.
 - **Velopack**: the installer and updater. Its Update.exe and Setup.exe come from the same MIT source, built by `vpk pack`.
 - **NSec.Cryptography**: verifies the Ed25519 signature on the update feed. Its NOTICE lists libsodium (ISC) and RFC 6234 sample code (Simplified BSD).
-- **Vulkan-Headers (proxy/third_party/vulkan)**: Source only, for the proxy self-test. Not in the shipped binaries.
+- **Vulkan-Headers (proxy/third_party/vulkan)**: Headers only, for the proxy self-test and the Vulkan recorder's own code (its feature table, `proxy/vk_features.h`, is generated from them).
 - **AMD GPU Services (amd_ags_x64.dll)**: AMD's signed release DLL, unmodified, in native\, downloaded by the proxy's CMake configure and pinned by SHA-256. scskiller_warm.exe loads it on AMD to create its device under a game's AGS app name.
+- **Fossilize (fossilize-replay.exe, scskiller_warm.exe, VkLayer_scskiller.dll, libVkLayer_scskiller.so, patched)**: built from source by the proxy's CMake configure at a pinned commit with the submodules the replayer needs, each source archive checked against a pinned SHA-256, with proxy/third_party/fossilize/scskiller.patch applied (the Vulkan warm's stop and its list of created pipelines, and the capture layer behind the recorder's admission). scskiller_warm.exe links its replayer interface, VkLayer_scskiller.dll and libVkLayer_scskiller.so are its capture layer. Its Vulkan headers are Vulkan-Headers.
 - **Inter (font, in d3d12.dll)**: Inter SemiBold's glyphs for the in-game panel's texts, rasterized at four sizes into `proxy/overlay_font.h` by `proxy/overlay_font.py` and compiled into the recorder. The font file isn't shipped.
+- **Fluent UI System Icons (font)**: a subset of FluentSystemIcons-Regular.ttf with only the glyphs the app uses (the ones `src/SCSKiller.Ui/Glyphs.cs` lists), embedded in the app (SCSKiller.Ui) for its icons. `src/SCSKiller.Ui/Assets/subset-icons.py` makes it from the release's file with fonttools, its name table as it is.
+- **Selawik (font)**: the Regular, Semibold and Bold TTF files, embedded in the app (SCSKiller.Ui) as its text font, unmodified.
+- **Avalonia (Avalonia*.dll)**: the app's UI framework, in every Avalonia package it ships (Avalonia, Desktop, Win32, X11, FreeDesktop, Skia, HarfBuzz, Themes.Fluent, Headless, Fonts.Inter and those they bring). The packages carry no licence file, so the text is the MIT licence with their copyright line.
+- **Inter (font, in Avalonia.Fonts.Inter.dll)**: six Inter TTF files, unmodified, embedded in Avalonia's font package, which Avalonia.Headless brings. Each one's name table carries its copyright and the OFL notice.
+- **SkiaSharp (SkiaSharp.dll, libSkiaSharp.dll, libSkiaSharp.so)**: Avalonia's renderer. libSkiaSharp.dll and libSkiaSharp.so are Skia (BSD-3-Clause) with the libraries built into it, and their notices ship as notices/SkiaSharp-THIRD-PARTY-NOTICES.txt.
+- **HarfBuzzSharp (HarfBuzzSharp.dll, libHarfBuzzSharp.dll, libHarfBuzzSharp.so)**: Avalonia's text shaping. libHarfBuzzSharp.dll and libHarfBuzzSharp.so are HarfBuzz ("Old MIT"), and its notices ship as notices/HarfBuzzSharp-THIRD-PARTY-NOTICES.txt.
+- **ANGLE (av_libglesv2.dll, Avalonia.Angle.Windows.Natives)**: Avalonia's OpenGL ES over Direct3D on Windows, built by the Avalonia project. The text is the package's LICENSE file.
+- **MicroCom.Runtime**: an Avalonia dependency. The package carries no licence file, so the text is the MIT licence with its copyright line.
+- **Tmds.DBus.Protocol**: Avalonia's D-Bus client on Linux (Avalonia.FreeDesktop). The package carries no licence file, so the text is the MIT licence with its copyright line.
 - **Game archive formats** (knowledge only, no code, keys or other data copied): the FromSoftware readers follow the layouts SoulsFormats (github.com/soulsmods/SoulsFormatsNEXT) and UXM Selective Unpack (github.com/Nordgaren/UXM-Selective-Unpack) document, and use the shader file names in UXM's archive dictionaries. The RE Engine package reader follows ree-pak-rs (github.com/eigeen/ree-pak-rs) and REE.PAK.Tool. No game key is embedded or shipped. Archive keys come from the user's install or the user, and stay on that PC. Where an install doesn't carry them in the clear (Dark Souls III's archive keys, PRAGMATA's table-key modulus), the app downloads them from those projects' public sources, pinned to a commit (UXM's `UXM/ArchiveKeys.cs`, ree-pak-rs's `ree-pak-core/src/pak/cipher/pak.rs`), and keeps only what opens the user's own archives.
 - **Build-time only, not shipped**: MemoryPack.Generator (source generator, MIT), Microsoft.Windows.SDK.BuildTools and Microsoft.Windows.SDK.BuildTools.MSIX (Microsoft Windows SDK terms), NETStandard.Library / Microsoft.NETCore.Platforms (metapackages).
-- **Native tools** (`d3d12.dll`, `scskiller_warm.exe`): SCSKiller's own code, statically linked with the Microsoft C/C++ runtime (Visual Studio distributable code).
+- **Native tools** (`d3d12.dll`, `scskiller_warm.exe`, `VkLayer_scskiller.dll`, `libVkLayer_scskiller.so`): SCSKiller's own code, statically linked with the Microsoft C/C++ runtime (Visual Studio distributable code), and on Linux with GCC's libstdc++ and libgcc (GPL-3.0-or-later with the GCC Runtime Library Exception 3.1).
 - **known-stutter.json**, **precompiles-at-boot.json** and **game-verdicts.json**: facts about games with the source of each (a link or a dated citation). No third-party text is copied.
 
 ## Licence texts
@@ -103,7 +127,7 @@ SOFTWARE.
 
 ### L2
 
-Used by: Windows App SDK (Runtime 2.5.1, WinUI 2.3.9, Foundation 2.3.12, Base 2.0.4, Interactive Experiences 2.1.9)
+Used by: Windows App SDK (Runtime 2.5.1, Foundation 2.3.12, Base 2.0.4, Interactive Experiences 2.1.9)
 
 ```text
 MICROSOFT SOFTWARE LICENSE TERMS
@@ -201,41 +225,46 @@ It also applies even if Microsoft knew or should have known about the possibilit
 
 ### L3
 
-Used by: Microsoft Edge WebView2 SDK
+Used by: ANGLE (av_libglesv2.dll, Avalonia.Angle.Windows.Natives)
 
 ```text
-Copyright (C) Microsoft Corporation. All rights reserved.
+Copyright 2018 The ANGLE Project Authors.
+All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are
-met:
+modification, are permitted provided that the following conditions
+are met:
 
-   * Redistributions of source code must retain the above copyright
-notice, this list of conditions and the following disclaimer.
-   * Redistributions in binary form must reproduce the above
-copyright notice, this list of conditions and the following disclaimer
-in the documentation and/or other materials provided with the
-distribution.
-   * The name of Microsoft Corporation, or the names of its contributors
-may not be used to endorse or promote products derived from this
-software without specific prior written permission.
+    Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+    Redistributions in binary form must reproduce the above
+    copyright notice, this list of conditions and the following
+    disclaimer in the documentation and/or other materials provided
+    with the distribution.
+
+    Neither the name of TransGaming Inc., Google Inc., 3DLabs Inc.
+    Ltd., nor the names of their contributors may be used to endorse
+    or promote products derived from this software without specific
+    prior written permission.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ### L4
 
-Used by: CUE4Parse, Vulkan-Headers (proxy/third_party/vulkan)
+Used by: CUE4Parse, Vulkan-Headers (proxy/third_party/vulkan), SPIRV-Tools (in the Linux fossilize-replay)
 
 ```text
                                  Apache License
@@ -1333,7 +1362,7 @@ SOFTWARE.
 
 ### L25
 
-Used by: zlib-ng (zlib-ng2.dll)
+Used by: zlib-ng (zlib-ng2.dll, libz-ng.so)
 
 ```text
 (C) 1995-2024 Jean-loup Gailly and Mark Adler
@@ -1414,7 +1443,7 @@ SOFTWARE.
 
 ### L28
 
-Used by: libsodium (libsodium.dll)
+Used by: libsodium (libsodium.dll, libsodium.so)
 
 ```text
 ISC License
@@ -1492,7 +1521,7 @@ SOFTWARE.
 
 ### L31
 
-Used by: Inter
+Used by: Inter (font, in d3d12.dll), Inter (font, in Avalonia.Fonts.Inter.dll)
 
 ```text
 Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
@@ -1587,6 +1616,399 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
+```
+
+### L32
+
+Used by: Fluent UI System Icons (font)
+
+```text
+MIT License
+
+Copyright (c) 2020 Microsoft Corporation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L33
+
+Used by: Selawik (font)
+
+```text
+Copyright 2015, Microsoft Corporation (www.microsoft.com), with Reserved Font Name Selawik.  All Rights Reserved.  Selawik is a trademark of Microsoft Corporation in the United States and/or other countries.
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+http://scripts.sil.org/OFL
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+```
+
+### L34
+
+Used by: Fossilize (fossilize-replay.exe, scskiller_warm.exe, VkLayer_scskiller.dll, libVkLayer_scskiller.so, patched)
+
+```text
+Copyright (c) 2018 Hans-Kristian Arntzen
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+### L35
+
+Used by: miniz (in fossilize-replay.exe, scskiller_warm.exe, VkLayer_scskiller.dll, libVkLayer_scskiller.so)
+
+```text
+Copyright 2013-2014 RAD Game Tools and Valve Software
+Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
+
+All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### L36
+
+Used by: RapidJSON (in fossilize-replay.exe, scskiller_warm.exe, VkLayer_scskiller.dll, libVkLayer_scskiller.so)
+
+```text
+Copyright (C) 2015 THL A29 Limited, a Tencent company, and Milo Yip.  All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+### L37
+
+Used by: volk (in fossilize-replay.exe)
+
+```text
+Copyright (c) 2018-2026 Arseny Kapoulkine
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L38
+
+Used by: SPIRV-Headers (in fossilize-replay.exe)
+
+```text
+Files: All files except for those called out below.
+Copyright (c) 2015-2024 The Khronos Group Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and/or associated documentation files (the
+"Materials"), to deal in the Materials without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Materials, and to
+permit persons to whom the Materials are furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Materials.
+
+MODIFICATIONS TO THIS FILE MAY MEAN IT NO LONGER ACCURATELY REFLECTS
+KHRONOS STANDARDS. THE UNMODIFIED, NORMATIVE VERSIONS OF KHRONOS
+SPECIFICATIONS AND HEADER INFORMATION ARE LOCATED AT
+   https://www.khronos.org/registry/
+
+THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
+```
+
+### L39
+
+Used by: dirent (in fossilize-replay.exe, scskiller_warm.exe, VkLayer_scskiller.dll)
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 1998-2019 Toni Ronkko
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L40
+
+Used by: Avalonia (Avalonia*.dll)
+
+```text
+MIT License
+
+Copyright 2013-2026 © The AvaloniaUI Project
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L41
+
+Used by: SkiaSharp (SkiaSharp.dll, libSkiaSharp.dll, libSkiaSharp.so), HarfBuzzSharp (HarfBuzzSharp.dll, libHarfBuzzSharp.dll, libHarfBuzzSharp.so)
+
+```text
+Copyright (c) 2015-2016 Xamarin, Inc.
+Copyright (c) 2017-2018 Microsoft Corporation.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+### L42
+
+Used by: MicroCom.Runtime
+
+```text
+MIT License
+
+Copyright 2021 © Nikita Tsukanov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### L43
+
+Used by: Tmds.DBus.Protocol
+
+```text
+MIT License
+
+Copyright Tom Deseyn
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ## Trademarks

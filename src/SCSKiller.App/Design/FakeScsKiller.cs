@@ -31,6 +31,16 @@ public sealed class FakeScsKiller : IScsKiller
         return new FrameReport(TimeSpan.FromMinutes(25), TimeSpan.FromSeconds(48), 88_400, 41.3, hitches, peaks);
     }
 
+    /// <summary>A 20-minute DirectX 11 session from the frames-only recorder: no creates, so no hitch is a shader's.</summary>
+    static FrameReport SampleFrames11()
+    {
+        Hitch[] hitches = [new(TimeSpan.FromSeconds(4), 1_870, HitchCause.Loading), new(TimeSpan.FromSeconds(142), 96, HitchCause.Other),
+            new(TimeSpan.FromSeconds(390), 64, HitchCause.Other), new(TimeSpan.FromSeconds(702), 2_120, HitchCause.Loading), new(TimeSpan.FromSeconds(955), 131, HitchCause.Other)];
+        var peaks = Enumerable.Range(0, FrameLog.GraphColumns).Select(i => (float)(15 + 5 * Math.Abs(Math.Sin(i * 0.29)))).ToArray();
+        foreach (var h in hitches) peaks[(int)(h.At.TotalSeconds / 1200 * FrameLog.GraphColumns)] = (float)h.Ms;
+        return new FrameReport(TimeSpan.FromMinutes(20), TimeSpan.FromSeconds(31), 72_900, 52.4, hitches, peaks, D3D11: true);
+    }
+
     public FakeScsKiller()
     {
         // Ready and stale games get the estimate the fake compiles at: 3 pipelines per shader, ~480/s, 24 KB each.
@@ -79,23 +89,28 @@ public sealed class FakeScsKiller : IScsKiller
             G("1817230", "Hi-Fi RUSH", "4.27", "Hi-Fi-RUSH.exe", 28_415, GameStatus.Ready, Core.Planning.Planner.NoRecording) with { RecorderMod = "ReShade", RecorderSkip = Core.App.ScsKiller.SkipForeignDll,
                 ReShade = true, ShaderMod = "RenoDX", ShaderModLayer = true, ShaderModAsD3D12 = true },   // ReShade as d3d12.dll
             G("1627720", "Lies of P", "4.27", "LOP-Win64-Shipping.exe", 52_880, GameStatus.Ready, Core.Planning.Planner.NoRecording) with { ReShade = true },
-            G("1139900", "Ghostrunner", "4.25", "Ghostrunner-Win64-Shipping.exe", 18_770, GameStatus.Ready, Core.Planning.Planner.Untested) with { Middleware = [new("DLSS", ["nvngx_dlss.dll"], 0)] },
+            G("1139900", "Ghostrunner", "4.25", "Ghostrunner-Win64-Shipping.exe", 18_770, GameStatus.Ready, Core.Planning.Planner.Untested) with { Middleware = [new("DLSS", ["nvngx_dlss.dll"], 0)], NoSharedHashes = true },
             G("3489700", "Stellar Blade Demo", "4.26", "SB-Win64-Shipping.exe", 94_473, GameStatus.Ready, Core.Planning.Planner.Untested),
             // shaders delivered by Advanced Shader Delivery, compiled by this driver: the tag and the game page's line
             G("Microsoft.Halcyon_8wekyb3d8bbwe", "Gears of War: E-Day", "5.6", "GoWEDay.exe", 61_000, GameStatus.Ready, Core.Planning.Planner.Untested, at: "xbox")
                 with { DeliveredShaders = 5_240_000_000, DeliveryFits = true },
-            G("1522820", "Orcs Must Die! 3", "4.26", "OrcsMustDie3.exe", 20_932, GameStatus.Ready, Core.Planning.Planner.NoRecording),
+            // its D3DSCache dbs shrank with Windows' automatic cleanup on: the game page's line under the status
+            G("3900290", "Lantern Coast", "5.4", "LanternCoast-Win64-Shipping.exe", 38_640, GameStatus.Stale, ScsKiller.TrimmedPartReason)
+                with { WarmedDriverVersion = "610.88", WarmedAt = DateTimeOffset.Now.AddDays(-4), LastWarmTime = TimeSpan.FromSeconds(241), D3DSCacheCleanup = true },
+            // Shader Model 6.6 shaders on Windows 10's own D3D12 runtime
+            G("1522820", "Orcs Must Die! 3", "4.26", "OrcsMustDie3.exe", 20_932, GameStatus.Ready, Core.Planning.Planner.NoRecording)
+                with { RuntimeWarning = Core.Warming.Warmer.RuntimeWarning("6.6", 19045, null) },
             // a compile over 16 GB (480,000 shaders: about 32 GB of cache), the queue's large-compile warning
             G("1285190", "Borderlands 4", "5.5", "Borderlands4.exe", 480_000, GameStatus.Ready, Core.Planning.Planner.Untested),
             // in the community database, which this signed-out PC doesn't download from
             // a real exe: its icon loads (the screenshots' library-groups checks it survives re-display)
-            G("1623730", "Palworld", "5.1", "Palworld-Win64-Shipping.exe", 122_835, GameStatus.NeedsRecording, Core.Planning.Planner.Record + "; " + Core.App.ScsKiller.InDbSupportersNote, at: "xbox",
+            G("1623730", "Palworld", "5.1", "Palworld-Win64-Shipping.exe", 122_835, GameStatus.NeedsRecording, Core.App.Format.Then(Core.Planning.Planner.Record, Core.App.ScsKiller.InDbSupportersNote), at: "xbox",
                 exePath: Environment.ProcessPath)
                 with { InCommunityDb = true, CommunityDbPsos = 18_406 },
-            G("3400000", "Life is Strange: Reunion", "5.5", "Reunion-Win64-Shipping.exe", 44_736, GameStatus.NeedsRecording, Core.Planning.Planner.Record + "; not in the community database yet", at: "ea")
+            G("3400000", "Life is Strange: Reunion", "5.5", "Reunion-Win64-Shipping.exe", 44_736, GameStatus.NeedsRecording, Core.App.Format.Then(Core.Planning.Planner.Record, "not in the community database yet"), at: "ea")
                 with { InCommunityDb = false },
             // compiled without its ray tracing (the plan can't rebuild Unreal 5's), in the community database
-            G("3300000", "Darwin's Paradox", "5.3", "DarwinsParadox-Win64-Shipping.exe", 108_542, GameStatus.Warmed, "warmed for driver 610.88; " + Core.App.ScsKiller.RtAfterRecordingNote, at: "epic",
+            G("3300000", "Darwin's Paradox", "5.3", "DarwinsParadox-Win64-Shipping.exe", 108_542, GameStatus.Warmed, Core.App.Format.Then("warmed for driver 610.88", Core.App.ScsKiller.RtAfterRecordingNote), at: "epic",
                 plan: new PlanStats(0, 96_210, 96_210, 64, false, Uncovered: 794, RtLibraries: 412, RtUncovered: 412, StageSets: 97_004, LeftOut: 794, RtInline: 0)) with
             {
                 WarmedDriverVersion = "610.88", WarmedAt = DateTimeOffset.Now.AddDays(-1).AddHours(-3), LastWarmTime = TimeSpan.FromSeconds(204), CacheOnDisk = 2_310_000_000,
@@ -117,7 +132,7 @@ public sealed class FakeScsKiller : IScsKiller
             G("Sample.AtomicHeart", "Atomic Heart", "4.27", "AtomicHeart-WinGDK-Shipping.exe", 157_069, GameStatus.Warmed, "", at: "xbox",
                 plan: new PlanStats(0, 188_730, 212, 118, false, StageSets: 188_730), cache: 4_500_000_000, time: TimeSpan.FromMinutes(7)) with
             {
-                WarmedDriverVersion = "610.88", WarmedAt = DateTimeOffset.Now.AddHours(-1), LastWarmTime = TimeSpan.FromSeconds(372), CacheOnDisk = 4_294_967_296,
+                WarmedDriverVersion = "610.88", WarmedAt = DateTimeOffset.Now.AddHours(-1), LastWarmTime = TimeSpan.FromSeconds(372), CacheOnDisk = 4_294_967_296, CacheInUse = 2_480_000_000, WindowsCache = 3_100_000_000,
                 LastWarmFailed = 0, LastWarmSkipped = 0, LastSession = new SessionStats(TimeSpan.FromMinutes(41), 2_310, 0, 2_310, 0, 1.2),
                 Similar = SimilarSystems.NoHelp,   // compiled an hour ago, not played since: Rate this compile is off
             },
@@ -136,6 +151,14 @@ public sealed class FakeScsKiller : IScsKiller
                 Engine = new EngineInfo("Dagor", "11.3", null, "D3D11 or D3D12", false, null), ApiDetected = "D3D11 or D3D12",
                 WarmedDriverVersion = "610.88", WarmedAt = DateTimeOffset.Now.AddDays(-2), LastWarmTime = TimeSpan.FromSeconds(163), CacheOnDisk = 1_980_000_000,
                 LastWarmFailed = 0, LastWarmSkipped = 0,
+            },
+            // switched to DirectX 11 in the game: its DirectX 12 compile is kept, its exe chosen by hand
+            G("3900280", "Tidal Echoes", "4.26", "Client-Win64-Shipping.exe", 296_278, GameStatus.Warmed, "warmed for driver 610.88",
+                plan: new PlanStats(0, 0, 0, 0, false, D3D11Shaders: 296_278), cache: 4_000_000_000, time: TimeSpan.FromMinutes(4)) with
+            {
+                Engine = new EngineInfo("Unreal", "4.26", null, "D3D11 (last run)", false, null), ApiDetected = "D3D11 (last run)",
+                WarmedDriverVersion = "610.88", WarmedAt = DateTimeOffset.Now.AddHours(-2), LastWarmTime = TimeSpan.FromSeconds(212), CacheOnDisk = 3_960_000_000,
+                LastWarmFailed = 0, LastWarmSkipped = 0, KeptApis = [new ApiCompile("12", DateTimeOffset.Now.AddDays(-1), "610.88", true)], ExeChosen = true,
             },
             // on the "not supported yet" list, compiled before it was put there
             G("999999901", "Sample Racer", "5.7", "SampleRacer-Win64-Shipping.exe", 48_210, GameStatus.Unsupported, "An app update is needed for support") with
@@ -166,10 +189,10 @@ public sealed class FakeScsKiller : IScsKiller
                 { RecorderOverride = RecorderOverride.On, RecorderEffective = true, RecorderInstalled = true, RecorderRefused = ScsKiller.GameChangedNote },
             G("3900040", "Quiet Orbit", "5.4", "QuietOrbit-Win64-Shipping.exe", 29_975, GameStatus.NeedsRecording, Core.Planning.Planner.Record) with
                 { RecorderOverride = RecorderOverride.On, RecorderEffective = true, RecorderInstalled = true, RecorderRefused = ScsKiller.NeverSawNote },
-            // its recorder placed by another SCSKiller copy (the installed one, its data copied here): off until turned on here
+            // its recorder placed by another SCSKiller copy (the installed one, its data copied here): off here
             G("3900060", "Foreign Field", "5.3", "ForeignField-Win64-Shipping.exe", 31_400, GameStatus.NeedsRecording, Core.Planning.Planner.Record) with
                 { RecorderOverride = RecorderOverride.On, RecorderForeign = true, RecorderNote = ScsKiller.ForeignNote },
-            // Windows Security removed the recorder: every install fails
+            // Windows Security removed the recorder's preloader: every install fails
             G("3900270", "Pale Harbor", "5.3", "PaleHarbor-Win64-Shipping.exe", 30_200, GameStatus.NeedsRecording, Core.Planning.Planner.Record) with
                 { RecorderOverride = RecorderOverride.On, RecorderEffective = true, RecorderFailure = AvFailure, RecorderNote = AvFailure },
             G("3900050", "Ashen Ward", "5.3", "AshenWard-Win64-Shipping.exe", 36_200, GameStatus.Stale,
@@ -182,13 +205,31 @@ public sealed class FakeScsKiller : IScsKiller
                 { AntiCheat = AntiCheat.EasyAntiCheat, RiskEligible = true, OfflineRecord = true },
             G("Sample.IronTide", "Iron Tide", "5.5", "IronTide-Win64-Shipping.exe", null, GameStatus.NeedsRecording, Core.Planning.Planner.Record) with
                 { Vac = true, RiskEligible = true, OfflineRecord = true, SessionNote = "This launch started before SCSKiller could attach: nothing was recorded. Try again." },
+            // Vulkan picked by the user where the last run was DirectX 11, and the session ran on DirectX 11 again
+            G("3900170", "Glass Meridian", "2021.3", "GlassMeridian.exe", null, GameStatus.NeedsRecording, Core.Planning.Planner.Record) with
+            {
+                AntiCheat = AntiCheat.Other, RiskEligible = true, OfflineRecord = true, ApiOverride = DxApi.Vulkan, ApiDetected = "D3D11 (last run)",
+                Engine = new EngineInfo("Unity", "2021.3", null, "Vulkan" + ScsKiller.ChoiceSuffix, false, null, OffersVulkan: true),
+                SessionNote = ScsKiller.RanOnNote("D3D11", picked: true),
+            },
             // its store has no launch a session can start
             G("nap_global", "Zenless Zone Zero", "2019.4", "ZenlessZoneZero.exe", null, GameStatus.Unsupported, "needs a recording, which its anti-cheat blocks", at: "hoyoplay") with
                 { AntiCheat = AntiCheat.Other, Engine = new EngineInfo("Unity", "2019.4", null, "D3D12", false, null), RiskNoLaunch = true },
             G("293760", "Automation", "4.27", "Automation-Win64-Shipping.exe", null, GameStatus.Unsupported, packed, unsupported: packed, at: "gog"),
+            // added by hand, renderer picked at run time (SDL): packed shaders, no API it tells, the picker offers Vulkan
+            G("c4d2e81f09a7b356", "Sample Recomp", "-", "SampleRecomp.exe", null, GameStatus.NeedsRecording, Core.Planning.Planner.Record, at: "manual") with
+                { Engine = new EngineInfo(Core.Carved.CarvedReader.Family, "-", null, Core.Unreal.UnrealRhi.Ambiguous, false, packed), ApiDetected = Core.Unreal.UnrealRhi.Ambiguous },
             // guesses: the version (no build string, no .utoc, no readable package), the DirectX (no DefaultGraphicsRHI), both
             G("CoffeeStainStudios.DeepRockGalactic", "Deep Rock Galactic", "4.27", "FSD-WinGDK-Shipping.exe", 18_350, GameStatus.Ready, "compiles every DirectX 11 shader", at: "xbox")
                 with { Engine = new EngineInfo("Unreal", "4.27", null, "D3D11", false, null, VersionGuessed: true, ApiGuessed: true), ApiDetected = "D3D11" },
+            // NVIDIA, DirectX 11, regular play: the frames-only recorder's graph, no shader split
+            G("3900300", "Frostline", "4.27", "Frostline-Win64-Shipping.exe", 22_610, GameStatus.Warmed, "warmed for driver 610.88",
+                plan: new PlanStats(0, 0, 0, 0, true, D3D11Shaders: 22_610)) with
+            {
+                Engine = new EngineInfo("Unreal", "4.27", null, "D3D11", false, null), ApiDetected = "D3D11", Records11 = true,
+                WarmedDriverVersion = "610.88", WarmedAt = DateTimeOffset.Now.AddDays(-2), LastWarmTime = TimeSpan.FromSeconds(96), CacheOnDisk = 640_000_000,
+                RecorderInstalled = true, RecorderEffective = true, PlayedAt = DateTimeOffset.Now.AddHours(-5), LastFrames = SampleFrames11(),
+            },
             G("3900010", "Harbor Lights", "5.3", "Harbor-Win64-Shipping.exe", 44_120, GameStatus.Ready, Core.Planning.Planner.NoRecording)
                 with { Engine = new EngineInfo("Unreal", "5.3", null, "D3D12", false, null, VersionGuessed: true) },
             G("3900020", "Moss Valley", "5.4", "MossValley-Win64-Shipping.exe", 27_840, GameStatus.Ready, Core.Planning.Planner.NoRecording)
@@ -202,6 +243,9 @@ public sealed class FakeScsKiller : IScsKiller
             G("5f1c0e9a2b7d4c30", "The Talos Principle 2", "5.3", "Talos2-Win64-Shipping.exe", 71_244, GameStatus.Ready, Core.Planning.Planner.NoRecording, at: "manual"),
             G("a93e4b1170cd2f86", "Satisfactory", "5.3", "FactoryGameSteam-Win64-Shipping.exe", 39_512, GameStatus.Unsupported,
                 "needs a recording, " + ScsKiller.ManualNoRecording, at: "manual") with { RecorderSkip = ScsKiller.SkipManual, RootUnconfirmed = true },   // its folder not confirmed yet
+            // Vulkan, nothing recorded, from Steam and from another store: plan and recorder as the core decides them (VulkanOn)
+            Vulkan(G("3900070", "Frost Relay", "2022.3", "FrostRelay.exe", 0, GameStatus.NeedsRecording, ""), vendor.Caps),
+            Vulkan(G("3900080", "Copper Lantern", "2022.3", "CopperLantern.exe", 0, GameStatus.NeedsRecording, "", at: "epic"), vendor.Caps),
         ];
         // as the core: every DirectX game offers the picker
         games = games.Select(g => g.ApiDetected == null && g.Engine is { } e && ScsKiller.ApiKey(e.GraphicsApi) != null ? g with { ApiDetected = e.GraphicsApi } : g).ToList();
@@ -221,8 +265,10 @@ public sealed class FakeScsKiller : IScsKiller
 
     const string SampleLocal = @"C:\Users\Player\AppData\Local";
 
-    static CacheItem SamplePart(string name, double gb, string folder = @"NVIDIA\DXCache", string? game = null, string? note = null) =>
-        new(name, CacheGroupKind.Installed, [new(Path.Combine(SampleLocal, folder, name + ".bin"), (long)(gb * (1L << 30)), DateTime.UnixEpoch)],
+    // d3ds: the game's own D3DSCache folder, which also holds part of its cache
+    static CacheItem SamplePart(string name, double gb, string folder = @"NVIDIA\DXCache", string? game = null, string? note = null, double? used = null, string? d3ds = null) =>
+        new(name, CacheGroupKind.Installed, [new($@"{SampleLocal}\{folder}\{name}.bin", (long)(gb * (1L << 30)), DateTime.UnixEpoch, (long?)(used * (1L << 30))),
+            .. d3ds == null ? Array.Empty<CacheFile>() : [new($@"{SampleLocal}\D3DSCache\{d3ds}\{name}.idx", 1L << 20, DateTime.UnixEpoch)]],
             game != null ? [game] : [], [], note);
 
     public CacheInventory CacheInventory() => SampleCaches;
@@ -238,11 +284,11 @@ public sealed class FakeScsKiller : IScsKiller
         ? throw new InvalidOperationException("SCSKILLER_TEST_READ_FAIL") : SampleCaches.Bytes(CacheGroupKind.OldDriver);
 
     static CacheInventory SampleCaches { get; } = new(
-        [new("DirectX 12 and 11", Path.Combine(SampleLocal, @"NVIDIA\DXCache"), true, null, false, (long)(105.35 * (1L << 30)))],
+        [new("DirectX 12 and 11", $@"{SampleLocal}\NVIDIA\DXCache", true, null, false, (long)(105.35 * (1L << 30)))],
         [
-            new(CacheGroupKind.Installed, [SamplePart("FINAL FANTASY VII REBIRTH", 12, game: "steam:2909400"), SamplePart("Hogwarts Legacy", 9.5, game: "steam:990080"),
+            new(CacheGroupKind.Installed, [SamplePart("FINAL FANTASY VII REBIRTH", 12, game: "steam:2909400"), SamplePart("Hogwarts Legacy", 9.5, game: "steam:990080", d3ds: "5f2a9c3e7b1d4086"),
                 SamplePart("Stellar Blade", 6, game: "steam:3489700"), SamplePart("Lies of P", 2.25, game: "steam:1627720")]),
-            new(CacheGroupKind.Uninstalled, [SamplePart("E-Day-Win64-Shipping.exe (steam_2913850)", 48, game: "steam_2913850"),
+            new(CacheGroupKind.Uninstalled, [SamplePart("E-Day-Win64-Shipping.exe (steam_2913850)", 48, game: "steam_2913850", used: 27.4),
                 SamplePart("Townfall-Win64-Shipping.exe (steam_1636440)", 6, game: "steam_1636440",
                     note: @"Its folder X:\Sample\Townfall is still there. It may be on a drive or in a store SCSKiller didn't find this time.")]),
             new(CacheGroupKind.OldDriver, [SamplePart("Hogwarts Legacy", 7), SamplePart(ScsKiller.OtherApps, 0.1)]),
@@ -254,12 +300,41 @@ public sealed class FakeScsKiller : IScsKiller
     /// <summary>The sample NVIDIA GPU; screenshots swap in an Intel one for the Library's notice.</summary>
     public IGpuVendorBackend Vendor { get; set; }
     public Settings Settings { get; set; } = new(30, WarmPriority.BelowNormal, DriverUpdateMode.Ask, 8, true, RecordAntiCheatGames: true);
-    public IReadOnlyList<FrameSession> FrameHistory(string gameId) => gameId != "steam:2909400" ? [] :
+    public IReadOnlyList<FrameSession> FrameHistory(string gameId) => gameId == "steam:3900300" ?
+    [
+        new(DateTimeOffset.Now.AddDays(-2).ToUnixTimeMilliseconds(), TimeSpan.FromMinutes(31), 58.2, 0),
+        new(DateTimeOffset.Now.AddDays(-4).ToUnixTimeMilliseconds(), TimeSpan.FromMinutes(12), 49.6, 0),
+    ] : gameId != "steam:2909400" ? [] :
     [
         new(DateTimeOffset.Now.AddDays(-1).ToUnixTimeMilliseconds(), TimeSpan.FromMinutes(42), 52.8, 3),
         new(DateTimeOffset.Now.AddDays(-3).ToUnixTimeMilliseconds(), TimeSpan.FromMinutes(95), 47.1, 11),
         new(DateTimeOffset.Now.AddDays(-6).ToUnixTimeMilliseconds(), TimeSpan.FromMinutes(18), 23.4, 64),
     ];
+    /// <summary>The game page's Steam launch options line where the platform shows it: FINAL FANTASY VII REBIRTH's to paste,
+    /// Ghostrunner's set already.</summary>
+    public Func<string, LaunchLine?> LaunchLines { get; set; } = id => id switch
+    {
+        "steam:2909400" => new(SampleLine("steam_2909400", "ff7rebirth_"), false),
+        "steam:1139900" => new(SampleLine("steam_1139900", "Ghostrunner-Win64-Shipping"), true),
+        _ => null,
+    };
+    /// <summary>The game page's line on the cache in Steam's own folder: Hogwarts Legacy's, whose cache is past what Steam's
+    /// files hold.</summary>
+    public Func<string, string?> SteamCacheNotes { get; set; } = id => id == "steam:990080" ? "2.1 GB of the cache doesn't fit Steam's cache files" : null;
+    public string? SteamCacheNote(string gameId) => SteamCacheNotes(gameId);
+    /// <summary>Tests: the games whose line's folders were made (LaunchLineOf with make).</summary>
+    public List<string> LaunchFoldersMade { get; } = [];
+    public LaunchLine? LaunchLineOf(string gameId, bool make = false)
+    {
+        if (make) lock (LaunchFoldersMade) LaunchFoldersMade.Add(gameId);
+        return LaunchLines(gameId);
+    }
+    static string SampleLine(string dir, string stem)
+    {
+        var cache = $"/home/you/.local/share/SCSKiller/games/{dir}/proton-cache";
+        return $"__GL_SHADER_DISK_CACHE_PATH={cache}/nvidia __GL_SHADER_DISK_CACHE_SIZE=10737418240 VKD3D_SHADER_CACHE_PATH={cache}/vkd3d "
+            + $"__GL_SHADER_DISK_CACHE_APP_NAME={stem} __GL_SHADER_DISK_CACHE_READ_ONLY_APP_NAME='{string.Join(';', Enumerable.Range(0, 8).Select(i => $"scskiller_{stem}{i}"))}' %command%";
+    }
     public IReadOnlyList<GpuChoice> GpuChoices { get; } = [new(1, GpuVendor.Nvidia, 0x2B85, "NVIDIA GeForce RTX 5090"), new(2, GpuVendor.Amd, 0x744C, "AMD Radeon RX 7900 XTX")];
     public IReadOnlyList<GameState> Games { get { lock (gate) return HideGames ? [] : Checking ? [.. games.Select((g, i) => i < 3 ? g : Unread(g))] : games.ToList(); } }
 
@@ -298,10 +373,13 @@ public sealed class FakeScsKiller : IScsKiller
     public bool QueueRunning => running;
     public bool Compiling => Queue.Any(Format.Running);
     public bool SetEncryptionKey(string gameId, string key) => false;
+    public bool HasEncryptionKey(string gameId) => gameId == "xbox:Sample.AtomicHeart";
+    public void RemoveEncryptionKey(string gameId) { }
     public bool ShouldNotifyStale() => Settings.OnDriverUpdate == DriverUpdateMode.Ask && DriverStaleGames().Count > 0;
     public void ApplyDriverUpdateMode() { }
     public Task<IReadOnlyList<GameState>> RescanAsync(CancellationToken ct, bool userRequested = false) => ScanAsync(ct);
     public void EnqueueWhenIdle(string gameId) => Enqueue(gameId);
+    public void EnqueueRightAway(string gameId) => Enqueue(gameId);
 
     /// <summary>Adds at the end; runs only after StartQueue, like the real queue.</summary>
     public void Enqueue(string gameId) => Update(() =>
@@ -486,6 +564,33 @@ public sealed class FakeScsKiller : IScsKiller
     }
     public void DropKeptCache(string gameId) => SetKept(gameId, null);
 
+    static readonly string[] VulkanSamples = ["steam:3900070", "epic:3900080"];
+
+    static GameState Vulkan(GameState s, VendorCaps caps)
+    {
+        var engine = new EngineInfo("Unity", "2022.3", null, "Vulkan", false, null);
+        var check = new Core.Planning.Planner().Check(s.Game, engine, null, caps);
+        s = s with { Engine = engine, ApiDetected = caps.VulkanKey != null ? engine.GraphicsApi : null, StatusReason = check.Reason,
+            Status = check.Readiness switch { Readiness.Ready => GameStatus.Ready, Readiness.NeedsRecording => GameStatus.NeedsRecording, _ => GameStatus.Unsupported } };
+        var skip = ScsKiller.RecorderSkip(s, null);
+        return s with { RecorderSkip = skip, RecorderEffective = ScsKiller.RecorderEffective(RecorderOverride.Default, true, skip) };
+    }
+
+    /// <summary>Screenshots: the Vulkan samples as the core plans them on <paramref name="caps"/>' GPU.</summary>
+    public void VulkanOn(VendorCaps caps)
+    {
+        foreach (var id in VulkanSamples)
+        {
+            GameState g;
+            lock (gate)
+            {
+                int i = games.FindIndex(x => x.Game.Id == id);
+                games[i] = g = Vulkan(games[i], caps);
+            }
+            GameChanged?.Invoke(g);
+        }
+    }
+
     /// <summary>Screenshots: every game compiled for driver <paramref name="from"/> shows <paramref name="to"/> instead.</summary>
     public void RenameDriver(string from, string to)
     {
@@ -499,7 +604,7 @@ public sealed class FakeScsKiller : IScsKiller
     public sealed class FakeAmdVendor : IGpuVendorBackend
     {
         public GpuVendor Vendor => GpuVendor.Amd;
-        public GpuInfo Gpu { get; } = new(GpuVendor.Amd, "AMD Radeon", "26.8.1 (32.0.31041.1004)", 0, 16UL << 30);
+        public GpuInfo Gpu { get; init; } = new(GpuVendor.Amd, "AMD Radeon", "26.8.1 (32.0.31041.1004)", 0, 16UL << 30);
         public VendorCaps Caps { get; } = new("amd-1", CacheKeyedByExeName: true, StateIndependentCache: false, CacheSizeConfigurable: false, PerStageCache: true);
         public CacheUsage GetCacheUsage() => new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AMD", "DxcCache"), 15_900_000_000, true);
         public CacheLimit? GetCacheLimit() => new(16L << 30, IsDriverDefault: false);
@@ -526,6 +631,26 @@ public sealed class FakeScsKiller : IScsKiller
         }
         GameChanged?.Invoke(g);
     }
+    public void SetGameTraversal(string gameId, bool? on)
+    {
+        GameState g;
+        lock (gate)
+        {
+            int i = games.FindIndex(x => x.Game.Id == gameId);
+            games[i] = g = games[i] with { TraversalOverride = on };
+        }
+        GameChanged?.Invoke(g);
+    }
+    public void SetGameCacheCap(string gameId, int? gb)
+    {
+        GameState g;
+        lock (gate)
+        {
+            int i = games.FindIndex(x => x.Game.Id == gameId);
+            games[i] = g = games[i] with { CacheCapGB = gb };
+        }
+        GameChanged?.Invoke(g);
+    }
     public void SetGameLeftOutOfAddAll(string gameId, bool on)
     {
         GameState g;
@@ -533,6 +658,16 @@ public sealed class FakeScsKiller : IScsKiller
         {
             int i = games.FindIndex(x => x.Game.Id == gameId);
             games[i] = g = games[i] with { LeftOutOfAddAll = on };
+        }
+        GameChanged?.Invoke(g);
+    }
+    public void SetGameUseShared(string gameId, bool on)
+    {
+        GameState g;
+        lock (gate)
+        {
+            int i = games.FindIndex(x => x.Game.Id == gameId);
+            games[i] = g = games[i] with { NoSharedHashes = !on };
         }
         GameChanged?.Invoke(g);
     }
@@ -562,15 +697,19 @@ public sealed class FakeScsKiller : IScsKiller
         string[] log = [$"2026-10-14 20:57:38Z {g.Name}: recording rehydrated from the install (24042 shaders)",
             $@"2026-10-14 20:58:04Z plan: 453311 PSOs, 733 root signatures, 9184 KiB -> C:\Users\{Environment.UserName}\AppData\Local\SCSKiller\games\{gameId.Replace(':', '_')}\plan.bin",
             $"2026-10-14 21:20:11Z {g.Name}: compiled 453311 of 453311 pipelines in 22 min 4 s"];
-        return Core.App.ProblemReport.Build("1.3.0-beta.2", g.Name, store, "nvidia", Vendor.Gpu.Name, Vendor.Gpu.DriverVersion, "10.0.26100", page, withLog ? log : null,
+        return Core.App.ProblemReport.Build("1.3.0-beta.2", g.Name, store, "nvidia", Vendor.Gpu.Name, Vendor.Gpu.DriverVersion, "Windows: 10.0.26100", page, withLog ? log : null,
             Core.App.ProblemReport.Masker.ThisPc);
     }
     /// <summary>Sends nothing: design runs never reach a server.</summary>
-    public async Task<(string? Id, string? Problem)> SendProblemAsync(string message, string report, CancellationToken ct = default)
+    public async Task<(string? Id, string? Problem)> SendProblemAsync(string gameId, string message, string report, CancellationToken ct = default)
     {
         await Task.Delay(600, ct);
-        return ("3f9c2e1a", null);
+        var id = Random.Shared.Next().ToString("x8");
+        lock (gate) problems.Add(new(id, Games.First(g => g.Game.Id == gameId).Game.Name, DateTimeOffset.UtcNow));
+        return (id, null);
     }
+    readonly List<SentProblem> problems = [new("3f9c2e1a", "Cyberpunk 2077", DateTimeOffset.UtcNow.AddDays(-3)), new("b04d7e95", "Elden Ring", DateTimeOffset.UtcNow.AddDays(-12))];
+    public IReadOnlyList<SentProblem> ProblemsSent() { lock (gate) return [.. problems.OrderByDescending(p => p.At)]; }
     public void RefreshGame(string gameId) => GameChanged?.Invoke(Games.FirstOrDefault(g => g.Game.Id == gameId) ?? throw new ArgumentException($"unknown game '{gameId}'"));
     public void RefreshCacheSizes() { }   // sample data: nothing changes on disk
     public ManualAdd PreviewManualGame(string exePath) => throw new ArgumentException("The sample library can't add games.");
@@ -583,7 +722,8 @@ public sealed class FakeScsKiller : IScsKiller
     public string? AfterUpdateLine { get => afterUpdateLine; set { afterUpdateLine = value; GameChanged?.Invoke(games[0]); } }
     /// <summary>--screenshots: the game whose D3DSCache fold runs, at 42%.</summary>
     public string? Folding { get; set; }
-    public string? FoldLine(string gameId) => Folding == gameId ? ScsKiller.FoldText("the game's", 42) : null;
+    public bool FoldWriting { get; set; }
+    public string? FoldLine(string gameId) => Folding == gameId ? ScsKiller.FoldText("the game's", 42, FoldWriting) : null;
     public void RenameManualGame(string gameId, string name)
     {
         GameState renamed;
@@ -593,6 +733,18 @@ public sealed class FakeScsKiller : IScsKiller
             renamed = games[i] = games[i] with { Game = games[i].Game with { Name = name.Trim() } };
         }
         GameChanged?.Invoke(renamed);
+    }
+
+    /// <summary>The sample's exe as picked, nothing read: Auto keeps the exe shown.</summary>
+    public void SetGameExe(string gameId, string? exe)
+    {
+        GameState changed;
+        lock (gate)
+        {
+            var i = games.FindIndex(g => g.Game.Id == gameId);
+            changed = games[i] = games[i] with { Game = exe == null ? games[i].Game : games[i].Game with { ExePath = exe }, ExeChosen = exe != null };
+        }
+        GameChanged?.Invoke(changed);
     }
 
     public IReadOnlyList<Game> HiddenGames { get { lock (gate) return [.. hidden.Select(s => s.Game)]; } }
@@ -620,8 +772,11 @@ public sealed class FakeScsKiller : IScsKiller
     {
         long total = TotalFor(q.GameId);
         long done = (long)(total * fraction);
-        return q with { Stage = QueueStage.Warming, Progress = new(done, total, 3, 480, done * 24_000, Skipped: 50), Note = null };
+        return q with { Stage = QueueStage.Warming, Progress = new(done, total, 3, 480, done * 24_000, Skipped: 50), Note = null, StartedAt = q.StartedAt ?? DateTimeOffset.Now.AddMinutes(-12) };
     }, includeWaiting: true));
+
+    /// <summary>Screenshots: the running item builds its plan, a given fraction through its shader groups.</summary>
+    public void PlanAt(double fraction) => Update(() => SetCurrent(q => q with { Stage = QueueStage.Planning, Progress = new((long)(18_420 * fraction), 18_420, 0, 0, Note: "shader groups paired"), Note = null }));
 
     /// <summary>Screenshots: the running item's warm is through and its process exits while the driver writes its cache.</summary>
     public void SavingFor(string note) => Update(() => SetCurrent(q => q with { Stage = QueueStage.Saving, Progress = null, Note = note }));
@@ -630,8 +785,11 @@ public sealed class FakeScsKiller : IScsKiller
     public void CopyAt(double fraction) => Update(() => SetCurrent(q =>
     {
         long total = TotalFor(q.GameId) * 24_000;
-        return q with { Stage = QueueStage.Merging, Progress = new((long)(total * fraction), total, 0, 180_000_000) };
+        return q with { Stage = QueueStage.Merging, Progress = new((long)(total * fraction), total, 0, 180_000_000), Note = null };
     }));
+
+    /// <summary>Screenshots: a step of the copy outran its estimate, as the core shows it.</summary>
+    public void CopyPast() => Update(() => SetCurrent(q => q with { Stage = QueueStage.Merging, Progress = null, Note = Core.App.Format.WritingStage }));
 
     void SetRecorder(string gameId, RecorderOverride value)
     {
@@ -641,9 +799,9 @@ public sealed class FakeScsKiller : IScsKiller
             int i = games.FindIndex(x => x.Game.Id == gameId);
             if (value == RecorderOverride.On && games[i].AntiCheat != AntiCheat.None) throw new InvalidOperationException($"{games[i].Game.Name} uses anti-cheat, so recording is not allowed.");
             bool on = ScsKiller.RecorderEffective(value, Settings.RecordAllGames, games[i].AntiCheat != AntiCheat.None ? ScsKiller.SkipAntiCheat : null);
-            if (games[i].RecorderForeign && value != RecorderOverride.On) on = false;   // only On takes another copy's recorder over
+            if (games[i].RecorderForeign) on = false;   // another copy's recorder is never taken over
             games[i] = g = games[i] with { RecorderOverride = value, RecorderEffective = on, RecorderInstalled = on,
-                RecorderForeign = games[i].RecorderForeign && value != RecorderOverride.On, RecorderNote = games[i].RecorderForeign && value != RecorderOverride.On ? games[i].RecorderNote : null };
+                RecorderNote = games[i].RecorderForeign ? games[i].RecorderNote : null };
         }
         GameChanged?.Invoke(g);
     }
@@ -684,8 +842,8 @@ public sealed class FakeScsKiller : IScsKiller
         GameState? finished = null;
         Update(() => SetCurrent(q =>
         {
-            if (paused || !running || q.Stage is QueueStage.Merging or QueueStage.Saving) return q;
-            if (q.Stage == QueueStage.Waiting) return q with { Stage = QueueStage.Planning };
+            if (paused || !running || q.Stage is QueueStage.Merging or QueueStage.Saving || q is { Stage: QueueStage.Planning, Progress: not null }) return q;
+            if (q.Stage == QueueStage.Waiting) return q with { Stage = QueueStage.Planning, StartedAt = DateTimeOffset.Now };
             long total = TotalFor(q.GameId);
             if (q.Stage == QueueStage.Planning) return q with { Stage = QueueStage.Warming, Progress = new(0, total, 0, 0, 0) };
             var p = q.Progress!;
@@ -736,7 +894,7 @@ public sealed class FakeScsKiller : IScsKiller
         CacheLimit limit = new(16L << 30, true);
         public GpuVendor Vendor => GpuVendor.Nvidia;
         public GpuInfo Gpu { get; } = new(GpuVendor.Nvidia, "NVIDIA GeForce", "610.88", 0, 32UL << 30);
-        public VendorCaps Caps { get; } = new("nvidia-1", true, true, true);
+        public VendorCaps Caps { get; } = new("nvidia-1", true, true, true, VulkanKey: Core.Vulkan.VulkanPlan.ExeNameKey);
         public CacheUsage GetCacheUsage() => new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NVIDIA", "DXCache"),
             Interlocked.Read(ref Used), true);
         public CacheLimit? GetCacheLimit() => limit;
@@ -753,17 +911,21 @@ public sealed class FakeScsKiller : IScsKiller
     }
     /// <summary>Screenshots: game id -> the reason its pair can't start, in place of the sample's own.</summary>
     public readonly Dictionary<string, string> BaBlocked = [];
+    /// <summary>Tests: the reason is read once this completes.</summary>
+    public TaskCompletionSource? HoldBaBlocked { get; set; }
     public string? BeforeAfterBlocked(string gameId)
     {
+        HoldBaBlocked?.Task.Wait();
         var g = Games.First(x => x.Game.Id == gameId);
         return BaBlocked.TryGetValue(gameId, out var why) ? why
-            : g.Engine?.GraphicsApi is not { } api || !api.Contains("D3D12") && !api.StartsWith("D3D11") ? "Only for DirectX 12 and DirectX 11 games"
+            : g.Engine?.GraphicsApi is not { } api || !api.Contains("D3D12") && !api.StartsWith("D3D11")
+                ? g is { Status: GameStatus.Unsupported, Engine: { } e } && SCSKiller.Core.Vulkan.VulkanPlan.IsVulkan(e) ? g.StatusReason : "Only for DirectX 12 and DirectX 11 games"
             : g.AnyAntiCheat ? "Not for games with anti-cheat"
             : g.NoStutter != null ? "Not for games without shader compilation stutter"
             : g.Status is not (GameStatus.Ready or GameStatus.Warmed or GameStatus.Stale or GameStatus.NeedsRecording) ? g.StatusReason
             : g.Playing ? $"{g.Game.Name} is running" : null;
     }
-    public void StartBeforeAfter(string gameId, int minutes, bool overlay = true) => SetBeforeAfter(gameId, new BeforeAfterInfo(BeforeAfterStage.BeforeArmed, minutes, null, 0));
+    public void StartBeforeAfter(string gameId, int minutes, bool overlay = true, bool max = false) => SetBeforeAfter(gameId, new BeforeAfterInfo(BeforeAfterStage.BeforeArmed, minutes, null, 0));
     public void BeforeAfterRecorderReady(string gameId) { }
     public void ContinueBeforeAfter(string gameId) => SetBeforeAfter(gameId, new BeforeAfterInfo(
         Games.First(x => x.Game.Id == gameId).BeforeAfter?.ClearPending == true ? BeforeAfterStage.BeforeArmed : BeforeAfterStage.AfterArmed, MinutesOf(gameId), null, 0));

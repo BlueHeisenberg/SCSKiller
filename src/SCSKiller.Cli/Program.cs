@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text.Json;
 using CUE4Parse.Compression;
@@ -11,17 +12,21 @@ const string Usage = """
     usage: scskiller <command>
       scan [--rescan]                             discover games and show their status (--rescan: redo engine detection)
       add <exe> [<install folder>]                add a game no store lists, by its exe (with its folder: the recorder may go there)
+      exe <game> <exe>|auto                       a store game's exe: one of its install, or auto for the one SCSKiller picks
       status [game]                               all games, or one in detail
       compile <game|--all-ready> [--threads N] [--idle | --when-idle] [--careful | --fast]
-                                                  --idle: background priority; --when-idle: also only while nobody uses the PC;
+                                                  --idle: background priority. --when-idle: also only while nobody uses the PC.
                                                   --careful (AMD): this and later compiles of the game compile its recorded
-                                                  pipelines in passes on few threads, so the driver keeps more of them (slower);
+                                                  pipelines in passes on few threads, so the driver keeps more of them (slower).
                                                   --fast: back to one pass
       queue [command]                             debug shell for the compile queue: the command, then one per line on stdin:
                                                   list | add <game> | move <game> <index> | remove <game> | start | stop | wait | quit
-      rewarm-stale [--if-driver-changed]          what the scheduled task runs; follows the driver-update setting
+      before-after <game> [--minutes N] [--no-overlay] [--max]  debug: a before and after recording without the app (you start the game)
+      rewarm-stale [--if-driver-changed]          what the scheduled task runs, following the driver-update setting
       cache get | cache set <GB|unlimited|default>
-      cache clear <game> [--game-precache]        delete the game's shader caches: driver, Windows (D3DSCache) (asks first);
+      cache page [--files] [delete <item>|everything [--others]]  the Cache page: its folders, groups and items, and a
+                                                  delete as its Delete or Clear everything makes it (asks first)
+      cache clear <game> [--game-precache]        delete the game's shader caches: driver, Windows (D3DSCache) (asks first).
                                                   --game-precache: also the caches the game writes itself (*.ushaderprecache,
                                                   Dawn's bin\pipelineLibrary.cache, RE Engine's shader.cache2 and
                                                   piplinelist.bin, GTA V Enhanced's and HELLDIVERS 2's pipeline libraries),
@@ -31,15 +36,19 @@ const string Usage = """
         (cache set / nvidia-auto-shader, as the app runs them elevated: --yes skips the question, --result <file>
          writes the outcome as a JSON line, --for-user <SID> refuses a different account's elevation)
       record install|uninstall <game>
-      record clear <game>                         delete the game's recording (the recorder's data files and SCSKiller's copy; asks first)
+      record remove-all                           take the recorder out of every game, as SCSKiller's uninstall does
+      record clear <game>                         delete the game's recording (the recorder's data files and SCSKiller's copy, asks first)
       record alongside <game> on|off              let the recorder chain to a mod's d3d12.dll (renamed, put back on removal)
-      key <game> <hex>                            give an encrypted game's AES key (verified, stored locally only)
+      shared <game> on|off                        use the shared shader hashes for the game: off, nothing is downloaded for it and its plans leave them out
+      key <game> <hex>                            give a game's AES key or game key (verified, stored locally only)
       index <game> --out <dir>                    debug: dump the engine reader's shader index
       rehydrate <game> <hash-only.db> --out <db> [--expect <content hash>]
                                                   add the shader bytes a hash-only recording references, from the install
       reference export <game> [--out <file>]      the game build's shader list for the community server's `admin reference import`:
                                                   the index's shaders and those this PC's recording saw (default <game id>.reference.json)
       task register|unregister                    the logon/idle "re-warm after a driver update" task
+      steam-place <game> [--remove]               Linux: put the game's compiled cache in Steam's cache folder for it
+                                                  once, or take it out, and show what each file holds
       fetch-codecs <dir>                          packaging: the pinned Oodle/zlib DLLs in <dir>, downloaded if missing
       --version                                   the CLI's version
     <game> is an id (steam:2909400) or a case-insensitive part of the name.
@@ -50,6 +59,7 @@ RouteFailover.Product = "SCSKiller-CLI";
 if (args.Length == 0 || args[0] is "-h" or "--help" or "help") { Console.WriteLine(Usage); return 0; }
 // before anything reads the data folder: a portable copy's first read copies the installed one's
 if (args[0] is "-v" or "--version" or "version") { Console.WriteLine(AppVersion.Current); return 0; }
+if (args[0] != "fetch-codecs" && AppStore.RefusesLiveData()) { Console.Error.WriteLine(AppStore.DevBuildRefusal); return 1; }
 // The app is handing over to Update.exe, which replaces this folder: start nothing (the scheduled task runs again later).
 // Packaging never reads the app's data folder.
 if (args[0] != "fetch-codecs" && Busy.Applying(AppStore.DefaultDir, DateTimeOffset.UtcNow))
@@ -61,6 +71,13 @@ if (args[0] != "fetch-codecs" && Busy.Applying(AppStore.DefaultDir, DateTimeOffs
     catch (ArgumentException) { }
     return 0;
 }
+// taking the recorders and the task out stays possible on a refused alpha
+if (args[0] != "fetch-codecs" && args is not ["record", "remove-all", ..] and not ["task", "unregister", ..]
+    && AlphaGate.Needed(AppVersion.Current) && !AlphaGate.Passed(AppStore.DefaultDir))
+{
+    Console.Error.WriteLine(AlphaGate.Cli);
+    return 1;
+}
 int code;
 try
 {
@@ -69,17 +86,21 @@ try
         "scan" => await Scan(args.Contains("--rescan")),
         "status" => await Status(args.Length > 1 ? args[1] : null),
         "add" => await AddGame(),
+        "exe" => await GameExe(),
         "compile" => await Compile(),
         "queue" => await QueueShell(),
+        "before-after" => await BeforeAfterCommand(),
         "rewarm-stale" => await RewarmStale(args.Contains("--if-driver-changed")),
-        "cache" => args.ElementAtOrDefault(1) == "clear" ? await CacheClear() : Cache(),
+        "cache" => args.ElementAtOrDefault(1) switch { "clear" => await CacheClear(), "page" => await CachePage(), _ => Cache() },
         "record" => await Record(),
+        "shared" => await UseShared(),
         "index" => await Index(),
         "rehydrate" => await RehydrateCommand(),
         "reference" when args.ElementAtOrDefault(1) == "export" => await ReferenceExport(),
         "key" => await Key(),
         "task" => TaskCommand(),
         "proton-env" => await ProtonEnv(),
+        "steam-place" => await SteamPlace(),
         "nvidia-snapshot" => NvidiaSnapshot(),
         "nvidia-auto-shader" => NvidiaAutoShader(),
         "fetch-codecs" => FetchCodecs(args.ElementAtOrDefault(1) ?? throw new ArgumentException("usage: scskiller fetch-codecs <dir>")),
@@ -132,12 +153,15 @@ static void BackgroundPriority()   // index/plan/materialize run in this process
     self.PriorityClass = ProcessPriorityClass.Idle;
 }
 
-static string StatusName(GameState s) => ScsKiller.NeedsOfflineSession(s) ? "NeedsOfflineSession" : s.Status.ToString();
+static string StatusName(GameState s) => ScsKiller.NeedsOfflineSession(s) ? "NeedsOfflineSession" : ScsKiller.NeedsSteamStart(s) ? "NeedsSteamStart" : s.Status.ToString();
 
 static string Hms(TimeSpan? t) => t?.ToString(@"h\:mm\:ss") ?? "-";
 
+// why the recorder stays out: its skip, else its note
+static string? RecorderWhy(GameState s) => s.RecorderSkip == ScsKiller.SkipModNotChainable ? ScsKiller.NotChainableReason(s.RecorderMod) : s.RecorderSkip ?? s.RecorderFailure ?? s.RecorderNote;
+
 static void Row(GameState s) =>
-    Console.WriteLine($"{StatusName(s),-19} {s.Game.Id,-24} {s.Game.Name}{(s.AntiCheat != AntiCheat.None ? $"  [{s.AntiCheat}]" : "")}{(s.KnownStutter is { } ks ? $"  [known stutter: {ks.Severity.ToString().ToLowerInvariant()}]" : "")}{(s.NoStutter != null ? "  [no shader stutter]" : "")}{(s.RecorderInstalled ? "  [recorder]" : "")}{(s.CacheOnDisk is { } c ? $"  [cache {Format.Bytes(c)}]" : "")}  - {(ScsKiller.NeverRecorded(s) ? $"{ScsKiller.NothingRecordedTitle}. {s.RecorderRefused}" : s.StatusReason)}");
+    Console.WriteLine($"{StatusName(s),-19} {s.Game.Id,-24} {s.Game.Name}{(s.AnyAntiCheat ? $"  [{ScsKiller.AntiCheatName(s)}]" : "")}{(s.KnownStutter is { } ks ? $"  [known stutter: {ks.Severity.ToString().ToLowerInvariant()}]" : "")}{(s.NoStutter != null ? "  [no shader stutter]" : "")}{(s.RecorderInstalled ? "  [recorder]" : "")}{(s.CacheOnDisk is { } c ? $"  [cache {Format.Bytes(c)}]" : "")}  - {(ScsKiller.NeverRecorded(s) ? $"{ScsKiller.NothingRecordedTitle}. {s.RecorderRefused}" : s.StatusReason)}");
 
 /// <summary>The tags' <see cref="Format.Middleware"/> lines joined with " · ", with the DLL names when <paramref name="dlls"/>.</summary>
 static string MiddlewareLine(IReadOnlyList<MiddlewareTag> tags, bool dlls) => string.Join(" · ", tags.Select(t =>
@@ -184,6 +208,7 @@ async Task<int> Scan(bool rescan)
 {
     var k = await Open(rescan);
     Console.WriteLine($"GPU: {k.Vendor.Gpu.Name}, driver {k.Vendor.Gpu.DriverVersion} ({k.Vendor.Caps.Profile})");
+    if (GpuBackends.DriverNote(k.Vendor) is { } note) Console.WriteLine(note);
     foreach (var s in k.Games) Row(s);
     return 0;
 }
@@ -206,45 +231,51 @@ async Task<int> Status(string? query)
         {g.Game.Name} ({g.Game.Id}, {g.Game.Store})
           install    {g.Game.InstallDir}
           exe        {g.Game.ExePath}
-          runs as    {(rec.LaunchedExeName is { } l0 ? $"{l0} (seen {rec.LaunchedExeSeenAt:yyyy-MM-dd HH:mm})" : "not seen yet")}; warms stage {ScsKiller.WarmExeName(g.Game, rec)}
+          runs as    {(rec.LaunchedExeName is { } l0 ? $"{l0} (seen {rec.LaunchedExeSeenAt:yyyy-MM-dd HH:mm})" : "not seen yet")}, warms stage {ScsKiller.WarmExeName(g.Game, rec)}
           engine     {(g.Engine is { } e ? string.Join(' ', new[] { Format.Engine(e) + (e.VersionGuessed ? " (guessed)" : ""), e.Fork, e.GraphicsApi }.OfType<string>()) + (e.Encrypted ? " encrypted" : "") : "-")}
-          status     {StatusName(g)}: {g.StatusReason}{(ScsKiller.DeliveryLine(g) is { } asd ? $"\n             {asd}" : "")}
-          anti-cheat {g.AntiCheat}
+          status     {StatusName(g)}: {g.StatusReason}{(ScsKiller.DeliveryLine(g) is { } asd ? $"\n             {asd}" : "")}{(ScsKiller.CleanupLine(g) is { } cleanup ? $"\n             {cleanup}" : "")}
+          anti-cheat {(g.AnyAntiCheat ? ScsKiller.AntiCheatName(g) : "None")}
           shaders    {g.ShaderCount?.ToString() ?? "-"}
           plan       {(g.Plan is { } p ? $"{p.Recorded} recorded + {p.Generated} generated + {p.D3D11Shaders} DirectX 11 shaders{(p.D3D11Draws > 0 ? $" ({p.D3D11Draws} vertex shaders with recorded layouts)" : "")} + {p.MiddlewareItems} middleware, {p.RootSignatures} root sigs, rule verified: {p.RootSigRuleVerified}" : "-")}
           stutter    {(g.KnownStutter is { } st ? $"known, {st.Severity.ToString().ToLowerInvariant()}: {st.Reason} ({st.Source}, checked {st.Date})" : g.NoStutter is { } ns ? $"none: {ns}" : "-")}
           middleware {(g.Middleware is { Count: > 0 } mw ? MiddlewareLine(mw, true) : "-")}
           estimate   {(g.EstimatedCacheBytes is { } est ? Format.Bytes(est) : "-")} of cache, {Hms(g.EstimatedWarmTime)}
           careful    {CarefulLine(g.Careful, g.Plan)}
-          warmed     {(g.WarmedAt is { } w ? $"{w:yyyy-MM-dd HH:mm} for driver {g.WarmedDriverVersion} in {Hms(g.LastWarmTime)}" + (ScsKiller.WarmCounts(g.LastWarmFailed ?? 0, g.LastWarmSkipped ?? 0, g.LastWarmCrashed ?? 0, g.LastWarmDriverSkipped ?? 0, g.LastWarmUnbuilt ?? 0, g.LastWarmKnown ?? 0, g.LastWarmFailedBy, g.LastWarmCrashedBefore ?? 0) is { } counts ? $"; {counts}" : "") : "never")}
+          shared     {(g.NoSharedHashes ? "not used: nothing is downloaded for this game and its plans leave the downloads out (shared <game> on)" : "used")}
+          warmed     {(g.WarmedAt is { } w ? $"{w:yyyy-MM-dd HH:mm} for driver {g.WarmedDriverVersion} in {Hms(g.LastWarmTime)}" + (ScsKiller.WarmCounts(g.LastWarmFailed ?? 0, g.LastWarmSkipped ?? 0, g.LastWarmCrashed ?? 0, g.LastWarmDriverSkipped ?? 0, g.LastWarmUnbuilt ?? 0, g.Plan, g.LastWarmInvalid ?? 0, g.LastWarmUnsupported ?? 0, g.LastWarmKnown ?? 0, g.LastWarmFailedBy, g.LastWarmCrashedBefore ?? 0) is { } counts ? $", {counts}" : "") : "never")}
           failed     {ScsKiller.RefusedLine(g) ?? "-"}{(k.WhyFailed(g.Game.Id) is { } failedWhy ? $" Why: {failedWhy}" : "")}
-          cache      {(g.CacheOnDisk is { } c ? $"{Format.Bytes(c)} on disk (driver-cache files its warms or the game had open)" : "-")}{(g.WindowsCache is { } wc ? $", {Format.Bytes(wc)} in its D3DSCache folder" : "")}
-          keys       {(rec.CacheKeys.Count > 0 ? string.Join(", ", rec.CacheKeys.Order()) : "-")}{(k.WarmAgs(g.Game.Id) is { } ags ? $" (compiles register its AGS app name {ags.App}, key {k.AgsKey(g.Game.Id)}: the exe name's case doesn't matter)" : AmdAppCache.IsNameHashed(rec.CacheKeys, ScsKiller.WarmExeName(g.Game, rec)) == false ? " (an app profile's key, not the exe name's hash: the name's case doesn't matter)" : "")}
-          recorder   {(g.RecorderInstalled ? "installed" : "not installed")}{(g.RecorderFailure is { } failed ? $" ({failed})" : "")}{(g.RecorderRefused is { } why ? $"; {(ScsKiller.NeverRecorded(g) ? ScsKiller.NothingRecordedTitle + ". " : "")}{why}" : "")}
-          recording  {(g.RecordingBytes > 0 ? $"{(g.RecordingBytes < 1 << 20 ? $"{Math.Max(1, g.RecordingBytes >> 10)} KB" : Format.Bytes(g.RecordingBytes))} (the game folder's files and SCSKiller's copy)" : "-")}, limit {ScsKiller.LimitText(k.Settings.RecordingLimitMB)} per game{(g.RecordingPaused ? $"; {ScsKiller.PausedNote(k.Settings)}" : "")}
-          last play  {(g.LastSession is { } l ? $"{Hms(l.Duration)}, {l.Requests} pipelines: {l.FromGameLibrary} from the game's library, {l.CacheHits} cache hits, {l.Compiles} compiles (worst {l.WorstCompileMs:0.0} ms){(l.StartupCompiles > 0 ? $", {l.StartupCompiles} compiles while the game started or loaded" : "")}{(l.RayQueryRecompiles > 0 ? $", {l.RayQueryRecompiles} ray-traced pipelines the driver partly recompiles every launch" : "")}{(l.StateObjectsReady + l.StateObjectsCompiled + l.StateObjectsStartupCompiled > 0 ? $"; ray tracing state objects: {l.StateObjectsReady} ready, {l.StateObjectsCompiled} compiled{(l.StateObjectsStartupCompiled > 0 ? $", {l.StateObjectsStartupCompiled} compiled while the game started or loaded" : "")}" : "")}" : "-")}
+          covered    {(ScsKiller.ShownPercent(g) is { } pct ? $"{pct}%" : "-")} for {(g.Engine is { } api && ScsKiller.ApiKey(api.GraphicsApi) is { } key ? ScsKiller.KeyName(key) : "-")}
+          other APIs {(g.KeptApis is { Count: > 0 } kept ? string.Join(", ", kept.Select(a => $"{ScsKiller.KeyName(a.Api)} compiled {a.WarmedAt:yyyy-MM-dd HH:mm} for driver {a.DriverVersion}{(a.CurrentDriver ? "" : " (an older driver)")}")) : "-")}
+          cache      {(g.CacheOnDisk is { } c ? $"{Format.Bytes(c)} on disk{(Format.InUseShown(c, g.CacheInUse) ? $", {Format.Bytes(g.CacheInUse)} in use" : "")} (driver-cache files its warms or the game had open)" : "-")}{(g.WindowsCache is { } wc ? $", {Format.Bytes(wc)} in its D3DSCache folder" : "")}
+          keys       {(rec.CacheKeys.Count > 0 ? string.Join(", ", rec.CacheKeys.Order()) : "-")}{(k.WarmAgs(g.Game.Id) is { } ags ? $" (compiles register its AGS app name {ags.App} as the game does: the exe name's case doesn't matter)" : AmdAppCache.IsNameHashed(rec.CacheKeys, ScsKiller.WarmExeName(g.Game, rec)) == false ? " (an app profile's key, not the exe name's hash: the name's case doesn't matter)" : "")}
+          recorder   {(g.RecorderInstalled ? ScsKiller.Frames11(g.Engine, k.Vendor.Caps) ? "installed, frame times only" : "installed" : "not installed")}{((!g.RecorderInstalled || g.RecorderFailure != null) && RecorderWhy(g) is { } off ? $" ({off})" : "")}{(g.RecorderRefused is { } why ? $". {(ScsKiller.NeverRecorded(g) ? ScsKiller.NothingRecordedTitle + ". " : "")}{why}" : "")}
+          recording  {(g.RecordingBytes > 0 ? $"{(g.RecordingBytes < 1 << 20 ? $"{Math.Max(1, g.RecordingBytes >> 10)} KB" : Format.Bytes(g.RecordingBytes))} (the game folder's files and SCSKiller's copy)" : "-")}, limit {ScsKiller.LimitText(k.Settings.RecordingLimitMB)} per game{(g.RecordingPaused ? $". {ScsKiller.PausedNote(k.Settings)}" : "")}
+          last play  {(g.LastSession is { } l ? $"{Hms(l.Duration)}, {l.Requests} pipelines: {l.FromGameLibrary} from the game's library, {l.CacheHits} cache hits, {l.Compiles} compiles (worst {l.WorstCompileMs:0.0} ms){(l.StartupCompiles > 0 ? $", {l.StartupCompiles} compiles while the game started or loaded" : "")}{(l.RayQueryRecompiles > 0 ? $", {l.RayQueryRecompiles} ray-traced pipelines the driver partly recompiles every launch" : "")}{(l.StateObjectsReady + l.StateObjectsCompiled + l.StateObjectsStartupCompiled > 0 ? $". Ray tracing state objects: {l.StateObjectsReady} ready, {l.StateObjectsCompiled} compiled{(l.StateObjectsStartupCompiled > 0 ? $", {l.StateObjectsStartupCompiled} compiled while the game started or loaded" : "")}" : "")}" : "-")}
           1st launch {(rec.FirstLaunch is { } fl ? $"{fl.At.LocalDateTime:yyyy-MM-dd HH:mm}, after the last compile: {fl.Hits} cache hits, {fl.Compiles} compiles ({fl.Compiled * 100:0.0}% compiled)" : "-")}
         """);
+    foreach (var line in Format.ModNote(g).Split('\n', StringSplitOptions.RemoveEmptyEntries)) Console.WriteLine($"  mod        {line}");
+    if (g.RuntimeWarning is { } warning) Console.WriteLine($"  warning    {warning}");
     return 0;
 }
 
 static string CarefulLine(CarefulCompile? c, PlanStats? plan) => c is not { } x ? "- (AMD only)"
     : (x.On ? $"on: the recorded pipelines compile in passes on at most {ScsKiller.AmdCarefulThreads} threads, the rest at full speed" : "off (compile <game> --careful turns it on)")
-      + (x.Recorded == 0 && plan is { D3D11Shaders: > 0, Recorded: 0 } ? "; only for DirectX 12: this game's DirectX 11 shaders always compile at full speed"
-         : x.Recorded == 0 ? "; no recorded DirectX 12 pipelines, so nothing compiles carefully"
-         : x.Estimate is { } t ? $"; a careful compile takes about {ScsKiller.Duration(t)}" : "");
+      + (x.Recorded == 0 && plan is { D3D11Shaders: > 0, Recorded: 0 } ? ". Only for DirectX 12: this game's DirectX 11 shaders always compile at full speed"
+         : x.Recorded == 0 ? ". No recorded DirectX 12 pipelines, so nothing compiles carefully"
+         : x.Estimate is { } t ? $". A careful compile takes about {ScsKiller.Duration(t)}" : "");
 
 static void PrintQueueChanges(ScsKiller k)
 {
     var lastPrint = DateTime.MinValue;
-    var lastStage = new Dictionary<string, QueueStage>();
+    var lastStage = new Dictionary<string, string>();
     k.QueueChanged += q =>
     {
         lock (lastStage)
         {
-            bool stageChanged = !lastStage.TryGetValue(q.GameId, out var st) || st != q.Stage;
+            var stage = q.Stage + (q.Stage == QueueStage.Merging ? q.Note : null);   // the merge's writing line shows at once
+            bool stageChanged = !lastStage.TryGetValue(q.GameId, out var st) || st != stage;
             if (!stageChanged && DateTime.Now - lastPrint < TimeSpan.FromSeconds(2)) return;
-            lastStage[q.GameId] = q.Stage;
+            lastStage[q.GameId] = stage;
             lastPrint = DateTime.Now;
             Console.WriteLine($"{DateTime.Now:HH:mm:ss} {q.GameId} {q.Stage}{ScsKiller.ProgressText(q)}{(q.Error != null ? " - " + q.Error : "")}");
         }
@@ -255,21 +286,145 @@ async Task<int> RunQueue(ScsKiller k, IReadOnlyList<GameState> targets, bool whe
 {
     if (targets.Count == 0) { Console.WriteLine("nothing to compile"); return 0; }
     PrintQueueChanges(k);
-    bool cancelled = false;
+    var run = new QueueRun(k);
+    void Stop()
+    {
+        Console.WriteLine("stopping (in-flight compiles finish so the driver writes its cache)...");
+        run.Stop();
+    }
     Console.CancelKeyPress += (_, e) =>
     {
         e.Cancel = true;
-        cancelled = true;
-        Console.WriteLine("stopping (in-flight compiles finish so the driver writes its cache)...");
-        foreach (var q in k.Queue.Where(q => q.Stage == QueueStage.Waiting)) k.Remove(q.GameId);
-        k.StopQueue();
+        Stop();
     };
-    foreach (var t in targets)
-        if (whenIdle) k.EnqueueWhenIdle(t.Game.Id); else k.Enqueue(t.Game.Id);
-    if (whenIdle) Console.WriteLine($"waiting until the PC has been idle for {k.IdleAfter.TotalMinutes:0} min (pauses on input)");
-    else k.StartQueue();
+    if (OperatingSystem.IsLinux()) StopOnSignals(Stop);
+    if (run.Start(targets.Select(t => t.Game.Id), whenIdle) && whenIdle)
+        Console.WriteLine($"waiting until the PC has been idle for {k.IdleAfter.TotalMinutes:0} min (pauses on input)");
     await k.WhenQueueIdle();
-    return !cancelled && k.Queue.Count > 0 && k.Queue.All(q => q.Stage == QueueStage.Done) ? 0 : 1;   // Ctrl+C: not everything compiled
+    return !run.Stopped && k.Queue.Count > 0 && k.Queue.All(q => q.Stage == QueueStage.Done) ? 0 : 1;   // Ctrl+C: not everything compiled
+}
+
+// SIGTERM (a service manager, kill) and SIGHUP (the terminal closed) stop the queue as Ctrl+C does, a later one too,
+// up to the process's exit. A closed terminal fails every write, so the console's writes no longer throw.
+static void StopOnSignals(Action stop)
+{
+    Console.SetOut(TextWriter.Synchronized(new NoThrowWriter(Console.Out)));
+    Console.SetError(TextWriter.Synchronized(new NoThrowWriter(Console.Error)));
+    foreach (var signal in new[] { PosixSignal.SIGTERM, PosixSignal.SIGHUP })
+        SignalHandlers.All.Add(PosixSignalRegistration.Create(signal, c =>
+        {
+            c.Cancel = true;
+            stop();
+        }));
+}
+
+// The app's before and after flow without a window: the run started, the app's poll loop in this process, the compile and
+// the after run continued as the app's buttons would, each change printed. The game is launched by whoever runs this.
+async Task<int> BeforeAfterCommand()
+{
+    if (args.Length < 2 || args[1].StartsWith("--")) return Fail("before-after <game> [--minutes N] [--no-overlay] [--max]");
+    int minutes = Opt("--minutes") is { } m ? int.TryParse(m, out var n) && n > 0 ? n : throw new ArgumentException("--minutes takes a number of minutes") : 5;
+    var k = await Open();
+    k.ManageRecorders = true;   // as the app: the run's recorder goes in, the before run's caches are set aside
+    var id = Match(k.Games, args[1]).Game.Id;
+    var stopFile = Path.Combine(k.Store.DataDir, "before-after.stop");
+    File.Delete(stopFile);
+    var done = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+    (BeforeAfterStage, string?, bool)? shown = null;
+    double printed = -30;
+    var continuing = Task.CompletedTask;   // under done's lock: ended before the pair is
+    using var stop = new CancellationTokenSource();
+    using var endWait = new CancellationTokenSource();
+    var ending = false;
+    var status = new Say(s => Console.WriteLine($"{DateTime.Now:HH:mm:ss} {s}"));
+    k.GameChanged += s =>
+    {
+        if (s.Game.Id != id || s.BeforeAfter is not { } b) return;
+        lock (done)
+        {
+            if (done.Task.IsCompleted) return;
+            var changed = shown != (b.Stage, b.Problem, b.ClearPending);
+            shown = (b.Stage, b.Problem, b.ClearPending);
+            if (changed || b.PlayedSeconds - printed >= 30)
+            {
+                Console.WriteLine($"{DateTime.Now:HH:mm:ss} {b.Stage}{(b.PlayedSeconds > 0 ? $", {b.PlayedSeconds:0} s of {b.Minutes * 60} played" : "")}{(b.Problem is { } p ? ": " + p : "")}");
+                printed = b.PlayedSeconds;
+            }
+            if (b.Stage == BeforeAfterStage.Done) done.TrySetResult(Report(k.BeforeAfterReport(id)));
+            else if (!changed) return;
+            // a clear that met the last run's cache still aside: the poll clears again once it is back
+            else if (b.ClearPending && b.Problem == ScsKiller.ClearHeldNote) return;
+            else if (b.Stage == BeforeAfterStage.AfterReady || b.ClearPending)   // the app's Continue
+                continuing = Task.Run(() =>
+                {
+                    try { k.ContinueBeforeAfter(id); }
+                    catch (Exception e) { Console.WriteLine("error: " + e.Message); done.TrySetResult(2); }
+                });
+            // the app shows a run to play again or a wait and goes on: only a note that needs the user ends it here
+            else if (b.Problem is { } p && (p.StartsWith(ScsKiller.RestoreFailedNote[..ScsKiller.RestoreFailedNote.IndexOf('{')], StringComparison.Ordinal)
+                     || b.Stage == BeforeAfterStage.Compiling && !ScsKiller.RetryNote(p)))
+                done.TrySetResult(2);
+        }
+    };
+    Console.CancelKeyPress += (_, e) =>
+    {
+        e.Cancel = true;
+        if (Volatile.Read(ref ending)) endWait.Cancel();   // a second stop: the wait for the put-back ends, the journal stays
+        done.TrySetResult(130);
+    };
+    if (OperatingSystem.IsLinux()) StopOnSignals(() => { if (Volatile.Read(ref ending)) endWait.Cancel(); done.TrySetResult(130); });
+    k.StartBeforeAfter(id, minutes, !args.Contains("--no-overlay"), args.Contains("--max"));
+    Console.WriteLine($"{DateTime.Now:HH:mm:ss} BeforeArmed: start the game, play {minutes} min, close it (stop: Ctrl+C or {stopFile})");
+    var watcher = k.WatchGames(stop.Token);
+    while (!done.Task.IsCompleted && !File.Exists(stopFile)) await Task.WhenAny(done.Task, Task.Delay(1000));
+    done.TrySetResult(130);
+    var code = await done.Task;
+    stop.Cancel();
+    await watcher;
+    Task last;
+    lock (done) last = continuing;
+    await last;
+    if (code != 0)
+    {
+        // the app's End: the pair ends, and what was set aside for the before run goes back below
+        k.StopQueue();
+        k.EndBeforeAfter(id, compile: false);
+        Console.WriteLine("before and after recording ended");
+    }
+    // never gone with a cache set aside: a game still running keeps it until it exits and nothing writes it
+    Volatile.Write(ref ending, true);
+    // a game played on after the pair ended keeps it aside: the wait ends then, the journal stays for the app's next start
+    endWait.CancelAfter(TimeSpan.FromMinutes(30));
+    try
+    {
+        if (await k.PutBackSetAsideAsync(status, endWait.Token) is { } armed && armed != id)
+            Console.WriteLine($"{DateTime.Now:HH:mm:ss} {armed}'s before run is armed: its cache stays set aside for it");
+    }
+    catch (OperationCanceledException)
+    {
+        foreach (var (game, folder, files) in k.SetAsideLeft())
+        {
+            Console.WriteLine($"still set aside for {game}: {folder}");
+            foreach (var f in files) Console.WriteLine($"  {f}");
+        }
+        Console.WriteLine("SCSKiller puts it back at its next start, once nothing uses it");
+        if (code == 0) code = 3;
+    }
+    await k.WhenQueueIdle();
+    return code;
+
+    static int Report(BeforeAfterResult? r)
+    {
+        if (r == null) return Fail("Done, but the report can't be read");
+        foreach (var (name, run) in new[] { ("before", r.Before), ("after", r.After) })
+        {
+            var x = BeforeAfter.Stats(run);
+            Console.WriteLine($"{name}: {x.PlaySeconds:0} s of play, {run.Frames} frames, {x.AvgFps:0.0} FPS average, {x.Low1PctFps:0.0} FPS 1% low, " +
+                $"{x.ShaderStutters} shader compilation stutters ({x.FrozenSeconds:0.00} s, worst {x.WorstStutterMs:0} ms), {x.OtherHitches} other stutters, " +
+                $"{x.Hitches} frames of 50 ms or more ({x.HitchSeconds:0.00} s, worst {x.WorstHitchMs:0} ms)");
+        }
+        return 0;
+    }
 }
 
 // A debugging shell: the queue lives in this process, so commands come on stdin (or piped: echo add ff7 | scskiller queue).
@@ -324,7 +479,7 @@ async Task<int> CacheClear()
     var precache = args.Contains("--game-precache");
     var parts = k.GameCaches(g.Game.Id, precache);
     var gap = k.DriverCacheGap(g.Game.Id);
-    if (parts.Count == 0) return Fail($"no shader-cache files of {g.Game.Name} were found" + (gap != null ? $" ({gap})" : ""));
+    if (parts.Count == 0 && g.WarmedAt == null) return Fail($"no shader-cache files of {g.Game.Name} were found" + (gap != null ? $" ({gap})" : ""));
     foreach (var p in parts)
     {
         Console.WriteLine($"{p.Name}  {Format.Bytes(p.Bytes)}");
@@ -332,11 +487,42 @@ async Task<int> CacheClear()
     }
     if (gap != null) Console.WriteLine($"note: {gap}");
     if (!precache && k.GameCaches(g.Game.Id, true).Where(p => p.Name is ScsKiller.PipelinePart or ScsKiller.PrecachePart).ToList() is { Count: > 0 } own)
-        Console.WriteLine($"kept: the game's own caches ({string.Join(", ", own.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}"))}); --game-precache deletes them too");
-    if (!Confirm($"Delete {g.Game.Name}'s shader caches ({string.Join(", ", parts.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}"))}, the files above)? " +
-                 "Its next run is cold; it shows as not warmed afterwards.")) return 1;
-    k.ClearGameCache(g.Game.Id, precache);   // a refusal throws InvalidOperationException: printed as "error: <reason>"
-    Console.WriteLine($"cleared {g.Game.Name}'s shader caches");
+        Console.WriteLine($"kept: the game's own caches ({string.Join(", ", own.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}"))}), --game-precache deletes them too");
+    if (!Confirm(parts.Count == 0 ? $"Forget {g.Game.Name}'s compile? No files are deleted, and it shows as not warmed afterwards."
+            : $"Delete {g.Game.Name}'s shader caches ({string.Join(", ", parts.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}"))}, the files above)? " +
+              "Its next run is cold, and it shows as not warmed afterwards.")) return 1;
+    // a refusal throws InvalidOperationException: printed as "error: <reason>"
+    if (!k.ClearGameCache(g.Game.Id, precache)) return Fail($"no shader-cache files of {g.Game.Name} were found");
+    Console.WriteLine(parts.Count == 0 ? $"forgot {g.Game.Name}'s compile" : $"cleared {g.Game.Name}'s shader caches");
+    return 0;
+}
+
+async Task<int> CachePage()
+{
+    var k = await Open();
+    var inv = k.CacheInventory();
+    if (inv.Folders.Count == 0 && inv.Groups.Count == 0) Console.WriteLine("SCSKiller doesn't know where this GPU's driver keeps its cache.");
+    foreach (var f in inv.Folders)
+        Console.WriteLine($"folder: {f.Label}  {f.Path}  {Format.Bytes(f.Bytes)}{(f.Exists ? "" : "  not created yet")}{(f.Final is { } at ? $"  stored in {at}" : "")}");
+    Console.WriteLine($"total: {Format.Bytes(inv.Groups.Sum(g => g.Bytes))}");
+    foreach (var g in inv.Groups)
+    {
+        Console.WriteLine($"{g.Kind}  {Format.Bytes(g.Bytes)}{(g.Note is { } gn ? $"  ({gn})" : "")}");
+        foreach (var i in g.Items)
+        {
+            Console.WriteLine($"  {i.Name}  {Format.Bytes(i.Bytes)}  {i.Files.Count} files{(i.Kept ? "  kept" : "")}{(i.Note is { } n ? $"  ({n})" : "")}");
+            if (args.Contains("--files")) foreach (var f in i.Files) Console.WriteLine($"    {f.Path}");
+        }
+    }
+    if (args.ElementAtOrDefault(2) != "delete") return 0;
+    if (args.ElementAtOrDefault(3) is not { } what) return Fail("cache page delete <item>|everything [--others]");
+    var items = what == "everything" ? inv.Everything(args.Contains("--others"))
+        : inv.Groups.SelectMany(g => g.Items).Where(i => i.Name.Equals(what, StringComparison.OrdinalIgnoreCase)).ToList();
+    if (items.Count == 0) return Fail($"nothing to delete for '{what}'");
+    if (!Confirm($"Delete {string.Join(", ", items.Select(i => i.Name))} ({Format.Bytes(items.Sum(i => i.Bytes))})?")) return 1;
+    var r = k.DeleteCaches(items);
+    Console.WriteLine($"deleted {Format.Bytes(r.Bytes)} in {r.Files} files");
+    foreach (var why in r.Skipped) Console.WriteLine($"skipped: {why}");
     return 0;
 }
 
@@ -345,6 +531,7 @@ async Task<int> Compile()
     if (args.Length < 2) return Fail("compile <game|--all-ready> [--threads N] [--idle | --when-idle] [--careful | --fast]");
     Only("--all-ready", "--threads", "--idle", "--when-idle", "--careful", "--fast");
     int? threads = Opt("--threads") is { } t ? int.TryParse(t, out var n) && n > 0 ? n : throw new ArgumentException("--threads takes a number of threads") : null;
+    using var awake = KeepAwake.Start();   // before the first await: still on the main thread
     var k = await Open();
     if (threads != null) k.ThreadsOverride = threads;
     bool whenIdle = args.Contains("--when-idle");
@@ -365,25 +552,29 @@ async Task<int> Compile()
 
 async Task<int> RewarmStale(bool ifDriverChanged)
 {
+    using var awake = KeepAwake.Start();   // before the first await: still on the main thread
     var k = await Open();
     var stale = ifDriverChanged ? k.DriverStaleGames() : k.StaleGames();
     if (stale.Count == 0) { Console.WriteLine("nothing to re-warm"); return 0; }
     switch (k.Settings.OnDriverUpdate)
     {
         case DriverUpdateMode.Off:
-            Console.WriteLine($"{stale.Count} game(s) need a re-warm; automatic re-warm is off.");
+            Console.WriteLine($"{stale.Count} game(s) need a re-warm. Automatic re-warm is off.");
             return 0;
         case DriverUpdateMode.Ask:
-            if (!k.ShouldNotifyStale()) { Console.WriteLine($"{stale.Count} game(s) need a re-warm; the user skipped them for this driver."); return 0; }
-            if (ScheduledTask.AppExe() is { } app)   // the app shows the notification (compile now / when idle / skip)
+            if (!k.ShouldNotifyStale()) { Console.WriteLine($"{stale.Count} game(s) need a re-warm. The user skipped them for this driver."); return 0; }
+            if (ScsKiller.StartDriverUpdated() is { } app)   // the app shows the notification (compile now / when idle / skip)
             {
-                Process.Start(new ProcessStartInfo(app, ScheduledTask.DriverUpdatedArg) { UseShellExecute = false })?.Dispose();
                 Console.WriteLine($"{stale.Count} game(s) need a re-warm: notified via {app}");
                 return 0;
             }
             Console.WriteLine($"{stale.Count} game(s) need a re-warm (driver {k.Vendor.Gpu.DriverVersion}):");
             foreach (var s in stale) Row(s);
             Console.WriteLine("Run 'scskiller compile <game>' or open SCSKiller to re-warm them.");
+            return 0;
+        // the app compiles them at once (ScsKiller.RewarmRightAway); without one, this run waits for idle
+        case DriverUpdateMode.WhenIdle when k.Settings.DriverRightAway && ifDriverChanged && ScsKiller.StartDriverUpdated() is { } handedTo:
+            Console.WriteLine($"{stale.Count} game(s) need a re-warm: handed to {handedTo}, which compiles them right away");
             return 0;
         default:
             BackgroundPriority();
@@ -395,6 +586,7 @@ int Cache()
 {
     var v = RunningGpu();
     Console.WriteLine($"GPU: {v.Gpu.Name} ({v.Vendor}), driver {v.Gpu.DriverVersion}, profile {v.Caps.Profile}");
+    if (ScsKiller.AmdAlwaysOnLine(v) is { } alwaysOn) Console.WriteLine($"  warning: {alwaysOn}");
     if (args.Length > 1 && args[1] == "set")
     {
         if (args.Length < 3) return Fail("cache set <GB|unlimited|default>");
@@ -428,17 +620,28 @@ int Cache()
     return 0;
 }
 
+async Task<int> UseShared()
+{
+    if (args.Length != 3 || args[2] is not ("on" or "off")) return Fail("shared <game> on|off");
+    var k = await Open();
+    var g = Match(k.Games, args[1]);
+    k.SetGameUseShared(g.Game.Id, args[2] == "on");
+    Console.WriteLine($"{g.Game.Name}: use shared shader hashes {args[2]}");
+    return 0;
+}
+
 async Task<int> Record()
 {
+    if (args.ElementAtOrDefault(1) == "remove-all") return RemoveAll();
     bool alongside = args.Length > 3 && args[1] == "alongside" && args[3] is "on" or "off";
     if (!alongside && (args.Length < 3 || args[1] is not ("install" or "uninstall" or "clear")))
-        return Fail("record install|uninstall|clear <game> | record alongside <game> on|off");
+        return Fail("record install|uninstall|clear <game> | record alongside <game> on|off | record remove-all");
     var k = await Open();
     var g = Match(k.Games, args[2]);
     if (args[1] == "clear")
     {
         if (g.RecordingBytes == 0) return Fail($"{g.Game.Name} has no recording");
-        if (!Confirm($"Delete {g.Game.Name}'s recording ({Format.Bytes(g.RecordingBytes)})? The recorded pipelines are removed; they're compiled again only if " +
+        if (!Confirm($"Delete {g.Game.Name}'s recording ({Format.Bytes(g.RecordingBytes)})? The recorded pipelines are removed. They're compiled again only if " +
                      "the game creates them again while recording, and the compile plan goes back to what the game's files give.")) return 1;
         k.ClearRecording(g.Game.Id);   // a refusal throws InvalidOperationException: printed as "error: <reason>"
         Console.WriteLine($"cleared {g.Game.Name}'s recording");
@@ -449,13 +652,27 @@ async Task<int> Record()
         var mod = k.RecorderMod(g.Game.Id);
         k.SetRecordAlongsideMod(g.Game.Id, args[3] == "on");
         var s = k.Games.Single(x => x.Game.Id == g.Game.Id);
-        Console.WriteLine($"record alongside {mod ?? "a mod"}: {args[3]}; recorder {(s.RecorderInstalled ? "installed" : "not installed")}"
-            + ((s.RecorderSkip == ScsKiller.SkipModNotChainable ? ScsKiller.NotChainableReason(s.RecorderMod) : s.RecorderSkip ?? s.RecorderNote) is { } why ? $" ({why})" : ""));
+        Console.WriteLine($"record alongside {mod ?? "a mod"}: {args[3]}, recorder {(s.RecorderInstalled ? "installed" : "not installed")}"
+            + (RecorderWhy(s) is { } why ? $" ({why})" : ""));
         return 0;
     }
     if (args[1] == "install") k.InstallRecorder(g.Game.Id); else k.UninstallRecorder(g.Game.Id);
     Console.WriteLine($"recorder {args[1]}ed: {Path.GetDirectoryName(g.Game.ExePath)}");
     return 0;
+}
+
+// no scan: the records name the folders, as for the uninstall
+static int RemoveAll()
+{
+    var removed = ScsKiller.RemoveRecordersFromAllGames(new AppStore(AppStore.DefaultDir));
+    foreach (var g in removed.Games)
+        Console.WriteLine(g.Left == null ? $"removed  {g.GameId}  {g.Folder}" : $"left     {g.GameId}  {g.Folder}: {g.Left}");
+    foreach (var layer in removed.VulkanLayers) Console.WriteLine($"Vulkan recorder unregistered: {layer}");
+    if (removed.VulkanLeft != null) Console.WriteLine($"left     Vulkan recorders' registrations: {removed.VulkanLeft}");
+    var left = removed.Games.Count(g => g.Left != null);
+    string[] where = [.. left > 0 ? [$"in {left} game{(left == 1 ? "" : "s")}"] : Array.Empty<string>(),
+        .. removed.VulkanLeft != null ? ["in the Vulkan registrations"] : Array.Empty<string>()];
+    return where.Length == 0 ? 0 : Fail($"the recorder is left {string.Join(" and ", where)}, see above");
 }
 
 async Task<int> AddGame()
@@ -468,18 +685,45 @@ async Task<int> AddGame()
     return 0;
 }
 
+async Task<int> GameExe()
+{
+    if (args.Length < 3) return Fail("exe <game> <exe>|auto");
+    var k = await Open();
+    var id = Match(k.Games, args[1]).Game.Id;
+    k.SetGameExe(id, args[2] == "auto" ? null : args[2]);
+    Console.WriteLine($"{id}  {Match(k.Games, id).Game.ExePath}");
+    return 0;
+}
+
 async Task<int> ProtonEnv()
 {
     if (args.Length < 2) return Fail("proton-env <game> [--warm]");
+    if (OperatingSystem.IsLinux())
+    {
+        var native = await Open();
+        var s = Match(native.Games, args[1]);
+        foreach (var (name, value) in native.CacheEnvironment(s.Game, args.Contains("--warm"))) Console.WriteLine($"{name}={value}");
+        return 0;
+    }
     if (!Wine.Running) return Fail("proton-env is for games under Wine (Proton)");
     var k = await Open();
     var g = Match(k.Games, args[1]);
-    var root = Directory.CreateDirectory(Path.Combine(k.Store.GameDir(g.Game.Id), "proton-cache"));
-    foreach (var d in new[] { "nvidia", "vkd3d" }) root.CreateSubdirectory(d);   // NVIDIA's driver keeps no cache in a folder that doesn't exist
-    if (Wine.UnixPath(root.FullName) is not { } unix) return Fail($"no Linux path for {root.FullName}");
+    var root = Wine.CacheRoot(k.Store.GameDir(g.Game.Id));
+    if (Wine.UnixPath(root) is not { } unix) return Fail($"no Linux path for {root}");
     var (warm, game) = Wine.CacheEnvironment(unix, Path.GetFileName(g.Game.ExePath));
     foreach (var (name, value) in args.Contains("--warm") ? warm : game) Console.WriteLine($"{name}={value}");
     return 0;
+}
+
+async Task<int> SteamPlace()
+{
+    if (args.Length < 2) return Fail("steam-place <game> [--remove]");
+    var k = await Open();
+    var g = Match(k.Games, args[1]);
+    var (done, status, details) = k.SteamPlaceNow(g.Game.Id, args.Contains("--remove"));
+    Console.WriteLine($"{g.Game.Name}: {status}");
+    foreach (var line in details) Console.WriteLine("  " + line);
+    return done ? 0 : 1;
 }
 
 async Task<int> Key()
@@ -591,6 +835,7 @@ int NvidiaAutoShader()
 
 int TaskCommand()
 {
+    if (!OperatingSystem.IsWindows()) return Fail("the re-warm task is a Windows scheduled task");
     switch (args.ElementAtOrDefault(1))
     {
         case "register":
@@ -622,8 +867,82 @@ static int FetchCodecs(string dir)
 /// <summary>What the command's last word was (its success line or the error), for <see cref="Elevated.ResultArg"/>.</summary>
 static class Outcome { public static string? Message; }
 
+/// <summary>The SIGTERM and SIGHUP handlers, kept for the process's life.</summary>
+static class SignalHandlers { public static readonly List<PosixSignalRegistration> All = []; }
+
+/// <summary>A writer whose writes fail silently: the output's reader (a terminal, a pipe) may be gone.</summary>
+sealed class NoThrowWriter(TextWriter inner) : TextWriter
+{
+    public override System.Text.Encoding Encoding => inner.Encoding;
+
+    public override void Write(char value) => Try(() => inner.Write(value));
+
+    public override void Write(string? value) => Try(() => inner.Write(value));
+
+    public override void WriteLine(string? value) => Try(() => inner.WriteLine(value));
+
+    public override void Flush() => Try(inner.Flush);
+
+    static void Try(Action write)
+    {
+        try { write(); }
+        catch (IOException) { }
+    }
+}
+
 // Not Progress<T>: it posts to the thread pool, so its last messages could be lost when the process exits.
 sealed class StderrLog : IProgress<string>
 {
     public void Report(string value) => Console.Error.WriteLine("  " + value);
+}
+
+sealed class Say(Action<string> say) : IProgress<string>
+{
+    public void Report(string value) => say(value);
+}
+
+/// <summary>The PC doesn't idle-sleep while a compile runs. Best effort: a failure is ignored.</summary>
+sealed class KeepAwake : IDisposable
+{
+    const uint EsContinuous = 0x80000000, EsSystemRequired = 1;
+    Process? _inhibit;
+
+    public static KeepAwake Start()
+    {
+        var awake = new KeepAwake();
+        if (OperatingSystem.IsWindows()) SetThreadExecutionState(EsContinuous | EsSystemRequired);
+        else if (OperatingSystem.IsLinux())
+        {
+            try
+            {
+                string[] inhibit = ["systemd-inhibit", "--what=idle", "--mode=block", "--who=SCSKiller", "--why=Compiling shaders", "cat"];
+                // own session: a Ctrl+C in the terminal reaches the CLI only, and the lock stays while it drains
+                try { awake._inhibit = Start("setsid", inhibit); }
+                catch (Exception) { awake._inhibit = Start(inhibit[0], inhibit[1..]); }
+            }
+            catch (Exception) { }   // no systemd-inhibit
+        }
+        return awake;
+    }
+
+    static Process? Start(string file, string[] args) => Process.Start(new ProcessStartInfo(file, args)
+    {
+        RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+    });
+
+    public void Dispose()
+    {
+        // Windows: the request belongs to the main thread and this runs after an await, so process exit drops it
+        if (_inhibit is not { } p) return;
+        try
+        {
+            p.StandardInput.Close();   // cat ends, the lock goes
+            if (!p.WaitForExit(2000)) p.Kill();
+        }
+        catch (Exception) { }
+        p.Dispose();
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    static extern uint SetThreadExecutionState(uint flags);
 }

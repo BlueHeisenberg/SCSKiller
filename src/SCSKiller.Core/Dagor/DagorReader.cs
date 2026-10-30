@@ -37,7 +37,7 @@ public sealed class DagorReader : IEngineReader
 
     public EngineInfo? Detect(Game game)
     {
-        if (!Directory.Exists(Path.Combine(game.InstallDir, "compiledShaders"))) return null;
+        if (!Directory.Exists(GameFiles.Find(game.InstallDir, DumpDir))) return null;
         if (Dumps(game).FirstOrDefault().Path is not { } path) return null;
         Span<byte> h = stackalloc byte[12];
         try
@@ -57,7 +57,7 @@ public sealed class DagorReader : IEngineReader
 
     public string DetectStamp(Game game, EngineInfo? engine)
     {
-        var f = new FileInfo(Path.Combine(game.InstallDir, "config.blk"));
+        var f = new FileInfo(GameFiles.Find(game.InstallDir, "config.blk"));
         return (f.Exists ? $"{f.Length}:{f.LastWriteTimeUtc.Ticks}" : "-") + (CbvRanges(game) ? "|cbv" : "");
     }
 
@@ -72,7 +72,7 @@ public sealed class DagorReader : IEngineReader
         Span<byte> h = stackalloc byte[32];
         try
         {
-            using var f = Open(Path.Combine(game.InstallDir, "cache", "dx12.cache"));
+            using var f = Open(GameFiles.Find(game.InstallDir, @"cache\dx12.cache"));
             if (f.ReadAtLeast(h, 32, throwOnEndOfStream: false) == 32 && h.StartsWith("CX12"u8) && BinaryPrimitives.ReadUInt32LittleEndian(h[4..]) == 34)
                 return (BinaryPrimitives.ReadUInt32LittleEndian(h[28..]) & 1) != 0;
         }
@@ -83,8 +83,8 @@ public sealed class DagorReader : IEngineReader
     /// <summary>The dumps config.blk's compatibility mode selects (switching it changes which shaders the game loads), and the
     /// constant-buffer mode (<see cref="CbvRanges"/>: it changes every root signature the plan builds).</summary>
     public string IndexStamp(Game game) =>
-        !Directory.Exists(Path.Combine(game.InstallDir, "compiledShaders")) ? ""
-        : string.Join(';', Dumps(game).Select(d => new FileInfo(d.Path)).Select(f => $"{f.Name}|{f.Length}|{f.LastWriteTimeUtc.Ticks}")) + (CbvRanges(game) ? "|cbv" : "");
+        !Directory.Exists(GameFiles.Find(game.InstallDir, DumpDir)) ? ""
+        : string.Join(';', Dumps(game).Select(d => (d.Name, File: new FileInfo(d.Path))).Select(f => $"{f.Name}|{f.File.Length}|{f.File.LastWriteTimeUtc.Ticks}")) + (CbvRanges(game) ? "|cbv" : "");
 
     public ShaderIndex Index(Game game, EngineInfo engine, IProgress<string>? log, CancellationToken ct)
     {
@@ -113,9 +113,9 @@ public sealed class DagorReader : IEngineReader
             if (maps.TryAdd(h, new ShaderMap(h, rel, platform, shas, pipeline))) platforms.Add(platform);
         }
 
-        foreach (var (path, dx12) in Dumps(game))
+        foreach (var (path, name, dx12) in Dumps(game))
         {
-            var rel = Path.GetRelativePath(game.InstallDir, path);
+            var rel = GameFiles.Rel(game.InstallDir, path, path, $@"{DumpDir}\{name}");
             var file = new FileInfo(path);
             stamp.Append(ContentStamps.Of(rel, file.FullName));
             var body = Body(Read(path));
@@ -138,7 +138,7 @@ public sealed class DagorReader : IEngineReader
                 if (nullRead) return nullPs;
                 nullRead = true;
                 if (NullPixelShader(game, ct) is not (FileInfo f, byte[] c)) return null;
-                stamp.Append(ContentStamps.Of(Path.GetRelativePath(game.InstallDir, f.FullName), f.FullName));
+                stamp.Append(ContentStamps.Of(GameFiles.Rel(game.InstallDir, f.FullName), f.FullName));
                 return nullPs = Add(c, null);
             }
             var byEntry = Entries(body, ct).Select(e =>
@@ -177,7 +177,7 @@ public sealed class DagorReader : IEngineReader
     public void ReadShaders(Game game, EngineInfo engine, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct)
     {
         var left = new HashSet<string>(sha1s);
-        foreach (var (path, dx12) in Dumps(game))
+        foreach (var (path, _, dx12) in Dumps(game))
             foreach (var e in Entries(Body(Read(path)), ct))
             {
                 var containers = dx12 ? Stages(e)?.Select(s => s.Container) ?? [] : Dxbc.Containers(e.Blob).Select(c => c.Container);
@@ -215,13 +215,14 @@ public sealed class DagorReader : IEngineReader
     }
 
     /// <summary>The dumps of the mode config.blk selects that exist: DirectX 11's, then DirectX 12's.</summary>
-    static IEnumerable<(string Path, bool Dx12)> Dumps(Game game)
+    static IEnumerable<(string Path, string Name, bool Dx12)> Dumps(Game game)
     {
         var compatibility = Video(game, "compatibilityMode") is "yes" or "true" or "1";
-        var dir = Path.Combine(game.InstallDir, "compiledShaders");
-        foreach (var (name, dx12) in new[] { (compatibility ? "game.compatibility" : "game", false), (compatibility ? "game.compatibilityDX12" : "gameDX12", true) })
-            if (Path.Combine(dir, name + ".ps50.shdump.bin") is var p && File.Exists(p)) yield return (p, dx12);
+        foreach (var (mode, dx12) in new[] { (compatibility ? "game.compatibility" : "game", false), (compatibility ? "game.compatibilityDX12" : "gameDX12", true) })
+            if (mode + ".ps50.shdump.bin" is var name && GameFiles.Find(game.InstallDir, $@"{DumpDir}\{name}") is var p && File.Exists(p)) yield return (p, name, dx12);
     }
+
+    const string DumpDir = "compiledShaders";
 
     /// <summary>The main layout of a version 11.3 dump, decompressed.</summary>
     internal static byte[] Body(byte[] dump)
@@ -345,7 +346,7 @@ public sealed class DagorReader : IEngineReader
     internal static string? Video(Game game, string name)
     {
         string text;
-        try { text = File.ReadAllText(Path.Combine(game.InstallDir, "config.blk")); }
+        try { text = File.ReadAllText(GameFiles.Find(game.InstallDir, "config.blk")); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
         var block = VideoBlock(text);
         if (block == null) return null;

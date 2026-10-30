@@ -31,9 +31,13 @@ public sealed class IntelBackend(GpuInfo dxgi) : IGpuVendorBackend, IRefreshable
     /// <summary>One file per exe name, named by a 64-hex hash that isn't derivable from the name alone.</summary>
     public static string CacheDir => Path.Combine(LocalAppData + "Low", "Intel", "ShaderCache");
 
+    public IntelAppCache AppCache { get; } = new(CacheDir);
+    IAppCache? IGpuVendorBackend.AppCache => AppCache;
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public CacheUsage GetCacheUsage() => new(CacheDir, AmdBackend.Bytes(CacheDir), UpperBound: false);
 
-    public CacheLimit? GetCacheLimit() => null;
+    public CacheLimit? GetCacheLimit() => new(PerGameCap, IsDriverDefault: false);
 
     public void SetCacheLimit(CacheLimit limit) =>
         throw new NotSupportedException($"the Intel shader cache size is not configurable ({Gpu.Name})");

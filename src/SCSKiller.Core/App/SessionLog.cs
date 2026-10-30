@@ -268,7 +268,8 @@ public static class SessionLog
     internal static AgsRegistration? AgsLine(string[] f)
     {
         if (f.Length != 6 || Unescape(f[4]) is not { Length: > 0 } app || Unescape(f[5]) is not { } engine) return null;
-        return new(app, engine);
+        static uint Version(string s) => uint.TryParse(s, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out var v) ? v : AmdAgs.UnspecifiedVersion;
+        return new(app, engine, AppVersion: Version(f[2]), EngineVersion: Version(f[3]));
 
         static string? Unescape(string s)
         {

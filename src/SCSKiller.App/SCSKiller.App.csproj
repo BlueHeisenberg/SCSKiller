@@ -27,8 +27,6 @@
     <!-- Component packages instead of the Microsoft.WindowsAppSDK metapackage, which adds AI/ML/Widgets/Search (+60 MB). -->
     <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.3.9" />
     <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="$(WinAppSdkRuntimeVersion)" />
-    <!-- installer and updater: per-user install, deltas, channels -->
-    <PackageReference Include="Velopack" Version="1.2.158" />
   </ItemGroup>
 
   <ItemGroup>
@@ -39,6 +37,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SCSKiller.Core\SCSKiller.Core.csproj" />
+    <Compile Include="..\SCSKiller.Ui.Models\AwakeGuard.cs" Link="AwakeGuard.cs" />
   </ItemGroup>
 
   <!-- WinAppSDK 2.5 self-contained output lacks this DLL (it is only inside the framework MSIX, also with the

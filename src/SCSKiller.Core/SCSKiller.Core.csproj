@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFrameworks>net10.0-windows;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -11,6 +11,18 @@
     <InternalsVisibleTo Include="SCSKiller.Tests" />
   </ItemGroup>
 
+  <!-- A platform's own code: *.Windows.cs for the Windows build, *.Linux.cs for the net10.0 one, *.Mac.cs for what that
+       build does differently on macOS -->
+  <ItemGroup Condition="'$([MSBuild]::GetTargetPlatformIdentifier($(TargetFramework)))' != 'windows'">
+    <Compile Remove="**\*.Windows.cs" />
+    <!-- the idle time (App/SessionIdle.Linux.cs): the version Avalonia.FreeDesktop brings, so the app and CLI share one file -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.94.1" />
+  </ItemGroup>
+  <ItemGroup Condition="'$([MSBuild]::GetTargetPlatformIdentifier($(TargetFramework)))' == 'windows'">
+    <Compile Remove="**\*.Linux.cs" />
+    <Compile Remove="**\*.Mac.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="CUE4Parse" Version="1.2.2.202609" />
     <!-- CUE4Parse pulls 9.0.0, which has GHSA-73j8-2gch-69rq -->
@@ -18,6 +30,8 @@
     <!-- Ed25519 for the signed update feed (App/Updates.cs): the BCL has none; the same package the origin signs tokens with -->
     <PackageReference Include="NSec.Cryptography" Version="26.4.0" />
     <PackageReference Include="ValvePak" Version="6.0.0.182" />
+    <!-- installer and updater: per-user install, deltas, channels -->
+    <PackageReference Include="Velopack" Version="1.2.158" />
   </ItemGroup>
 
   <ItemGroup>
@@ -25,6 +39,7 @@
     <EmbeddedResource Include="Games\precompiles-at-boot.json" LogicalName="SCSKiller.Core.Games.precompiles-at-boot.json" />
     <EmbeddedResource Include="Games\game-verdicts.json" LogicalName="SCSKiller.Core.Games.game-verdicts.json" />
     <EmbeddedResource Include="Games\maximum-mode.json" LogicalName="SCSKiller.Core.Games.maximum-mode.json" />
+    <EmbeddedResource Include="Games\game-exes.json" LogicalName="SCSKiller.Core.Games.game-exes.json" />
     <EmbeddedResource Include="Games\shader-mods.json" LogicalName="SCSKiller.Core.Games.shader-mods.json" />
     <EmbeddedResource Include="Games\offline-eac.json" LogicalName="SCSKiller.Core.Games.offline-eac.json" />
     <EmbeddedResource Include="Games\collections.json" LogicalName="SCSKiller.Core.Games.collections.json" />

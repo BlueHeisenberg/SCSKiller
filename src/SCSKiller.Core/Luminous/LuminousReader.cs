@@ -2,8 +2,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
-using SCSKiller.Core.Games;
 using SCSKiller.Core.Carved;
+using SCSKiller.Core.Games;
 using SCSKiller.Core.Unreal;
 
 namespace SCSKiller.Core.Luminous;
@@ -20,7 +20,7 @@ public sealed class LuminousReader : IEngineReader
 {
     public const string Family = "Luminous", Version = "EARC 3.20", Platform = "PCD3D_SM5";
     public const string Exe = "ffxv_s.exe";
-    const string Datas = "datas", Shadergen = @"datas\shader\shadergen\autoexternal.earc", Suffix = ".sb";
+    const string Datas = "datas", HairWorks = "HairWorks", Shadergen = @"datas\shader\shadergen\autoexternal.earc", Suffix = ".sb";
 
     /// <summary>Bytes carved from a binary per read, and how far reads overlap: a container is found whole when it's at most
     /// <see cref="Overlap"/> long (measured: the exe is 253 MB, the largest container in it and the DLLs 329 KB).</summary>
@@ -38,11 +38,11 @@ public sealed class LuminousReader : IEngineReader
 
     public EngineInfo? Detect(Game game)
     {
-        var shadergen = Path.Combine(game.InstallDir, Shadergen);
+        var shadergen = GameFiles.Find(game.InstallDir, Shadergen);
         if (Earc.VersionOf(shadergen) is not { } v) return null;
         // the API is FINAL FANTASY XV's: another Luminous game (Forspoken runs on D3D12) isn't read as one
         var unsupported = v != Earc.Version ? "an archive version SCSKiller doesn't read"
-            : !File.Exists(Path.Combine(game.InstallDir, Exe)) ? "a Luminous game SCSKiller doesn't read" : null;
+            : !File.Exists(GameFiles.Find(game.InstallDir, Exe)) ? "a Luminous game SCSKiller doesn't read" : null;
         return new EngineInfo(Family, $"EARC {v >> 16}.{v & 0xFFFF}", null, "D3D11", false, unsupported);
     }
 
@@ -81,10 +81,11 @@ public sealed class LuminousReader : IEngineReader
             return list;
         }
 
-        foreach (var f in Listed(() => Archives(game), Datas))
+        string datas = GameFiles.Find(game.InstallDir, Datas), hair = GameFiles.Find(game.InstallDir, HairWorks);
+        foreach (var f in Listed(() => Archives(datas), Datas))
         {
             ct.ThrowIfCancellationRequested();
-            var rel = Path.GetRelativePath(game.InstallDir, f.FullName);
+            var rel = GameFiles.Rel(game.InstallDir, f.FullName, datas, Datas);
             var map = new List<string>();
             try
             {
@@ -105,10 +106,10 @@ public sealed class LuminousReader : IEngineReader
         }
 
         var carved = 0;
-        foreach (var f in Listed(() => Binaries(game), "the exe and DLLs"))
+        foreach (var f in Listed(() => Binaries(game.InstallDir, hair), "the exe and DLLs"))
         {
             ct.ThrowIfCancellationRequested();
-            var rel = Path.GetRelativePath(game.InstallDir, f.FullName);
+            var rel = GameFiles.Rel(game.InstallDir, f.FullName, hair, HairWorks);
             var map = new List<string>();
             try
             {
@@ -161,22 +162,22 @@ public sealed class LuminousReader : IEngineReader
         }
     }
 
-    static IEnumerable<FileInfo> Archives(Game game)
+    static IEnumerable<FileInfo> Archives(string datas)
     {
-        var dir = new DirectoryInfo(Path.Combine(game.InstallDir, Datas));
+        var dir = new DirectoryInfo(datas);
         return !dir.Exists ? []
-            : dir.EnumerateFiles("*.earc", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 })
-                .OrderBy(f => f.FullName, StringComparer.OrdinalIgnoreCase);
+            : GameFiles.EnumerateFiles(dir, "*.earc", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 })
+                .OrderBy(f => f.FullName, GameFiles.PathOrder);
     }
 
     /// <summary>The exe and DLLs beside it, and HairWorks' shader cache.</summary>
-    static IEnumerable<FileInfo> Binaries(Game game)
+    static IEnumerable<FileInfo> Binaries(string installDir, string hairWorks)
     {
         var opts = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 };
-        var root = new DirectoryInfo(game.InstallDir);
-        var hair = new DirectoryInfo(Path.Combine(game.InstallDir, "HairWorks"));
-        return root.EnumerateFiles("*.exe", opts).Concat(root.EnumerateFiles("*.dll", opts))
-            .Concat(hair.Exists ? hair.EnumerateFiles("*.bin", opts) : []).OrderBy(f => f.FullName, StringComparer.OrdinalIgnoreCase);
+        var root = new DirectoryInfo(installDir);
+        var hair = new DirectoryInfo(hairWorks);
+        return GameFiles.EnumerateFiles(root, "*.exe", opts).Concat(GameFiles.EnumerateFiles(root, "*.dll", opts))
+            .Concat(hair.Exists ? GameFiles.EnumerateFiles(hair, "*.bin", opts) : []).OrderBy(f => f.FullName, GameFiles.PathOrder);
     }
 
     /// <summary>Every valid container in the file with its offset, read <see cref="Window"/> bytes at a time. One starting in a

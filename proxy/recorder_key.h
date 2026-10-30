@@ -102,15 +102,29 @@ inline bool odd_name(const std::wstring& p) {
     return !p.empty() && (p.back() == L'.' || p.back() == L' ');
 }
 
+// Wine's FILE_ID_INFO: the volume serial is the mount manager's for the drive letter the file was opened through (Z: 0,
+// C: another, the same file either way), the file id the inode. Core on Linux can't know the letter, so under Wine the
+// key has this in the serial's place (GameFiles.WineFileId): "wine-ino".
+inline constexpr ULONGLONG kWineVolume = 0x6f6e692d656e6977;
+
+// The key of a file identity; wine: Wine's (under_wine).
+inline std::wstring id_key(FILE_ID_INFO id, bool wine) {
+    if (wine) id.VolumeSerialNumber = kWineVolume;
+    return key_hex(&id, sizeof id);
+}
+
+// Windows' ntdll never exports it (Vendors.Wine.Running).
+inline bool under_wine() { return GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr; }
+
 // A file's or folder's key: SHA-1 in hex of its file identity (FILE_ID_INFO, 24 bytes: the same through any link, junction
-// or 8.3 name, where a packaged app's process names its exe by the package's WindowsApps link), else of its final path
-// (no \\?\), else of the path as given (UTF-16LE, A-Z lowered).
+// or 8.3 name, where a packaged app's process names its exe by the package's WindowsApps link; id_key), else of its final
+// path (no \\?\), else of the path as given (UTF-16LE, A-Z lowered).
 inline std::wstring file_key(const std::wstring& path) {
     HANDLE f = CreateFileW(long_path(path).c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (f != INVALID_HANDLE_VALUE) {
         FILE_ID_INFO id;
         std::wstring key;
-        if (GetFileInformationByHandleEx(f, FileIdInfo, &id, sizeof id)) key = key_hex(&id, sizeof id);
+        if (GetFileInformationByHandleEx(f, FileIdInfo, &id, sizeof id)) key = id_key(id, under_wine());
         std::wstring final(32768, L'\0');
         DWORD m = key.empty() ? GetFinalPathNameByHandleW(f, final.data(), (DWORD)final.size(), 0) : 0;
         CloseHandle(f);
@@ -136,8 +150,6 @@ inline std::wstring final_dir(const std::wstring& dir) {
     final = final.rfind(L"\\\\?\\UNC\\", 0) == 0 ? L"\\\\" + final.substr(8) : final.rfind(L"\\\\?\\", 0) == 0 ? final.substr(4) : final;
     return final.back() == L'\\' ? final : final + L'\\';
 }
-
-inline bool under_wine() { return GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr; }
 
 // A folder identity no file system gives: volume serial 0 and a file id under 16 in both halves, beside an exe whose volume
 // has a serial. In DD2 Character Creator's process (Streamline loaded) every directory open answers serial 0, id 6.

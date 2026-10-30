@@ -1,17 +1,19 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
-using Microsoft.Win32;
 
 namespace SCSKiller.Core.Games;
 
 /// <summary>Installed Steam games from libraryfolders.vdf + appmanifest_*.acf. Tools and applications installed like
 /// games (SteamVR, Lossless Scaling, redistributables, runtimes) are left out by Steam's own app type, from
 /// appcache/appinfo.vdf; if that file is missing or unreadable everything installed is kept.</summary>
-public sealed class SteamSource(string? steamRoot = null) : IGameSource
+public sealed partial class SteamSource(string? steamRoot = null) : IGameSource
 {
     public Store Store => Store.Steam;
 
     (string Stamp, HashSet<uint> Asked, Dictionary<uint, string> Types)? _types;   // appinfo.vdf is only re-read when it changes
+
+    readonly System.Collections.Concurrent.ConcurrentDictionary<uint, byte> _noExeLogged = new();   // once per app and process, not every scan
 
     /// <summary>Games listed before, by id: a game's exe is reused while its build and install folder are the same and the
     /// exe is there, instead of looking through its folders again.</summary>
@@ -24,12 +26,13 @@ public sealed class SteamSource(string? steamRoot = null) : IGameSource
     {
         var root = steamRoot ?? Root();
         var installed = new List<(uint Id, Game Game)>();
+        var noExe = new List<(uint Id, string Name, string Install)>();
         foreach (var lib in Libraries(root))
             try
             {
                 var apps = Path.Combine(lib, "steamapps");
                 if (!Directory.Exists(apps)) continue;
-                foreach (var acf in Directory.EnumerateFiles(apps, "appmanifest_*.acf"))
+                foreach (var acf in Manifests(apps))
                     try
                     {
                         var text = File.ReadAllText(acf);
@@ -45,13 +48,21 @@ public sealed class SteamSource(string? steamRoot = null) : IGameSource
                         }
                         var exe = Known?.GetValueOrDefault($"steam:{id}") is { Version: { } was } k && was == build && k.InstallDir.Equals(install, StringComparison.OrdinalIgnoreCase)
                             && File.Exists(k.ExePath) && !GameFiles.NotTheGameExe(install, k.ExePath) ? k.ExePath : GameFiles.FindExe(install);
-                        if (exe == null) continue;
+                        if (exe == null)
+                        {
+                            noExe.Add((id, V("name") ?? dir, install));
+                            continue;
+                        }
                         installed.Add((id, new Game($"steam:{id}", V("name") ?? dir, Store.Steam, install, exe, build)));
                     }
-                    catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"Steam: {acf} skipped: {e.Message}"); }
+                    // one unreadable game never drops the store, and keeps its records: CleanUninstalled needs its manifest and exe gone
+                    catch (Exception e) when (e is not OperationCanceledException) { Log?.Report($"Steam: {acf} skipped: {e.GetType().Name}: {e.Message}"); }
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"Steam: library {lib} skipped: {e.Message}"); }
-        var types = TypesOf(Path.Combine(root, "appcache", "appinfo.vdf"), installed.Select(a => a.Id).ToHashSet());
+        var types = TypesOf(Path.Combine(root, "appcache", "appinfo.vdf"), installed.Select(a => a.Id).Concat(noExe.Select(a => a.Id)).ToHashSet());
+        foreach (var (id, name, install) in noExe)   // a redistributable or soundtrack has no exe by design
+            if ((types?.TryGetValue(id, out var t) != true || IsGameType(t!)) && _noExeLogged.TryAdd(id, 0))
+                Log?.Report($"Steam: {name} ({id}) left out: no game exe found in {install}");
         return installed.Where(a => types?.TryGetValue(a.Id, out var t) != true || IsGameType(t!)).Select(a => a.Game).ToList();
     }
 
@@ -93,10 +104,14 @@ public sealed class SteamSource(string? steamRoot = null) : IGameSource
     public static IReadOnlyList<string> Libraries(string root)
     {
         var vdf = Path.Combine(root, "steamapps", "libraryfolders.vdf");
-        var libraries = File.Exists(vdf) ? Values(File.ReadAllText(vdf), "path").ToList() : [];
+        var libraries = File.Exists(vdf) ? Values(File.ReadAllText(vdf), "path").Select(p => LibraryPath(root, p)).OfType<string>().ToList() : [];
         if (libraries.Count == 0) libraries.Add(root);
         return libraries.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
+
+    /// <summary>A library path of libraryfolders.vdf as this OS opens it: the Flatpak Steam's, under the home folder it sees,
+    /// in its sandbox folder. Null when it names no folder here.</summary>
+    private static partial string? LibraryPath(string root, string path);
 
     /// <summary>The Steam app whose install folder holds <paramref name="path"/> (a game's install folder or exe). A path in
     /// a steamapps\common folder is in that library whether or not libraryfolders.vdf lists it (as the proxy decides it): the
@@ -105,12 +120,12 @@ public sealed class SteamSource(string? steamRoot = null) : IGameSource
     public static (uint? Id, bool InLibrary) AppAt(string root, string path)
     {
         var full = Path.GetFullPath(path);
-        var at = full.IndexOf(@"\steamapps\common\", StringComparison.OrdinalIgnoreCase);
+        var at = full.IndexOf(CommonPart, StringComparison.OrdinalIgnoreCase);
         if (at < 0)
-            return (null, Libraries(root).Any(lib => full.StartsWith(Path.TrimEndingDirectorySeparator(lib) + '\\', StringComparison.OrdinalIgnoreCase)));
-        var apps = full[..(at + @"\steamapps".Length)];
-        var folder = full[(at + @"\steamapps\common\".Length)..].Split('\\')[0];
-        foreach (var acf in Directory.Exists(apps) ? Directory.EnumerateFiles(apps, "appmanifest_*.acf") : [])
+            return (null, Libraries(root).Any(lib => full.StartsWith(Path.TrimEndingDirectorySeparator(lib) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)));
+        var apps = full[..(at + AppsPart.Length)];
+        var folder = full[(at + CommonPart.Length)..].Split(Path.DirectorySeparatorChar)[0];
+        foreach (var acf in Directory.Exists(apps) ? Manifests(apps) : [])
         {
             var text = File.ReadAllText(acf);
             if (Values(text, "installdir").FirstOrDefault() is { } dir && dir.Equals(folder, StringComparison.OrdinalIgnoreCase)
@@ -119,8 +134,143 @@ public sealed class SteamSource(string? steamRoot = null) : IGameSource
         return (null, true);
     }
 
-    /// <summary>Steam's folder: the registry's SteamPath, else the default install folder.</summary>
-    public static string Root() => Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) as string ?? @"C:\Program Files (x86)\Steam";
+    // Windows lists an NTFS folder by name, the order a library's games are found in: elsewhere they're sorted so
+    static IEnumerable<string> Manifests(string apps) => OperatingSystem.IsWindows() ? Directory.EnumerateFiles(apps, "appmanifest_*.acf")
+        : Directory.EnumerateFiles(apps, "appmanifest_*.acf").Order(GameFiles.PathOrder);
+
+    /// <summary>"\steamapps" and "\steamapps\common\" with this system's separator.</summary>
+    internal static readonly string AppsPart = Path.DirectorySeparatorChar + "steamapps", CommonPart = $"{AppsPart}{Path.DirectorySeparatorChar}common{Path.DirectorySeparatorChar}";
+
+    /// <summary>The Proton prefix Steam runs the game in (<see cref="ProtonPrefix"/>), the app by the game's "steam:" id, else
+    /// by the manifest that names its folder (<see cref="AppAt"/>). Null when there is none: the game isn't in a
+    /// steamapps/common folder, no app is known, or Steam never made its prefix (it never ran under Proton). Only read.</summary>
+    /// <param name="steamRoot">Steam's folder, for config/config.vdf (default: Steam's own)</param>
+    public static ProtonPrefix? PrefixOf(Game game, string? steamRoot = null)
+    {
+        try
+        {
+            var root = steamRoot ?? Root();
+            if (CompatData(game, root) is not { } compat) return null;
+            var (app, data) = compat;
+            var pfx = Path.Combine(data, "pfx");
+            return Directory.Exists(pfx) ? new ProtonPrefix(app, pfx, CompatTool(root, app), LastProton(data)) : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return null; }
+    }
+
+    /// <summary><see cref="PrefixOf"/>'s folder whether Steam made it yet or not (it does at the game's first start under
+    /// Proton); null when the game isn't in a steamapps/common folder or no app is known. Only read.</summary>
+    internal static string? PrefixFolder(Game game, string? steamRoot = null)
+    {
+        try { return CompatData(game, steamRoot) is { } compat ? Path.Combine(compat.Data, "pfx") : null; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return null; }
+    }
+
+    // the app and its compatdata folder in the library that holds the game; Steam's folder only for an app found by its manifest
+    static (uint App, string Data)? CompatData(Game game, string? steamRoot)
+    {
+        var full = Path.GetFullPath(game.InstallDir);
+        var at = full.IndexOf(CommonPart, StringComparison.OrdinalIgnoreCase);
+        if (at < 0 || (AppId(game.Id) ?? AppAt(steamRoot ?? Root(), full).Id) is not { } app) return null;
+        return (app, Path.Combine(full[..(at + AppsPart.Length)], "compatdata", app.ToString()));
+    }
+
+    /// <summary>config/config.vdf's CompatToolMapping: the app's tool, else the one Steam Play runs every other title with
+    /// (the "0" entry) unless <paramref name="orDefault"/> is false; null without either, or when the file can't be read.</summary>
+    internal static string? CompatTool(string root, uint app, bool orDefault = true)
+    {
+        Dictionary<string, object>? mapping;
+        try
+        {
+            var config = Path.Combine(root, "config", "config.vdf");
+            mapping = File.Exists(config) && Small(config) is { } text ? Child(KeyValues(text), "InstallConfigStore", "Software", "Valve", "Steam", "CompatToolMapping") : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+        string? Name(string id) => Child(mapping, id)?.GetValueOrDefault("name") is string { Length: > 0 } name ? name : null;   // "": no tool set
+        return Name(app.ToString()) ?? (orDefault ? Name("0") : null);
+    }
+
+    /// <summary>compatdata/&lt;app&gt;/config_info's first line: the Proton that last ran the prefix.</summary>
+    static string? LastProton(string data)
+    {
+        var info = Path.Combine(data, "config_info");
+        try { return File.Exists(info) && Small(info)?.Split('\n')[0].Trim() is { Length: > 0 } version ? version : null; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    /// <summary>The text of a regular file of at most 16 MB; null for a bigger one, a FIFO or a device.</summary>
+    internal static string? Small(string path)
+    {
+        using var f = GameFiles.OpenRegular(path);
+        if (f == null) return null;
+        var length = f.Length;
+        if (length > 16 << 20) return null;
+        var bytes = new byte[length];
+        var n = f.ReadAtLeast(bytes, bytes.Length, throwOnEndOfStream: false);
+        using var text = new StreamReader(new MemoryStream(bytes, 0, n));   // a BOM read as File.ReadAllText reads it
+        return text.ReadToEnd();
+    }
+
+    /// <summary>The account id of Steam's most recent user (config/loginusers.vdf's MostRecent, else its latest sign-in): the
+    /// name of its userdata folder, a SteamID64's low 32 bits. Null when Steam's files don't say.</summary>
+    internal static uint? RecentAccount(string root)
+    {
+        var logins = Path.Combine(root, "config", "loginusers.vdf");
+        if (!File.Exists(logins) || Small(logins) is not { } text || Child(KeyValues(text), "users") is not { } users) return null;
+        // Steam doesn't always write MostRecent: the latest sign-in then
+        static string? Value(object user, string key) => (user as Dictionary<string, object>)?.GetValueOrDefault(key) as string;
+        var recent = users.Where(u => u.Value is Dictionary<string, object> && ulong.TryParse(u.Key, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+            .OrderByDescending(u => Value(u.Value, "MostRecent") == "1")
+            .ThenByDescending(u => long.TryParse(Value(u.Value, "Timestamp"), NumberStyles.None, CultureInfo.InvariantCulture, out var t) ? t : 0)
+            .Select(u => ulong.Parse(u.Key, CultureInfo.InvariantCulture)).FirstOrDefault();
+        return recent == 0 ? null : (uint)(recent & 0xFFFFFFFF);
+    }
+
+    static Dictionary<string, object>? Child(Dictionary<string, object>? o, params string[] path)
+    {
+        foreach (var key in path) o = o?.GetValueOrDefault(key) as Dictionary<string, object>;
+        return o;
+    }
+
+    /// <summary>A text KeyValues file (VDF) as nested objects of strings, keys case-insensitive, the first of a repeated key
+    /// kept, quoted text unescaped as <see cref="Values"/> does; conditions ([$WIN32]) and // comments skipped, a key without
+    /// a value dropped. Nothing past an object nested deeper than 64 is read.</summary>
+    internal static Dictionary<string, object> KeyValues(string vdf)
+    {
+        var at = 0;
+        (string Text, bool Brace)? Next()
+        {
+            while (at < vdf.Length)
+                if (char.IsWhiteSpace(vdf[at])) at++;
+                else if (vdf[at] == '/' && at + 1 < vdf.Length && vdf[at + 1] == '/') at = vdf.IndexOf('\n', at) is var n and >= 0 ? n : vdf.Length;
+                else if (vdf[at] == '[') at = vdf.IndexOf(']', at) is var e and >= 0 ? e + 1 : vdf.Length;
+                else break;
+            if (at >= vdf.Length) return null;
+            if (vdf[at] is '{' or '}') return (vdf[at++].ToString(), true);
+            var text = new StringBuilder();
+            if (vdf[at] == '"')
+            {
+                for (at++; at < vdf.Length && vdf[at] != '"'; at++) text.Append(vdf[at] == '\\' && at + 1 < vdf.Length ? vdf[++at] : vdf[at]);
+                at++;
+            }
+            else
+                while (at < vdf.Length && !char.IsWhiteSpace(vdf[at]) && vdf[at] is not ('{' or '}' or '"')) text.Append(vdf[at++]);
+            return (text.ToString(), false);
+        }
+        Dictionary<string, object> Object(int depth)
+        {
+            var o = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            while (Next() is ({ } key, false) && Next() is ({ } value, var brace) && !(brace && value == "}"))
+                if (!brace) o.TryAdd(key, value);
+                else if (depth < 64) o.TryAdd(key, Object(depth + 1));
+                else at = vdf.Length;
+            return o;
+        }
+        return Object(0);
+    }
+
+    /// <summary>Steam's folder: the one the user's Steam runs from, else its default install folder.</summary>
+    public static partial string Root();
 
     /// <summary>Steam's appinfo.vdf for the Steam folder <paramref name="root"/>. Under Wine (Proton) Steam's data is the one
     /// of the Steam that started the game (STEAM_COMPAT_CLIENT_INSTALL_PATH, through Wine's drives), even when a Steam in the
@@ -244,3 +394,9 @@ public sealed class SteamSource(string? steamRoot = null) : IGameSource
         Regex.Matches(vdf, $@"""{Regex.Escape(key)}""\s+""((?:[^""\\]|\\.)*)""", RegexOptions.IgnoreCase)
             .Select(m => Regex.Replace(m.Groups[1].Value, @"\\(.)", "$1"));
 }
+
+/// <summary>A Steam game's Wine prefix under Proton (<see cref="SteamSource.PrefixOf"/>). <paramref name="Folder"/>:
+/// steamapps/compatdata/&lt;app&gt;/pfx in the game's library. <paramref name="Tool"/>: the compatibility tool Steam runs the
+/// game with, by its internal name (<see cref="SteamSource.CompatTool"/>). <paramref name="LastRun"/>: the Proton that last
+/// ran the prefix, as its config_info names it. Each null when Steam's files don't say.</summary>
+public sealed record ProtonPrefix(uint AppId, string Folder, string? Tool, string? LastRun);

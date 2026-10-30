@@ -88,7 +88,10 @@ EXPORTS
     SCSKiller_D3D12Items                             @215
     SCSKiller_StartWarm11                            @216
     SCSKiller_Work                                   @217
+    SCSKiller_PassedOver                             @218
+    SCSKiller_Unsupported                            @219
     SCSKiller_CountCached                            @220
     SCSKiller_Cached                                 @221
     SCSKiller_WarmKnown                              @222
     SCSKiller_Known                                  @223
+    SCSKiller_MemoryStop                             @224

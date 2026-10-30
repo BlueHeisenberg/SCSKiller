@@ -18,8 +18,10 @@ public static partial class BeforeAfter
     const string LibraryLoads = "The after run loaded {0} more pipelines from the game's own cache, not counted for SCSKiller";
     const string OtherSettings = "The runs had different resolutions or display formats: {0} before, {1} after";
     const string OverlayOnce = "The in-game countdown was on in one run only";
+    const string MaxCompiled = "The after run was compiled with Max compile";
     const string Crashed = "The game didn't close normally in the before run";
-    const string MaybeWarm = "AMD's DirectX 11 driver cache can't be checked, so the before run may not have been fully cold";
+    public const string MaybeWarm = "AMD's DirectX 11 driver cache can't be checked, so the before run may not have been fully cold";
+    public const string VulkanNotCold = "Some of the driver's Vulkan cache couldn't be set aside or cleared, so the before run may not have been fully cold";
     const string MaybeHelped = "The game's DirectX 11 driver cache couldn't be told from another app's, so the after run may have used the before run's";
     const string FrameGenBoth = "Frame generation was {0} in both runs.";
     const string FrameGenOne = "Frame generation was on in the {0} run only.";
@@ -58,11 +60,11 @@ public static partial class BeforeAfter
     }
 
     /// <summary>The before run is cold (a run that started with old driver-cache files is played again), unless
-    /// <paramref name="notCold"/>: its clear didn't know the key of a cache SCSKiller can't watch (AMD's DirectX 11).
-    /// <paramref name="afterHelped"/>: that key was still unknown at the clear before the compile. A cold
-    /// run's ready pipelines are the driver's own reuse within the launch (both vendors cache per shader stage, so a new
-    /// pipeline of stages it already compiled is ready), not a cache it started with.</summary>
-    public static Comparison Compare(SessionSnapshot before, SessionSnapshot after, bool notCold = false, bool afterHelped = false)
+    /// <paramref name="notCold"/>, the line saying why: its clear didn't know the key of a cache SCSKiller can't watch (AMD's
+    /// DirectX 11), or couldn't set aside a Vulkan game's. <paramref name="afterHelped"/>: that key was still unknown at the
+    /// clear before the compile. A cold run's ready pipelines are the driver's own reuse within the launch (both vendors
+    /// cache per shader stage, so a new pipeline of stages it already compiled is ready), not a cache it started with.</summary>
+    public static Comparison Compare(SessionSnapshot before, SessionSnapshot after, string? notCold = null, bool afterHelped = false, bool max = false)
     {
         var (b, a) = (Stats(before), Stats(after));
         bool dx11 = before.D3D11 || after.D3D11;   // either run without create rows: no split claimed for the pair
@@ -71,7 +73,8 @@ public static partial class BeforeAfter
         if (before.SwapChain != null && after.SwapChain != null && before.SwapChain != after.SwapChain) notes.Add(F(OtherSettings, before.SwapChain, after.SwapChain));
         if (before.Overlay != after.Overlay) notes.Add(OverlayOnce);
         if (!before.CleanExit) notes.Add(Crashed);
-        if (notCold) notes.Add(MaybeWarm);
+        if (max) notes.Add(MaxCompiled);
+        if (notCold != null) notes.Add(notCold);
         else if (afterHelped) notes.Add(MaybeHelped);
         if (before.FrameGen is { } fb && after.FrameGen is { } fa)   // a run whose module loaded but whose frames can't tell says nothing
             notes.Add(fb == fa ? F(FrameGenBoth, fb ? "on" : "off") : F(FrameGenOne, fb ? "before" : "after"));

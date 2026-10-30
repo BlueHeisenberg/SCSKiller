@@ -17,16 +17,46 @@ namespace SCSKiller.Core.Vendors;
 /// share may be attributed only by a later warm. The driver writes the files through a memory map: their size grows,
 /// their LastWriteTime doesn't, so mtimes say nothing. <c>%LOCALAPPDATA%\D3DSCache</c> (the Windows runtime's DXBC->DXIL
 /// conversions) is not this cache: App.D3DSCache finds a game's folders there.</summary>
-public sealed class AmdAppCache(string dxcDir, string dxDir) : IAppCache
+public sealed class AmdAppCache(string dxcDir, string dxDir, string? vkDir = null) : IAppCache
 {
     public const string D3D12Prefix = "dxc:", D3D11Prefix = "dx:";
 
     public string DxcDir { get; } = dxcDir;   // D3D12
     public string DxDir { get; } = dxDir;     // D3D11
+    public string? VkDir { get; } = vkDir;    // Vulkan: AppCacheFiles.VulkanPrefix keys
 
-    /// <summary>"207c35a9.dfac411e.71efbc0e.2b1a674a.0.parc" in DxcCache -> "dxc:207c35a9"; null for anything else.</summary>
+    public static readonly string[] VulkanTypes = [".parc"];
+
+    /// <summary>Whether a .parc holds an entry. It is preallocated, so its size doesn't tell. Null: not the known layout, or
+    /// unreadable.</summary>
+    public static bool? HasEntries(string path)
+    {
+        // seen in Steam's AMDv1, VkCache and DxcCache files: 16-byte magic, u32 header size at 0x18, then the first record's
+        // tag, NTRY for an entry or FOTR for the footer of an empty file
+        Span<byte> head = stackalloc byte[64];
+        try
+        {
+            using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            f.ReadExactly(head);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+        var at = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(head[0x18..]);
+        if (!head[..16].SequenceEqual(ParcMagic) || at is < 0x1c or > 60) return null;
+        var tag = head.Slice((int)at, 4);
+        return tag.SequenceEqual("NTRY"u8) ? true : tag.SequenceEqual("FOTR"u8) ? false : null;
+    }
+
+    static readonly System.Text.RegularExpressions.Regex BinName = new(@"^[0-9a-f]{48}\.bin2?$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    static ReadOnlySpan<byte> ParcMagic => [0x23, 0xd8, 0xfa, 0xe7, 0x0f, 0x5f, 0x47, 0xbe, 0x8b, 0xd1, 0x48, 0xf5, 0xd8, 0xf0, 0xb4, 0xa7];
+
+    /// <summary>"207c35a9.dfac411e.71efbc0e.2b1a674a.0.parc" in DxcCache -> "dxc:207c35a9"; in DxCache also
+    /// "3bdb5f0655d8dcbb8202a9dff8c36635ed3c470009357570.bin" (and .bin2) -> "dx:3bdb5f0655d8dcbb"; null for anything else.</summary>
     public static string? Key(string fileName, bool d3d12)
     {
+        // the D3D11 cache some drivers write instead of .parc (seen on 26.9.2, 32.0.21045): the first 16 hex differ per app
+        if (!d3d12 && BinName.IsMatch(fileName)) return $"{D3D11Prefix}{fileName[..16].ToLowerInvariant()}";
         var parts = fileName.Split('.');
         if (parts.Length != 6 || !parts[5].Equals("parc", StringComparison.OrdinalIgnoreCase) || !int.TryParse(parts[4], out _)) return null;
         for (int i = 0; i < 4; i++)
@@ -61,26 +91,11 @@ public sealed class AmdAppCache(string dxcDir, string dxDir) : IAppCache
     /// FNV-1a-32 of the name as registered, case-sensitive, whatever the exe is called or the engine name and versions.</summary>
     public static string AppNameKey(string appName) => $"{D3D12Prefix}{Fnv1a(appName):x8}";
 
-    /// <summary>The plan rules' AGS app names (<see cref="Planning.AgsRule"/>, embedded: Phoenix d32786a7, OakGame f2f80824, proven
-    /// Townfall), the embedded ones while the rules in use have none. App-name profiles were measured on the exact case only
-    /// and win over exe-name profiles: Wonderlands.exe registering "OakGame" gets f2f80824, not its own 85c2b2e5. A proven app
-    /// name's game was seen holding the key it gives (SILENT HILL: Townfall, dc72f790): a warm registers it before the game
-    /// has been seen, any other only once the game is seen holding its key.</summary>
-    static IEnumerable<Planning.AgsRule> AgsRules() =>
-        (Planning.RulesFile.Current.Rules.Any(r => r.Ags != null) ? Planning.RulesFile.Current : Planning.RulesFile.Embedded).Rules.Select(r => r.Ags).OfType<Planning.AgsRule>();
-
-    /// <summary>HINT ONLY: the key of an exe that registers <paramref name="appName"/> through AGS: an app-name profile's,
-    /// then an exe-name profile's (it wins over an unprofiled app name: ff7rebirth_.exe registering any other name keeps
-    /// 6b2fcd83), else <see cref="AppNameKey"/>.</summary>
-    public static string AgsKey(string exeFileName, string appName) =>
-        AgsRules().Select(r => r.Profiles?.GetValueOrDefault(appName)).OfType<string>().Select(k => $"{D3D12Prefix}{k.ToLowerInvariant()}").FirstOrDefault()
-        ?? ProfileKey(exeFileName) ?? AppNameKey(appName);
-
-    /// <summary>The app names whose app-name profile in the rules gives this key: a profiled game holds no hash of its name.</summary>
-    public static IEnumerable<string> ProfiledApps(string key) =>
-        AgsRules().SelectMany(r => r.Profiles ?? []).Where(p => key.Equals($"{D3D12Prefix}{p.Value}", StringComparison.OrdinalIgnoreCase)).Select(p => p.Key);
-
-    public static bool ProvenAgsApp(string appName) => AgsRules().Any(r => r.Proven?.Contains(appName, StringComparer.Ordinal) == true);
+    /// <summary>HINT ONLY: the key of an exe that registers <paramref name="appName"/> through AGS: an exe-name profile's (it
+    /// wins over an unprofiled app name: ff7rebirth_.exe registering any other name keeps 6b2fcd83), else <see cref="AppNameKey"/>.
+    /// The driver remaps some app names to other keys (26.10.1: "Griffin" gives 9b7a7a85, not its FNV), so a warm mirrors the
+    /// game's registration and never chooses one by this key.</summary>
+    public static string AgsKey(string exeFileName, string appName) => ProfileKey(exeFileName) ?? AppNameKey(appName);
 
     /// <summary>Driver app profiles measured on 32.0.31041.1004: a name part (case-insensitive) and the fixed DxcCache key it
     /// gets. "ff7rebirth" matches as a substring (measured: any name containing it, any case); the others were measured on
@@ -146,10 +161,12 @@ public sealed class AmdAppCache(string dxcDir, string dxDir) : IAppCache
     public IReadOnlyList<string> Missing(IEnumerable<string> fileNames) => fileNames.Where(n => !File.Exists(Path.Combine(DxcDir, n))).ToList();
 
     /// <summary>Bytes of every file in DxcCache: what <see cref="DxcCacheCap"/> is compared with.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public long DxcBytes() => AmdBackend.Bytes(DxcDir);
 
     /// <summary>DxcCache within a tenth of <see cref="DxcCacheCap"/>: an eviction leaves it just under the cap, and later
     /// compiles and launches only add to it, so a missing file there is the driver making room.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public bool Full() => DxcBytes() >= DxcCacheCap - DxcCacheCap / 10;
 
     /// <summary>A warning when the queued games' estimated cache growth is more than the room left under the cap, else null.</summary>
@@ -168,8 +185,9 @@ public sealed class AmdAppCache(string dxcDir, string dxDir) : IAppCache
         foreach (var (dir, d3d12) in new[] { (DxcDir, true), (DxDir, false) })
         {
             if (!AppCacheFiles.Readable(dir)) continue;
-            foreach (var f in Directory.EnumerateFiles(dir, "*.parc"))
+            foreach (var f in Directory.EnumerateFiles(dir))
                 if (Key(Path.GetFileName(f), d3d12) is { } k) yield return (f, k);
         }
+        foreach (var f in AppCacheFiles.VulkanFiles(VkDir, VulkanTypes)) yield return f;
     }
 }

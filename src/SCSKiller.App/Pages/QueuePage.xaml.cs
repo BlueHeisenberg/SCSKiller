@@ -54,6 +54,7 @@ public sealed partial class QueuePage : Page
     void OnRemoveCurrent(object _, RoutedEventArgs __) => Act(() => App.Core.Remove(Vm.Current.Id));
     void OnClearFinished(object _, RoutedEventArgs __) => Act(() => { foreach (var r in Vm.Finished.ToList()) App.Core.Remove(r.Id); });
     void OnTop(object sender, RoutedEventArgs _) => Act(() => App.Core.MoveInQueue(RowOf(sender).Id, 0));
+    void OnBottom(object sender, RoutedEventArgs _) => Act(() => App.Core.MoveInQueue(RowOf(sender).Id, int.MaxValue));
     void OnUp(object sender, RoutedEventArgs _) => MoveBy(RowOf(sender), -1);
     void OnDown(object sender, RoutedEventArgs _) => MoveBy(RowOf(sender), 1);
     void MoveBy(QueueRow row, int delta) => Act(() => App.Core.MoveInQueue(row.Id, Vm.Waiting.IndexOf(row) + delta));

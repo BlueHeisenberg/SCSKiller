@@ -69,6 +69,10 @@ public static class Dxbc
 
     static readonly byte[][] Programs = ["DXIL"u8.ToArray(), "SHEX"u8.ToArray(), "SHDR"u8.ToArray()];
 
+    /// <summary>A DXIL program's shader model from its program header version (major in bits 4-7, minor in 0-3); null = no DXIL.</summary>
+    public static Version? DxilShaderModel(ReadOnlySpan<byte> c) =>
+        Valid(c) && Part(c, "DXIL"u8) is { Length: >= 4 } p ? new((int)(U(p, 0) >> 4) & 0xF, (int)U(p, 0) & 0xF) : null;
+
     /// <summary>A DXIL shader's required wave lane range ([WaveSize], SM 6.6+) from PSV0's runtime info (after the 16-byte
     /// stage union: MinimumExpectedWaveLaneCount, MaximumExpectedWaveLaneCount); null = no requirement.</summary>
     public static (uint Min, uint Max)? WaveLanes(ReadOnlySpan<byte> c)
@@ -82,6 +86,10 @@ public static class Dxbc
     /// <summary>A DXIL shader that traces rays inline (RayQuery): SFI0's D3D_SHADER_REQUIRES_RAYTRACING_TIER_1_1.</summary>
     public static bool InlineRayTracing(ReadOnlySpan<byte> c) =>
         Valid(c) && Part(c, "SFI0"u8) is { Length: >= 8 } f && (BinaryPrimitives.ReadUInt64LittleEndian(f) & 0x100000) != 0;
+
+    /// <summary>A DXIL shader that reads SV_ViewID: SFI0's D3D_SHADER_REQUIRES_VIEW_ID.</summary>
+    public static bool ViewId(ReadOnlySpan<byte> c) =>
+        Valid(c) && Part(c, "SFI0"u8) is { Length: >= 8 } f && (BinaryPrimitives.ReadUInt64LittleEndian(f) & 0x10000) != 0;
 
     /// <summary>A serialized root signature (D3D12SerializeRootSignature output): a container of RTS0 chunks only, no
     /// program. Generated binding metadata, never shader code: the only blobs packs and hash-only recordings keep.</summary>
@@ -215,6 +223,86 @@ public static class Dxbc
             }
         }
         return true;
+    }
+
+    /// <summary>A container of one part, as the D3D12 runtime and the compilers write it.</summary>
+    public static byte[] Container(ReadOnlySpan<byte> fourcc, ReadOnlySpan<byte> part)
+    {
+        var c = new byte[44 + part.Length];
+        "DXBC"u8.CopyTo(c);
+        BinaryPrimitives.WriteUInt32LittleEndian(c.AsSpan(20), 1);
+        BinaryPrimitives.WriteInt32LittleEndian(c.AsSpan(24), c.Length);
+        BinaryPrimitives.WriteUInt32LittleEndian(c.AsSpan(28), 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(c.AsSpan(32), 36);
+        fourcc.CopyTo(c.AsSpan(36));
+        BinaryPrimitives.WriteInt32LittleEndian(c.AsSpan(40), part.Length);
+        part.CopyTo(c.AsSpan(44));
+        Checksum(c).CopyTo(c.AsSpan(4));
+        return c;
+    }
+
+    /// <summary>The container's checksum over everything after it: MD5's rounds with its own padding, the bit count first in
+    /// the last block and 1 | 2 x the byte count last (DXC's ComputeHashRetail).</summary>
+    public static byte[] Checksum(ReadOnlySpan<byte> container)
+    {
+        var data = container[20..];
+        uint n = (uint)data.Length, left = n & 63;
+        uint[] s = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476];
+        var full = (int)(n - left);
+        for (var o = 0; o < full; o += 64) Md5Block(s, data.Slice(o, 64));
+        Span<byte> x = stackalloc byte[64];
+        x.Clear();
+        if (left < 56)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(x, n << 3);
+            data[full..].CopyTo(x[4..]);
+            x[4 + (int)left] = 0x80;
+        }
+        else
+        {
+            data[full..].CopyTo(x);
+            x[(int)left] = 0x80;
+            Md5Block(s, x);
+            x.Clear();
+            BinaryPrimitives.WriteUInt32LittleEndian(x, n << 3);
+        }
+        BinaryPrimitives.WriteUInt32LittleEndian(x[60..], 1 | n << 1);
+        Md5Block(s, x);
+        var hash = new byte[16];
+        for (var i = 0; i < 4; i++) BinaryPrimitives.WriteUInt32LittleEndian(hash.AsSpan(4 * i), s[i]);
+        return hash;
+    }
+
+    static readonly uint[] Md5K =
+    [
+        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
+        0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
+        0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+        0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
+        0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
+        0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+        0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
+    ];
+    static readonly int[] Md5Shift = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21];
+
+    static void Md5Block(uint[] s, ReadOnlySpan<byte> block)
+    {
+        Span<uint> m = stackalloc uint[16];
+        for (var i = 0; i < 16; i++) m[i] = BinaryPrimitives.ReadUInt32LittleEndian(block[(4 * i)..]);
+        uint a = s[0], b = s[1], c = s[2], d = s[3];
+        for (var i = 0; i < 64; i++)
+        {
+            var (f, g) = (i >> 4) switch
+            {
+                0 => ((b & c) | (~b & d), i),
+                1 => ((d & b) | (~d & c), (5 * i + 1) & 15),
+                2 => (b ^ c ^ d, (3 * i + 5) & 15),
+                _ => (c ^ (b | ~d), (7 * i) & 15),
+            };
+            (a, d, c, b) = (d, c, b, b + System.Numerics.BitOperations.RotateLeft(a + f + Md5K[i] + m[g], Md5Shift[(i >> 4) * 4 + (i & 3)]));
+        }
+        s[0] += a; s[1] += b; s[2] += c; s[3] += d;
     }
 
     /// <summary>Stages a graphics pipeline is built from (not compute, not DXR libraries).</summary>

@@ -1,0 +1,110 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- the Windows TFM links Core's *.Windows.cs, net10.0 its *.Linux.cs (built on Windows too, so it keeps compiling) -->
+    <TargetFrameworks>net10.0-windows10.0.26100.0;net10.0</TargetFrameworks>
+    <TargetFrameworks Condition="!$([MSBuild]::IsOSPlatform('Windows'))">net10.0</TargetFrameworks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <!-- toasts and single instance: the Windows App SDK's Foundation component, self-contained, without WinUI -->
+  <PropertyGroup Condition="'$([MSBuild]::GetTargetPlatformIdentifier($(TargetFramework)))' == 'windows'">
+    <!-- SCSKiller.exe: Velopack's mainExe and shortcut, the toast and single-instance registrations, the Run value and the scheduled task all name it -->
+    <AssemblyName>SCSKiller</AssemblyName>
+    <ApplicationIcon>..\SCSKiller.App\Assets\app.ico</ApplicationIcon>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <WinAppSdkRuntimeVersion>2.5.1</WinAppSdkRuntimeVersion>
+  </PropertyGroup>
+  <ItemGroup Condition="'$([MSBuild]::GetTargetPlatformIdentifier($(TargetFramework)))' == 'windows'">
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="2.3.12" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="$(WinAppSdkRuntimeVersion)" />
+    <!-- loaded by no start, toast, toast start, second start or update hook: the Microsoft.UI composition and input stack and
+         Foundation's other features. Microsoft.WindowsAppRuntime.dll, Microsoft.Internal.FrameworkUdk.dll (its import), the
+         Insights resource, its .pri and the AppLifecycle and AppNotifications projections and .winmd files stay. -->
+    <WinAppSdkUnused Include="CoreMessagingXP.dll;DwmSceneI.dll;dcompi.dll;dwmcorei.dll;marshal.dll;wuceffectsi.dll;Microsoft.DirectManipulation.dll;
+        Microsoft.Graphics.Display.dll;Microsoft.InputStateManager.dll;Microsoft.UI.Composition.OSSupport.dll;Microsoft.UI.Designer.dll;Microsoft.UI.Input.dll;
+        Microsoft.UI.Windowing.Core.dll;Microsoft.UI.Windowing.dll;Microsoft.UI.dll;Microsoft.UI.pri;Microsoft.UI.winmd;Microsoft.Foundation.winmd;Microsoft.Graphics.winmd;
+        Microsoft.InteractiveExperiences.Projection.dll;MRM.dll;RestartAgent.exe;PushNotificationsLongRunningTask.ProxyStub.dll;
+        Microsoft.WindowsAppRuntime.Bootstrap.dll;Microsoft.WindowsAppRuntime.Bootstrap.Net.dll;
+        Microsoft.Windows.ApplicationModel.Background.UniversalBGTask.dll;Microsoft.Windows.ApplicationModel.Resources.dll;
+        Microsoft.Security.Authentication.OAuth.Projection.dll;Microsoft.Security.Authentication.OAuth.winmd;
+        Microsoft.Windows.ApplicationModel.Background.Projection.dll;Microsoft.Windows.ApplicationModel.Background.winmd;Microsoft.Windows.ApplicationModel.Background.UniversalBGTask.winmd;
+        Microsoft.Windows.ApplicationModel.DynamicDependency.Projection.dll;Microsoft.Windows.ApplicationModel.DynamicDependency.winmd;
+        Microsoft.Windows.ApplicationModel.Resources.Projection.dll;Microsoft.Windows.ApplicationModel.Resources.winmd;
+        Microsoft.Windows.ApplicationModel.WindowsAppRuntime.Projection.dll;Microsoft.Windows.ApplicationModel.WindowsAppRuntime.winmd;
+        Microsoft.Windows.BadgeNotifications.Projection.dll;Microsoft.Windows.BadgeNotifications.winmd;Microsoft.Windows.Foundation.Projection.dll;Microsoft.Windows.Foundation.winmd;
+        Microsoft.Windows.Globalization.winmd;Microsoft.Windows.Management.Deployment.Projection.dll;Microsoft.Windows.Management.Deployment.winmd;
+        Microsoft.Windows.Media.Capture.Projection.dll;Microsoft.Windows.Media.Capture.winmd;Microsoft.Windows.PushNotifications.Projection.dll;Microsoft.Windows.PushNotifications.winmd;
+        Microsoft.Windows.Security.AccessControl.Projection.dll;Microsoft.Windows.Security.AccessControl.winmd;Microsoft.Windows.Storage.Pickers.Projection.dll;Microsoft.Windows.Storage.Pickers.winmd;
+        Microsoft.Windows.Storage.Projection.dll;Microsoft.Windows.Storage.winmd;Microsoft.Windows.System.Power.Projection.dll;Microsoft.Windows.System.Power.winmd;
+        Microsoft.Windows.System.Projection.dll;Microsoft.Windows.System.winmd" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+    <!-- the screenshots mode renders off-screen -->
+    <PackageReference Include="Avalonia.Headless" Version="12.1.4" />
+    <!-- Avalonia's build task sends usage telemetry on every build: its assets are left out -->
+    <PackageReference Include="Avalonia.BuildServices" Version="11.3.2" ExcludeAssets="all" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" Exclude="Assets\*.py" />
+    <AvaloniaResource Include="..\SCSKiller.App\Assets\app.ico" Link="Assets\app.ico" />
+    <!-- the tray loads it from the file -->
+    <None Include="..\SCSKiller.App\Assets\app.ico" Link="Assets\app.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="..\SCSKiller.App\Design\FakeScsKiller.cs" Link="Design\FakeScsKiller.cs" />
+    <Compile Include="..\SCSKiller.App\Design\FakeAccount.cs" Link="Design\FakeAccount.cs" />
+    <!-- the About page reads it from the assembly: it doesn't depend on the file sitting next to the exe -->
+    <EmbeddedResource Include="..\..\THIRD-PARTY-NOTICES.md" LogicalName="THIRD-PARTY-NOTICES.md" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$([MSBuild]::GetTargetPlatformIdentifier($(TargetFramework)))' != 'windows'">
+    <Compile Remove="**\*.Windows.cs" />
+    <!-- the Secret Service client (Platform/Keyring.Linux.cs) and the Background portal (Platform/BackgroundPortal.Linux.cs): the version Avalonia.FreeDesktop already brings -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.94.1" />
+  </ItemGroup>
+  <ItemGroup Condition="'$([MSBuild]::GetTargetPlatformIdentifier($(TargetFramework)))' == 'windows'">
+    <Compile Remove="**\*.Linux.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SCSKiller.Ui.Models\SCSKiller.Ui.Models.csproj" />
+  </ItemGroup>
+
+  <!-- As in SCSKiller.App.csproj: the self-contained output lacks this DLL, and AppNotificationManager.Register() then throws 0x8007007E -->
+  <Target Name="AddWinAppSdkInsightsResource" BeforeTargets="AssignTargetPaths" Condition="'$([MSBuild]::GetTargetPlatformIdentifier($(TargetFramework)))' == 'windows'">
+    <Unzip SourceFiles="$(NuGetPackageRoot)microsoft.windowsappsdk.runtime\$(WinAppSdkRuntimeVersion)\tools\MSIX\win10-x64\Microsoft.WindowsAppRuntime.2.msix"
+           DestinationFolder="$(IntermediateOutputPath)winappsdk" Include="Microsoft.WindowsAppRuntime.Insights.Resource.dll" SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <None Include="$(IntermediateOutputPath)winappsdk\Microsoft.WindowsAppRuntime.Insights.Resource.dll" Link="Microsoft.WindowsAppRuntime.Insights.Resource.dll"
+            CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+
+  <!-- before the deps file is written: the host refuses to start when an assembly it lists is missing -->
+  <Target Name="TrimWinAppSdkPackageAssets" AfterTargets="ResolvePackageAssets" Condition="'@(WinAppSdkUnused)' != ''">
+    <PropertyGroup><_WinAppSdkUnused>;@(WinAppSdkUnused);</_WinAppSdkUnused></PropertyGroup>
+    <ItemGroup>
+      <RuntimeCopyLocalItems Remove="@(RuntimeCopyLocalItems)" Condition="$(_WinAppSdkUnused.Contains(';%(Filename)%(Extension);'))" />
+      <NativeCopyLocalItems Remove="@(NativeCopyLocalItems)" Condition="$(_WinAppSdkUnused.Contains(';%(Filename)%(Extension);'))" />
+    </ItemGroup>
+  </Target>
+  <Target Name="TrimWinAppSdkPayload" AfterTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents" Condition="'@(WinAppSdkUnused)' != ''">
+    <PropertyGroup><_WinAppSdkUnused>;@(WinAppSdkUnused);</_WinAppSdkUnused></PropertyGroup>
+    <ItemGroup>
+      <None Remove="@(None)" Condition="$(_WinAppSdkUnused.Contains(';%(Filename)%(Extension);'))" />
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" Condition="$(_WinAppSdkUnused.Contains(';%(Filename)%(Extension);'))" />
+    </ItemGroup>
+  </Target>
+
+</Project>

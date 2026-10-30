@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Text.RegularExpressions;
 using SCSKiller.Core.App;
 using SCSKiller.Core.Carved;
@@ -8,14 +7,17 @@ namespace SCSKiller.Core.Vendors;
 
 /// <summary>The names an Unreal game registers with the AMD driver when it creates its device through AGS
 /// (<c>agsDriverExtensionsDX12_CreateDevice</c>, UE 4.25-5.6 D3D12Adapter.cpp): the project name as the app,
-/// "UnrealEngine&lt;major&gt;.&lt;minor&gt;" as the engine, both versions unspecified. AMD keys the DxcCache on the app name,
-/// not on the exe name, unless a driver profile matches (<see cref="AmdAppCache.AgsKey"/>). <paramref name="ExeUnread"/>: the
-/// exe can't be read (an Xbox app game's), so AGS is assumed; only the keys the game is seen holding prove it.</summary>
-public sealed record AgsRegistration(string App, string Engine, bool ExeUnread = false);
+/// "UnrealEngine&lt;major&gt;.&lt;minor&gt;" as the engine, both versions unspecified. AMD keys the DxcCache on what the game
+/// registers, not on the exe name, by a mapping the driver may change, so a warm registers exactly the same.
+/// <paramref name="ExeUnread"/>: the exe can't be read (an Xbox app game's), so AGS is assumed; only the keys the game is seen
+/// holding prove it.</summary>
+public sealed record AgsRegistration(string App, string Engine, bool ExeUnread = false,
+    uint AppVersion = AmdAgs.UnspecifiedVersion, uint EngineVersion = AmdAgs.UnspecifiedVersion);
 
 public static class AmdAgs
 {
     public const string DllName = "amd_ags_x64.dll";
+    public const uint UnspecifiedVersion = 0xFFFFAD00;   // AGS_UNSPECIFIED_VERSION
     const string CreateDevice = "agsDriverExtensionsDX12_CreateDevice";
 
     /// <summary>Null unless the game is Unreal 4.25 or later (earlier versions create the D3D12 device without AGS, though
@@ -38,7 +40,7 @@ public static class AmdAgs
     {
         if (engine == null || engine.Family == "Unreal") return null;
         var dxc = gameKeys.Where(k => k.StartsWith(AmdAppCache.D3D12Prefix, StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToList();
-        if (dxc.Count == 0 || dxc.Contains(AmdAppCache.HintKey(exeName))) return null;
+        if (dxc.Count == 0 || dxc.Contains(AmdAppCache.DxcKey(exeName))) return null;
         var fi = new FileInfo(g.ExePath);
         if (!fi.Exists) return null;
         // ponytail: in-memory per exe stamp and keys, so a restart scans again; persist on the GameRecord if that shows
@@ -46,7 +48,6 @@ public static class AmdAgs
         if (!names.TryGetValue(stamp, out var app))
         {
             var hashes = dxc.Select(k => uint.TryParse(k.AsSpan(AmdAppCache.D3D12Prefix.Length), System.Globalization.NumberStyles.HexNumber, null, out var h) ? h : 0).ToHashSet();
-            hashes.UnionWith(dxc.SelectMany(AmdAppCache.ProfiledApps).Select(AmdAppCache.Fnv1a));
             try
             {
                 using var s = new FileStream(fi.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.SequentialScan);
@@ -56,13 +57,6 @@ public static class AmdAgs
         }
         return app == null || app.Equals(exeName, StringComparison.OrdinalIgnoreCase) ? null : new(app, engine.Family);
     }
-
-    /// <summary>The registration the game's own process was seen making (the recorder hooks
-    /// <c>agsDriverExtensionsDX12_CreateDevice</c> in a loaded <see cref="DllName"/>), only when the key it gives
-    /// (<see cref="AmdAppCache.AgsKey"/>) is one the game's process held (<paramref name="gameKeys"/>): a name the driver
-    /// keyed otherwise (an app profile, no app registration) is not proof.</summary>
-    public static AgsRegistration? Learned(string? app, string? engine, string exeName, IEnumerable<string> gameKeys) =>
-        app is { Length: > 0 } && gameKeys.Contains(AmdAppCache.AgsKey(exeName, app)) ? new(app, engine ?? "") : null;
 
     static readonly ConcurrentDictionary<(string, long, DateTime, string), string?> names = new();
     const int MaxName = 64;
@@ -144,7 +138,7 @@ public static class AmdAgs
     public static string? DllFor(Game g, string? bundled)
     {
         var own = Path.Combine(Path.GetDirectoryName(g.ExePath) ?? "", DllName);
-        try { return File.Exists(own) && FileVersionInfo.GetVersionInfo(own).FileMajorPart == 6 ? own : bundled; }
+        try { return File.Exists(own) && PeVersionInfo.GetVersionInfo(own).FileMajorPart == 6 ? own : bundled; }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return bundled; }
     }
 

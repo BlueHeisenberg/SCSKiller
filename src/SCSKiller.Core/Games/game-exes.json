@@ -1,0 +1,14 @@
+{
+  "about": "The exe of games whose own pick is wrong. ids are Game.Id values, the only match. exe is relative to the install root (either separator, never rooted, no part ending in a dot) and used only when that file is in the install. engines and builds limit an entry like game-verdicts.json's. source is never shown but this file is public. date = when the entry was last checked. This is the body: the server serves it signed (release-sign sign-content --name game-exes).",
+  "games": [
+    {
+      "name": "Phantom Blade Zero",
+      "ids": [
+        "steam:4115450"
+      ],
+      "exe": "platform/steam/PBZ.exe",
+      "source": "Steam appinfo 4115450 (installdir PBZ) and user installs: the game is platform/steam/PBZ.exe, ProjectPBZ/Binaries/Win64 holds only tools (8za_v2.exe, CheckEnv.exe), no Shipping exe",
+      "date": "2026-10-29"
+    }
+  ]
+}

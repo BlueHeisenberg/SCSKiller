@@ -2,9 +2,9 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
-using SCSKiller.Core.Games;
 using SCSKiller.Core.App;
 using SCSKiller.Core.Carved;
+using SCSKiller.Core.Games;
 using SCSKiller.Core.Nixxes;
 using SCSKiller.Core.Northlight;
 using SCSKiller.Core.Unreal;
@@ -50,18 +50,20 @@ public sealed class DecimaReader(string? dataDir = null) : IEngineReader
     /// Packed_DX12 is Horizon Zero Dawn's even when none of its .bin files has a known magic (Archives empty).</summary>
     public static (string Fork, List<FileInfo> Archives, int Unknown)? Layout(string installDir)
     {
-        foreach (var (dir, magic, fork) in new[] { ("Packed_DX12", DecimaArchive.Plain, HorizonZeroDawn), ("data", DecimaArchive.Encrypted, DeathStranding) })
+        foreach (var (dir, magic, fork) in Folders)
         {
-            var d = new DirectoryInfo(Path.Combine(installDir, dir));
+            var d = new DirectoryInfo(GameFiles.Find(installDir, dir));
             if (!d.Exists) continue;
             List<FileInfo> all;
-            try { all = [.. d.EnumerateFiles("*.bin", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 }).OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)]; }
+            try { all = [.. GameFiles.EnumerateFiles(d, "*.bin", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 }).OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)]; }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
             var bins = all.Where(f => DecimaArchive.Magic(f.FullName) == magic).ToList();
             if (bins.Count > 0 || fork == HorizonZeroDawn && all.Count > 0) return (fork, bins, all.Count - bins.Count);
         }
         return null;
     }
+
+    static readonly (string Dir, uint Magic, string Fork)[] Folders = [("Packed_DX12", DecimaArchive.Plain, HorizonZeroDawn), ("data", DecimaArchive.Encrypted, DeathStranding)];
 
     public string DetectStamp(Game game, EngineInfo? engine) => keys.KeyStamp(game);
 
@@ -93,6 +95,8 @@ public sealed class DecimaReader(string? dataDir = null) : IEngineReader
         var sw = Stopwatch.StartNew();
         var (fork, archives, unknown) = Layout(game.InstallDir) ?? throw new InvalidDataException("not a Decima install: scan the game again");
         var salts = Salts(game, fork);
+        var dir = Folders.First(l => l.Fork == fork).Dir;
+        string Library(string archive) => GameFiles.Rel(game.InstallDir, archive, Path.GetDirectoryName(archive)!, dir);
         try { Codecs.Load(zlib: false); }   // a missing codec fails the index, not each archive
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { throw new InvalidDataException("the Oodle codec can't be loaded", e); }
         var shaders = new Dictionary<string, ShaderInfo>();
@@ -109,7 +113,7 @@ public sealed class DecimaReader(string? dataDir = null) : IEngineReader
         foreach (var f in archives)
         {
             ct.ThrowIfCancellationRequested();
-            var rel = Path.GetRelativePath(game.InstallDir, f.FullName);
+            var rel = Library(f.FullName);
             content.AppendData(Encoding.UTF8.GetBytes(ContentStamps.Of(rel, f.FullName)));
             using var a = DecimaArchive.Open(f.FullName, salts, out var why);
             if (a == null) { unopened[why] = unopened.GetValueOrDefault(why) + 1; continue; }
@@ -166,10 +170,10 @@ public sealed class DecimaReader(string? dataDir = null) : IEngineReader
             if (NorthlightReader.Feeds([shaders[vs], shaders[ps]]) != true) { unlinked++; continue; }
             paired.Add(vs);
             paired.Add(ps);
-            maps.Add(new ShaderMap(CarvedReader.Sha1Hex($"{vs},{ps}"), Library(locs[vs], game), CarvedReader.Platform, [vs, ps], IsPipeline: true));
+            maps.Add(new ShaderMap(CarvedReader.Sha1Hex($"{vs},{ps}"), Library(locs[vs].Archive), CarvedReader.Platform, [vs, ps], IsPipeline: true));
         }
         foreach (var cs in shaders.Values.Where(s => s.Stage == Stage.Compute).Select(s => s.Sha1))
-            maps.Add(new ShaderMap(CarvedReader.Sha1Hex(cs), Library(locs[cs], game), CarvedReader.Platform, [cs], IsPipeline: true));
+            maps.Add(new ShaderMap(CarvedReader.Sha1Hex(cs), Library(locs[cs].Archive), CarvedReader.Platform, [cs], IsPipeline: true));
         var pooled = 0;
         foreach (var (lib, seen) in pools)
             if (seen.Where(h => shaders[h].Stage != Stage.Compute && !paired.Contains(h)).ToList() is { Count: > 0 } pool)
@@ -188,8 +192,6 @@ public sealed class DecimaReader(string? dataDir = null) : IEngineReader
             + $" ({sw.Elapsed.TotalSeconds:F1}s)");
         return new ShaderIndex(Convert.ToHexStringLower(content.GetHashAndReset()), [CarvedReader.Platform], shaders, maps);
     }
-
-    static string Library(Loc at, Game game) => Path.GetRelativePath(game.InstallDir, at.Archive);
 
     DecimaArchive.Salts? Salts(Game game, string fork) =>
         fork == DeathStranding ? keys.Stored(game) ?? throw new InvalidDataException("encrypted archives without their salts: scan the game again") : null;

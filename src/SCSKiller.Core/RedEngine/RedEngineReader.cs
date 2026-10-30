@@ -2,8 +2,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
-using SCSKiller.Core.Games;
 using SCSKiller.Core.Carved;
+using SCSKiller.Core.Games;
 using SCSKiller.Core.Planning;
 using SCSKiller.Core.Unreal;
 
@@ -40,7 +40,7 @@ public sealed class RedEngineReader : IEngineReader
 
     public EngineInfo? Detect(Game game)
     {
-        var path = Path.Combine(game.InstallDir, Materials);
+        var path = GameFiles.Find(game.InstallDir, Materials);
         if (!File.Exists(path)) return null;
         using var f = Open(path);
         if (RedShaderCache.ReadMaterials(f) is not { } m) return null;
@@ -84,17 +84,17 @@ public sealed class RedEngineReader : IEngineReader
         }
         string PlatformOf(string sha) => platformOf.GetValueOrDefault(sha, CarvedReader.Platform);
 
-        var path = Path.Combine(game.InstallDir, Materials);
+        var path = GameFiles.Find(game.InstallDir, Materials);
         RedShaderCache.Materials? m;
         using (var f = Open(path)) m = RedShaderCache.ReadMaterials(f, ct);
         if (m == null) throw new InvalidDataException($"{Materials} no longer reads as a version 5 shader cache: scan the game again");
 
-        var staticPath = Path.Combine(game.InstallDir, Static);
+        var staticPath = GameFiles.Find(game.InstallDir, Static);
         var engineShaders = 0;
         if (File.Exists(staticPath))
         {
             using var f = Open(staticPath);
-            content.AppendData(Stamp(game, staticPath));
+            content.AppendData(Stamp(game, staticPath, Static));
             var pool = (RedShaderCache.ReadStatic(f) ?? []).Select(e => Add(staticPath, e, f)).OfType<string>().Where(shaders.ContainsKey).Distinct().ToList();
             engineShaders = pool.Count;
             foreach (var g in pool.GroupBy(PlatformOf))
@@ -104,7 +104,7 @@ public sealed class RedEngineReader : IEngineReader
         int pipelines = 0, rejected = 0, overCap = 0, libraries;
         using (var f = Open(path))
         {
-            content.AppendData(Stamp(game, path));
+            content.AppendData(Stamp(game, path, Materials));
             var shaOf = new Dictionary<ulong, string>(m.Shaders.Count);
             foreach (var (key, e) in m.Shaders.OrderBy(s => s.Value.At))
                 if (Add(path, e, f) is { } sha) shaOf[key] = sha;
@@ -210,9 +210,9 @@ public sealed class RedEngineReader : IEngineReader
 
     static FileStream Open(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 20);
 
-    static byte[] Stamp(Game game, string path)
+    static byte[] Stamp(Game game, string path, string rel)
     {
         var fi = new FileInfo(path);
-        return Encoding.UTF8.GetBytes(ContentStamps.Of(Path.GetRelativePath(game.InstallDir, path), fi.FullName));
+        return Encoding.UTF8.GetBytes(ContentStamps.Of(GameFiles.Rel(game.InstallDir, path, path, rel), fi.FullName));
     }
 }

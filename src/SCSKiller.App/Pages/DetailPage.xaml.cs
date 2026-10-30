@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using SCSKiller.Core;
 using SCSKiller.Core.App;
+using SCSKiller.Core.Games;
 
 namespace SCSKiller.App.Pages;
 
@@ -20,7 +21,7 @@ public sealed partial class DetailPage : Page
         // a warm raises a tick every progress report: only this game's move the page, and only its progress
         void OnQueue(QueueItem q)
         {
-            if (q.Stage is not (QueueStage.Warming or QueueStage.Merging or QueueStage.Saving or QueueStage.Finishing)) refresh.Request();
+            if (!Format.ProgressTick(q)) refresh.Request();
             else if (q.GameId == Vm?.Row.Id) progress.Request();
         }
         // Refresh too: a change raised while the page wasn't loaded (e.g. the game exited) would show only at the next one
@@ -61,6 +62,31 @@ public sealed partial class DetailPage : Page
     {
         var vm = Vm;
         if (await AesKeyDialog.ShowAsync(XamlRoot, vm.Row.Id, $"Set the AES key for {vm.Name}")) vm.RefreshGame();
+    }
+
+    async void OnChangeAesKey(object _, RoutedEventArgs __)
+    {
+        var vm = Vm;
+        if (await AesKeyDialog.ShowAsync(XamlRoot, vm.Row.Id, $"Change the AES key for {vm.Name}")) vm.RefreshGame();
+    }
+
+    async void OnRemoveAesKey(object _, RoutedEventArgs __)
+    {
+        var vm = Vm;
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot, Title = $"Remove the AES key for {vm.Name}?", PrimaryButtonText = "Remove", CloseButtonText = "Cancel",
+            Content = new TextBlock { Text = DetailVm.RemoveAesKeyNote, TextWrapping = TextWrapping.Wrap },
+        };
+        if (await App.ShowAsync(dialog) != ContentDialogResult.Primary) return;
+        App.Core.RemoveEncryptionKey(vm.Row.Id);
+        vm.RefreshGame();
+    }
+
+    async void OnSetGameKey(object _, RoutedEventArgs __)
+    {
+        var vm = Vm;
+        if (await AesKeyDialog.ShowAsync(XamlRoot, vm.Row.Id, $"Set the game key for {vm.Name}", aes: false)) vm.RefreshGame();
     }
 
     static readonly (CompatChoice Choice, string Text)[] ReportChoices =
@@ -212,7 +238,7 @@ public sealed partial class DetailPage : Page
             d.IsPrimaryButtonEnabled = false;
             var (text, body) = (words.Text.Trim().ReplaceLineEndings("\n"), built);
             string? sent, why;
-            try { (sent, why) = await Task.Run(() => App.Core.SendProblemAsync(text, body)); }
+            try { (sent, why) = await Task.Run(() => App.Core.SendProblemAsync(id, text, body)); }
             catch (Exception ex) { (sent, why) = (null, Describe(ex)); }
             if (sent != null) Thanked(d, sent);
             else
@@ -234,7 +260,7 @@ public sealed partial class DetailPage : Page
                 {
                     new TextBlock { Text = "Thanks, your report was sent.", TextWrapping = TextWrapping.Wrap },
                     new TextBlock { Text = $"Report ID {reportId}", IsTextSelectionEnabled = true, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
-                    new TextBlock { Text = "Mention it on Discord or GitHub so we can find your report.", TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["Secondary"] },
+                    new TextBlock { Text = "Mention it on Discord or GitHub so we can find your report. It's listed on the About page.", TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["Secondary"] },
                 },
             };
             return d;
@@ -268,6 +294,13 @@ public sealed partial class DetailPage : Page
         DrawFrames();
     }
 
+    async void OnOpenExeFolder(object _, RoutedEventArgs __)
+    {
+        try { if (ShowExe.Open(Vm.Row.State.Game.ExePath)) return; }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException) { }
+        await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't open the folder", Content = "The game's folder isn't there.", CloseButtonText = "OK" });
+    }
+
     async void OnGameFolder(object _, RoutedEventArgs __)
     {
         var game = Vm.Row.State.Game;
@@ -276,6 +309,40 @@ public sealed partial class DetailPage : Page
         catch (Exception ex)
         {
             await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't set the game folder", Content = ex.Message, CloseButtonText = "OK" });
+            return;
+        }
+        Vm.Refresh();
+    }
+
+    async void OnGameExe(object _, RoutedEventArgs __)
+    {
+        string? path;
+        try
+        {
+            var picker = new Microsoft.Windows.Storage.Pickers.FileOpenPicker(App.Main.AppWindow.Id)
+            {
+                SuggestedStartLocation = Microsoft.Windows.Storage.Pickers.PickerLocationId.ComputerFolder, CommitButtonText = "Use this exe",
+            };
+            picker.FileTypeFilter.Add(".exe");
+            path = (await picker.PickSingleFileAsync())?.Path;
+        }
+        catch (Exception ex)
+        {
+            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't open the file picker", Content = ex.Message, CloseButtonText = "OK" });
+            return;
+        }
+        if (path != null) await SetExe(path);
+    }
+
+    async void OnAutoExe(object _, RoutedEventArgs __) => await SetExe(null);
+
+    async Task SetExe(string? path)
+    {
+        var id = Vm.Row.Id;
+        try { await Task.Run(() => App.Core.SetGameExe(id, path)); }   // reads the game again
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't change the game's exe", Content = ex.Message, CloseButtonText = "OK" });
             return;
         }
         Vm.Refresh();
@@ -319,7 +386,7 @@ public sealed partial class DetailPage : Page
         App.Main.Navigate(typeof(LibraryPage));
     }
 
-    void DrawFrames() => Graph.Show(Vm.F is { } f ? FrameData.Of(f) : null);
+    void DrawFrames() => Graph.Show(Vm.F is { } f ? FrameData.Of(f) with { Neutral = Vm.FramesOnly } : null);
 
     /// <summary>Screenshots: the bottom of the page; false when it all fits.</summary>
     public bool ScrollToEnd() => Scroller.ScrollableHeight > 0 && Scroller.ChangeView(null, Scroller.ScrollableHeight, null, true);
@@ -332,6 +399,9 @@ public sealed partial class DetailPage : Page
 
     /// <summary>Screenshots: the frame times card at the top; false without one.</summary>
     public bool ScrollToFrames() => Vm.HasFrames && Scroller.ChangeView(null, FramesCard.TransformToVisual((UIElement)Scroller.Content).TransformPoint(default).Y - 12, null, true);
+
+    /// <summary>Screenshots: the traversal stutter fix's choice in the middle; false without it.</summary>
+    public bool ScrollToTraversal() => Vm.ShowTraversal && Scroller.ChangeView(null, TraversalBox.TransformToVisual((UIElement)Scroller.Content).TransformPoint(default).Y - 400, null, true);
 
     void OnCrumb(BreadcrumbBar _, BreadcrumbBarItemClickedEventArgs e)
     {
@@ -369,7 +439,26 @@ public sealed partial class DetailPage : Page
         if (on != Vm.LeftOutOn) Set((vm, p) => vm.LeftOutPending = p, on, id => App.Core.SetGameLeftOutOfAddAll(id, on));
     }
 
+    void OnSharedToggled(object _, RoutedEventArgs __)
+    {
+        var on = SharedSwitch.IsOn;
+        if (on != Vm.SharedOn) Set((vm, p) => vm.SharedPending = p, on, id => App.Core.SetGameUseShared(id, on));
+    }
+
     void SetCareful(bool on) => Set((vm, p) => vm.CarefulPending = p, on, id => App.Core.SetCarefulCompile(id, on));
+
+    async void OnCacheCapChanged(object _, SelectionChangedEventArgs __)
+    {
+        var (vm, id, i) = (Vm, Vm.Row.Id, CacheCapBox.SelectedIndex);
+        if (i < 0 || i == vm.CacheCapIndex) return;
+        try
+        {
+            await Task.Run(() => App.Core.SetGameCacheCap(id, i == 0 ? null : ScsKiller.CacheCapsGB[i - 1]));
+            vm.Error = null;
+        }
+        catch (Exception ex) { vm.Error = Describe(ex); }
+        vm.Refresh();
+    }
 
     async void OnRayTracingChanged(object _, SelectionChangedEventArgs __)
     {
@@ -378,6 +467,19 @@ public sealed partial class DetailPage : Page
         try
         {
             await Task.Run(() => App.Core.SetGameRayTracing(id, i switch { 1 => true, 2 => false, _ => null }));
+            vm.Error = null;
+        }
+        catch (Exception ex) { vm.Error = Describe(ex); }
+        vm.Refresh();
+    }
+
+    async void OnTraversalChanged(object _, SelectionChangedEventArgs __)
+    {
+        var (vm, id, i) = (Vm, Vm.Row.Id, TraversalBox.SelectedIndex);
+        if (i < 0 || i == vm.TraversalIndex) return;
+        try
+        {
+            await Task.Run(() => App.Core.SetGameTraversal(id, TraversalFix.OverrideAt(i)));
             vm.Error = null;
         }
         catch (Exception ex) { vm.Error = Describe(ex); }
@@ -402,7 +504,7 @@ public sealed partial class DetailPage : Page
     {
         var i = ((ComboBox)sender).SelectedIndex;
         if (i < 0 || i == Vm.ApiIndex || !Vm.CanPickApi) return;
-        DxApi? api = i == 1 ? DxApi.D3D11 : i == 2 ? DxApi.D3D12 : null;
+        var api = Vm.ApiAt(i);
         Set((vm, p) => vm.ApiPending = p, true, id => App.Core.SetApiOverride(id, api));
     }
 
@@ -542,7 +644,7 @@ public sealed partial class DetailPage : Page
         }
         var fresh = vm.Row.State with { AntiCheat = shown };   // VAC stays the state's: the check only names a client anti-cheat
         var ok = await App.ConfirmAsync(this, $"Always record {vm.Name} at your own risk?",
-            new TextBlock { TextWrapping = TextWrapping.Wrap, Text = DetailVm.RiskText(fresh) }, "Always record");
+            new TextBlock { TextWrapping = TextWrapping.Wrap, Text = DetailVm.RiskText(fresh) + (ScsKiller.VulkanPickWarning(fresh) is { } pick ? "\n\n" + pick : "") }, "Always record");
         vm.AlwaysPending = null;
         if (!ok)
         {
@@ -589,7 +691,7 @@ public sealed partial class DetailPage : Page
         }
         var fresh = vm.Row.State with { AntiCheat = shown };   // VAC stays the state's: the check only names a client anti-cheat
         var ok = await App.ConfirmAsync(this, $"Record {vm.Name} at your own risk?",
-            new TextBlock { TextWrapping = TextWrapping.Wrap, Text = DetailVm.RiskText(fresh) + " SCSKiller removes its files when the game exits, or after a crash at your next logon." },
+            new TextBlock { TextWrapping = TextWrapping.Wrap, Text = RiskConfirmText(fresh) },
             "Record session");
         if (!ok)
         {
@@ -599,6 +701,9 @@ public sealed partial class DetailPage : Page
         }
         await StartSession(vm, () => App.Core.StartRiskSession(id, confirmed: true, shown));
     }
+
+    static string RiskConfirmText(GameState fresh) => DetailVm.RiskText(fresh) + " SCSKiller removes its files when the game exits, or after a crash at your next logon."
+        + (ScsKiller.VulkanPickWarning(fresh) is { } pick ? "\n\n" + pick : "");
 
     // The start runs off the UI thread; the task it returns ends when the game exited and its files are out.
     async Task StartSession(DetailVm vm, Func<Task> start)

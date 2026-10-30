@@ -91,22 +91,11 @@ public sealed partial class ReportWindow : Window
         Heading.Text = $"Before and after · {game}";
         CardGame.Text = game.ToUpperInvariant();
         ShowIcon();
-        CardSub.Text = C.Dx11 ? BeforeAfter.Dx11Label
-            : C.AlreadySmooth ? "Already smooth on this PC: few shader compilation stutters even before the compile"
-            : "Shader compilation stutter before and after SCSKiller compiled its shaders";
-        if (C.Dx11)   // no ready share and no shader split: every frame of 50 ms or more
-        {
-            (LabelStutters.Text, LabelReady.Text, LabelWorst.Text) = ("STUTTERS", "TIME FROZEN", "WORST STUTTER");
-            TileStutters.Text = $"{C.Before.Hitches:N0}  →  {C.After.Hitches:N0}";
-            TileReady.Text = $"{C.Before.HitchSeconds:0.0} s  →  {C.After.HitchSeconds:0.0} s";
-            TileWorst.Text = $"{Ms(C.Before.WorstHitchMs)}  →  {Ms(C.After.WorstHitchMs)}";
-        }
-        else
-        {
-            TileStutters.Text = $"{C.Before.ShaderStutters:N0}  →  {C.After.ShaderStutters:N0}";
-            TileReady.Text = $"{Pct(C.Before.ReadyShare)}  →  {Pct(C.After.ReadyShare)}";
-            TileWorst.Text = $"{Ms(C.Before.WorstStutterMs)}  →  {Ms(C.After.WorstStutterMs)}";
-        }
+        var text = BeforeAfter.Report(game, r, App.Core.Vendor.Vendor);
+        CardSub.Text = text.Subtitle;
+        (LabelStutters.Text, TileStutters.Text) = text.Tiles[0];
+        (LabelReady.Text, TileReady.Text) = text.Tiles[1];
+        (LabelWorst.Text, TileWorst.Text) = text.Tiles[2];
 
         var (before, after) = (FrameData.Of(r.Before) with { Neutral = C.Dx11 }, FrameData.Of(r.After) with { Neutral = C.Dx11 });
         if (C.Dx11) (LegendShader.Visibility, LegendOther.Text) = (Visibility.Collapsed, "stutter");
@@ -118,7 +107,7 @@ public sealed partial class ReportWindow : Window
         {
             graph.Show(d, d.Play.From, d.Play.To, top, spp);
             axis.Width = graph.Width;
-            end.Text = Clock(run.PlaySeconds) + " of play";
+            end.Text = BeforeAfter.Clock(run.PlaySeconds) + " of play";
         }
 
         ShowGpu.IsChecked = App.Core.Settings.BeforeAfterShowGpu;
@@ -127,39 +116,11 @@ public sealed partial class ReportWindow : Window
 
         Details.Children.Clear();
         Details.RowDefinitions.Clear();
-        Row("Details", "Before", "After", header: true);
-        Row("Play time", Clock(C.Before.PlaySeconds), Clock(C.After.PlaySeconds));
-        if (C.Dx11)
-        {
-            Row("Stutters of 50 ms or more", Count(C.Before.Hitches, C.Before), Count(C.After.Hitches, C.After));
-            Row("Time frozen by them", $"{C.Before.HitchSeconds:0.0} s", $"{C.After.HitchSeconds:0.0} s");
-            Row("Worst stutter", Ms(C.Before.WorstHitchMs), Ms(C.After.WorstHitchMs));
-        }
-        else
-        {
-            Row("Shader compilation stutters", Count(C.Before.ShaderStutters, C.Before), Count(C.After.ShaderStutters, C.After));
-            Row("Ready from the cache", Pct(C.Before.ReadyShare), Pct(C.After.ReadyShare));
-            // state objects aren't in the ready share
-            if (r.Before.Creates is { } bc && r.After.Creates is { } ac && bc.StateObjectsReady + bc.StateObjectsCompiled + ac.StateObjectsReady + ac.StateObjectsCompiled > 0)
-                Row("Ray tracing ready from the cache", Rt(bc), Rt(ac));
-            Row("Pipelines compiled while playing", Count(C.Before.PlayCompiles, C.Before), Count(C.After.PlayCompiles, C.After));
-            Row("Time frozen by shader compilation stutters", $"{C.Before.FrozenSeconds:0.0} s", $"{C.After.FrozenSeconds:0.0} s");
-            Row("Worst shader compilation stutter", Ms(C.Before.WorstStutterMs), Ms(C.After.WorstStutterMs));
-        }
-        Row("1% low", $"{C.Before.Low1PctFps:0} fps", $"{C.After.Low1PctFps:0} fps");
-        Row("Average", $"{C.Before.AvgFps:0} fps", $"{C.After.AvgFps:0} fps",
-            note: "1% low and average count from the game's first frame, menus and loading included, so a faster start alone raises them.");
-        if (!C.Dx11)
-            Row("Other hitches (not shader-related)", Count(C.Before.OtherHitches, C.Before), Count(C.After.OtherHitches, C.After),
-                note: "Streaming hitches can drop on a second run: Windows keeps the game's files in memory.");
+        Row(new("Details", "Before", "After"), header: true);
+        foreach (var row in text.Rows) Row(row);
 
         Notes.Children.Clear();
-        foreach (var n in C.Notes) Note(n);
-        if (C.Dx11) Note("On DirectX 11 stutters on loading screens count too, and streaming stutters can drop on a second run.");
-        if (C.AlreadySmooth) Note($"{game} barely stuttered from shaders on this PC even before the compile.");
-        // the D3D11 recorder records input layouts on AMD only, frame times only on NVIDIA
-        Note(C.Dx11 && App.Core.Vendor.Vendor != GpuVendor.Amd ? "Compiled from the game's files." : "Compiled from the game's files and your before run's recording.");
-        Note("Frame times and this report stay on your PC unless you share the image.");
+        foreach (var n in text.Notes) Note(n);
     }
 
     /// <summary>The game's icon as the library shows it, or its tile.</summary>
@@ -174,18 +135,9 @@ public sealed partial class ReportWindow : Window
 
     void Footer()
     {
-        var (b, a) = BeforeAfter.PlayMinutes(C);
-        string play = b == a ? $"{b} min of play each" : $"{b} and {a} min of play";
-        string? size = Size(r.Before.SwapChain) is { } s && s == Size(r.After.SwapChain) ? s : null;
-        CardFooter.Text = string.Join("  ·  ", new[]
-        {
-            play, "same PC", size,   // the swap chain's size is all SCSKiller knows of the settings
-            App.Core.Settings.BeforeAfterShowGpu ? App.Core.Vendor.Gpu.Name : null,
-        }.OfType<string>());
+        CardFooter.Text = BeforeAfter.Footer(r, App.Core.Settings.BeforeAfterShowGpu ? App.Core.Vendor.Gpu.Name : null);
+        CardVersions.Text = BeforeAfter.Versions(App.Core.Settings.BeforeAfterShowGpu ? App.Core.Vendor.Gpu.DriverVersion : null);
     }
-
-    /// <summary>"2560×1440" from the csv's swap chain line ("2560x1440 fmt 28").</summary>
-    static string? Size(string? swapChain) => swapChain?.Split(' ')[0].Replace('x', '×');
 
     void OnShowGpu(object _, RoutedEventArgs __)
     {
@@ -193,9 +145,10 @@ public sealed partial class ReportWindow : Window
         Footer();
     }
 
-    void Row(string label, string before, string after, string? note = null, bool header = false)
+    void Row(ReportRow row, bool header = false)
     {
-        int row = Details.RowDefinitions.Count;
+        var (label, before, after, note) = row;
+        int at = Details.RowDefinitions.Count;
         Details.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var style = (Style)Application.Current.Resources[header ? "Section" : "BodyTextBlockStyle"];
         var cells = new List<TextBlock>
@@ -207,7 +160,7 @@ public sealed partial class ReportWindow : Window
         if (note != null) cells.Add(new() { Text = note, Style = (Style)Application.Current.Resources["Caption"], TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
         for (int i = 0; i < cells.Count; i++)
         {
-            Grid.SetRow(cells[i], row);
+            Grid.SetRow(cells[i], at);
             Grid.SetColumn(cells[i], i);
             Details.Children.Add(cells[i]);
         }
@@ -222,13 +175,6 @@ public sealed partial class ReportWindow : Window
             new Microsoft.UI.Xaml.Documents.Run { Text = text },
         },
     });
-
-    /// <summary>A count, and per 10 minutes of play when the two runs' play times differ by more than 10%.</summary>
-    string Count(long n, RunStats run) => $"{n:N0}" + (C.PerTenMinutes && run.PlaySeconds > 0 ? $"  ({n * 600 / run.PlaySeconds:0.#} per 10 min)" : "");
-    static string Rt(CreateStats c) => $"{c.StateObjectsReady:N0} of {c.StateObjectsReady + c.StateObjectsCompiled:N0}";
-    static string Pct(double? share) => share is { } s ? $"{s * 100:0}%" : Format.Dash;
-    static string Ms(double ms) => ms <= 0 ? "none" : ms >= 1000 ? $"{ms / 1000:0.0} s" : $"{ms:0} ms";
-    static string Clock(double seconds) => $"{(int)(seconds / 60)}:{(int)seconds % 60:00}";
 
     /// <summary>The card as a 1200 × 675 PNG, whatever the display scale (doc 6.3).</summary>
     public async Task<InMemoryRandomAccessStream> PngAsync()
@@ -250,7 +196,7 @@ public sealed partial class ReportWindow : Window
     {
         try
         {
-            var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.PicturesLibrary, SuggestedFileName = FileName($"{game} before and after") };
+            var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.PicturesLibrary, SuggestedFileName = BeforeAfter.ImageName(game) };
             picker.FileTypeChoices.Add("PNG image", [".png"]);
             WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
             if (await picker.PickSaveFileAsync() is not { } file) return;
@@ -263,8 +209,6 @@ public sealed partial class ReportWindow : Window
         }
         catch (Exception e) { Tell("Couldn't save the image: " + BeforeAfterUi.Describe(e), InfoBarSeverity.Error); }
     }
-
-    static string FileName(string name) => string.Join(" ", name.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries)).Trim();
 
     /// <summary>Text from Core (BeforeAfter.ShareText); null with the error shown.</summary>
     string? Text()
@@ -304,19 +248,8 @@ public sealed partial class ReportWindow : Window
     }
 
     // neither composer takes an image from a link: it goes to the clipboard, and a toast over the browser says to paste it
-    void OnX(object _, RoutedEventArgs __) => Post(t => $"https://x.com/intent/post?text={Uri.EscapeDataString(WithoutLink(t))}&url={Uri.EscapeDataString(BeforeAfter.Link)}");
-
-    /// <summary>X shows the url param as the link: the text's own trailing link would show twice.</summary>
-    static string WithoutLink(string text)
-    {
-        text = text.TrimEnd();
-        foreach (var link in new[] { BeforeAfter.Link, "scskiller.com" })
-            if (text.EndsWith(link, StringComparison.OrdinalIgnoreCase)) return text[..^link.Length].TrimEnd();
-        return text;
-    }
-    // a text post: a link post has no body to paste the image into
-    void OnReddit(object _, RoutedEventArgs __) =>
-        Post(t => $"https://www.reddit.com/submit?selftext=true&title={Uri.EscapeDataString(WithoutLink(t))}&text={Uri.EscapeDataString(BeforeAfter.Link)}");
+    void OnX(object _, RoutedEventArgs __) => Post(BeforeAfter.PostOnX);
+    void OnReddit(object _, RoutedEventArgs __) => Post(BeforeAfter.PostOnReddit);
 
     async void Post(Func<string, string> url)
     {

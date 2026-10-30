@@ -53,6 +53,15 @@ public sealed class UnrealKeys(string dataDir)
     /// <summary>The stored key, unchecked (a full mount checks it: SubmitKey mounts only what it opens).</summary>
     public FAesKey? Stored(Game game) => File.Exists(KeyFile(game)) ? Parse(File.ReadAllText(KeyFile(game))) : null;
 
+    public bool Has(Game game) => File.Exists(KeyFile(game));
+
+    /// <summary>Forgets the stored key and the failed-scan note: the next detection scans the exe again.</summary>
+    public void Remove(Game game)
+    {
+        File.Delete(KeyFile(game));
+        File.Delete(ScanFile(game));
+    }
+
     /// <summary>A key the user supplies (hex, "0x" optional): stored if it opens the game's files.</summary>
     public bool Set(Game game, string key, Func<FAesKey, bool> opens)
     {

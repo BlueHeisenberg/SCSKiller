@@ -44,7 +44,7 @@ public static class Vac
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {
                 // can't tell: Steam's when the path is in a steamapps folder (blocked), else not (a game clearly elsewhere)
-                if (path.Contains(@"\steamapps\", StringComparison.OrdinalIgnoreCase)) return null;
+                if (path.Contains(SteamSource.AppsPart + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return null;
             }
         }
         steam = false;

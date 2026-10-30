@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using SCSKiller.Core.Games;
 
 namespace SCSKiller.Core.Carved;
 
@@ -17,6 +18,8 @@ public static class DawnStores
     const long MaxPsoFile = 256L << 20;   // the game's: 8.3 MB
     static readonly int[] OtherStages = [56, 72, 88, 104];   // where a GS, HS or DS id would sit: none in the game's records
 
+    public const string ShaderRel = @"bin\rawshader.store2", RootRel = @"bin\rawroot.store2", PsoRel = @"bin\rawpso.store2";
+
     public sealed record Root(long Offset, int Size, string Sha, byte[] Blob);
 
     /// <param name="Shaders">entry id -> the container's offset in <paramref name="ShaderFile"/></param>
@@ -27,8 +30,7 @@ public static class DawnStores
 
     public static Stores? Read(string installDir)
     {
-        var bin = Path.Combine(installDir, "bin");
-        string shaderFile = Path.Combine(bin, "rawshader.store2"), rootFile = Path.Combine(bin, "rawroot.store2"), psoFile = Path.Combine(bin, "rawpso.store2");
+        string shaderFile = GameFiles.Find(installDir, ShaderRel), rootFile = GameFiles.Find(installDir, RootRel), psoFile = GameFiles.Find(installDir, PsoRel);
         if (!File.Exists(psoFile) || !File.Exists(rootFile) || !File.Exists(shaderFile)) return null;
         try
         {

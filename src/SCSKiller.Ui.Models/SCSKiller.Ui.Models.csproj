@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The view models of the Avalonia app: no UI framework types, so they build and test on any OS. The Windows build
+       is for the tests, which use Core's Windows build there. -->
+  <PropertyGroup>
+    <TargetFrameworks>net10.0-windows;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SCSKiller.Core\SCSKiller.Core.csproj" />
+  </ItemGroup>
+
+</Project>

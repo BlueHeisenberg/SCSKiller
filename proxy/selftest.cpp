@@ -15,6 +15,16 @@
 // `selftest vulkan [runs]` runs only probe 8: does the Vulkan driver keep its own disk cache of pipelines (no
 //        VkPipelineCache), keyed how (exe name, folder, NVIDIA's cache redirect variables), and at what granularity
 //        (see vk_child). Needs vulkan-1.dll (installed with every Vulkan driver); SPIR-V from vk_spirv.h.
+// `selftest vkfoz <fossilize dir> [runs] [fill]` runs only probe 9: does a Fossilize replay fill the driver's cache for the
+//        app it recorded, ray tracing included, under which identity, and how NVIDIA's cache size limit evicts (see vkfoz_parent).
+// `selftest vkcap [max] [chunk]`: NVIDIA's default ceiling for one app's Vulkan disk cache (see vkcap_parent).
+// `selftest vkproxy <fossilize dir>`: a vulkan-1.dll beside the exe adds a layer to its own process (see vkproxy_parent).
+// `selftest vkrt [pairs] [rq]`: ray tracing and RayQuery pipelines on NVIDIA's Vulkan disk cache, cold pairs (see vkrt_parent).
+// `selftest vkwarm <fossilize dir>`: scskiller_warm --vulkan end to end, its stop and a faulting pipeline (see vkwarm_parent).
+// `selftest vkappkey <fossilize dir> [rows] [seconds]`: are VkApplicationInfo and the extension set in the driver's key under a
+//        cache redirect (see vkappkey_parent).
+// `selftest vkrec`: the Vulkan recorder layer: admitted records outside the game folder, refused and ungated pass through
+//        (see vkrec_parent).
 // `selftest cacheprobe`: what NVIDIA's DXCache keeps of a PSO (see cacheprobe_parent).
 // `selftest nvext [runs]`: is NVAPI's shader-extension slot in the driver's key, and does the warm carry it (see nvext_child).
 // `selftest nvopts`: on WARP, NVAPI's pipeline creation flags as recorded and as the warm sets them (see nvopts_child).
@@ -29,7 +39,7 @@
 #include <d3d12.h>
 #include <d3d11.h>
 #include <d3d12shader.h>
-#include <dxgi1_4.h>
+#include <dxgi1_6.h>
 #include <tlhelp32.h>
 #include <psapi.h>
 #include <winternl.h>
@@ -133,6 +143,8 @@ template <class F> static bool read_rows(const std::wstring& path, std::vector<s
     DeleteFileW(path.c_str());
     return true;
 }
+
+static std::string read_all(const std::wstring& path);
 
 // mode: record | warm (asserting test phases), probe (time creates), warmonly (replay the db, compile nothing of this
 // seed's), debugwarm (warmonly under the debug layer), dump (write the seed's shaders)
@@ -264,7 +276,12 @@ static int child(const std::wstring& dir, const std::wstring& mode, unsigned see
         CHECK(made == 6);
     }
     ID3D12Device* dev = nullptr;
-    CHECK(SUCCEEDED(create_device(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+    IDXGIAdapter* warp = nullptr;  // SELFTEST_WARP=1: WARP (the runtime's checks, no GPU driver or cache)
+    if (GetEnvironmentVariableW(L"SELFTEST_WARP", nullptr, 0)) {
+        IDXGIFactory4* f = nullptr;
+        CHECK(SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+    }
+    CHECK(SUCCEEDED(create_device(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
     ID3D12InfoQueue* iq = nullptr;
     if (mode == L"debugwarm" && SUCCEEDED(dev->QueryInterface(IID_PPV_ARGS(&iq)))) iq->SetMuteDebugOutput(TRUE), iq->SetMessageCountLimit(UINT64_MAX);
     ID3D12Device2* dev2 = nullptr;
@@ -396,6 +413,20 @@ static int child(const std::wstring& dir, const std::wstring& mode, unsigned see
         CHECK(SUCCEEDED(lib->LoadPipeline(L"s", &sd, IID_PPV_ARGS(&out))));
         out->Release();
         CHECK(FAILED(lib->LoadGraphicsPipeline(L"missing", &g, IID_PPV_ARGS(&out))));  // a miss is not recorded
+
+        // a create the runtime rejects (a pixel shader as CS), retried as a game does: logged once with its key, counted
+        // in the creates= line, never recorded (db_now below)
+        D3D12_COMPUTE_PIPELINE_STATE_DESC bad = {rs, {ps->GetBufferPointer(), ps->GetBufferSize()}};
+        for (int i = 0; i < 50; ++i) CHECK(FAILED(dev->CreateComputePipelineState(&bad, IID_PPV_ARGS(&out))));
+        std::string log;
+        for (int i = 0; i < 600 && (log = read_all(dir + L"scskiller.log")).find("creates=") == std::string::npos; ++i) {
+            CHECK(SUCCEEDED(dev->CreateComputePipelineState(&c, IID_PPV_ARGS(&out))));
+            out->Release();
+        }
+        size_t at = log.find("create failed ('C') hr=0x80070057 key ");
+        size_t sum = log.find("creates=");
+        CHECK(at != std::string::npos && log.find("create failed", at + 1) == std::string::npos && log.find(" failed=50 ", sum) != std::string::npos);
+        printf("%s\n%s\n", log.substr(at, log.find('\n', at) - at).c_str(), log.substr(sum, log.find('\n', sum) - sum).c_str());
     }
 
     uint64_t st[7];
@@ -1618,6 +1649,7 @@ static int ledger_dir_rules() {
     CHECK(with("D:\\Jeux\\donn\xc3\xa9" "es\\armed\r\n") && out == L"D:\\Jeux\\donn\u00e9es");
     CHECK(with(R"(\\server\share\data\ARMED)") && out == LR"(\\server\share\data)");
     CHECK(with(R"(C:\Users\x\.scs\armed)") && out == LR"(C:\Users\x\.scs)");
+    CHECK(with(R"(Z:\home\x\.local\share\SCSKiller\armed)") && out == LR"(Z:\home\x\.local\share\SCSKiller)");  // Core on Linux: through Wine's Z:
     for (const char* bad : {"", "\r\n", R"(data\armed)", R"(C:\armed)", R"(C:\data\other)", R"(C:\data\armed\)", "C:\\da\xff" "ta\\armed",
                             R"(\\?\C:\data\armed)", R"(\\?\C:\armed)", R"(\\.\C:\data\armed)", R"(C:\data\..\armed)", R"(C:\data\.\armed)",
                             R"(1:\data\armed)", R"(\\server\armed)", R"(\\\server\share\armed)", R"(\\server\\armed)", R"(C:\data/..\armed)",
@@ -1660,6 +1692,15 @@ static int admission_rules() {
             CHECK(long_path(raw) == raw);   // not normalized or not absolute: as it is
         CHECK(!odd_name(L"C:\\Games\\Game\\") && !odd_name(L"\\\\s\\share\\Game\\") && !odd_name(L"C:\\"));
         CHECK(odd_name(L"C:\\Games\\Game.\\x\\") && odd_name(L"C:\\Games\\Game \\") && odd_name(L"C:\\Games\\Game."));
+    }
+    // a file identity's key: Windows' as it is, Wine's the same through any drive letter (GameFiles.WineFileId's golden)
+    {
+        FILE_ID_INFO c{}, z{};
+        const uint64_t inode = 0x29d436;
+        memcpy(c.FileId.Identifier, &inode, 8), memcpy(z.FileId.Identifier, &inode, 8);
+        c.VolumeSerialNumber = 0x43000000;  // as Wine reports the file through C:, and 0 through Z:
+        CHECK(id_key(c, true) == L"115956651fdf522be11efb4f7f682cbf88f24e5a" && id_key(z, true) == id_key(c, true));
+        CHECK(id_key(c, false) == key_hex(&c, sizeof c) && id_key(c, false) == L"8c558b6c7aa76a28dcf0c634e3804d697c031a7a" && id_key(z, false) != id_key(c, false));
     }
     // ini_value against GetPrivateProfileStringW: equal wherever it reads a value, empty where the two could differ
     {
@@ -1892,7 +1933,8 @@ static int dxr_parent(const std::wstring& a, const std::wstring& dir, int runs) 
     X(vkDestroyInstance) X(vkEnumeratePhysicalDevices) X(vkGetPhysicalDeviceProperties2) X(vkGetPhysicalDeviceFeatures2)          \
     X(vkGetPhysicalDeviceQueueFamilyProperties) X(vkEnumerateDeviceExtensionProperties) X(vkCreateDevice) X(vkDestroyDevice)     \
     X(vkCreateShaderModule) X(vkDestroyShaderModule) X(vkCreateDescriptorSetLayout) X(vkCreatePipelineLayout)                    \
-    X(vkCreateRenderPass) X(vkCreateGraphicsPipelines) X(vkCreateComputePipelines) X(vkDestroyPipeline)
+    X(vkCreateRenderPass) X(vkCreateGraphicsPipelines) X(vkCreateComputePipelines) X(vkDestroyPipeline)                \
+    X(vkCreatePipelineCache) X(vkDestroyPipelineCache) X(vkGetDeviceProcAddr)
 #define VKDECL(n) static PFN_##n n;
 VKF(VKDECL)
 
@@ -1908,17 +1950,70 @@ struct VkG {  // one graphics pipeline; the defaults are the base pipeline's sta
     bool blend = false, depth = false, dyncull = false, rp = false;
     VkFormat color = VK_FORMAT_R8G8B8A8_UNORM;
     VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
-    int layout = 0;  // 0 base (b0 UBO, FS), 1 + push constants, 2 + unused b1 sampler, 3 b0 dynamic UBO, 4 b0 all graphics stages
+    int layout = 0;  // 0 base (b0 UBO, FS), 1 + push constants, 2 + unused b1 sampler, 3 b0 dynamic UBO, 4 b0 all graphics stages,
+                     // 9 b0 acceleration structure (FS, for fsm)
+    VkShaderModule fsm = VK_NULL_HANDLE;  // instead of fs: a FS compiled from HLSL (the RayQuery row)
 };
 
+// SPIR-V from HLSL through DXC (a build with SPIR-V output: SELFTEST_DXC), for probe 9's ray tracing rows.
+static bool dxc_spirv(IDxcCompiler3* c, const std::string& src, LPCWSTR target, std::vector<uint32_t>& out) {
+    DxcBuffer b = {src.data(), src.size(), DXC_CP_UTF8};
+    LPCWSTR args[] = {L"-T", target, L"-spirv", L"-fspv-target-env=vulkan1.2", L"-E", L"main"};
+    IDxcResult* r = nullptr;
+    HRESULT st = E_FAIL;
+    if (FAILED(c->Compile(&b, args, wcsncmp(target, L"lib", 3) ? 6 : 4, nullptr, IID_PPV_ARGS(&r))) || FAILED(r->GetStatus(&st)) || FAILED(st)) {
+        IDxcBlobUtf8* e = nullptr;
+        if (r && SUCCEEDED(r->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&e), nullptr)) && e) printf("  DXC (SPIR-V): %s\n", e->GetStringPointer());
+        return false;
+    }
+    IDxcBlob* o = nullptr;
+    r->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&o), nullptr);
+    out.assign((const uint32_t*)o->GetBufferPointer(), (const uint32_t*)o->GetBufferPointer() + o->GetBufferSize() / 4);
+    o->Release(), r->Release();
+    return out.size() > 5 && out[0] == 0x07230203;
+}
+
+// Probe 9's ray tracing shaders, seeded like vk_spirv.h's: 0 an RT library (raygen rg, miss ms, closest hit ch), 1 a
+// RayQuery CS, 2 a RayQuery FS (its input is vk_spirv.h's VS output). Some ALU so a cold compile costs milliseconds.
+static std::string vk_rt_src(int kind, unsigned seed) {
+    std::string k = std::to_string(seed) + ".0",
+                alu = "[unroll] for (int j = 0; j < 64; ++j) x = sin(x * 1.37 + float3(j, " + k + ", x.y)) * cos(x.zxy + " + k + ");",
+                as = "[[vk::binding(0)]] RaytracingAccelerationStructure scene;\n";
+    if (kind == 0)
+        return as + "[[vk::binding(1)]] RWStructuredBuffer<float4> outp;\nstruct P { float4 c; };\n"
+               "[shader(\"raygeneration\")] void rg() { RayDesc r; r.Origin = float3(DispatchRaysIndex().xy, " + k + "); r.Direction = float3(0, 0, 1);"
+               " r.TMin = 0; r.TMax = 1e4; P p; p.c = 0; TraceRay(scene, 0, 0xFF, 0, 1, 0, r, p); outp[DispatchRaysIndex().x] = p.c; }\n"
+               "[shader(\"miss\")] void ms(inout P p) { p.c = float4(" + k + ", 0, 0, 1); }\n"
+               "[shader(\"closesthit\")] void ch(inout P p, in BuiltInTriangleIntersectionAttributes a) { float3 x = float3(a.barycentrics, " + k + "); " +
+               alu + " p.c = float4(x, 1); }\n";
+    std::string query = "RayDesc r; r.Origin = o; r.Direction = float3(0, 0, 1); r.TMin = 0; r.TMax = 1e4; RayQuery<RAY_FLAG_NONE> q;"
+                        " q.TraceRayInline(scene, 0, 0xFF, r); q.Proceed(); float3 x = o + q.CommittedStatus(); " + alu;
+    if (kind == 1)
+        return as + "[[vk::binding(1)]] RWStructuredBuffer<float4> d;\n[numthreads(64, 1, 1)] void main(uint i : SV_GroupIndex) { float3 o = float3(i, " + k +
+               ", 0); " + query + " d[i] = float4(x, 1); }\n";
+    return as + "float4 main(float4 col : COLOR0) : SV_Target { float3 o = col.xyz * " + k + "; " + query + " return float4(x, 1); }\n";
+}
+
 static int vk_child(int proc, unsigned seed, const std::wstring& out) {
-    HMODULE m = load_system(L"vulkan-1.dll");
+    // vkproxy's 22 and 23 load the loader by name, as a game does (the exe's folder first); 24 from System32 only
+    HMODULE m = proc == 22 || proc == 23 ? LoadLibraryW(L"vulkan-1.dll")
+              : proc == 24              ? LoadLibraryExW(L"vulkan-1.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)
+                                        : load_system(L"vulkan-1.dll");
     CHECK(m);
+    std::wstring loaded(MAX_PATH, L'\0'), self(MAX_PATH, L'\0');
+    loaded.resize(GetModuleFileNameW(m, loaded.data(), MAX_PATH)), self.resize(GetModuleFileNameW(nullptr, self.data(), MAX_PATH));
+    const bool beside = !_wcsicmp(loaded.substr(0, loaded.find_last_of(L'\\')).c_str(), self.substr(0, self.find_last_of(L'\\')).c_str());
+    const bool layers_set = GetEnvironmentVariableW(L"VK_INSTANCE_LAYERS", nullptr, 0) > 0;
     auto gipa = (PFN_vkGetInstanceProcAddr)GetProcAddress(m, "vkGetInstanceProcAddr");
     CHECK(gipa);
     auto create_instance = (PFN_vkCreateInstance)gipa(nullptr, "vkCreateInstance");
+    // SCSK_VK_APP / SCSK_VK_ENGINE (probe 9): is VkApplicationInfo in the driver's key?
+    char app_name[128] = "scskiller selftest", engine[128] = "";
+    GetEnvironmentVariableA("SCSK_VK_APP", app_name, sizeof app_name);
+    GetEnvironmentVariableA("SCSK_VK_ENGINE", engine, sizeof engine);
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-    app.pApplicationName = "scskiller selftest";
+    app.pApplicationName = app_name;
+    app.pEngineName = *engine ? engine : nullptr;
     app.apiVersion = VK_API_VERSION_1_3;
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ici.pApplicationInfo = &app;
@@ -1946,6 +2041,9 @@ static int vk_child(int proc, unsigned seed, const std::wstring& out) {
     auto has = [&](const char* e) { return std::any_of(exts.begin(), exts.end(), [&](auto& x) { return !strcmp(x.extensionName, e); }); };
     bool gpl = has(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME) && has(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
     bool bin = has(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME);
+    // ray tracing: probe 9's and vkrt's processes only, so probe 8's devices stay as measured
+    bool rt = (proc >= 9 && proc <= 21 || proc == 25 || proc == 26) && has(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) && has(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME) &&
+              has(VK_KHR_RAY_QUERY_EXTENSION_NAME) && has(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME) && has(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
 
     VkPhysicalDeviceProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
     VkPhysicalDeviceDriverProperties drv{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
@@ -1961,10 +2059,29 @@ static int vk_child(int proc, unsigned seed, const std::wstring& out) {
     VkPhysicalDeviceFeatures2 feat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gplf{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT};
+    VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR asf{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtpf{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
+    VkPhysicalDeviceRayQueryFeaturesKHR rqf{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
     feat.pNext = &f13;
-    if (gpl) f13.pNext = &gplf;
+    tail = &f13.pNext;
+    if (gpl) *tail = &gplf, tail = &gplf.pNext;
+    if (rt) *tail = &f12, f12.pNext = &asf, asf.pNext = &rtpf, rtpf.pNext = &rqf;
     vkGetPhysicalDeviceFeatures2(pd, &feat);
     gpl = gpl && gplf.graphicsPipelineLibrary;
+    rt = rt && f12.bufferDeviceAddress && asf.accelerationStructure && rtpf.rayTracingPipeline && rqf.rayQuery;
+    // the RT rows' SPIR-V, compiled before the device: a DXC without SPIR-V output leaves ray tracing off
+    std::map<std::pair<int, unsigned>, std::vector<uint32_t>> spv;
+    IDxcCompiler3* dxc = rt ? dxc_compiler() : nullptr;
+    auto spv_of = [&](int kind, unsigned k) -> const std::vector<uint32_t>& {
+        auto& w = spv[{kind, k}];
+        if (w.empty() && dxc) dxc_spirv(dxc, vk_rt_src(kind, k), kind == 0 ? L"lib_6_3" : kind == 1 ? L"cs_6_5" : L"ps_6_5", w);
+        return w;
+    };
+    if (rt && (spv_of(0, seed + 20).empty() || spv_of(1, seed + 22).empty() || spv_of(2, seed + 23).empty())) {
+        if (proc == 9) printf("  ray tracing rows skipped: SELFTEST_DXC needs a dxcompiler.dll with SPIR-V output\n");
+        rt = false;
+    }
     CHECK(f13.dynamicRendering && f13.pipelineCreationCacheControl);
     if (proc == 1) {
         auto yn = [](VkBool32 b) { return b ? "yes" : "no"; };
@@ -1993,19 +2110,57 @@ static int vk_child(int proc, unsigned seed, const std::wstring& out) {
     e13.dynamicRendering = e13.pipelineCreationCacheControl = VK_TRUE;
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT egpl{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT};
     egpl.graphicsPipelineLibrary = VK_TRUE;
-    if (gpl) e13.pNext = &egpl;
-    const char* dext[] = {VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME, VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME};
+    VkPhysicalDeviceVulkan12Features e12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR eas{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR ertp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
+    VkPhysicalDeviceRayQueryFeaturesKHR erq{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+    e12.bufferDeviceAddress = eas.accelerationStructure = ertp.rayTracingPipeline = erq.rayQuery = VK_TRUE;
+    std::vector<const char*> dext;
+    tail = &e13.pNext;
+    if (gpl) *tail = &egpl, tail = &egpl.pNext, dext = {VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME, VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME};
+    if (rt) {
+        *tail = &e12, e12.pNext = &eas, eas.pNext = &ertp, ertp.pNext = &erq;
+        if (!gpl) dext.push_back(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
+        for (auto e : {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, VK_KHR_RAY_QUERY_EXTENSION_NAME,
+                       VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME})
+            dext.push_back(e);
+    }
+    // SCSK_VK_ALL_EXT (vkappkey): every device extension, as fossilize-replay enables them (its filter_extension's exclusions)
+    if (GetEnvironmentVariableA("SCSK_VK_ALL_EXT", nullptr, 0))
+        for (auto& x : exts) {
+            const char* e = x.extensionName;
+            bool skip = std::any_of(dext.begin(), dext.end(), [&](const char* d) { return !strcmp(d, e); });
+            for (const char* no : {"VK_AMD_negative_viewport_height", "VK_NV_ray_tracing", "VK_AMD_shader_info", "VK_KHR_shader_abort", "VK_EXT_device_fault",
+                                   "VK_KHR_device_fault"})
+                skip |= !strcmp(e, no);
+            skip |= !strcmp(e, "VK_EXT_buffer_device_address") && has("VK_KHR_buffer_device_address");
+            if (!skip) dext.push_back(e);
+        }
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &e13, 0, 1, &qci};
-    dci.enabledExtensionCount = gpl ? 2 : 0;
-    dci.ppEnabledExtensionNames = dext;
+    dci.enabledExtensionCount = (uint32_t)dext.size();
+    dci.ppEnabledExtensionNames = dext.data();
     VkDevice dev;
     CHECK(vkCreateDevice(pd, &dci, nullptr, &dev) == VK_SUCCESS);
+    auto create_rt = rt ? (PFN_vkCreateRayTracingPipelinesKHR)vkGetDeviceProcAddr(dev, "vkCreateRayTracingPipelinesKHR") : nullptr;
+    rt = rt && create_rt;
+    // SCSK_VK_PIPELINE_CACHE (probe 9): every create through an empty VkPipelineCache of the app's, as fossilize-replay does
+    VkPipelineCache pcache = VK_NULL_HANDLE;
+    if (GetEnvironmentVariableA("SCSK_VK_PIPELINE_CACHE", nullptr, 0)) {
+        VkPipelineCacheCreateInfo pci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+        CHECK(vkCreatePipelineCache(dev, &pci, nullptr, &pcache) == VK_SUCCESS);
+    }
 
     // Shader modules by (stage, seed): the embedded SPIR-V with its marker constant replaced by the seed (< 2^24: exact).
     std::map<std::pair<int, unsigned>, VkShaderModule> mods;
     auto mod = [&](int stage, unsigned s) {
         auto& sm = mods[{stage, s}];
         if (sm) return sm;
+        if (stage >= 10) {  // probe 9's HLSL kinds (vk_rt_src)
+            auto& w = spv_of(stage - 10, s);
+            VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0, w.size() * 4, w.data()};
+            if (!w.empty()) vkCreateShaderModule(dev, &ci, nullptr, &sm);
+            return sm;
+        }
         const uint32_t* src[] = {kSpv_vs, kSpv_fs, kSpv_cs};
         size_t size[] = {sizeof kSpv_vs, sizeof kSpv_fs, sizeof kSpv_cs};
         uint32_t marker[] = {kSpv_vs_marker, kSpv_fs_marker, kSpv_cs_marker};
@@ -2037,9 +2192,16 @@ static int vk_child(int proc, unsigned seed, const std::wstring& out) {
         vkCreatePipelineLayout(dev, &ci, nullptr, &l);
         return l;
     };
-    VkPipelineLayout pl[] = {pipeline_layout(sl[0], 0), pipeline_layout(sl[0], VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT),
-                             pipeline_layout(sl[1], 0), pipeline_layout(sl[2], 0), pipeline_layout(sl[3], 0),
-                             pipeline_layout(sl[4], 0), pipeline_layout(sl[4], VK_SHADER_STAGE_COMPUTE_BIT)};
+    std::vector<VkPipelineLayout> pl = {pipeline_layout(sl[0], 0), pipeline_layout(sl[0], VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT),
+                                        pipeline_layout(sl[1], 0), pipeline_layout(sl[2], 0), pipeline_layout(sl[3], 0),
+                                        pipeline_layout(sl[4], 0), pipeline_layout(sl[4], VK_SHADER_STAGE_COMPUTE_BIT)};
+    // ray tracing: 7 RT (b0 acceleration structure + b1 SSBO, raygen), 8 RayQuery CS (b0 + b1 SSBO), 9 RayQuery FS (b0)
+    if (rt) {
+        const auto AS = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+        pl.push_back(pipeline_layout(set_layout({{0, AS, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR}, {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR}}), 0));
+        pl.push_back(pipeline_layout(set_layout({{0, AS, 1, VK_SHADER_STAGE_COMPUTE_BIT}, {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT}}), 0));
+        pl.push_back(pipeline_layout(set_layout({{0, AS, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}), 0));
+    }
     for (auto l : pl) CHECK(l);
 
     // The one render pass (the "render pass instead of dynamic rendering" row): a single RGBA8 color attachment.
@@ -2076,7 +2238,7 @@ static int vk_child(int proc, unsigned seed, const std::wstring& out) {
     auto fill = [&](GState& g, const VkG& d) {
         g.spec.pData = &d.k;
         g.st[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, mod(0, d.vs), "main"};
-        g.st[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, mod(1, d.fs), "main", &g.spec};
+        g.st[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, d.fsm ? d.fsm : mod(1, d.fs), "main", &g.spec};
         g.vb = {0, d.stride, d.rate};
         g.va = {0, 0, d.vfmt, d.voff};
         g.ia.topology = d.topo;
@@ -2107,16 +2269,66 @@ static int vk_child(int proc, unsigned seed, const std::wstring& out) {
         if (r != VK_SUCCESS && fails++ < 20) printf("  p%d: create failed, VkResult %d\n", proc, (int)r);
         return r == VK_SUCCESS ? t : -1.0;
     };
+    // VK_EXT_pipeline_creation_feedback of the last monolithic create: pipeline flags * 100 + stage 0 * 10 + stage 1
+    // (1 valid, 2 application pipeline cache hit, 4 base pipeline acceleration).
+    int feedback = -1;
+    struct Fb {
+        VkPipelineCreationFeedback p{}, s[2]{};
+        VkPipelineCreationFeedbackCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO, nullptr, &p, 0, s};
+        int code() const { return (int)(p.flags * 100 + s[0].flags * 10 + s[1].flags); }
+    };
     auto graphics = [&](const VkG& d, VkPipelineCreateFlags flags) {
         GState g;
         fill(g, d);
         g.ci.flags = flags;
-        return timed([&](VkPipeline* p) { return vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &g.ci, nullptr, p); });
+        Fb fb;
+        fb.ci.pNext = g.ci.pNext, fb.ci.pipelineStageCreationFeedbackCount = 2, g.ci.pNext = &fb.ci;
+        double t = timed([&](VkPipeline* p) { return vkCreateGraphicsPipelines(dev, pcache, 1, &g.ci, nullptr, p); });
+        feedback = fb.code();
+        return t;
     };
-    auto compute = [&](unsigned cs, int layout, VkPipelineCreateFlags flags) {
-        VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, nullptr, flags,
-                                       {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, mod(2, cs), "main"}, pl[layout]};
-        return timed([&](VkPipeline* p) { return vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &ci, nullptr, p); });
+    auto compute_m = [&](VkShaderModule cs, int layout, VkPipelineCreateFlags flags) {
+        Fb fb;
+        fb.ci.pipelineStageCreationFeedbackCount = 1;
+        VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, &fb.ci, flags,
+                                       {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, cs, "main"}, pl[layout]};
+        double t = timed([&](VkPipeline* p) { return vkCreateComputePipelines(dev, pcache, 1, &ci, nullptr, p); });
+        feedback = fb.code();
+        return t;
+    };
+    auto compute = [&](unsigned cs, int layout, VkPipelineCreateFlags flags) { return compute_m(mod(2, cs), layout, flags); };
+
+    // VK_KHR_ray_tracing_pipeline, one shape: raygen + miss + a triangle hit group (closest hit), one module. form 0 a
+    // pipeline, 1 a library (the first one made is kept for the link row), 2 a pipeline linked from the kept library.
+    VkPipeline rt_lib = VK_NULL_HANDLE;
+    auto rtp = [&](unsigned k, VkPipelineCreateFlags flags, int form) -> double {
+        if (!rt) return -2;
+        if (form == 2 && !rt_lib) return -1;
+        VkShaderModule m = form == 2 ? VK_NULL_HANDLE : mod(10, k);
+        const auto SS = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        const auto GR = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+        const uint32_t U = VK_SHADER_UNUSED_KHR;
+        VkPipelineShaderStageCreateInfo st[3] = {{SS, nullptr, 0, VK_SHADER_STAGE_RAYGEN_BIT_KHR, m, "rg"}, {SS, nullptr, 0, VK_SHADER_STAGE_MISS_BIT_KHR, m, "ms"},
+                                                 {SS, nullptr, 0, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, m, "ch"}};
+        VkRayTracingShaderGroupCreateInfoKHR g[3] = {{GR, nullptr, VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 0, U, U, U},
+                                                     {GR, nullptr, VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 1, U, U, U},
+                                                     {GR, nullptr, VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, U, 2, U, U}};
+        VkPipelineLibraryCreateInfoKHR li{VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR, nullptr, 1, &rt_lib};
+        VkRayTracingPipelineInterfaceCreateInfoKHR itf{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_INTERFACE_CREATE_INFO_KHR, nullptr, 16, 8};
+        VkRayTracingPipelineCreateInfoKHR ci{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
+        ci.flags = flags | (form == 1 ? VK_PIPELINE_CREATE_LIBRARY_BIT_KHR : 0);
+        if (form < 2) ci.stageCount = 3, ci.pStages = st, ci.groupCount = 3, ci.pGroups = g;
+        ci.maxPipelineRayRecursionDepth = 1;
+        ci.pLibraryInfo = form == 2 ? &li : nullptr;
+        ci.pLibraryInterface = form ? &itf : nullptr;
+        ci.layout = pl[7];
+        if (form != 1) return timed([&](VkPipeline* p) { return create_rt(dev, VK_NULL_HANDLE, pcache, 1, &ci, nullptr, p); });
+        VkPipeline p = VK_NULL_HANDLE;
+        VkResult r = VK_SUCCESS;
+        double t = ms([&] { r = create_rt(dev, VK_NULL_HANDLE, pcache, 1, &ci, nullptr, &p); });
+        if (r == VK_SUCCESS && !rt_lib) rt_lib = p;
+        else if (p) vkDestroyPipeline(dev, p, nullptr);
+        return r == VK_PIPELINE_COMPILE_REQUIRED ? -3.0 : r == VK_SUCCESS ? t : -1.0;
     };
 
     // VK_EXT_graphics_pipeline_library: the four parts of a VkG's pipeline, kept for the link rows (the first set made).
@@ -2141,7 +2353,7 @@ static int vk_child(int proc, unsigned seed, const std::wstring& out) {
             if (i == 3) c.pColorBlendState = &g.cb, c.pMultisampleState = &g.ms;
             if (i == 1 || i == 2) c.layout = g.ci.layout;
             VkResult r = VK_SUCCESS;
-            t += ms([&] { r = vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &c, nullptr, &made.l[i]); });
+            t += ms([&] { r = vkCreateGraphicsPipelines(dev, pcache, 1, &c, nullptr, &made.l[i]); });
             if (r != VK_SUCCESS) t = -1, printf("  p%d: library part %d failed, VkResult %d\n", proc, i, (int)r);
         }
         bool kept = !keep.l[0] && t >= 0;
@@ -2156,14 +2368,17 @@ static int vk_child(int proc, unsigned seed, const std::wstring& out) {
         VkPipelineLibraryCreateInfoKHR li{VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR, nullptr, 4, k.l};
         VkGraphicsPipelineCreateInfo c{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &li, lto ? VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT : 0u};
         c.layout = pl[0];
-        return timed([&](VkPipeline* p) { return vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &c, nullptr, p); });
+        return timed([&](VkPipeline* p) { return vkCreateGraphicsPipelines(dev, pcache, 1, &c, nullptr, p); });
     };
 
     // Seeds: s+1..s+11 are this run's shaders (a, b, c, g, m, the swaps); s+100+10p+i are fresh per process.
     const unsigned s = seed, f = seed + 100 + 10 * proc;
     const VkG A{s + 1, s + 2}, G{s + 6, s + 7}, M{s + 8, s + 9};
     auto var = [&](auto edit) { VkG d = A; edit(d); return d; };
-    enum { ALL = 0x1FE, BASE = 1 << 1 | 1 << 2 | 1 << 4 | 1 << 5 | 1 << 6 | 1 << 7 | 1 << 8, VAR = 1 << 2 | 1 << 3, P3 = 1 << 3 };
+    // Probe 9's processes are 9 (recorded through Fossilize) and 10-21 (checks): the base rows, the ray tracing rows and the
+    // controls. vkproxy's are 22-24: the base rows and the controls. vkrt's cold pair, 25 and 26: as probe 9's.
+    enum { FOZ = 0x3FFE00 | 1 << 25 | 1 << 26, PX = 0x1C00000, ALL = 0x1FE | FOZ | PX, BASE = 1 << 1 | 1 << 2 | 1 << 4 | 1 << 5 | 1 << 6 | 1 << 7 | 1 << 8 | FOZ | PX,
+           VAR = 1 << 2 | 1 << 3, P3 = 1 << 3 };
     // fc: whether the row gets the fail-on-compile-required create first (monolithic pipelines only).
     struct Row { const char* name; int procs; bool fc; std::function<double(VkPipelineCreateFlags)> f; };
     auto G_ = [&](VkG d) { return [=, &graphics](VkPipelineCreateFlags fl) { return graphics(d, fl); }; };
@@ -2178,6 +2393,17 @@ static int vk_child(int proc, unsigned seed, const std::wstring& out) {
         {"gpl: 4 libraries, VS g + FS g", BASE, false, [&](auto) { return libs(G, gpl_g); }},
         {"gpl: fast link (no LTO)", BASE, false, [&](auto) { return link(gpl_g, false); }},
         {"gpl: link with LTO", BASE, false, [&](auto) { return link(gpl_g, true); }},
+        {"ctl: cold rt pipeline, fresh RG + MS + CH", FOZ, true, [&](auto fl) { return rtp(f + 6, fl, 0); }},
+        {"rt: pipeline RG + MS + CH a", FOZ, true, [&](auto fl) { return rtp(s + 20, fl, 0); }},
+        {"rt: library RG + MS + CH b", FOZ, true, [&](auto fl) { return rtp(s + 21, fl, 1); }},
+        {"rt: pipeline linked from library b", FOZ, true, [&](auto fl) { return rtp(s + 21, fl, 2); }},
+        {"rayquery: compute CS q", FOZ, true, [&](auto fl) { return rt ? compute_m(mod(11, s + 22), 8, fl) : -2.0; }},
+        {"rayquery: graphics VS a + FS q", FOZ, true, [&](auto fl) {
+             if (!rt) return -2.0;
+             VkG d = A;
+             d.fsm = mod(12, s + 23), d.layout = 9;
+             return graphics(d, fl);
+         }},
         {"VS a + fresh FS", VAR, true, G_({s + 1, s + 10})},
         {"fresh VS + FS a", VAR, true, G_({s + 11, s + 2})},
         {"xpair: VS a + FS c (each cached, never paired)", VAR, true, G_({s + 1, s + 5})},
@@ -2210,17 +2436,73 @@ static int vk_child(int proc, unsigned seed, const std::wstring& out) {
     };
     FILE* o = _wfopen(out.c_str(), L"w");
     CHECK(o);
-    for (auto& r : rows) {
-        if (!(r.procs >> proc & 1)) continue;
-        double fc = r.fc ? r.f(VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT) : -2;
-        double first = r.f(0), again = r.f(0);
-        fprintf(o, "%s\t%.3f\t%.3f\t%.3f\n", r.name, fc, first, again);
+    if (proc >= 22 && proc <= 24)
+        fprintf(o, "loader: the vulkan-1.dll beside the exe\t%d\nVK_INSTANCE_LAYERS set when it loaded\t%d\n", beside, layers_set);
+    if (proc == 32) {  // vkcap: SCSK_VK_FILL fresh compute pipelines from index SCSK_VK_FILL_FROM, on half the cores
+        char nb[16] = "2000", fb[16] = "0";
+        GetEnvironmentVariableA("SCSK_VK_FILL", nb, sizeof nb), GetEnvironmentVariableA("SCSK_VK_FILL_FROM", fb, sizeof fb);
+        const int count = atoi(nb), from = atoi(fb);
+        std::atomic<int> next{from}, failed{0};
+        auto worker = [&] {
+            std::vector<uint32_t> w(kSpv_cs, kSpv_cs + sizeof kSpv_cs / 4);
+            const size_t at = std::find(w.begin(), w.end(), kSpv_cs_marker) - w.begin();
+            for (int i; (i = next++) < from + count;) {
+                float v = (float)(s + 1000 + i);  // as mod(2, s + 1000 + i): p31 asks for the same pipelines
+                memcpy(&w[at], &v, 4);
+                VkShaderModuleCreateInfo mi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0, w.size() * 4, w.data()};
+                VkShaderModule sm = VK_NULL_HANDLE;
+                VkPipeline pp = VK_NULL_HANDLE;
+                VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, nullptr, 0,
+                                               {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, VK_NULL_HANDLE, "main"}, pl[5]};
+                if (vkCreateShaderModule(dev, &mi, nullptr, &sm) != VK_SUCCESS) ++failed;
+                else if (ci.stage.module = sm; vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &ci, nullptr, &pp) != VK_SUCCESS) ++failed;
+                if (pp) vkDestroyPipeline(dev, pp, nullptr);
+                if (sm) vkDestroyShaderModule(dev, sm, nullptr);
+            }
+        };
+        std::vector<std::thread> threads(std::clamp(std::thread::hardware_concurrency() / 2, 1u, 16u));
+        for (auto& th : threads) th = std::thread(worker);
+        for (auto& th : threads) th.join();
+        fprintf(o, "made\t%d\t%d\n", count - failed.load(), failed.load());
+    }
+    if (proc == 30 || proc == 31) {  // probe 9's cache size: 30 makes SCSK_VK_FILL fresh compute pipelines, 31 asks which are still on disk
+        char nb[16] = "200";
+        GetEnvironmentVariableA("SCSK_VK_FILL", nb, sizeof nb);
+        int count = atoi(nb);
+        for (int i = 0; i < count; ++i) {
+            if (proc == 31 && i >= 30 && i < count - 30) continue;
+            double fc = compute(s + 1000 + i, 5, VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT);
+            double t = fc == -3 ? compute(s + 1000 + i, 5, 0) : fc;
+            fprintf(o, "fill %d\t%.3f\t%.3f\n", i, fc, t);
+        }
+    }
+    // SCSK_VK_RQ_FIRST (vkrt rq): the RayQuery rows right after the warm-up, then a wait before the device goes
+    const bool rq_first = GetEnvironmentVariableA("SCSK_VK_RQ_FIRST", nullptr, 0) != 0;
+    std::vector<const Row*> in_order;
+    for (auto& r : rows) in_order.push_back(&r);
+    if (rq_first) std::stable_partition(in_order.begin() + 1, in_order.end(), [](const Row* r) { return !strncmp(r->name, "rayquery", 8); });
+    // SCSK_VK_FC (vkappkey): "0" the plain creates only, "only" the fail-on-compile create only (-2 = not made)
+    char fcb[8] = "";
+    GetEnvironmentVariableA("SCSK_VK_FC", fcb, sizeof fcb);
+    const bool no_fc = !strcmp(fcb, "0"), fc_only = !strcmp(fcb, "only");
+    for (const Row* rp : in_order) {
+        const Row& r = *rp;
+        if (proc >= 30 || !(r.procs >> proc & 1)) continue;
+        double fc = r.fc && !no_fc ? r.f(VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT) : -2;
+        feedback = -1;
+        double first = fc_only ? -2 : r.f(0);
+        int fb = feedback;
+        double again = fc_only ? -2 : r.f(0);
+        fprintf(o, "%s\t%.3f\t%.3f\t%.3f\t%d\n", r.name, fc, first, again, fb);
     }
     fclose(o);
     for (auto& [k, sm] : mods) vkDestroyShaderModule(dev, sm, nullptr);
     for (auto* k : {&gpl_g, &gpl_m})
         for (auto l : k->l)
             if (l) vkDestroyPipeline(dev, l, nullptr);
+    if (rt_lib) vkDestroyPipeline(dev, rt_lib, nullptr);
+    if (pcache) vkDestroyPipelineCache(dev, pcache, nullptr);
+    if (rq_first) Sleep(5000);  // a cache write still in flight after the last create gets time before the device goes
     vkDestroyDevice(dev, nullptr);  // the driver may write its cache at device destruction: never skip it
     vkDestroyInstance(inst, nullptr);
     return 0;
@@ -2300,6 +2582,467 @@ static int vk_parent(const std::wstring& a, const std::wstring& dir, int runs) {
         if (it->is_regular_file(ec)) printf("  %ls (%llu)\n", it->path().wstring().substr(redirect.size()).c_str(), (unsigned long long)it->file_size(ec));
     list_new_cache(start);
     return 0;
+}
+
+// Fossilize for probes 9 and vkproxy: an upstream build (fossilize-replay.exe, VkLayer_fossilize.json and its dll), or
+// Steam's folder (bin\fossilize-replay64.exe, VkLayer_steam_fossilize64.dll). Steam's layer is copied into the run folder
+// under a manifest of ours, an explicit layer of another name, so its own implicit registration stays off.
+struct FozKit { std::wstring layer_dir, layer, dump_var, replay; };
+static bool foz_kit(const std::wstring& src, const std::wstring& dir, FozKit& k) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (fs::exists(src + L"\\fossilize-replay.exe", ec) && fs::exists(src + L"\\VkLayer_fossilize.json", ec)) {
+        k = {src, L"VK_LAYER_fossilize", L"FOSSILIZE_DUMP_PATH", src + L"\\fossilize-replay.exe"};
+        return true;
+    }
+    std::wstring ld = dir + L"foz_layer";
+    if (fs::exists(src + L"\\bin\\fossilize-replay64.exe", ec) && CreateDirectoryW(ld.c_str(), nullptr) &&
+        CopyFileW((src + L"\\VkLayer_steam_fossilize64.dll").c_str(), (ld + L"\\VkLayer_steam_fossilize64.dll").c_str(), FALSE)) {
+        FILE* j = _wfopen((ld + L"\\scsk_fossilize.json").c_str(), L"w");
+        if (!j) return false;
+        fputs("{\"file_format_version\": \"1.0.0\", \"layer\": {\"name\": \"VK_LAYER_SCSK_steam_fossilize\", \"type\": \"GLOBAL\",\n"
+              " \"library_path\": \".\\\\VkLayer_steam_fossilize64.dll\", \"api_version\": \"1.4.303\", \"implementation_version\": \"1\",\n"
+              " \"description\": \"selftest\", \"functions\": {\"vkGetInstanceProcAddr\": \"VK_LAYER_fossilize_GetInstanceProcAddr\",\n"
+              " \"vkGetDeviceProcAddr\": \"VK_LAYER_fossilize_GetDeviceProcAddr\"}}}\n", j);
+        fclose(j);
+        k = {ld, L"VK_LAYER_SCSK_steam_fossilize", L"STEAM_FOSSILIZE_DUMP_PATH", src + L"\\bin\\fossilize-replay64.exe"};
+        return true;
+    }
+    printf("no Fossilize in %ls: an upstream build (fossilize-replay.exe, VkLayer_fossilize.json) or Steam's folder\n", src.c_str());
+    return false;
+}
+
+// Probe 9 (`selftest vkfoz <fossilize dir> [runs] [fill]`): does a Fossilize replay fill the driver's cache for the app
+// it recorded? <fossilize dir>: foz_kit. Ray tracing rows need SELFTEST_DXC with SPIR-V output. Per run, fresh exe names
+// and one seed:
+//   p9 = R records probe 8's base rows and the ray tracing rows through the Fossilize layer, an explicit layer of this
+//   process only.
+//   The .foz is replayed by fossilize-replay copied as X (the driver's default cache), and as Z with the cache
+//   redirected to app name G (NVIDIA's __GL_SHADER_DISK_CACHE_* and AMD's AMD_VK_PIPELINE_CACHE_*).
+//   p10 = X; p11 = X with another VkApplicationInfo; p12 = X from another folder; p13 = Y, never replayed (control);
+//   p14 = V redirected as G; p15 = V2 as G2 and p16 = V3 as G3, each with G's file as
+//   __GL_SHADER_DISK_CACHE_READ_ONLY_APP_NAME (p15 its file name G0, p16 the app name G).
+//   p17 = W through an empty VkPipelineCache of its own, as fossilize-replay creates, and p18 = W again without one;
+//   p19 = U redirected as H, then p20 = U from another folder as H; p21 = N after a replay as N that passes no
+//   VkPipelineCache (a replayer patched for FOSSILIZE_REPLAY_NO_PIPELINE_CACHE).
+// Then once, NVIDIA only: [fill] fresh compute pipelines (p30) into a redirected cache, unlimited and with
+// __GL_SHADER_DISK_CACHE_SIZE at a third of what the unlimited one wrote (+ _SKIP_CLEANUP), and which of the first and
+// last 30 still hit in a new process (p31); last, the unlimited file opened by a process under that limit.
+static int vkfoz_parent(const std::wstring& a, const std::wstring& dir, const std::wstring& foz, int runs, int fill) {
+    namespace fs = std::filesystem;
+    std::wstring lock = gpu_lock("selftest vkfoz");
+    if (lock.empty()) return 1;
+    std::error_code ec;
+    FozKit kit;
+    if (!foz_kit(foz, dir, kit)) return 1;
+    auto env = [](const wchar_t* n, const std::wstring& v) { SetEnvironmentVariableW(n, v.empty() ? nullptr : v.c_str()); };
+    auto layers_off = [&] {
+        env(L"VK_LOADER_LAYERS_DISABLE", L"~all~");
+        env(L"DISABLE_VK_LAYER_VALVE_steam_fossilize_1", L"1");
+        for (auto n : {L"VK_LAYER_PATH", L"VK_ADD_LAYER_PATH", L"VK_INSTANCE_LAYERS", L"FOSSILIZE_DUMP_PATH", L"STEAM_FOSSILIZE_DUMP_PATH",
+                       L"__GL_SHADER_DISK_CACHE_PATH", L"__GL_SHADER_DISK_CACHE_APP_NAME",
+                       L"__GL_SHADER_DISK_CACHE_READ_ONLY_APP_NAME", L"__GL_SHADER_DISK_CACHE_SIZE", L"__GL_SHADER_DISK_CACHE_SKIP_CLEANUP", L"AMD_VK_USE_PIPELINE_CACHE",
+                       L"AMD_VK_PIPELINE_CACHE_PATH", L"AMD_VK_PIPELINE_CACHE_FILENAME", L"SCSK_VK_APP",
+                       L"SCSK_VK_ENGINE", L"SCSK_VK_FILL", L"SCSK_VK_PIPELINE_CACHE", L"FOSSILIZE_REPLAY_NO_PIPELINE_CACHE"})
+            env(n, L"");
+    };
+    std::wstring stamp = std::to_wstring(GetTickCount() % 1000000), odir = dir + L"vk_other\\", redirect = dir + L"vk_glcache";
+    // NVIDIA's redirect and AMD's (the variables steamclient64.dll sets); each driver ignores the other's
+    auto redirect_as = [&](const std::wstring& app) {
+        env(L"__GL_SHADER_DISK_CACHE_PATH", redirect), env(L"__GL_SHADER_DISK_CACHE_APP_NAME", app);
+        env(L"AMD_VK_USE_PIPELINE_CACHE", L"1"), env(L"AMD_VK_PIPELINE_CACHE_PATH", redirect), env(L"AMD_VK_PIPELINE_CACHE_FILENAME", app);
+    };
+    CreateDirectoryW(odir.c_str(), nullptr);
+    CreateDirectoryW(redirect.c_str(), nullptr);
+    auto name = [&](const std::wstring& tag, int r) { return L"scskfz" + stamp + tag + std::to_wstring(r) + L".exe"; };
+    const DxrSnap start = dxr_snap();
+    DxrSnap prev = start;
+    auto snap = [&](const char* when) { DxrSnap s = dxr_snap(); dxr_diff(prev, s, when); prev = s; };
+    std::vector<std::string> order;
+    Col col[22];
+    std::map<std::string, std::string> fc, fb;
+    std::vector<double> replay_ms[2];
+    std::random_device rd;
+    for (int r = 0; r < runs; ++r) {
+        unsigned seed = 100000 + rd() % 8000000;
+        printf("probe 9 run %d/%d\n", r + 1, runs);
+        std::wstring rec = dir + L"rec" + std::to_wstring(r), R = dir + name(L"r", r), X = dir + name(L"x", r), Y = dir + name(L"y", r),
+                     Z = dir + name(L"z", r), V = dir + name(L"v", r), V2 = dir + name(L"w", r), V3 = dir + name(L"u", r), X2 = odir + name(L"x", r),
+                     W = dir + name(L"p", r), U = dir + name(L"h", r), U2 = odir + name(L"h", r), N = dir + name(L"n", r);
+        std::wstring G = L"scskfz" + stamp + L"g" + std::to_wstring(r), G2 = G + L"b", G3 = G + L"c", H = G + L"h";
+        CreateDirectoryW(rec.c_str(), nullptr);
+        for (auto& e : {R, Y, V, V2, V3, W, U, U2}) CHECK(CopyFileW(a.c_str(), e.c_str(), FALSE));
+        for (auto& e : {X, X2}) CHECK(CopyFileW(a.c_str(), e.c_str(), FALSE));
+        auto child = [&](int p, const std::wstring& exe) {
+            std::wstring out = dir + L"fz" + std::to_wstring(p) + L".txt";
+            DeleteFileW(out.c_str());
+            int rc = run(exe, L"vkchild " + std::to_wstring(p) + L" " + std::to_wstring(seed) + L" \"" + out + L"\"");
+            char when[32];
+            sprintf_s(when, "p%d", p);
+            snap(when);
+            if (rc) {  // a failed process's rows aren't measurements
+                printf("  p%d exited with %d: its rows left out\n", p, rc), DeleteFileW(out.c_str());
+                return;
+            }
+            read_rows(out, &order, [&](const std::string& n, const char* rest) {
+                double c = 0, first = 0, again = 0;
+                int f = -1;
+                sscanf_s(rest, "%lf\t%lf\t%lf\t%d", &c, &first, &again, &f);
+                col[p][n].push_back(first);
+                auto& h = fc[n];
+                h.resize(13, '.');
+                if (p >= 9) h[p - 9] = c == -2 ? '.' : c == -3 ? 'M' : c < 0 ? 'x' : 'H';
+                if (!r && (p == 9 || p == 10)) fb[n] += std::to_string(f) + (p == 9 ? "/" : "");
+            });
+        };
+        // record
+        layers_off();
+        env(L"VK_LOADER_LAYERS_DISABLE", L"~implicit~");
+        env(L"DISABLE_VK_LAYER_VALVE_steam_fossilize_1", L"");  // its implicit registration is off by the line above
+        env(L"VK_LAYER_PATH", kit.layer_dir);
+        env(L"VK_INSTANCE_LAYERS", kit.layer);
+        env(kit.dump_var.c_str(), rec + L"\\scsk");
+        child(9, R);
+        layers_off();
+        std::wstring db;
+        for (fs::directory_iterator it(rec, ec), end; !ec && it != end; it.increment(ec))
+            if (it->path().extension() == L".foz") {
+                db = it->path().wstring(), printf("  recorded %ls (%llu bytes)\n", db.substr(dir.size()).c_str(), (unsigned long long)it->file_size(ec));
+                if (wchar_t keep[MAX_PATH]; GetEnvironmentVariableW(L"SCSK_VK_KEEP", keep, MAX_PATH) - 1u < MAX_PATH - 1u)  // as vkproxy's
+                    CopyFileW(db.c_str(), (std::wstring(keep) + L"\\run" + std::to_wstring(r) + L"-" + it->path().filename().wstring()).c_str(), FALSE);
+            }
+        if (db.empty()) return printf("  no .foz: the layer didn't load\n"), 1;
+        // replay as X, then as Z redirected to G
+        for (int k = 0; k < 2; ++k) {
+            std::wstring exe = k ? Z : X;
+            CHECK(CopyFileW(kit.replay.c_str(), exe.c_str(), FALSE));
+            if (k) redirect_as(G);
+            int rc = 0;
+            double t = ms([&] { rc = run(exe, L"\"" + db + L"\""); });
+            replay_ms[k].push_back(t);
+            printf("  replay as %ls%s: %.0f ms, exit %d\n", exe.substr(dir.size()).c_str(), k ? " (redirected)" : "", t, rc);
+            if (rc) return printf("  the replay failed: the checks after it would measure nothing\n"), 1;
+            snap(k ? "replay Z" : "replay X");
+            layers_off();
+        }
+        CHECK(CopyFileW(a.c_str(), X.c_str(), FALSE));  // X is the replayer's name, now the app again
+        child(10, X);
+        env(L"SCSK_VK_APP", L"another app"), env(L"SCSK_VK_ENGINE", L"another engine");
+        child(11, X);
+        layers_off();
+        child(12, X2);
+        child(13, Y);
+        redirect_as(G);
+        child(14, V);
+        // the writable file is <app name>0.bin; Steam's read-only one is steam_shader_cache.bin: which name does it take?
+        redirect_as(G2), env(L"__GL_SHADER_DISK_CACHE_READ_ONLY_APP_NAME", G + L"0");
+        child(15, V2);
+        redirect_as(G3), env(L"__GL_SHADER_DISK_CACHE_READ_ONLY_APP_NAME", G);
+        child(16, V3);
+        layers_off();
+        // Does a create through the app's own VkPipelineCache (as fossilize-replay makes) reach the driver's cache?
+        env(L"SCSK_VK_PIPELINE_CACHE", L"1");
+        child(17, W);
+        env(L"SCSK_VK_PIPELINE_CACHE", L"");
+        child(18, W);
+        // Does the redirect replace the exe path in the key (AMD)? Written from one path, read from another.
+        redirect_as(H);
+        child(19, U);
+        child(20, U2);
+        layers_off();
+        // A replay through no VkPipelineCache of its own: honoured only by a replayer patched for
+        // FOSSILIZE_REPLAY_NO_PIPELINE_CACHE (else p21 is p10 again).
+        CHECK(CopyFileW(kit.replay.c_str(), N.c_str(), FALSE));
+        env(L"FOSSILIZE_REPLAY_NO_PIPELINE_CACHE", L"1");
+        if (int rc = run(N, L"\"" + db + L"\""))
+            return printf("  replay as %ls (no VkPipelineCache) failed: exit %d\n", N.substr(dir.size()).c_str(), rc), 1;
+        env(L"FOSSILIZE_REPLAY_NO_PIPELINE_CACHE", L"");
+        snap("replay N");
+        CHECK(CopyFileW(a.c_str(), N.c_str(), FALSE));
+        child(21, N);
+    }
+    for (auto& v : replay_ms) std::sort(v.begin(), v.end());
+    printf("probe 9: vkCreate*Pipelines ms, median of %d run(s); fossilize-replay median %.0f ms (X), %.0f ms (Z redirected)\n"
+           "p9 R records (Fossilize layer on), then fossilize-replay runs as X and as Z (redirected, app name G).\n"
+           "p10 X, p11 X with another VkApplicationInfo, p12 X from another folder, p13 Y never replayed,\n"
+           "p14 V as G, p15 V2 as G2 + read-only G0, p16 V3 as G3 + read-only G;\n"
+           "p17 W with an app VkPipelineCache, p18 W, p19 U as H, p20 U other folder as H, p21 N after a no-cache replay; fc p9..p21 (H created without compiling, M compile required);\n"
+           "fb = creation feedback p9/p10 (pipeline*100 + VS*10 + FS; 1 valid, 2 app cache hit, 4 base acceleration)\n",
+           runs, replay_ms[0][replay_ms[0].size() / 2], replay_ms[1][replay_ms[1].size() / 2]);
+    printf("%-54s %8s %8s %8s %8s %8s %8s %8s %8s %8s %8s %8s %8s %8s  %-13s %s\n", "row", "p9 R", "p10 X", "p11 Xapp", "p12 Xod", "p13 Y", "p14 G",
+           "p15 roG0", "p16 roG", "p17 W pc", "p18 W", "p19 H", "p20 H od", "p21 N", "fc", "fb");
+    for (auto& n : order) {
+        std::string line;
+        for (int p = 9; p <= 21; ++p) line += cell(col_median(col[p], n));
+        printf("%-54s%s  %-13s %s\n", n.c_str(), line.c_str(), fc[n].c_str(), fb[n].c_str());
+    }
+    printf("files in the redirect folder:\n");
+    for (fs::recursive_directory_iterator it(redirect, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec)) printf("  %ls (%llu)\n", it->path().wstring().substr(redirect.size()).c_str(), (unsigned long long)it->file_size(ec));
+
+    if (fill > 0) {
+        unsigned seed = 100000 + rd() % 8000000;
+        std::wstring F = dir + L"scskfz" + stamp + L"f.exe";
+        CHECK(CopyFileW(a.c_str(), F.c_str(), FALSE));
+        auto folder_size = [&](const std::wstring& d) {
+            uintmax_t n = 0;
+            for (fs::recursive_directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec))
+                if (it->is_regular_file(ec)) n += it->file_size(ec);
+            return n;
+        };
+        uintmax_t unlimited = 0;
+        // mode 3: no fill, a new process under the limit opens mode 0's unlimited file (pruned at start-up?)
+        const wchar_t* modes[] = {L"unlimited", L"size limit", L"size limit + skip cleanup", L"the unlimited file reopened under the limit"};
+        for (int m = 0; m < 4; ++m) {
+            int k = m == 3 ? 0 : m;
+            std::wstring d = dir + L"vk_fill" + std::to_wstring(k), app = L"scskfz" + stamp + L"fill" + std::to_wstring(k);
+            CreateDirectoryW(d.c_str(), nullptr);
+            layers_off();
+            env(L"__GL_SHADER_DISK_CACHE_PATH", d), env(L"__GL_SHADER_DISK_CACHE_APP_NAME", app), env(L"SCSK_VK_FILL", std::to_wstring(fill));
+            std::wstring limit = m ? std::to_wstring(std::max<uintmax_t>(unlimited / 3, 1)) : L"";
+            env(L"__GL_SHADER_DISK_CACHE_SIZE", limit);
+            if (m == 2) env(L"__GL_SHADER_DISK_CACHE_SKIP_CLEANUP", L"1");
+            int hits[2][2] = {};  // [p30/p31][first 30 / last 30]
+            for (int p = m == 3 ? 31 : 30; p <= 31; ++p) {
+                std::wstring out = dir + L"fill" + std::to_wstring(p) + L".txt";
+                int rc = run(F, L"vkchild " + std::to_wstring(p) + L" " + std::to_wstring(seed + 10000 * k) + L" \"" + out + L"\"");
+                if (rc) printf("  fill p%d exited with %d\n", p, rc);
+                read_rows(out, nullptr, [&](const std::string& n, const char* rest) {
+                    int i = atoi(n.c_str() + 5);
+                    double c = atof(rest);
+                    if (c >= 0) ++hits[p - 30][i < 30 ? 0 : 1];
+                });
+            }
+            uintmax_t size = folder_size(d);
+            if (!m) unlimited = size;
+            printf("fill %d compute pipelines, %ls%ls%ls: %llu bytes on disk (%.1f KB per pipeline); a new process hits %d of the first 30, %d of the last 30\n",
+                   fill, modes[m], m ? L" " : L"", limit.c_str(), (unsigned long long)size, size / 1024.0 / fill, hits[1][0], hits[1][1]);
+        }
+        layers_off();
+    }
+    list_new_cache(start);
+    return 0;
+}
+
+static uintmax_t folder_bytes(const std::wstring& d) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    uintmax_t n = 0;
+    for (fs::recursive_directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec)) n += it->file_size(ec);
+    return n;
+}
+
+// `selftest vkcap [max] [chunk]`: NVIDIA's default ceiling for one app's Vulkan disk cache (no __GL_SHADER_DISK_CACHE_SIZE),
+// in a redirected folder of the run's. Fresh compute pipelines, [chunk] (2000) per process (p32, the driver writes its
+// file by the process's end), until two chunks in a row add no byte or [max] (60000) are made. Then p31: a new process
+// asks which of the first and the last 30 are on disk. Other vendors ignore the redirect: the folder stays empty.
+static int vkcap_parent(const std::wstring& a, const std::wstring& dir, int max, int chunk) {
+    std::wstring lock = gpu_lock("selftest vkcap");
+    if (lock.empty()) return 1;
+    SetEnvironmentVariableW(L"VK_LOADER_LAYERS_DISABLE", L"~all~");
+    SetEnvironmentVariableW(L"DISABLE_VK_LAYER_VALVE_steam_fossilize_1", L"1");
+    std::wstring stamp = std::to_wstring(GetTickCount() % 1000000), F = dir + L"scskcap" + stamp + L".exe", d = dir + L"vk_cap";
+    CHECK(CopyFileW(a.c_str(), F.c_str(), FALSE) && CreateDirectoryW(d.c_str(), nullptr));
+    SetEnvironmentVariableW(L"__GL_SHADER_DISK_CACHE_PATH", d.c_str());
+    SetEnvironmentVariableW(L"__GL_SHADER_DISK_CACHE_APP_NAME", (L"scskcap" + stamp).c_str());
+    SetEnvironmentVariableW(L"__GL_SHADER_DISK_CACHE_SIZE", nullptr);
+    std::random_device rd;
+    const unsigned seed = 100000 + rd() % 8000000;  // + 1000 + max stays < 2^24: the seeded float constants stay exact
+    std::wstring out = dir + L"cap.txt";
+    printf("probe vkcap: up to %d fresh compute pipelines, %d per process, into %ls\n", max, chunk, d.c_str());
+    int made = 0, flat = 0, failed = 0;
+    uintmax_t size = 0;
+    for (; made < max && flat < 2;) {
+        int n = std::min(chunk, max - made);
+        SetEnvironmentVariableW(L"SCSK_VK_FILL", std::to_wstring(n).c_str());
+        SetEnvironmentVariableW(L"SCSK_VK_FILL_FROM", std::to_wstring(made).c_str());
+        int rc = 0;
+        double t = ms([&] { rc = run(F, L"vkchild 32 " + std::to_wstring(seed) + L" \"" + out + L"\""); });
+        int ok = 0, bad = 0;
+        read_rows(out, nullptr, [&](const std::string&, const char* rest) { sscanf_s(rest, "%d\t%d", &ok, &bad); });
+        made += n, failed += bad;
+        uintmax_t now = folder_bytes(d);
+        printf("  %6d pipelines: %llu bytes (+%llu) in %.0f s%s\n", made, (unsigned long long)now, (unsigned long long)(now - size), t / 1000,
+               rc ? " (the process failed)" : bad ? " (some creates failed)" : "");
+        if (rc) return 1;
+        flat = now > size ? 0 : flat + 1;
+        size = now;
+    }
+    SetEnvironmentVariableW(L"SCSK_VK_FILL", std::to_wstring(made).c_str());
+    int hits[2] = {}, asked[2] = {};
+    DeleteFileW(out.c_str());
+    if (int rc = run(F, L"vkchild 31 " + std::to_wstring(seed) + L" \"" + out + L"\"")) return printf("vkcap: p31 exited with %d\n", rc), 1;
+    read_rows(out, nullptr, [&](const std::string& n, const char* rest) {
+        if (!n.starts_with("fill ")) return;
+        int i = atoi(n.c_str() + 5);
+        ++asked[i < 30 ? 0 : 1];
+        if (atof(rest) >= 0) ++hits[i < 30 ? 0 : 1];
+    });
+    if (flat >= 2)
+        printf("vkcap: the cache stopped at %llu bytes, about %d pipelines in (%.1f KB a pipeline)", (unsigned long long)size, made - 2 * chunk,
+               size / 1024.0 / std::max(1, made - 2 * chunk));
+    else
+        printf("vkcap: no ceiling up to %d pipelines, %llu bytes", made, (unsigned long long)size);
+    printf("; %d creates failed; a new process finds %d of the first %d and %d of the last %d on disk\n", failed, hits[0], asked[0], hits[1], asked[1]);
+    printf("files in the cache folder:\n");
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec)) printf("  %ls (%llu)\n", it->path().wstring().substr(d.size()).c_str(), (unsigned long long)it->file_size(ec));
+    return 0;
+}
+
+// `selftest vkproxy <fossilize dir>`: a vulkan-1.dll beside the exe (vkprobe_proxy.dll, copied beside a copy of this exe),
+// as a recorder would place it for a game it doesn't launch. p22: no vkprobe.ini: the copy loads and passes through, no
+// layer variable, nothing recorded. p23: vkprobe.ini names the Fossilize layer (foz_kit): the copy sets the loader's
+// variables in its own process before the loader loads, and the layer records. p24: an exe that loads the loader from
+// System32 only (LOAD_LIBRARY_SEARCH_SYSTEM32) never loads the copy. Every create must work in all three.
+static int vkproxy_parent(const std::wstring& a, const std::wstring& dir, const std::wstring& foz) {
+    namespace fs = std::filesystem;
+    std::wstring lock = gpu_lock("selftest vkproxy");
+    if (lock.empty()) return 1;
+    FozKit kit;
+    if (!foz_kit(foz, dir, kit)) return 1;
+    std::wstring proxy = a.substr(0, a.find_last_of(L'\\') + 1) + L"vkprobe_proxy.dll", P = dir + L"scskvp" + std::to_wstring(GetTickCount() % 1000000) + L".exe",
+                 ini = dir + L"vkprobe.ini", rec = dir + L"proxyrec", marker = dir + L"marker.txt";
+    CHECK(CopyFileW(a.c_str(), P.c_str(), FALSE) && CopyFileW(proxy.c_str(), (dir + L"vulkan-1.dll").c_str(), FALSE) && CreateDirectoryW(rec.c_str(), nullptr));
+    // implicit layers off as the other probes, but not ~all~: that drops an explicit layer too
+    SetEnvironmentVariableW(L"VK_LOADER_LAYERS_DISABLE", L"~implicit~");
+    for (auto n : {L"VK_LAYER_PATH", L"VK_ADD_LAYER_PATH", L"VK_INSTANCE_LAYERS", L"FOSSILIZE_DUMP_PATH", L"STEAM_FOSSILIZE_DUMP_PATH", L"DISABLE_VK_LAYER_VALVE_steam_fossilize_1"})
+        SetEnvironmentVariableW(n, nullptr);
+    std::random_device rd;
+    const unsigned seed = 100000 + rd() % 8000000;
+    int bad = 0;
+    for (int p = 22; p <= 24; ++p) {
+        DeleteFileW(ini.c_str());
+        if (p > 22) {
+            if (FILE* u = _wfopen(ini.c_str(), L"wb")) fwrite("\xFF\xFE", 1, 2, u), fclose(u);  // UTF-16: the profile API then keeps it UTF-16, not ANSI
+            WritePrivateProfileStringW(L"vk", L"layer_path", kit.layer_dir.c_str(), ini.c_str());
+            WritePrivateProfileStringW(L"vk", L"layer", kit.layer.c_str(), ini.c_str());
+            WritePrivateProfileStringW(L"vk", L"dump_var", kit.dump_var.c_str(), ini.c_str());
+            WritePrivateProfileStringW(L"vk", L"dump", (rec + L"\\p" + std::to_wstring(p)).c_str(), ini.c_str());
+            WritePrivateProfileStringW(L"vk", L"marker", marker.c_str(), ini.c_str());
+            WritePrivateProfileStringW(L"vk", L"disable", L"DISABLE_VK_LAYER_VALVE_steam_fossilize_1", ini.c_str());
+        }
+        // the copy writes <marker>.<pid>: each process's own new file
+        auto markers = [&] {
+            std::vector<fs::path> m;
+            std::error_code e;
+            for (fs::directory_iterator it(dir, e), end; !e && it != end; it.increment(e))
+                if (it->path().filename().wstring().starts_with(L"marker.txt.")) m.push_back(it->path());
+            return m;
+        };
+        for (auto& m : markers()) DeleteFileW(m.c_str());
+        std::wstring out = dir + L"vp" + std::to_wstring(p) + L".txt";
+        int rc = run(P, L"vkchild " + std::to_wstring(p) + L" " + std::to_wstring(seed) + L" \"" + out + L"\"");
+        double beside = -1, layers = -1;
+        int rows = 0, failed = 0;
+        read_rows(out, nullptr, [&](const std::string& n, const char* rest) {
+            double v = 0, first = 0;
+            sscanf_s(rest, "%lf\t%lf", &v, &first);
+            if (n.starts_with("loader:")) beside = v;
+            else if (n.starts_with("VK_INSTANCE_LAYERS")) layers = v;
+            else ++rows, failed += first < 0;
+        });
+        int fozs = 0;
+        uintmax_t bytes = 0;
+        std::error_code ec;
+        for (fs::directory_iterator it(rec, ec), end; !ec && it != end; it.increment(ec))
+            if (it->path().filename().wstring().starts_with(L"p" + std::to_wstring(p)) && it->path().extension() == L".foz") {
+                ++fozs, bytes += it->file_size(ec);
+                // SCSK_VK_KEEP=<folder>: the recording outlives the run folder (a real archive for the store's reader tests)
+                if (wchar_t keep[MAX_PATH]; GetEnvironmentVariableW(L"SCSK_VK_KEEP", keep, MAX_PATH) - 1u < MAX_PATH - 1u)
+                    CopyFileW(it->path().c_str(), (std::wstring(keep) + L"\\" + it->path().filename().wstring()).c_str(), FALSE);
+            }
+        bool want_beside = p != 24, want_rec = p == 23;
+        // p23's marker: one UTF-16 line, written before the copy sets the layer variables (none of ours in it)
+        std::wstring mk;
+        for (auto& path : markers())
+            if (FILE* m = _wfopen(path.c_str(), L"rb")) {
+                wchar_t b[2048];
+                for (size_t k; (k = fread(b, sizeof(wchar_t), 2048, m)) > 0;) mk.append(b, k);
+                fclose(m);
+            }
+        bool marked = !mk.empty() && mk.find(L"VK_INSTANCE_LAYERS=") == std::wstring::npos && mk.find(L"VK_ADD_LAYER_PATH=") == std::wstring::npos;
+        bool ok = !rc && rows > 0 && !failed && (beside == 1) == want_beside && (layers == 1) == want_rec && (fozs > 0) == want_rec && marked == want_rec;
+        bad += !ok;
+        printf("p%d %-44s exit %d, loader beside the exe %s, layer variable %s, %d rows %d failed, %d .foz (%llu bytes): %s\n", p,
+               p == 22 ? "(no vkprobe.ini)" : p == 23 ? "(vkprobe.ini names the layer)" : "(ini, exe loads from System32 only)", rc,
+               beside == 1 ? "yes" : "no", layers == 1 ? "set" : "unset", rows, failed, fozs, (unsigned long long)bytes, ok ? "as expected" : "UNEXPECTED");
+        if (!mk.empty()) printf("    marker: %ls", mk.c_str());
+    }
+    printf("vkproxy: %s\n", bad ? "FAILED" : "passed");
+    return bad ? 1 : 0;
+}
+
+// `selftest vkrt [pairs]`: a second signal for ray tracing on NVIDIA's Vulkan disk cache. Per pair: a fresh seed and exe
+// name, the cache redirected to a new folder of the run's under that name; process A (25) then B (26), each creating
+// every probe 9 row once with fail-on-compile, then for real, then again in the same process. The folder's files
+// before A, after A and after B. A row B creates without compiling (fail-on-compile H, under 1 ms) was kept on disk.
+// rq: both processes create the RayQuery rows right after the warm-up and wait 5 s before destroying the device.
+static int vkrt_parent(const std::wstring& a, const std::wstring& dir, int pairs, bool rq) {
+    namespace fs = std::filesystem;
+    std::wstring lock = gpu_lock("selftest vkrt");
+    if (lock.empty()) return 1;
+    SetEnvironmentVariableW(L"VK_LOADER_LAYERS_DISABLE", L"~all~");
+    SetEnvironmentVariableW(L"DISABLE_VK_LAYER_VALVE_steam_fossilize_1", L"1");
+    SetEnvironmentVariableW(L"SCSK_VK_RQ_FIRST", rq ? L"1" : nullptr);
+    if (rq) printf("vkrt rq: the RayQuery rows first, a 5 s wait before each process destroys its device\n");
+    std::random_device rd;
+    std::wstring stamp = std::to_wstring(GetTickCount() % 1000000);
+    auto files = [](const std::wstring& d) {
+        std::map<std::wstring, std::pair<uintmax_t, long long>> m;
+        std::error_code ec;
+        for (fs::recursive_directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec))
+            if (it->is_regular_file(ec))
+                m[it->path().filename().wstring()] = {it->file_size(ec), (long long)it->last_write_time(ec).time_since_epoch().count()};
+        return m;
+    };
+    auto diff = [](const char* when, const auto& was, const auto& now) {
+        printf("    files %s:", when);
+        int n = 0;
+        for (auto& [f, v] : now)
+            if (auto it = was.find(f); it == was.end()) printf(" new %ls %llu;", f.c_str(), v.first), ++n;
+            else if (it->second != v) printf(" %ls %llu -> %llu%s;", f.c_str(), it->second.first, v.first, it->second.second != v.second ? " (written)" : ""), ++n;
+        printf(n ? "\n" : " no change\n");
+    };
+    int bad = 0;
+    for (int r = 0; r < pairs; ++r) {
+        unsigned seed = 100000 + rd() % 8000000;
+        std::wstring name = L"scskrt" + stamp + L"p" + std::to_wstring(r), exe = dir + name + L".exe", cache = dir + L"rt_cache" + std::to_wstring(r);
+        CHECK(CopyFileW(a.c_str(), exe.c_str(), FALSE) && CreateDirectoryW(cache.c_str(), nullptr));
+        SetEnvironmentVariableW(L"__GL_SHADER_DISK_CACHE_PATH", cache.c_str());
+        SetEnvironmentVariableW(L"__GL_SHADER_DISK_CACHE_APP_NAME", name.c_str());
+        printf("vkrt pair %d/%d, seed %u\n", r + 1, pairs, seed);
+        std::vector<std::string> order;
+        std::map<std::string, std::string> cells[2];
+        auto before = files(cache);
+        for (int k = 0; k < 2; ++k) {
+            std::wstring out = dir + L"rt" + std::to_wstring(k) + L".txt";
+            DeleteFileW(out.c_str());
+            int rc = run(exe, L"vkchild " + std::to_wstring(25 + k) + L" " + std::to_wstring(seed) + L" \"" + out + L"\"");
+            auto now = files(cache);
+            diff(k ? "after B" : "after A", before, now);
+            before = now;
+            if (rc) {
+                printf("  %s exited with %d: pair left out\n", k ? "B" : "A", rc), ++bad;
+                break;
+            }
+            read_rows(out, &order, [&](const std::string& n, const char* rest) {
+                double c = 0, first = 0, again = 0;
+                sscanf_s(rest, "%lf\t%lf\t%lf", &c, &first, &again);
+                char b[64];
+                snprintf(b, sizeof b, "%c %8.2f %8.2f", c == -2 ? '.' : c == -3 ? 'M' : c < 0 ? 'x' : 'H', first, again);
+                cells[k][n] = b;
+            });
+        }
+        printf("  %-52s %-21s %-21s\n", "row (fc, first ms, again in-process ms)", "A", "B");
+        for (auto& n : order) printf("  %-52s %-21s %-21s\n", n.c_str(), cells[0][n].c_str(), cells[1][n].c_str());
+    }
+    SetEnvironmentVariableW(L"__GL_SHADER_DISK_CACHE_PATH", nullptr);
+    SetEnvironmentVariableW(L"__GL_SHADER_DISK_CACHE_APP_NAME", nullptr);
+    return bad ? 1 : 0;
 }
 
 // `selftest layoutrules`: which input layouts the D3D12 runtime accepts, on WARP (CPU only: no GPU driver, no GPU cache).
@@ -3245,6 +3988,457 @@ static std::string read_all(const std::wstring& path) {
     return s;
 }
 
+// `selftest vkwarm <fossilize dir>`: the Vulkan warm end to end (NVIDIA). R records probe 9's rows through the Fossilize
+// layer of <fossilize dir> (foz_kit), as the game would. scskiller_warm --vulkan replays the recording from a work folder
+// under a fresh exe name (X on 1 thread, W on 4), then the app under that name creates every row with fail-on-compile:
+// each plain graphics and compute row and the GPL rows must hit (ray tracing never does on NVIDIA, RayQuery rows are
+// shown). Then, under Y, the warm with its stop event set before it starts: it creates nothing, exits 0 with a stopped
+// done line, and its failed keys are every pipeline's. With the test hooks, under Z, the last graphics pipeline faults in
+// the driver (SCSKILLER_REPLAY_CRASH) and the last compute one hangs (SCSKILLER_REPLAY_HANG, a 10 s timeout): those two
+// alone are skipped by the driver and in the failed keys, nothing counts as failed, the app under Z hits the rest as X's
+// does, and the warm exits 0. Under V a pipeline stuck only once beside the hang is replayed again and not skipped.
+static int vkwarm_parent(const std::wstring& a, const std::wstring& bin, const std::wstring& dir, const std::wstring& src) {
+    namespace fs = std::filesystem;
+    std::wstring lock = gpu_lock("selftest vkwarm");
+    if (lock.empty()) return 1;
+    FozKit kit;
+    if (!foz_kit(src, dir, kit)) return 1;
+    auto env = [](const wchar_t* n, const std::wstring& v) { SetEnvironmentVariableW(n, v.empty() ? nullptr : v.c_str()); };
+    auto layers_off = [&] {
+        env(L"VK_LOADER_LAYERS_DISABLE", L"~all~");
+        env(L"DISABLE_VK_LAYER_VALVE_steam_fossilize_1", L"1");
+        for (auto n : {L"VK_LAYER_PATH", L"VK_ADD_LAYER_PATH", L"VK_INSTANCE_LAYERS", L"FOSSILIZE_DUMP_PATH", L"STEAM_FOSSILIZE_DUMP_PATH",
+                       L"__GL_SHADER_DISK_CACHE_PATH", L"__GL_SHADER_DISK_CACHE_APP_NAME", L"SCSKILLER_REPLAY_CRASH", L"SCSKILLER_REPLAY_HANG",
+                       L"SCSKILLER_REPLAY_WAIT", L"SCSKILLER_REPLAY_WAIT_ONCE"})
+            env(n, L"");
+    };
+    std::random_device rd;
+    const unsigned seed = 100000 + rd() % 8000000;
+    const std::wstring stamp = std::to_wstring(GetTickCount() % 1000000), rec = dir + L"rec";
+    auto name = [&](const wchar_t* t) { return L"scskvw" + stamp + t + L".exe"; };
+    CreateDirectoryW(rec.c_str(), nullptr);
+    std::wstring R = dir + name(L"r");
+    CHECK(CopyFileW(a.c_str(), R.c_str(), FALSE));
+    layers_off();
+    env(L"VK_LOADER_LAYERS_DISABLE", L"~implicit~");
+    env(L"DISABLE_VK_LAYER_VALVE_steam_fossilize_1", L"");
+    env(L"VK_LAYER_PATH", kit.layer_dir), env(L"VK_INSTANCE_LAYERS", kit.layer), env(kit.dump_var.c_str(), rec + L"\\scsk");
+    if (int rc = run(R, L"vkchild 9 " + std::to_wstring(seed) + L" \"" + dir + L"rec.txt\"")) return printf("recording exited with %d\n", rc), 1;
+    layers_off();
+    std::error_code ec;
+    std::wstring db;
+    for (fs::directory_iterator it(rec, ec), end; !ec && it != end; it.increment(ec))
+        if (it->path().extension() == L".foz") db = it->path().wstring();
+    if (db.empty()) return printf("no .foz: the layer didn't load\n"), 1;
+    // the archive's pipelines (tags 6 graphics, 7 compute, 9 ray tracing) by their 40-character entry names
+    std::vector<std::string> pipelines;
+    {
+        std::string f = read_all(db);
+        for (size_t o = 16; o + 56 <= f.size();) {
+            uint32_t stored;
+            memcpy(&stored, f.data() + o + 40, 4);
+            std::string n = f.substr(o, 40);
+            int tag = (int)strtoul(n.substr(0, 24).c_str(), nullptr, 16);
+            if (tag == 6 || tag == 7 || tag == 9) pipelines.push_back(n);
+            o += 56 + stored;
+        }
+    }
+    printf("recorded %zu pipelines\n", pipelines.size());
+    CHECK(!pipelines.empty());
+
+    struct Done { int code = -1; long long done = -1, total = -1, failed = -1, skipped = -1; bool stopped = false; std::string keys; };
+    // scskiller_warm --vulkan from its own work folder, its JSON lines to a file
+    auto warm = [&](const wchar_t* tag, bool stopped, const std::string& crash, int threads = 4, const std::string& hang = "", const std::string& wait = "") {
+        Done d;
+        std::wstring work = dir + L"work_" + tag + L"\\", out = dir + L"warm_" + tag + L".txt";
+        std::wstring event = L"Local\\SCSKiller.Stop.selftest" + stamp + tag;
+        SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
+        HANDLE f = CreateDirectoryW(work.c_str(), nullptr) && CopyFileW(db.c_str(), (work + L"scskiller.foz").c_str(), FALSE)
+                       ? CreateFileW(out.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, 0, nullptr) : INVALID_HANDLE_VALUE;
+        HANDLE stop = CreateEventW(nullptr, TRUE, stopped, event.c_str());
+        env(L"SCSKILLER_REPLAY_CRASH", std::wstring(crash.begin(), crash.end())), env(L"SCSKILLER_REPLAY_HANG", std::wstring(hang.begin(), hang.end()));
+        env(L"SCSKILLER_REPLAY_WAIT", std::wstring(wait.begin(), wait.end())), env(L"SCSKILLER_REPLAY_WAIT_ONCE", wait.empty() ? L"" : dir + L"wait_" + tag);
+        std::wstring cmd = L"\"" + bin + L"scskiller_warm.exe\" \"" + work + L".\" " + name(tag) + L" --vulkan --threads " + std::to_wstring(threads) + L" --stop-event " + event;
+        STARTUPINFOW si{sizeof si};
+        si.dwFlags = STARTF_USESTDHANDLES, si.hStdOutput = f, si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+        PROCESS_INFORMATION pi;
+        if (f == INVALID_HANDLE_VALUE || !CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+            printf("warm %ls: not started (error %lu)\n", tag, GetLastError());
+            if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
+            CloseHandle(stop);
+            return d;
+        }
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        DWORD code = 1;
+        GetExitCodeProcess(pi.hProcess, &code);
+        CloseHandle(pi.hProcess), CloseHandle(pi.hThread), CloseHandle(f), CloseHandle(stop);
+        env(L"SCSKILLER_REPLAY_CRASH", L""), env(L"SCSKILLER_REPLAY_HANG", L""), env(L"SCSKILLER_REPLAY_WAIT", L""), env(L"SCSKILLER_REPLAY_WAIT_ONCE", L"");
+        d.code = (int)code;
+        std::string text = read_all(out);
+        size_t at = text.rfind("{\"event\":\"done\"");
+        auto num = [&](const char* k) {
+            size_t p = at == std::string::npos ? at : text.find(k, at);
+            return p == std::string::npos ? -1ll : atoll(text.c_str() + p + strlen(k));
+        };
+        d.done = num("\"done\":"), d.total = num("\"total\":"), d.failed = num("\"failed\":"), d.skipped = num("\"driverSkipped\":");
+        d.stopped = at != std::string::npos && text.find("\"stopped\":true", at) != std::string::npos;
+        for (fs::recursive_directory_iterator it(work, ec), end; !ec && it != end; it.increment(ec))
+            if (it->path().filename() == L"scskiller_failed.keys") d.keys += read_all(it->path().wstring());
+        printf("warm %ls: exit %d, done %lld of %lld, failed %lld, driver skipped %lld%s, %zu failed keys\n", tag, d.code, d.done, d.total, d.failed,
+               d.skipped, d.stopped ? ", stopped" : "", d.keys.size() / 20);
+        if (at == std::string::npos) printf("%s", text.c_str());
+        return d;
+    };
+    auto key = [](const std::string& n) { auto h = sha1_of('V', n); return std::string((const char*)h.data(), 20); };
+    int bad = 0;
+
+    // the app under the warm's name afterwards: each plain row must be created without compiling
+    auto app = [&](const wchar_t* tag) {
+        int miss = 0;
+        std::wstring X = dir + name(tag), rows = dir + tag + L".txt";
+        if (!CopyFileW(a.c_str(), X.c_str(), FALSE)) return printf("copying the app as %ls failed\n", X.c_str()), 1;  // the replayer's name, now the app's
+        if (int rc = run(X, L"vkchild 10 " + std::to_wstring(seed) + L" \"" + rows + L"\"")) return printf("%ls exited with %d\n", X.c_str(), rc), 1;
+        printf("%-54s %s\n", "row (the app after the warm)", "fc  ms");
+        read_rows(rows, nullptr, [&](const std::string& n, const char* rest) {
+            double c = 0, first = 0;
+            sscanf_s(rest, "%lf\t%lf", &c, &first);
+            const bool plain = !n.compare(0, 9, "graphics ") || !n.compare(0, 8, "compute ");
+            const char h = c == -2 ? '.' : c == -3 ? 'M' : c < 0 ? 'x' : 'H';
+            // GPL libraries and links have no fail-on-compile row: under 1 ms is a hit (cold: 18-112 ms)
+            const bool cold = plain ? h != 'H' : !n.compare(0, 4, "gpl:") && first >= 1.0;
+            printf("%-54s %c %7.2f%s\n", n.c_str(), h, first, cold ? "  NOT WARMED" : "");
+            miss += cold;
+        });
+        return miss;
+    };
+    // one thread, then four (one worker process: several would each write the same cache file, measured)
+    for (auto [tag, threads] : {std::pair{L"x", 1}, std::pair{L"w", 4}}) {
+        Done x = warm(tag, false, "", threads);
+        bad += x.code != 0 || x.total != (long long)pipelines.size() || x.done != x.total || x.failed != 0 || x.skipped != 0;
+        bad += app(tag);
+    }
+
+    Done y = warm(L"y", true, "");
+    bad += y.code != 0 || !y.stopped || y.keys.size() != 20 * pipelines.size();
+
+#ifdef SCSK_TEST_HOOKS
+    // the last graphics pipeline (the RayQuery FS row, after the GPL links) faults, the last compute one hangs: Fossilize's
+    // recovery leaves out more than those two, the next passes replay the rest
+    std::string crash, hang;
+    for (auto& n : pipelines) {
+        const unsigned long tag = strtoul(n.substr(0, 24).c_str(), nullptr, 16);
+        if (tag == 6) crash = n;
+        if (tag == 7) hang = n;
+    }
+    CHECK(!crash.empty() && !hang.empty());
+    SetEnvironmentVariableW(L"SCSKILLER_REPLAY_TIMEOUT_S", L"10");
+    Done z = warm(L"z", false, crash.substr(24), 4, hang.substr(24));
+    SetEnvironmentVariableW(L"SCSKILLER_REPLAY_TIMEOUT_S", nullptr);
+    bad += z.code != 0 || z.skipped != 2 || z.failed != 0 || z.done != z.total || z.keys != key(crash) + key(hang);  // graphics keys come first
+    bad += app(L"z");
+
+    // under V the first compute pipeline is stuck too, but only in the first process: both are in flight at the timeout,
+    // and replayed alone only the last one hangs again
+    std::string wait;
+    for (auto& n : pipelines)
+        if (wait.empty() && strtoul(n.substr(0, 24).c_str(), nullptr, 16) == 7) wait = n;
+    CHECK(wait != hang);
+    SetEnvironmentVariableW(L"SCSKILLER_REPLAY_TIMEOUT_S", L"10");
+    Done v = warm(L"v", false, "", 4, hang.substr(24), wait.substr(24));
+    SetEnvironmentVariableW(L"SCSKILLER_REPLAY_TIMEOUT_S", nullptr);
+    bad += v.code != 0 || v.skipped != 1 || v.failed != 0 || v.done != v.total || v.keys != key(hang);
+#endif
+    printf("vkwarm: %s\n", bad ? "FAILED" : "passed");
+    return bad ? 1 : 0;
+}
+
+// `selftest vkrec`: the Vulkan recorder layer (VkLayer_scskiller.dll, beside this exe) in a copy of this exe in its own
+// folder, made by vkchild 9 on the system's loader. Under X the copy is armed (its signed scskiller.ini) and the layer is
+// explicit, with FOSSILIZE_DUMP_PATH aimed at the copy's folder and a cache redirect variable set: the archive, the csv
+// (#api,vulkan, the #cache line, a row per pipeline) go to the recorder folder's vulkan\<exe key>\, and nothing but the ini
+// is in the copy's folder. Under U unarmed: it passes through, writes nothing there, and its refusal is in refused\. Then
+// the layer as an implicit one enabled by SteamAppId=4242 only: without it the layer isn't loaded (nothing written, no
+// refusal), with it the armed copy records.
+// run, with the child's stdout and stderr into out
+static int run_to(const std::wstring& exe, const std::wstring& args, const std::wstring& out) {
+    fflush(stdout);
+    SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
+    HANDLE f = CreateFileW(out.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return 1;
+    std::wstring cmd = L"\"" + exe + L"\" " + args;
+    STARTUPINFOW si = {sizeof si};
+    si.dwFlags = STARTF_USESTDHANDLES, si.hStdOutput = si.hStdError = f;
+    PROCESS_INFORMATION pi;
+    DWORD code = 1;
+    if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi))
+        WaitForSingleObject(pi.hProcess, INFINITE), GetExitCodeProcess(pi.hProcess, &code), CloseHandle(pi.hProcess), CloseHandle(pi.hThread);
+    CloseHandle(f);
+    return (int)code;
+}
+
+// ms per pipeline of one kind from fossilize-replay's "Playing back N <kind> pipelines took X s (accumulated time)", which
+// is wall time with one thread; -1 when the log has none.
+static double replay_ms(const std::wstring& log, const char* kind) {
+    const std::string t = read_all(log), want = std::string("Playing back %u ") + kind + " pipelines took %lf s";
+    for (size_t at = 0; (at = t.find("Playing back ", at)) != std::string::npos; ++at) {
+        unsigned n = 0;
+        double s = 0;
+        if (sscanf_s(t.c_str() + at, want.c_str(), &n, &s) == 2 && n) return s * 1000 / n;
+    }
+    return -1;
+}
+
+// `selftest vkappkey <fossilize dir>`: is VkApplicationInfo in the driver's cache key under a redirect, as Steam sets one
+// (__GL_SHADER_DISK_CACHE_PATH + _APP_NAME, AMD_VK_PIPELINE_CACHE_PATH + _FILENAME)? R records vkchild 9's rows with the kit's
+// layer, then fossilize-replay (beside this exe) replays them once as Z, redirected to one path and app name. Then fresh exe
+// names under the same redirect, each vkchild 10 timed per row against a cold baseline: A with the recorded app info, N with another
+// appName, E with an engineName (the recording has none), X with the replay's extension set (every one, as fossilize-replay
+// enables them) instead of the minimal one, and C under another app name, never replayed (the control). [rows] pins the
+// order (each letter a row, repeats allowed, Z = fossilize-replay again as Z) and gives no verdict, [seconds] waits after the
+// replay.
+static int vkappkey_parent(const std::wstring& a, const std::wstring& bin, const std::wstring& dir, const std::wstring& src, const std::wstring& order,
+                           int delay_s) {
+    namespace fs = std::filesystem;
+    std::wstring lock = gpu_lock("selftest vkappkey");
+    if (lock.empty()) return 1;
+    FozKit kit;
+    if (!foz_kit(src, dir, kit)) return 1;
+    auto env = [](const wchar_t* n, const std::wstring& v) { SetEnvironmentVariableW(n, v.empty() ? nullptr : v.c_str()); };
+    auto layers_off = [&] {
+        env(L"VK_LOADER_LAYERS_DISABLE", L"~all~");
+        for (auto n : {L"VK_LAYER_PATH", L"VK_INSTANCE_LAYERS", L"FOSSILIZE_DUMP_PATH", L"STEAM_FOSSILIZE_DUMP_PATH", L"SCSK_VK_APP", L"SCSK_VK_ENGINE", L"SCSK_VK_FC"}) env(n, L"");
+    };
+    auto redirect = [&](const std::wstring& app, const std::wstring& to = L"") {  // NVIDIA's and AMD's, as steamclient64.dll sets them; each driver ignores the other's
+        const std::wstring path = app.empty() ? L"" : to.empty() ? dir + L"cache" : to;
+        env(L"__GL_SHADER_DISK_CACHE_PATH", path), env(L"__GL_SHADER_DISK_CACHE_APP_NAME", app);
+        env(L"AMD_VK_USE_PIPELINE_CACHE", app.empty() ? L"" : L"1"), env(L"AMD_VK_PIPELINE_CACHE_PATH", path), env(L"AMD_VK_PIPELINE_CACHE_FILENAME", app);
+    };
+    std::random_device rd;
+    const unsigned seed = 100000 + rd() % 8000000;
+    const std::wstring stamp = std::to_wstring(GetTickCount() % 1000000), rec = dir + L"rec", g = L"scskak" + stamp + L"g";
+    auto name = [&](const std::wstring& t) { return dir + L"scskak" + stamp + t + L".exe"; };
+    CreateDirectoryW(rec.c_str(), nullptr), CreateDirectoryW((dir + L"cache").c_str(), nullptr);
+    layers_off();
+    env(L"VK_LOADER_LAYERS_DISABLE", L"~implicit~");
+    env(L"VK_LAYER_PATH", kit.layer_dir), env(L"VK_INSTANCE_LAYERS", kit.layer), env(kit.dump_var.c_str(), rec + L"\\scsk");
+    redirect(g + L"0");  // the recording's own creates stay in this run's folder too, under an app name nothing else uses
+    const std::wstring R = name(L"r");
+    CHECK(CopyFileW(a.c_str(), R.c_str(), FALSE));
+    if (int rc = run(R, L"vkchild 9 " + std::to_wstring(seed) + L" \"" + dir + L"rec.txt\"")) return printf("recording exited with %d\n", rc), 1;
+    layers_off();
+    std::wstring db;
+    std::error_code ec;
+    for (fs::directory_iterator it(rec, ec), end; !ec && it != end; it.increment(ec))
+        if (it->path().extension() == L".foz") db = it->path().wstring();
+    if (db.empty()) return printf("no .foz: the layer didn't load\n"), 1;
+    const std::wstring Z = name(L"z");
+    CHECK(CopyFileW((bin + L"fossilize-replay.exe").c_str(), Z.c_str(), FALSE));
+    redirect(g);
+    const std::wstring first = dir + L"replay.txt";
+    if (int rc = run_to(Z, L"\"" + db + L"\" --num-threads 1", first)) return printf("the replay exited with %d\n", rc), 1;
+    const ULONGLONG replayed = GetTickCount64();
+    // Timing decides, as fail-on-compile reported every row a miss on AMD under the redirect (measured): per row a cold
+    // baseline in a cache folder of its own, then the plain creates under the replayed redirect (a hit: under the cut below
+    // of the baseline), then fail-on-compile alone in another process (does it report what the plain pass found or stored?).
+    // Without [rows] they run in a shuffled order, printed: each plain pass writes the replayed cache, so an order effect shows.
+    using Ms = std::map<std::string, double>;
+    // AMD's warm graphics creates take 0.07 to 0.15 of their cold time (measured), NVIDIA's about 0.002: AMD's cut is 0.2
+    double cut = 0.1;
+    IDXGIFactory1* df = nullptr;
+    IDXGIAdapter1* da = nullptr;
+    DXGI_ADAPTER_DESC1 dd{};
+    if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&df))) && SUCCEEDED(df->EnumAdapters1(0, &da)) && SUCCEEDED(da->GetDesc1(&dd)) && dd.VendorId == 0x1002) cut = 0.2;
+    if (da) da->Release();
+    if (df) df->Release();
+    printf("hit: under %.0f%% of the cold baseline\n", cut * 100);
+    auto creates = [&](const std::wstring& exe, const std::wstring& path, const std::wstring& as, const wchar_t* fc, int col, Ms& out) {
+        redirect(as, path);
+        env(L"SCSK_VK_FC", fc);
+        const std::wstring rows = exe + L".txt";
+        if (run(exe, L"vkchild 10 " + std::to_wstring(seed) + L" \"" + rows + L"\"")) return false;
+        read_rows(rows, nullptr, [&](const std::string& n, const char* rest) {
+            double v[2] = {};
+            sscanf_s(rest, "%lf\t%lf", &v[0], &v[1]);
+            if (!n.compare(0, 9, "graphics ") || !n.compare(0, 8, "compute ")) out[n] = v[col];
+        });
+        return !out.empty();
+    };
+    struct Variant {
+        const wchar_t* app_name;
+        const wchar_t* engine;
+        std::wstring as;
+        bool all_ext;
+    };
+    const std::map<wchar_t, Variant> kinds = {{L'A', {nullptr, nullptr, g, false}}, {L'N', {L"another app", nullptr, g, false}},
+                                              {L'E', {nullptr, L"another engine", g, false}}, {L'X', {nullptr, nullptr, g, true}},
+                                              {L'C', {nullptr, nullptr, g + L"2", false}}};
+    std::wstring tags = order.empty() ? L"ANEXC" : order;
+    if (order.empty()) std::shuffle(tags.begin(), tags.end(), std::mt19937(seed));
+    for (wchar_t t : tags)
+        if (t != L'Z' && !kinds.count(t)) return printf("vkappkey: row %lc isn't one of A N E X C Z\n", t), 1;
+    printf("row order:");
+    for (wchar_t t : tags) printf(" %lc", t);
+    printf("\n");
+    if (delay_s > 0) printf("waiting %d s after the replay\n", delay_s), Sleep(delay_s * 1000);
+    std::map<wchar_t, int> verdicts;  // each tag's first row
+    int row = 0;
+    for (wchar_t t : tags) {
+        const std::wstring at = std::wstring(1, t) + std::to_wstring(++row);
+        if (t == L'Z') {  // the replayer's own exe again, under the same redirect: its single-threaded time per pipeline, against its first replay's
+            env(L"SCSK_VK_ALL_EXT", L""), env(L"SCSK_VK_APP", L""), env(L"SCSK_VK_ENGINE", L""), env(L"SCSK_VK_FC", L"");
+            redirect(g);
+            const double since = (GetTickCount64() - replayed) / 1000.0;
+            const std::wstring log = dir + L"replay" + at + L".txt";
+            if (int rc = run_to(Z, L"\"" + db + L"\" --num-threads 1", log)) return printf("Z: the replay exited with %d\n", rc), 1;
+            for (const char* kind : {"graphics", "compute"}) {
+                const double cold = replay_ms(first, kind), warm = replay_ms(log, kind);
+                printf("  Z %-8s pipelines, ms each: cold %8.2f (the first replay), warm %8.2f, ratio %.3f\n", kind, cold, warm, cold > 0 ? warm / cold : 0.0);
+            }
+            printf("Z (row %d, %.1f s after the replay): %ls again under the same redirect\n", row, since, Z.substr(dir.size()).c_str());
+            continue;
+        }
+        const Variant& v = kinds.at(t);
+        env(L"SCSK_VK_ALL_EXT", v.all_ext ? L"1" : L"");
+        env(L"SCSK_VK_APP", v.app_name ? v.app_name : L""), env(L"SCSK_VK_ENGINE", v.engine ? v.engine : L"");
+        const std::wstring X = name(at), cold = dir + L"cold" + at;
+        Ms base, plain, fc;
+        CreateDirectoryW(cold.c_str(), nullptr);  // the redirect's folder must exist, or the driver caches nothing
+        if (!CopyFileW(a.c_str(), X.c_str(), FALSE) || !creates(X, cold, v.as, L"0", 1, base)) return printf("%ls: a run failed\n", at.c_str()), 1;
+        const double since = (GetTickCount64() - replayed) / 1000.0;  // as the plain pass starts
+        if (!creates(X, dir + L"cache", v.as, L"0", 1, plain) || !creates(X, dir + L"cache", v.as, L"only", 0, fc)) return printf("%ls: a run failed\n", at.c_str()), 1;
+        int n = 0, hit = 0, fc_hit = 0;
+        double ms = 0, cold_ms = 0;
+        for (auto& [k, tm] : plain) {
+            const double b = base.count(k) ? base[k] : 0;
+            ++n, ms += tm, cold_ms += b, hit += tm < b * cut, fc_hit += fc.count(k) && fc[k] >= 0;
+            printf("  %lc %-40s cold %8.2f ms, warm %8.2f ms, ratio %.3f, fail-on-compile %s\n", t, k.c_str(), b, tm, b > 0 ? tm / b : 0.0,
+                   !fc.count(k) ? "-" : fc[k] >= 0 ? "cached" : "compile");
+        }
+        printf("%lc (row %d, %.1f s after the replay): %d of %d plain creates under %.0f%% of the cold baseline, %.2f ms vs %.2f ms each; fail-on-compile "
+               "afterwards: %d of %d reported cached\n",
+               t, row, since, hit, n, cut * 100, ms / n, cold_ms / n, fc_hit, n);
+        verdicts.try_emplace(t, hit == n ? 1 : hit == 0 ? 0 : 2);
+    }
+    redirect(L""), layers_off(), env(L"VK_LOADER_LAYERS_DISABLE", L""), env(L"SCSK_VK_ALL_EXT", L""), env(L"SCSK_VK_FC", L"");
+    if (!order.empty()) return printf("vkappkey: every row ran\n"), 0;  // a pinned order measures: no verdict
+    const char* const what[] = {"miss", "hit", "partly"};
+    printf("vkappkey (by timing): same app info %s, another appName %s, another engineName %s, the replay's extension set %s, control %s\n",
+           what[verdicts[L'A']], what[verdicts[L'N']], what[verdicts[L'E']], what[verdicts[L'X']], what[verdicts[L'C']]);
+    return verdicts[L'A'] == 1 && verdicts[L'C'] == 0 ? 0 : 1;  // the probe works only when the replay is seen and the control isn't
+}
+
+static void arm_self(const std::wstring& dir, const std::wstring& exe);
+static int vkrec_parent(const std::wstring& a, const std::wstring& bin, const std::wstring& dir) {
+    namespace fs = std::filesystem;
+    std::wstring lock = gpu_lock("selftest vkrec");
+    if (lock.empty()) return 1;
+    auto env = [](const wchar_t* n, const std::wstring& v) { SetEnvironmentVariableW(n, v.empty() ? nullptr : v.c_str()); };
+    auto clean = [&] {
+        for (auto n : {L"VK_LAYER_PATH", L"VK_ADD_LAYER_PATH", L"VK_ADD_IMPLICIT_LAYER_PATH", L"VK_INSTANCE_LAYERS", L"VK_LOADER_LAYERS_ALLOW",
+                       L"FOSSILIZE_DUMP_PATH", L"__GL_SHADER_DISK_CACHE_PATH", L"SteamAppId"})
+            env(n, L"");
+        env(L"VK_LOADER_LAYERS_DISABLE", L"~implicit~");  // Steam's and the overlays' layers stay out
+    };
+    const std::wstring game = dir + L"game\\", layer = dir + L"layer\\", exe = game + L"scskvr" + std::to_wstring(GetTickCount() % 1000000) + L".exe";
+    CHECK(CreateDirectoryW(game.c_str(), nullptr) && CreateDirectoryW(layer.c_str(), nullptr) && CopyFileW(a.c_str(), exe.c_str(), FALSE));
+    // the layer's manifest as the app writes it per game, the dll where the app installs it
+    std::wstring dll = bin + L"VkLayer_scskiller.dll";
+    for (auto& c : dll) if (c == L'\\') c = L'/';
+    auto manifest = [&](const char* name, const char* gate) {
+        std::string d(WideCharToMultiByte(CP_UTF8, 0, dll.c_str(), -1, nullptr, 0, nullptr, nullptr), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, dll.c_str(), -1, d.data(), (int)d.size(), nullptr, nullptr);
+        d.pop_back();
+        FILE* f = _wfopen((layer + L"VkLayer_scskiller.json").c_str(), L"wb");
+        if (!f) return false;
+        fprintf(f, "{\"file_format_version\": \"1.0.0\", \"layer\": {\"name\": \"%s\", \"type\": \"GLOBAL\", \"library_path\": \"%s\",\n"
+                   " \"api_version\": \"1.4.303\", \"implementation_version\": \"1\", \"description\": \"selftest\",\n"
+                   " \"functions\": {\"vkGetInstanceProcAddr\": \"VK_LAYER_fossilize_GetInstanceProcAddr\", \"vkGetDeviceProcAddr\": \"VK_LAYER_fossilize_GetDeviceProcAddr\"}%s}}\n",
+                name, d.c_str(), gate);
+        return fclose(f) == 0;
+    };
+    wchar_t recdir[MAX_PATH];
+    CHECK(GetEnvironmentVariableW(L"SCSKILLER_TEST_RECORDER_DIR", recdir, MAX_PATH));
+    const std::wstring out = std::wstring(recdir) + L"\\vulkan\\" + file_key(exe) + L"\\", refusal = std::wstring(recdir) + L"\\refused\\" + file_key(exe);
+    auto files = [&](const std::wstring& d) {
+        std::vector<std::wstring> r;
+        std::error_code ec;
+        for (fs::directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec)) r.push_back(it->path().filename().wstring());
+        return r;
+    };
+    auto pipelines = [&](const std::wstring& foz) {  // tags 6, 7, 9
+        std::string f = read_all(foz);
+        int n = 0;
+        for (size_t o = 16; o + 56 <= f.size();) {
+            uint32_t stored;
+            memcpy(&stored, f.data() + o + 40, 4);
+            const int tag = (int)strtoul(f.substr(o, 24).c_str(), nullptr, 16);
+            n += tag == 6 || tag == 7 || tag == 9;
+            o += 56 + stored;
+        }
+        return n;
+    };
+    struct Seen { int code = -1, foz = 0, pipes = 0, rows = 0; bool api = false, cache = false, refused = false, inst = false, dev = false; std::vector<std::wstring> game; };
+    auto play = [&](const wchar_t* tag) {
+        Seen s;
+        std::error_code ec;
+        fs::remove_all(out, ec), DeleteFileW(refusal.c_str());
+        s.code = run(exe, L"vkchild 9 " + std::to_wstring(100000 + GetTickCount() % 8000000) + L" \"" + dir + tag + L".txt\"");
+        for (auto& n : files(out))
+            if (n.starts_with(L"scskiller.") && n.ends_with(L".foz")) ++s.foz, s.pipes += pipelines(out + n);
+        std::string csv = read_all(out + L"scskiller_creates.csv");
+        std::erase(csv, '\r');  // a text-mode file
+        s.api = csv.find("\n#api,vulkan\n") != std::string::npos;
+        s.cache = csv.find("\n#cache,__GL_SHADER_DISK_CACHE_PATH=" + std::string("C:\\scsk vkrec cache") + "\n") != std::string::npos;
+        // vk_child's instance (API 1.3, no instance extensions), its one device queue (count 1, flags 0, priority 1) and its
+        // features chain, Vulkan 1.3's first (pipelineCreationCacheControl and dynamicRendering)
+        s.inst = csv.find("\n#vkinstance,4206592,0,0,=a%2C b%25c,=scsk engine,\n") != std::string::npos;
+        if (size_t d = csv.find("\n#vkdevice,"); d != std::string::npos) {
+            const std::string l = csv.substr(d + 1, csv.find('\n', d + 1) - d - 1);
+            s.dev = l.find(":1:0:1,53:000100000000100") != std::string::npos;
+        }
+        for (size_t at = 0; (at = csv.find('\n', at)) != std::string::npos;)
+            if (++at < csv.size() && csv[at] != '#') s.rows += csv.find(',', at) != std::string::npos;
+        s.refused = GetFileAttributesW(refusal.c_str()) != INVALID_FILE_ATTRIBUTES;
+        s.game = files(game);
+        printf("%ls: exit %d, %d archive(s), %d pipelines, %d rows%s%s%s%s%s; game folder:", tag, s.code, s.foz, s.pipes, s.rows, s.api ? ", #api,vulkan" : "",
+               s.cache ? ", #cache" : "", s.inst ? ", #vkinstance" : "", s.dev ? ", #vkdevice" : "", s.refused ? ", refused" : "");
+        for (auto& n : s.game) printf(" %ls", n.c_str());
+        printf("\n");
+        return s;
+    };
+    auto only_ini = [](const Seen& s) { return s.game.size() == 2; };  // the exe and its scskiller.ini
+    int bad = 0;
+
+    clean();
+    env(L"SCSKILLER_SELFTEST_UNARMED", L"1");  // the copy never arms itself: this parent does
+    arm_self(game, exe);
+    CHECK(manifest("VK_LAYER_SCSKILLER_selftest", ""));
+    env(L"VK_ADD_LAYER_PATH", layer), env(L"VK_INSTANCE_LAYERS", L"VK_LAYER_SCSKILLER_selftest");
+    env(L"FOSSILIZE_DUMP_PATH", game + L"fossilize"), env(L"__GL_SHADER_DISK_CACHE_PATH", L"C:\\scsk vkrec cache");
+    env(L"SCSK_VK_APP", L"a, b%c"), env(L"SCSK_VK_ENGINE", L"scsk engine");
+    Seen x = play(L"x");
+    env(L"SCSK_VK_APP", L""), env(L"SCSK_VK_ENGINE", L"");
+    bad += x.code != 0 || x.foz < 1 || x.pipes < 1 || x.rows < x.pipes || !x.api || !x.cache || !x.inst || !x.dev || x.refused || !only_ini(x);
+
+    CHECK(DeleteFileW((game + L"scskiller.ini").c_str()));
+    Seen u = play(L"u");
+    bad += u.code != 0 || u.foz || u.rows || !u.refused || u.game.size() != 1;
+
+    clean();
+    arm_self(game, exe);
+    CHECK(manifest("VK_LAYER_SCSKILLER_selftest_implicit", ",\n \"enable_environment\": {\"SteamAppId\": \"4242\"}, \"disable_environment\": {\"DISABLE_VK_LAYER_SCSKILLER_4242\": \"1\"}"));
+    env(L"VK_ADD_IMPLICIT_LAYER_PATH", layer), env(L"VK_LOADER_LAYERS_ALLOW", L"VK_LAYER_SCSKILLER_selftest_implicit");
+    Seen i0 = play(L"i0");
+    bad += i0.code != 0 || i0.foz || i0.rows || i0.refused || !only_ini(i0);
+    env(L"SteamAppId", L"4242");
+    Seen i1 = play(L"i1");
+    bad += i1.code != 0 || i1.foz < 1 || i1.pipes < 1 || i1.refused || !only_ini(i1);
+    clean();
+    env(L"VK_LOADER_LAYERS_DISABLE", L""), env(L"SCSKILLER_SELFTEST_UNARMED", L""), env(L"VK_LOADER_DEBUG", L"");
+    printf("vkrec: %s\n", bad ? "FAILED" : "passed");
+    return bad ? 1 : 0;
+}
+
 static int layerwarm_child(const std::wstring& dir, unsigned seed, int n) {
     HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());  // ReShade (dxgi.dll, imported by this exe) is loaded by now
     CHECK(m);
@@ -3473,12 +4667,13 @@ static int amwarm_parent(const std::wstring& a, const std::wstring& dir, int n) 
     return r;
 }
 
-// `selftest burst <n> <threads> <rec|plain> [shaders] [compute]`: a game's startup compile on WARP: n graphics PSOs (or compute
+// `selftest burst <n> <threads> <rec|plain> [shaders] [compute|late]`: a game's startup compile on WARP: n graphics PSOs (or compute
 // PSOs of <shaders> shaders, mostly repeats) created by <threads> threads at once, each released right away, every fourth
-// the desc of an earlier one; through the proxy beside it recording (rec)
+// the desc of an earlier one (late: each shader's PSOs in a run of their own, in shader order, as a session that reaches
+// new areas: max_db_bytes in the scskiller.ini beside the proxy shows what its limit keeps); through the proxy beside it recording (rec)
 // or the system d3d12.dll (plain). Prints creates/s, the process's private bytes at the start, at their peak and at the end,
 // and its file writes during the burst.
-static int burst_rows(const std::wstring& dir, long n, unsigned threads, bool rec, int shaders, bool cs) {
+static int burst_rows(const std::wstring& dir, long n, unsigned threads, bool rec, int shaders, bool cs, bool late) {
     auto priv = [] {
         PROCESS_MEMORY_COUNTERS_EX m{sizeof m};
         return K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&m, sizeof m) ? m.PrivateUsage / 1048576.0 : 0;
@@ -3543,9 +4738,10 @@ static int burst_rows(const std::wstring& dir, long n, unsigned threads, bool re
                 D3D12_GRAPHICS_PIPELINE_STATE_DESC g = {};
                 g.pRootSignature = rs, g.InputLayout = {&ie, 1};
                 g.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
-                g.PS = {ps[j % shaders]->GetBufferPointer(), ps[j % shaders]->GetBufferSize()};
+                long per = std::max(1L, n / shaders), p = late ? std::min<long>(j / per, shaders - 1) : j % shaders;
+                g.PS = {ps[p]->GetBufferPointer(), ps[p]->GetBufferSize()};
                 g.SampleMask = UINT_MAX, g.RasterizerState = {D3D12_FILL_MODE_SOLID, D3D12_CULL_MODE_NONE}, g.RasterizerState.DepthClipEnable = TRUE;
-                g.RasterizerState.DepthBias = (INT)(j / shaders);  // n distinct descs over a few shaders
+                g.RasterizerState.DepthBias = (INT)(late ? j - p * per : j / shaders);  // n distinct descs over a few shaders
                 g.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, g.NumRenderTargets = 1, g.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
                 g.SampleDesc = {1, 0};
                 if (SUCCEEDED(dev->CreateGraphicsPipelineState(&g, IID_PPV_ARGS(&pso)))) pso->Release();
@@ -4024,14 +5220,144 @@ static int frames_storm_rows(const std::wstring& dir) {
     return 0;
 }
 
+// Two hookers of dxgi's Present entry, before the proxy loads, each through a relay page near the entry to a stub in this
+// exe (the prologue RivaTuner's detours start with, then its body). RivaTuner's (rt_*) puts the bytes it saved at install
+// back for its own call and its jmp after, over whatever is there (rtsskeep: the bytes it found). Ubisoft Connect's
+// overlay's (uc_*) runs the entry's first instruction moved into its trampoline, or where a jmp there led.
+#pragma section(".rtss", read, execute)
+__declspec(allocate(".rtss")) __declspec(align(16)) static uint8_t rt_entry[32] = {
+    0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18,  // mov [rsp+8..18h], rbx/rbp/rsi
+    0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xE0};                                           // mov rax, body / jmp rax
+__declspec(allocate(".rtss")) __declspec(align(16)) static uint8_t uc_entry[2][32] = {
+    {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xE0},
+    {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xE0}};
+static uint8_t *g_rt_at, g_rt_orig[5], g_rt_jmp[5];
+static SRWLOCK g_rt_lock = SRWLOCK_INIT;
+static long g_rt_calls, g_uc_calls[2];
+static bool g_rt_keep;
+static uint8_t* g_uc_tramp[2];
+static void rt_write(uint8_t* at, const void* b, size_t n) {
+    DWORD old;
+    VirtualProtect(at, n, PAGE_EXECUTE_READWRITE, &old);
+    memcpy(at, b, n);
+    VirtualProtect(at, n, old, &old);
+    FlushInstructionCache(GetCurrentProcess(), at, n);
+}
+static HRESULT STDMETHODCALLTYPE rt_body(IDXGISwapChain* sc, UINT sync, UINT flags) {
+    AcquireSRWLockExclusive(&g_rt_lock);
+    uint8_t found[5];
+    memcpy(found, g_rt_at, 5);
+    rt_write(g_rt_at, g_rt_orig, 5);
+    HRESULT hr = ((PFN_Pr)g_rt_at)(sc, sync, flags);
+    rt_write(g_rt_at, g_rt_keep ? found : g_rt_jmp, 5);
+    ++g_rt_calls;
+    ReleaseSRWLockExclusive(&g_rt_lock);
+    return hr;
+}
+template <int K> static HRESULT STDMETHODCALLTYPE uc_body(IDXGISwapChain* sc, UINT sync, UINT flags) {
+    InterlockedIncrement(&g_uc_calls[K]);
+    return ((PFN_Pr)g_uc_tramp[K])(sc, sync, flags);
+}
+// a page within a rel32 jmp of at
+static uint8_t* near_page(uint8_t* at) {
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    uint8_t* p = nullptr;
+    for (uintptr_t g = si.dwAllocationGranularity, base = (uintptr_t)at & ~(g - 1), k = g; !p && k < 0x70000000; k += g)
+        for (uintptr_t a : {base - k, base + k})
+            if (!p) p = (uint8_t*)VirtualAlloc((void*)a, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    return p;
+}
+static void abs_jmp(uint8_t* at, const void* to) { at[0] = 0xFF, at[1] = 0x25, memset(at + 2, 0, 4), memcpy(at + 6, &to, 8); }
+// the relays stand_in writes: 0 jmp [rip+0], 1 jmp [rip+disp] to a slot further on, 2 mov rax, imm64 / jmp rax,
+// 3 push lo32 / mov dword [rsp+4], hi32 / ret
+static int g_relay_form;
+// the stub's body set, and in jmp the entry's e9 to a relay to the stub
+static bool stand_in(uint8_t* stub, void* body, uint8_t* jmp) {
+    uint8_t s[32];
+    memcpy(s, stub, sizeof s), memcpy(s + 17, &body, 8);
+    rt_write(stub, s, sizeof s);
+    uint8_t* relay = near_page(g_rt_at);
+    if (!relay) return false;
+    if (g_relay_form == 1) {
+        const int32_t slot = 64 - 6;
+        relay[0] = 0xFF, relay[1] = 0x25, memcpy(relay + 2, &slot, 4), memcpy(relay + 64, &stub, 8);
+    } else if (g_relay_form == 2) relay[0] = 0x48, relay[1] = 0xB8, memcpy(relay + 2, &stub, 8), relay[10] = 0xFF, relay[11] = 0xE0;
+    else if (g_relay_form == 3) {
+        const uint64_t a = (uint64_t)stub;
+        const uint8_t mov[4] = {0xC7, 0x44, 0x24, 0x04};
+        relay[0] = 0x68, memcpy(relay + 1, &a, 4), memcpy(relay + 5, mov, 4), memcpy(relay + 9, (const uint8_t*)&a + 4, 4), relay[13] = 0xC3;
+    }
+    else abs_jmp(relay, stub);
+    FlushInstructionCache(GetCurrentProcess(), relay, 72);
+    int32_t rel = (int32_t)(relay - (g_rt_at + 5));
+    jmp[0] = 0xE9, memcpy(jmp + 1, &rel, 4);
+    return true;
+}
+static bool rt_hook() {
+    memcpy(g_rt_orig, g_rt_at, 5);
+    if (!stand_in(rt_entry, (void*)rt_body, g_rt_jmp)) return false;
+    rt_write(g_rt_at, g_rt_jmp, 5);
+    return true;
+}
+template <int K> static bool uc_hook() {
+    uint8_t *at = g_rt_at, jmp[5], *tramp = (uint8_t*)VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!tramp) return false;
+    if (at[0] == 0xE9) {  // another hooker's jmp: its target
+        int32_t r;
+        memcpy(&r, at + 1, 4);
+        abs_jmp(tramp, at + 5 + r);
+    } else {  // dxgi's own Present: a 5-byte mov [rsp+10h], rbx first
+        if (memcmp(at, "\x48\x89\x5C\x24", 4)) return false;
+        memcpy(tramp, at, 5), abs_jmp(tramp + 5, at + 5);
+    }
+    FlushInstructionCache(GetCurrentProcess(), tramp, 19);
+    g_uc_tramp[K] = tramp;
+    if (!stand_in(uc_entry[K], (void*)uc_body<K>, jmp)) return false;
+    rt_write(at, jmp, 5);
+    return true;
+}
+// dxgi's Present, from a swap chain made before the proxy loads
+static bool find_present() {
+    wchar_t sys[MAX_PATH];
+    GetSystemDirectoryW(sys, MAX_PATH);
+    HMODULE d12 = LoadLibraryW((std::wstring(sys) + L"\\d3d12.dll").c_str());
+    auto create = d12 ? (decltype(&D3D12CreateDevice))GetProcAddress(d12, "D3D12CreateDevice") : nullptr;
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    ID3D12Device* dev = nullptr;
+    ID3D12CommandQueue* q = nullptr;
+    IDXGISwapChain1* sc = nullptr;
+    D3D12_COMMAND_QUEUE_DESC qd = {};
+    DXGI_SWAP_CHAIN_DESC1 d = {64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2};
+    d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    HWND w = CreateWindowExW(0, L"STATIC", L"scskiller rtss", WS_POPUP, 0, 0, 8, 8, nullptr, nullptr, nullptr, nullptr);
+    bool ok = create && SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))) &&
+              SUCCEEDED(create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))) && SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q))) &&
+              SUCCEEDED(f->CreateSwapChainForHwnd(q, w, &d, nullptr, nullptr, &sc));
+    if (ok) g_rt_at = (uint8_t*)(*(void***)sc)[8];
+    for (IUnknown* u : {(IUnknown*)sc, (IUnknown*)q, (IUnknown*)dev, (IUnknown*)warp, (IUnknown*)f})
+        if (u) u->Release();
+    DestroyWindow(w);
+    return ok;
+}
+
 // `selftest framesfg ffx [late]`: fakenext.dll loaded as amd_fidelityfx_loader_dx12.dll before the first device (late:
 // after it), a swap chain presented 3 times, then frame generation's swap chain from its ffxCreateContext (FOR_HWND) presented 3 times, each
 // presenting its real swap chain once on this thread and twice from another. Prints "chains <frames of each>" and "game
 // <index>". play: a compute PSO first, and frame generation's swap chain presents until the log says the in-game panel's
-// play time is done or dxgi's Present went back (60 s at most).
+// play time is done, its swap chain isn't drawn on, or with no panel, dxgi's Present went back (60 s at most).
+// play rtss|rtsskeep|ucrtss|rtssuc: RivaTuner's Present hook goes in first (rtsskeep: putting back the bytes it found), or
+// with Ubisoft Connect's overlay's, in the order named. uconly: Ubisoft Connect's overlay's alone; uclate: then a second
+// hooker like it over ours after 50 presents of frame generation's swap chain; ucdisp, ucrax, ucpush: alone, through a
+// jmp [rip+disp], a mov rax / jmp rax or a push / mov / ret relay. Then "rtss calls <n>", "uc calls <first> <second>" and "fg presents <n>".
 static HRESULT compute_pso(ID3D12Device* dev, ID3D12RootSignature* rs, int k);
-static int frames_ffx_rows(const std::wstring& dir, bool play, bool late) {
+static int frames_ffx_rows(const std::wstring& dir, bool play, bool late, int rtss) {
     SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    g_rt_keep = rtss == 2;
+    g_relay_form = rtss == 7 ? 1 : rtss == 8 ? 2 : rtss == 9 ? 3 : 0;
+    CHECK(!rtss || (find_present() && (rtss != 3 && rtss < 5 || uc_hook<0>()) && (rtss >= 5 || rt_hook()) && (rtss != 4 || uc_hook<0>())));
+    long fg_presents = 0;
     auto load_ffx = [&] { return LoadLibraryW((dir + L"amd_fidelityfx_loader_dx12.dll").c_str()); };
     HMODULE ffx = late ? nullptr : load_ffx();
     HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
@@ -4067,9 +5393,14 @@ static int frames_ffx_rows(const std::wstring& dir, bool play, bool late) {
         CHECK(ser && SUCCEEDED(ser(&rd, D3D_ROOT_SIGNATURE_VERSION_1, &rb, &err)) &&
               SUCCEEDED(dev->CreateRootSignature(0, rb->GetBufferPointer(), rb->GetBufferSize(), IID_PPV_ARGS(&rs))) && SUCCEEDED(compute_pso(dev, rs, (int)GetTickCount())));
         for (ULONGLONG until = GetTickCount64() + 60000; GetTickCount64() < until;) {
-            for (int i = 0; i < 10; ++i) fg->Present(0, 0), Sleep(15);
+            for (int i = 0; i < 10; ++i, ++fg_presents) {
+                if (rtss == 5 && fg_presents == 50) CHECK(uc_hook<1>());  // over ours, calling it as its original
+                fg->Present(0, 0), Sleep(15);
+            }
             std::string log = read_all(dir + L"scskiller.log");
-            if (log.find("s of play counted, done") != std::string::npos || log.find("dxgi's Present unhooked") != std::string::npos) break;
+            if (log.find("s of play counted, done") != std::string::npos || log.find("overlay: frame generation swap chain") != std::string::npos ||
+                (log.find("dxgi's Present unhooked") != std::string::npos && log.find("overlay: on") == std::string::npos))
+                break;
         }
     }
     std::vector<long> chains;
@@ -4080,6 +5411,139 @@ static int frames_ffx_rows(const std::wstring& dir, bool play, bool late) {
     printf("\ngame %ld\n", game);
     // SCSKILLER_SELFTEST_FG_UNNAMED: its present queue unnamed, recognised by its ffxCreateContext all the same
     printf("unhooked %d\n", read_all(dir + L"scskiller.log").find("dxgi's Present unhooked") != std::string::npos);
+    if (rtss) printf("rtss calls %ld\nuc calls %ld %ld\nfg presents %ld\n", g_rt_calls, g_uc_calls[0], g_uc_calls[1], fg_presents);
+    return 0;
+}
+
+// FSR 3.0 built into the game (this exe), as FidelityFX SDK 1.x's frame interpolation swap chain: it makes the real swap
+// chain on a queue named "AMD FSR PresentQueue" through the factory, registers itself in that one's private data under
+// FSR's IID (a raw pointer), and the game presents it. Its Present signals the game's queue, then presents the real swap
+// chain on the game's thread (nothing generated) or twice from another thread (FSR's presenter: a generated and a real frame).
+static const GUID kFfxFi = {0xbeed74b2, 0x282e, 0x4aa3, {0xbb, 0xf7, 0x53, 0x45, 0x60, 0x50, 0x7a, 0x45}};
+struct Fs30Chain : IDXGISwapChain4 {
+    IDXGISwapChain4* real = nullptr;
+    ID3D12CommandQueue* game = nullptr;
+    ID3D12Fence* fence = nullptr;
+    UINT64 value = 0;
+    LONG refs = 1;
+    int presents = 0;
+    virtual ~Fs30Chain() {
+        if (real) real->Release();
+        if (fence) fence->Release();
+    }
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** pp) override {
+        const IID* mine[] = {&__uuidof(IUnknown), &__uuidof(IDXGIObject), &__uuidof(IDXGIDeviceSubObject), &__uuidof(IDXGISwapChain),
+                             &__uuidof(IDXGISwapChain1), &__uuidof(IDXGISwapChain2), &__uuidof(IDXGISwapChain3), &__uuidof(IDXGISwapChain4), &kFfxFi};
+        for (const IID* i : mine)
+            if (riid == *i) return AddRef(), *pp = this, S_OK;
+        return *pp = nullptr, E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&refs); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        const LONG n = InterlockedDecrement(&refs);
+        if (!n) delete this;
+        return n;
+    }
+    HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID g, UINT n, const void* d) override { return real->SetPrivateData(g, n, d); }
+    HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID g, const IUnknown* u) override { return real->SetPrivateDataInterface(g, u); }
+    HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID g, UINT* n, void* d) override { return real->GetPrivateData(g, n, d); }
+    HRESULT STDMETHODCALLTYPE GetParent(REFIID r, void** pp) override { return real->GetParent(r, pp); }
+    HRESULT STDMETHODCALLTYPE GetDevice(REFIID r, void** pp) override { return real->GetDevice(r, pp); }
+    HRESULT STDMETHODCALLTYPE Present(UINT sync, UINT flags) override {
+        if (flags & DXGI_PRESENT_TEST) return real->Present(sync, flags);
+        HRESULT hr = game->Signal(fence, ++value);
+        if (FAILED(hr)) return hr;
+        if (++presents <= 3) return real->Present(sync, flags);
+        std::thread([&] { for (int i = 0; i < 2 && SUCCEEDED(hr); ++i) hr = real->Present(sync, flags); }).join();
+        return hr;
+    }
+    HRESULT STDMETHODCALLTYPE GetBuffer(UINT i, REFIID r, void** pp) override { return real->GetBuffer(i, r, pp); }
+    HRESULT STDMETHODCALLTYPE SetFullscreenState(BOOL f, IDXGIOutput* o) override { return real->SetFullscreenState(f, o); }
+    HRESULT STDMETHODCALLTYPE GetFullscreenState(BOOL* f, IDXGIOutput** o) override { return real->GetFullscreenState(f, o); }
+    HRESULT STDMETHODCALLTYPE GetDesc(DXGI_SWAP_CHAIN_DESC* d) override { return real->GetDesc(d); }
+    HRESULT STDMETHODCALLTYPE ResizeBuffers(UINT n, UINT w, UINT h, DXGI_FORMAT f, UINT fl) override { return real->ResizeBuffers(n, w, h, f, fl); }
+    HRESULT STDMETHODCALLTYPE ResizeTarget(const DXGI_MODE_DESC* d) override { return real->ResizeTarget(d); }
+    HRESULT STDMETHODCALLTYPE GetContainingOutput(IDXGIOutput** o) override { return real->GetContainingOutput(o); }
+    HRESULT STDMETHODCALLTYPE GetFrameStatistics(DXGI_FRAME_STATISTICS* s) override { return real->GetFrameStatistics(s); }
+    HRESULT STDMETHODCALLTYPE GetLastPresentCount(UINT* n) override { return real->GetLastPresentCount(n); }
+    HRESULT STDMETHODCALLTYPE GetDesc1(DXGI_SWAP_CHAIN_DESC1* d) override { return real->GetDesc1(d); }
+    HRESULT STDMETHODCALLTYPE GetFullscreenDesc(DXGI_SWAP_CHAIN_FULLSCREEN_DESC* d) override { return real->GetFullscreenDesc(d); }
+    HRESULT STDMETHODCALLTYPE GetHwnd(HWND* w) override { return real->GetHwnd(w); }
+    HRESULT STDMETHODCALLTYPE GetCoreWindow(REFIID r, void** pp) override { return real->GetCoreWindow(r, pp); }
+    HRESULT STDMETHODCALLTYPE Present1(UINT sync, UINT flags, const DXGI_PRESENT_PARAMETERS*) override { return Present(sync, flags); }
+    BOOL STDMETHODCALLTYPE IsTemporaryMonoSupported() override { return real->IsTemporaryMonoSupported(); }
+    HRESULT STDMETHODCALLTYPE GetRestrictToOutput(IDXGIOutput** o) override { return real->GetRestrictToOutput(o); }
+    HRESULT STDMETHODCALLTYPE SetBackgroundColor(const DXGI_RGBA* c) override { return real->SetBackgroundColor(c); }
+    HRESULT STDMETHODCALLTYPE GetBackgroundColor(DXGI_RGBA* c) override { return real->GetBackgroundColor(c); }
+    HRESULT STDMETHODCALLTYPE SetRotation(DXGI_MODE_ROTATION r) override { return real->SetRotation(r); }
+    HRESULT STDMETHODCALLTYPE GetRotation(DXGI_MODE_ROTATION* r) override { return real->GetRotation(r); }
+    HRESULT STDMETHODCALLTYPE SetSourceSize(UINT w, UINT h) override { return real->SetSourceSize(w, h); }
+    HRESULT STDMETHODCALLTYPE GetSourceSize(UINT* w, UINT* h) override { return real->GetSourceSize(w, h); }
+    HRESULT STDMETHODCALLTYPE SetMaximumFrameLatency(UINT n) override { return real->SetMaximumFrameLatency(n); }
+    HRESULT STDMETHODCALLTYPE GetMaximumFrameLatency(UINT* n) override { return real->GetMaximumFrameLatency(n); }
+    HANDLE STDMETHODCALLTYPE GetFrameLatencyWaitableObject() override { return real->GetFrameLatencyWaitableObject(); }
+    HRESULT STDMETHODCALLTYPE SetMatrixTransform(const DXGI_MATRIX_3X2_F* m) override { return real->SetMatrixTransform(m); }
+    HRESULT STDMETHODCALLTYPE GetMatrixTransform(DXGI_MATRIX_3X2_F* m) override { return real->GetMatrixTransform(m); }
+    UINT STDMETHODCALLTYPE GetCurrentBackBufferIndex() override { return real->GetCurrentBackBufferIndex(); }
+    HRESULT STDMETHODCALLTYPE CheckColorSpaceSupport(DXGI_COLOR_SPACE_TYPE c, UINT* s) override { return real->CheckColorSpaceSupport(c, s); }
+    HRESULT STDMETHODCALLTYPE SetColorSpace1(DXGI_COLOR_SPACE_TYPE c) override { return real->SetColorSpace1(c); }
+    HRESULT STDMETHODCALLTYPE ResizeBuffers1(UINT n, UINT w, UINT h, DXGI_FORMAT f, UINT fl, const UINT* m, IUnknown* const* q) override {
+        return real->ResizeBuffers1(n, w, h, f, fl, m, q);
+    }
+    HRESULT STDMETHODCALLTYPE SetHDRMetaData(DXGI_HDR_METADATA_TYPE t, UINT n, void* d) override { return real->SetHDRMetaData(t, n, d); }
+};
+
+// `selftest framesfg fs30 [noreg|alien|obj]`: a swap chain presented 3 times, then FSR 3.0's built in (Fs30Chain) presented
+// until the log says the panel's play time is done or its lookup ended (60 s at most). noreg: it registers nothing on its
+// real swap chain; alien: it registers the real swap chain, an object of dxgi's; obj: its address instead of its vtable. Prints "chains <frames of each>", "game <index>",
+// "fs30 timed <0|1>" and "done <0|1>".
+static int frames_fs30_rows(const std::wstring& dir, const wchar_t* how) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    auto proxy_create = m ? (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice") : nullptr;
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    ID3D12Device* dev = nullptr;
+    CHECK(proxy_create && SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))) &&
+          SUCCEEDED(proxy_create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+    D3D12_COMMAND_QUEUE_DESC qd = {};
+    ID3D12CommandQueue *q = nullptr, *pq = nullptr;
+    DXGI_SWAP_CHAIN_DESC1 d = {64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2};
+    d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    auto wnd = [] { return CreateWindowExW(0, L"STATIC", L"scskiller framesfg", WS_OVERLAPPEDWINDOW, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr); };
+    IDXGISwapChain1* sc = nullptr;
+    CHECK(SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q))) && SUCCEEDED(f->CreateSwapChainForHwnd(q, wnd(), &d, nullptr, nullptr, &sc)));
+    for (int i = 0; i < 3; ++i) sc->Present(0, 0);
+    auto fi = new Fs30Chain;
+    fi->game = q;
+    IDXGISwapChain1* real1 = nullptr;
+    CHECK(SUCCEEDED(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fi->fence))) && SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&pq))) &&
+          SUCCEEDED(pq->SetName(L"AMD FSR PresentQueue")) && SUCCEEDED(f->CreateSwapChainForHwnd(pq, wnd(), &d, nullptr, nullptr, &real1)) &&
+          SUCCEEDED(real1->QueryInterface(IID_PPV_ARGS(&fi->real))));
+    real1->Release();
+    if (!how || wcscmp(how, L"noreg")) {
+        // as the SDK does: `this` as the data, so its first 8 bytes (the vtable pointer) are stored; obj: its address
+        const void* self = how && !wcscmp(how, L"alien") ? (const void*)fi->real : (const void*)fi;
+        CHECK(SUCCEEDED(fi->real->SetPrivateData(kFfxFi, sizeof(void*), how && !wcscmp(how, L"obj") ? (const void*)&self : self)));
+    }
+    IDXGISwapChain* game = fi;
+    bool done = false, ended = false;
+    for (ULONGLONG until = GetTickCount64() + 60000; !done && GetTickCount64() < until;) {
+        for (int i = 0; i < 10; ++i) game->Present(0, 0), Sleep(15);
+        std::string log = read_all(dir + L"scskiller.log");
+        done = log.find("s of play counted, done") != std::string::npos;
+        // refused: nothing more to wait for once the lookup ended and the panel can't count
+        ended = log.find("frames: FSR 3 frame generation built into") != std::string::npos;
+        if (ended && log.find("registered on it timed") == std::string::npos) break;
+    }
+    std::string log = read_all(dir + L"scskiller.log");
+    std::vector<long> chains;
+    long g;
+    frames_after(dir, 3, &chains, &g);
+    printf("chains");
+    for (long n : chains) if (n) printf(" %ld", n);
+    printf("\ngame %ld\nfs30 timed %d\ndone %d\n", g, log.find("registered on it timed") != std::string::npos, done);
+    game->Release();
     return 0;
 }
 
@@ -4548,6 +6012,15 @@ static int frames_fg_rows(const std::wstring& dir, const wchar_t* queue, bool ov
     int failed = 0;
     for (int i = 0; i < 3; ++i) failed += FAILED(sc->Present(0, 0)) + FAILED(sc->Present1(0, 0, &p));
     printf("presents failed %d\nframes %ld\n", failed, frames_after(dir, ours(sc) ? (queue ? 9 : 6) : -1));
+    if (queue && read_all(dir + L"scskiller.log").find("overlay: on") != std::string::npos) {
+        // the panel's play time runs out on the frames presented after frame generation took the slots back
+        bool done = false;
+        for (ULONGLONG until = GetTickCount64() + 60000; !done && GetTickCount64() < until;) {
+            for (int i = 0; i < 10; ++i) sc->Present(0, 0), Sleep(15);
+            done = read_all(dir + L"scskiller.log").find("s of play counted, done") != std::string::npos;
+        }
+        printf("done %d\n", done);
+    }
     return 0;
 }
 
@@ -6015,6 +7488,40 @@ static int nvopts_parent(const std::wstring& a, const std::wstring& bin, const s
     return bad ? 1 : 0;
 }
 
+// D3D11 warm: under Wine (SCSKILLER_TEST_WINE) a worker recreates its device every SCSKILLER_TEST_RECYCLE11 items and
+// still counts every item ok once, natively it never does. One thread: 64 items are 4 batches, a recreation after each
+// but the last.
+static int recycle11_rows(const std::wstring& d) {
+    ID3DBlob* cs = compile("RWBuffer<uint> b : register(u0); [numthreads(1,1,1)] void main() { b[0] = 1; }", "cs_5_0");
+    if (!cs) return printf("FAIL: recycle11: the CS didn't compile\n"), 1;
+    const std::string bytes((const char*)cs->GetBufferPointer(), cs->GetBufferSize()), h(20, '\x11');
+    auto rec = [](char tag, const std::string& p) { const uint32_t n = (uint32_t)p.size(); return tag + std::string((const char*)&n, 4) + p; };
+    std::string gen = rec('B', h + bytes);
+    for (int i = 0; i < 64; ++i) gen += rec('1', std::string("\x06\0\0\0", 4) + h);  // stage 6: CS
+    for (bool wine : {true, false}) {
+        if (!wine && GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version")) { printf("recycle11 native: skipped, this is Wine\n"); continue; }
+        const std::wstring sub = d + (wine ? L"recycle11wine\\" : L"recycle11native\\");
+        CreateDirectoryW(sub.c_str(), nullptr);
+        if (!CopyFileW((d + L"selftest.exe").c_str(), (sub + L"selftest.exe").c_str(), FALSE) || !CopyFileW((d + L"d3d12.dll").c_str(), (sub + L"d3d12.dll").c_str(), FALSE))
+            return printf("FAIL: recycle11: its folder couldn't be made\n"), 1;
+        FILE* f = _wfopen((sub + L"scskiller_gen.db").c_str(), L"wb");
+        if (!f) return 1;
+        fwrite(gen.data(), 1, gen.size(), f), fclose(f);
+        SetEnvironmentVariableW(L"SCSKILLER_TEST_RECYCLE11", L"16"), SetEnvironmentVariableW(L"SCSKILLER_THREADS", L"1");
+        if (wine) SetEnvironmentVariableW(L"SCSKILLER_TEST_WINE", L"1");
+        const int rc = run(sub + L"selftest.exe", L"warmonly 1");
+        SetEnvironmentVariableW(L"SCSKILLER_TEST_RECYCLE11", nullptr), SetEnvironmentVariableW(L"SCSKILLER_THREADS", nullptr), SetEnvironmentVariableW(L"SCSKILLER_TEST_WINE", nullptr);
+        if (rc) return rc;
+        const std::string log = read_all(sub + L"scskiller.log");
+        size_t made = 0;
+        for (size_t at = 0; (at = log.find("warm11: device recreated after 16 items", at)) != std::string::npos; ++at) ++made;
+        if (made != (wine ? 3u : 0u) || log.find("warm11: CS ok x64") == std::string::npos || log.find("failed:") != std::string::npos)
+            return printf("FAIL: recycle11 %s: %zu recreations, or not every item ok:\n%s\n", wine ? "wine" : "native", made, log.c_str()), 1;
+        printf("recycle11 %s: %zu recreations, 64 items ok\n", wine ? "wine" : "native", made);
+    }
+    return 0;
+}
+
 int wmain(int argc, wchar_t** argv) {
     std::wstring a(32768, L'\0');  // a run from a path past MAX_PATH (\\?\) loads the proxy beside it
     a.resize(GetModuleFileNameW(nullptr, a.data(), (DWORD)a.size()));
@@ -6037,7 +7544,7 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 2 && !wcscmp(argv[1], L"so")) return so_rows(dir, (unsigned)_wtoi(argv[2]));
     if (argc > 4 && !wcscmp(argv[1], L"burst"))
         return burst_rows(dir, _wtol(argv[2]), std::max(1, _wtoi(argv[3])), !wcscmp(argv[4], L"rec"), argc > 5 ? std::max(1, _wtoi(argv[5])) : 256,
-                          argc > 6 && !wcscmp(argv[6], L"compute"));
+                          argc > 6 && !wcscmp(argv[6], L"compute"), argc > 6 && !wcscmp(argv[6], L"late"));
     if (argc > 2 && !wcscmp(argv[1], L"frames")) return frames_rows(dir, _wtoi(argv[2]));
     if (argc > 1 && !wcscmp(argv[1], L"unload")) return unload_rows(dir);
     if (argc > 2 && !wcscmp(argv[1], L"preload")) return preload_rows(dir, argv[2]);
@@ -6048,8 +7555,9 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 2 && !wcscmp(argv[1], L"framesfg") && !wcscmp(argv[2], L"slm")) return frames_slm_rows(dir, argc > 3 ? argv[3] : L"");
     if (argc > 3 && !wcscmp(argv[1], L"framesfg") && !wcscmp(argv[2], L"sl"))
         return frames_sl_rows(dir, wcscmp(argv[3], L"new") != 0, !wcscmp(argv[3], L"shim"), !wcscmp(argv[3], L"many") ? 20 : 0);
+    if (argc > 2 && !wcscmp(argv[1], L"framesfg") && !wcscmp(argv[2], L"fs30")) return frames_fs30_rows(dir, argc > 3 ? argv[3] : nullptr);
     if (argc > 2 && !wcscmp(argv[1], L"framesfg") && !wcscmp(argv[2], L"ffx"))
-        return frames_ffx_rows(dir, argc > 3 && !wcscmp(argv[3], L"play"), argc > 3 && !wcscmp(argv[3], L"late"));
+        return frames_ffx_rows(dir, argc > 3 && !wcscmp(argv[3], L"play"), argc > 3 && !wcscmp(argv[3], L"late"), argc <= 4 ? 0 : !wcscmp(argv[4], L"rtss") ? 1 : !wcscmp(argv[4], L"rtsskeep") ? 2 : !wcscmp(argv[4], L"ucrtss") ? 3 : !wcscmp(argv[4], L"rtssuc") ? 4 : !wcscmp(argv[4], L"uclate") ? 5 : !wcscmp(argv[4], L"uconly") ? 6 : !wcscmp(argv[4], L"ucdisp") ? 7 : !wcscmp(argv[4], L"ucrax") ? 8 : !wcscmp(argv[4], L"ucpush") ? 9 : 0);
     if (argc > 1 && !wcscmp(argv[1], L"framescapture")) return frames_capture_rows(dir);
     if (argc > 1 && !wcscmp(argv[1], L"framesstorm")) return frames_storm_rows(dir);
     if (argc > 1 && !wcscmp(argv[1], L"framesdummy")) return frames_dummy_rows(dir);
@@ -6100,6 +7608,17 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (argc > 5 && !wcscmp(argv[1], L"dxrchild")) return dxr_child(_wtoi(argv[2]), (unsigned)_wtoi(argv[3]), argv[4], argv[5]);
     if (argc > 1 && !wcscmp(argv[1], L"vulkan")) return in_run(L"vulkan", false, [&](const std::wstring& dir) { return vk_parent(a, dir, argc > 2 ? std::max(1, _wtoi(argv[2])) : 1); });
+    if (argc > 1 && !wcscmp(argv[1], L"vkcap"))
+        return in_run(L"vkcap", false, [&](const std::wstring& dir) { return vkcap_parent(a, dir, argc > 2 ? std::max(1, _wtoi(argv[2])) : 60000, argc > 3 ? std::max(1, _wtoi(argv[3])) : 2000); });
+    if (argc > 1 && !wcscmp(argv[1], L"vkrt"))
+        return in_run(L"vkrt", false, [&](const std::wstring& dir) { return vkrt_parent(a, dir, argc > 2 ? std::max(1, _wtoi(argv[2])) : 3, argc > 3 && !wcscmp(argv[3], L"rq")); });
+    if (argc > 2 && !wcscmp(argv[1], L"vkproxy")) return in_run(L"vkproxy", false, [&](const std::wstring& dir) { return vkproxy_parent(a, dir, argv[2]); });
+    if (argc > 2 && !wcscmp(argv[1], L"vkfoz"))
+        return in_run(L"vkfoz", false, [&](const std::wstring& dir) { return vkfoz_parent(a, dir, argv[2], argc > 3 ? std::max(1, _wtoi(argv[3])) : 1, argc > 4 ? _wtoi(argv[4]) : 0); });
+    if (argc > 2 && !wcscmp(argv[1], L"vkappkey"))
+        return in_run(L"vkappkey", false, [&](const std::wstring& d) { return vkappkey_parent(a, dir, d, argv[2], argc > 3 ? argv[3] : L"", argc > 4 ? _wtoi(argv[4]) : 0); });
+    if (argc > 1 && !wcscmp(argv[1], L"vkrec")) return in_run(L"vkrec", false, [&](const std::wstring& d) { return vkrec_parent(a, dir, d); });
+    if (argc > 2 && !wcscmp(argv[1], L"vkwarm")) return in_run(L"vkwarm", false, [&](const std::wstring& d) { return vkwarm_parent(a, dir, d, argv[2]); });
     if (argc > 4 && !wcscmp(argv[1], L"vkchild")) return vk_child(_wtoi(argv[2]), (unsigned)_wtoi(argv[3]), argv[4]);
     if (argc > 1 && !wcscmp(argv[1], L"fields"))
         return in_run(L"fields", false, [&](const std::wstring& dir) { return fields_main(a, dir, argc > 2 ? std::max(1, _wtoi(argv[2])) : 1, argc > 3 && !wcscmp(argv[3], L"dxil")); });
@@ -6185,6 +7704,7 @@ int wmain(int argc, wchar_t** argv) {
             }
         }
         if (!rc) rc = run(d + L"selftest.exe", L"warm" + seed);
+        if (!rc) rc = recycle11_rows(d);
         if (rc) return rc;
         // every item created: the warm's list of what it didn't create is there and empty
         if (GetFileAttributesW((d + L"scskiller_failed.keys").c_str()) == INVALID_FILE_ATTRIBUTES || !read_all(d + L"scskiller_failed.keys").empty())

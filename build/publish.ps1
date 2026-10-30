@@ -2,13 +2,16 @@
 .SYNOPSIS
 Builds dist\SCSKiller\ and dist\SCSKiller.zip:
 
-  SCSKiller.exe            WinUI app, self-contained (.NET + Windows App SDK), + oodle-data-shared.dll, zlib-ng2.dll
+  SCSKiller.exe            the app (src\SCSKiller.Ui, Avalonia), self-contained (.NET + Windows App SDK Foundation), + oodle-data-shared.dll, zlib-ng2.dll
   cli\scskiller.exe        command line, self-contained, same Core project and commit, + the two codec DLLs
   cli\scskillerw.exe       the same CLI flagged as a GUI-subsystem exe: what the scheduled task runs (no console window)
-  native\                  scskiller_warm.exe + the proxy d3d12.dll (the app looks in native\, the CLI in ..\native\)
+  native\                  scskiller_warm.exe + the proxy d3d12.dll + the DirectX 9 recorder d3d9.dll (x86\ for 32-bit
+                           games) (the app looks in native\, the CLI in ..\native\)
                            + scskiller_ags.dll (the same recorder as an AMD AGS wrapper, installed as a game's amd_ags_x64.dll)
                            + amd_ags_x64.dll (AMD AGS, downloaded by the proxy's CMake configure)
                            + segheap\scskiller_warm.exe (the same on the segment heap: NVIDIA's warm)
+                           + fossilize-replay.exe (Fossilize's replayer, patched in the proxy's CMake: the Vulkan warm's)
+                           + VkLayer_scskiller.dll (Fossilize's capture layer, patched the same: the Vulkan recorder)
                            + preload\winmm.dll, version.dll, dinput8.dll (the recorder's preloader in Streamline games)
   THIRD-PARTY-NOTICES.md   every third-party component and its licence; notices\ holds the Microsoft packages' own notices
 
@@ -19,8 +22,10 @@ established, THIRD-PARTY-NOTICES.md); UnrealReader and the FromSoft reader downl
 
 -Version X.Y.Z[-pre] (a leading v is dropped) stamps every exe and DLL with the same ProductVersion (SignPath).
 Without it: the v* tag at HEAD if there is exactly one, else the dev default 0.0.0-internal.0+<sha>.
+
+-NativeOnly stops after native\: the files build/publish-linux.sh takes from a Windows build (CI's pull requests).
 #>
-param([string]$Configuration = "Release", [switch]$NoZip, [switch]$NoOodle, [string]$Version)
+param([string]$Configuration = "Release", [switch]$NoZip, [switch]$NoOodle, [string]$Version, [switch]$NativeOnly)
 $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot -Parent
 
@@ -60,16 +65,26 @@ $scskVersion = if ($Version) { $Version } else { "0.0.0-internal.0" }   # every 
 Run cmake @("-S", (Join-Path $repo "proxy"), "-B", $build, "-A", "x64", "-DSCSK_VERSION=$scskVersion")
 Run cmake @("--build", $build, "--config", "Release")
 New-Item -ItemType Directory -Force $native | Out-Null
-Copy-Item (Join-Path $build "Release\scskiller_warm.exe"), (Join-Path $build "Release\d3d12.dll"), (Join-Path $build "Release\amd_ags_x64.dll"), (Join-Path $build "Release\scskiller_ags.dll") $native
+Copy-Item (Join-Path $build "Release\scskiller_warm.exe"), (Join-Path $build "Release\d3d12.dll"), (Join-Path $build "Release\amd_ags_x64.dll"), (Join-Path $build "Release\scskiller_ags.dll"), (Join-Path $build "Release\fossilize-replay.exe"), (Join-Path $build "Release\VkLayer_scskiller.dll") $native
 New-Item -ItemType Directory -Force (Join-Path $native "segheap"), (Join-Path $native "preload") | Out-Null
 Copy-Item (Join-Path $build "Release\preload\*.dll") (Join-Path $native "preload")
 Copy-Item (Join-Path $build "Release\segheap\scskiller_warm.exe") (Join-Path $native "segheap")
+# the DirectX 9 recorder, also as x86 for 32-bit games: a Win32 build of the same CMake project makes only it
+$build86 = Join-Path $repo "proxy\build-x86"
+Run cmake @("-S", (Join-Path $repo "proxy"), "-B", $build86, "-A", "Win32", "-DSCSK_VERSION=$scskVersion")
+Run cmake @("--build", $build86, "--config", "Release")
+New-Item -ItemType Directory -Force (Join-Path $native "x86") | Out-Null
+Copy-Item (Join-Path $build "Release\d3d9.dll") $native
+Copy-Item (Join-Path $build86 "Release\d3d9.dll") (Join-Path $native "x86")
+if ($NativeOnly) { Write-Host "dist\SCSKiller\native only"; return }
 
 # 2. app + CLI
 # the SDK reuses obj\...\apphost.exe until the assembly changes, so a CETCompat change alone would ship the old flag
 Get-ChildItem (Join-Path $repo "src") -Recurse -Filter apphost.exe | Where-Object FullName -like "*\obj\*" | Remove-Item
-Run $dotnet (@("publish", (Join-Path $repo "src\SCSKiller.App\SCSKiller.App.csproj"), "-c", $Configuration, "-r", "win-x64",
-    "--self-contained", "true", "-p:Platform=x64", "-p:EnableMsixTooling=true", "-o", $out) + $versionArgs)   # MSIX tooling: else the app's .pri/.xbf aren't published and XAML crashes at start
+Run $dotnet (@("publish", (Join-Path $repo "src\SCSKiller.Ui\SCSKiller.Ui.csproj"), "-c", $Configuration, "-f", "net10.0-windows10.0.26100.0", "-r", "win-x64",
+    "--self-contained", "true", "-o", $out) + $versionArgs)
+# the SkiaSharp and HarfBuzz native packages carry their own .pdb, which DebugType=None doesn't drop
+Get-ChildItem $out -Filter *.pdb | Remove-Item
 Run $dotnet (@("publish", (Join-Path $repo "src\SCSKiller.Cli\SCSKiller.Cli.csproj"), "-c", $Configuration, "-r", "win-x64",
     "--self-contained", "true", "-o", $cli) + $versionArgs)
 
@@ -113,14 +128,17 @@ Run (Join-Path $cli "scskiller.exe") @("fetch-codecs", $cache)
 foreach ($c in $codecs) { Copy-Item (Join-Path $cache $c) $cli; Copy-Item (Join-Path $cache $c) $out }
 
 # 4b. licences: our notices and licence (GPL-3.0-or-later + the section 7 permission), plus the large notice files of the Microsoft packages as shipped
-Copy-Item (Join-Path $repo "THIRD-PARTY-NOTICES.md") $out
 foreach ($l in "LICENSE", "LICENSE-EXCEPTION.txt") { Copy-Item (Join-Path $repo $l) $out }
 $nuget = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $env:USERPROFILE ".nuget\packages" }
 New-Item -ItemType Directory -Force (Join-Path $out "notices") | Out-Null
 # versions come from what was actually published (any SDK/runtime of this major or newer builds it)
 $runtime = ((Get-Content (Join-Path $out "SCSKiller.runtimeconfig.json") -Raw | ConvertFrom-Json).runtimeOptions.includedFrameworks |
     Where-Object name -eq "Microsoft.NETCore.App").version
-$libs = (Get-Content (Join-Path $repo "src\SCSKiller.App\obj\project.assets.json") -Raw | ConvertFrom-Json).libraries.PSObject.Properties.Name   # the restore that built it
+$row = "| .NET runtime (self-contained) |"
+$notices = [IO.File]::ReadAllText((Join-Path $repo "THIRD-PARTY-NOTICES.md")) -replace "(?m)^$([regex]::Escape($row)) [^|]* \|", "$row $runtime |"
+if (-not $notices.Contains("$row $runtime |")) { throw "THIRD-PARTY-NOTICES.md has no $row row to put .NET $runtime in" }
+[IO.File]::WriteAllText((Join-Path $out "THIRD-PARTY-NOTICES.md"), $notices, [Text.UTF8Encoding]::new($true))
+$libs = (Get-Content (Join-Path $repo "src\SCSKiller.Ui\obj\project.assets.json") -Raw | ConvertFrom-Json).libraries.PSObject.Properties.Name   # the restore that built it
 function PackageVersion($id) {
     $v = $libs | Where-Object { $_ -like "$id/*" } | Select-Object -First 1
     if (-not $v) { throw "$id is not among the app's restored packages" }
@@ -129,8 +147,8 @@ function PackageVersion($id) {
 foreach ($n in @(
         @("microsoft.netcore.app.runtime.win-x64\$runtime\THIRD-PARTY-NOTICES.TXT", "dotnet-THIRD-PARTY-NOTICES.txt"),
         @("microsoft.windowsappsdk.runtime\$(PackageVersion 'Microsoft.WindowsAppSDK.Runtime')\NOTICE.txt", "WindowsAppSDK-NOTICE.txt"),
-        @("microsoft.windowsappsdk.winui\$(PackageVersion 'Microsoft.WindowsAppSDK.WinUI')\NOTICE.txt", "WinUI-NOTICE.txt"),
-        @("microsoft.web.webview2\$(PackageVersion 'Microsoft.Web.WebView2')\NOTICE.txt", "WebView2-NOTICE.txt"),
+        @("skiasharp.nativeassets.win32\$(PackageVersion 'SkiaSharp.NativeAssets.Win32')\THIRD-PARTY-NOTICES.txt", "SkiaSharp-THIRD-PARTY-NOTICES.txt"),
+        @("harfbuzzsharp.nativeassets.win32\$(PackageVersion 'HarfBuzzSharp.NativeAssets.Win32')\THIRD-PARTY-NOTICES.txt", "HarfBuzzSharp-THIRD-PARTY-NOTICES.txt"),
         @("communitytoolkit.highperformance\$(PackageVersion 'CommunityToolkit.HighPerformance')\ThirdPartyNotices.txt", "CommunityToolkit-ThirdPartyNotices.txt"))) {
     Copy-Item (Join-Path $nuget $n[0].ToLowerInvariant()) (Join-Path $out "notices\$($n[1])")   # THIRD-PARTY-NOTICES.md lists the versions shipped
 }
@@ -138,10 +156,12 @@ foreach ($n in @(
 # 5. layout check, including self-contained .NET (no "install .NET" prompt): the runtime next to each exe and
 #    runtimeconfig.json listing includedFrameworks rather than a shared framework
 $expected = "SCSKiller.exe", "oodle-data-shared.dll", "zlib-ng2.dll", "cli\scskiller.exe", "cli\scskillerw.exe",
-    "cli\oodle-data-shared.dll", "cli\zlib-ng2.dll", "native\scskiller_warm.exe", "native\segheap\scskiller_warm.exe", "native\d3d12.dll", "native\amd_ags_x64.dll", "native\scskiller_ags.dll",
-    "native\preload\winmm.dll", "native\preload\version.dll", "native\preload\dinput8.dll",
-    "hostfxr.dll", "coreclr.dll", "cli\hostfxr.dll", "cli\coreclr.dll", "Microsoft.WindowsAppRuntime.dll", "SCSKiller.pri",
-    "THIRD-PARTY-NOTICES.md", "LICENSE", "LICENSE-EXCEPTION.txt", "notices\dotnet-THIRD-PARTY-NOTICES.txt"
+    "cli\oodle-data-shared.dll", "cli\zlib-ng2.dll", "native\scskiller_warm.exe", "native\segheap\scskiller_warm.exe", "native\d3d12.dll", "native\amd_ags_x64.dll", "native\scskiller_ags.dll", "native\fossilize-replay.exe",
+    "native\VkLayer_scskiller.dll", "native\d3d9.dll", "native\x86\d3d9.dll", "native\preload\winmm.dll", "native\preload\version.dll", "native\preload\dinput8.dll",
+    "hostfxr.dll", "coreclr.dll", "cli\hostfxr.dll", "cli\coreclr.dll", "Microsoft.WindowsAppRuntime.dll",
+    "Microsoft.WindowsAppRuntime.Insights.Resource.dll", "libSkiaSharp.dll", "libHarfBuzzSharp.dll", "av_libglesv2.dll",
+    "THIRD-PARTY-NOTICES.md", "LICENSE", "LICENSE-EXCEPTION.txt", "notices\dotnet-THIRD-PARTY-NOTICES.txt",
+    "notices\SkiaSharp-THIRD-PARTY-NOTICES.txt", "notices\HarfBuzzSharp-THIRD-PARTY-NOTICES.txt"
 if ($NoOodle) { $expected = $expected | Where-Object { $_ -notlike "*oodle-data-shared.dll" } }
 $missing = $expected | Where-Object { -not (Test-Path (Join-Path $out $_)) }
 if ($missing) { throw "dist\SCSKiller is missing: $($missing -join ', ')" }

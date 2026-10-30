@@ -16,13 +16,19 @@ public static class Program
     [STAThread]
     static int Main(string[] args)
     {
-        if (IsDesignRun(args)) UpdateHooks.DesignDir = Path.Combine(Path.GetTempPath(), $"SCSKiller-fake-{Environment.ProcessId}");
+        if (IsDesignRun(args)) Core.App.UpdateHooks.DesignDir = Path.Combine(Path.GetTempPath(), $"SCSKiller-fake-{Environment.ProcessId}");
+        Core.App.Format.PlainGroupSeparator();
         // logged, not handled: the app still ends as it would have
         AppDomain.CurrentDomain.UnhandledException += (_, e) => LogCrash(e.ExceptionObject as Exception ?? new Exception($"{e.ExceptionObject}"));
         TaskScheduler.UnobservedTaskException += (_, e) => LogCrash(e.Exception);
         // Update.exe runs the install, update and uninstall hooks through here, and they exit: before anything but the crash
         // handlers, and in Main itself, where vpk checks for it
-        UpdateHooks.Hooks(VelopackApp.Build()).Run();
+        Core.App.UpdateHooks.Hooks(VelopackApp.Build()).Run();
+        if (!IsDesignRun(args) && Core.App.AppStore.RefusesLiveData())
+        {
+            MessageBoxW(0, Core.App.AppStore.DevBuildRefusal, "SCSKiller", 0x10 /* MB_ICONERROR */);
+            return 1;
+        }
         // an offline session's cleanup helper: no window, no instance of its own
         if (args is [Core.App.ScsKiller.CleanupArg, var game]) return Core.App.ScsKiller.RunOfflineCleanup(new Core.App.AppStore(Core.App.AppStore.DefaultDir), game, exe: Environment.ProcessPath);
         try
@@ -43,7 +49,7 @@ public static class Program
         return 0;
     }
 
-    public static void LogCrash(Exception e) => Core.App.CrashLog.Write(UpdateHooks.DataDir, e);
+    public static void LogCrash(Exception e) => Core.App.CrashLog.Write(Core.App.UpdateHooks.DataDir, e);
 
     /// <summary>Logs a start that failed and, unless it is a design-data run, which nobody watches, says where the log is.</summary>
     public static void StartFailed(Exception e, string[] args)

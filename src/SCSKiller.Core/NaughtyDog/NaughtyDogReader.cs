@@ -29,7 +29,7 @@ namespace SCSKiller.Core.NaughtyDog;
 public sealed class NaughtyDogReader : IEngineReader
 {
     public const string Family = "Naughty Dog", Version = "ndshader";
-    const string Globals = "shaders.psarc";
+    const string Globals = "shaders.psarc", BuildPc = @"build\pc";
 
     /// <summary>Bytes Detect reads (archive TOCs and names, then decompressed entries), smallest archive first (shaders.psarc: 6-8 MB).</summary>
     const long DetectBudget = 64L << 20;
@@ -51,7 +51,7 @@ public sealed class NaughtyDogReader : IEngineReader
     public EngineInfo? Detect(Game game)
     {
         var meter = new NixxesReader.Meter(DetectBudget);
-        foreach (var f in Archives(game).OrderBy(f => !f.Name.Equals(Globals, StringComparison.OrdinalIgnoreCase)).ThenBy(f => f.Length))
+        foreach (var f in Archives(game).Select(a => a.File).OrderBy(f => !f.Name.Equals(Globals, StringComparison.OrdinalIgnoreCase)).ThenBy(f => f.Length))
         {
             using var a = Psarc.Open(f.FullName, meter);
             if (a == null) continue;
@@ -82,12 +82,11 @@ public sealed class NaughtyDogReader : IEngineReader
         int records = 0, packages = 0, badRs = 0, bad = 0, tooBig = 0, unreadable = 0;
         long read = 0;
         using var content = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
-        foreach (var f in Archives(game).OrderBy(f => f.FullName, StringComparer.OrdinalIgnoreCase))
+        foreach (var (f, rel) in Archives(game).OrderBy(a => a.File.FullName, GameFiles.PathOrder))
         {
             using var a = Psarc.Open(f.FullName);
             if (a == null) continue;
             if (a.Oodle) App.Codecs.Load(zlib: false);   // a missing codec fails the index, not each entry
-            var rel = Path.GetRelativePath(game.InstallDir, f.FullName);
             content.AppendData(Encoding.UTF8.GetBytes(ContentStamps.Of(rel, f.FullName)));
             for (var i = 1; i < a.Count; i++)
             {
@@ -237,21 +236,22 @@ public sealed class NaughtyDogReader : IEngineReader
     /// <summary>The archives of each folder of build\pc (in the install or a folder of it, UNCHARTED's Uncharted4_data) that
     /// holds a shaders.psarc; for a game of a collection only its own (<see cref="CollectionGame.Data"/>). A folder with an
     /// updated-fx-paks archive keeps its material shaders there, and its other archives (UNCHARTED: about 120 GB of levels,
-    /// textures and animation) hold none: only those two are read.</summary>
-    static IEnumerable<FileInfo> Archives(Game game)
+    /// textures and animation) hold none: only those two are read. Each with its path under the install as Windows spells it.</summary>
+    static IEnumerable<(FileInfo File, string Rel)> Archives(Game game)
     {
         var install = new DirectoryInfo(game.InstallDir);
         if (!install.Exists) return [];
         var flat = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 };
-        var only = Collections.Member(game.Id) is { } m ? Path.GetFullPath(Path.Combine(install.FullName, m.Game.Data)) : null;
+        var only = Collections.Member(game.Id) is { } m ? Path.GetFullPath(GameFiles.Under(install.FullName, m.Game.Data)) : null;
         static bool Fx(FileInfo f) => f.Name.StartsWith("updated-fx-paks", StringComparison.OrdinalIgnoreCase);
-        return new[] { install }.Concat(install.EnumerateDirectories("*", flat))
-            .Select(d => new DirectoryInfo(Path.Combine(d.FullName, "build", "pc"))).Where(d => d.Exists)
-            .SelectMany(pc => pc.EnumerateDirectories("*", flat))
-            .Where(d => File.Exists(Path.Combine(d.FullName, Globals)) && (only == null || Path.GetFullPath(d.FullName).Equals(only, StringComparison.OrdinalIgnoreCase))).SelectMany(d =>
+        return new[] { install }.Concat(GameFiles.EnumerateDirectories(install, "*", flat))
+            .Select(d => new DirectoryInfo(GameFiles.Find(d.FullName, BuildPc))).Where(d => d.Exists)
+            .SelectMany(pc => GameFiles.EnumerateDirectories(pc, "*", flat))
+            .Where(d => File.Exists(GameFiles.Find(d.FullName, Globals)) && (only == null || Path.GetFullPath(d.FullName).Equals(only, StringComparison.OrdinalIgnoreCase))).SelectMany(d =>
         {
-            var all = d.EnumerateFiles("*.psarc", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 }).ToList();
-            return all.Any(Fx) ? all.Where(f => Fx(f) || f.Name.Equals(Globals, StringComparison.OrdinalIgnoreCase)) : all;
+            var all = GameFiles.EnumerateFiles(d, "*.psarc", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 }).ToList();
+            return (all.Any(Fx) ? all.Where(f => Fx(f) || f.Name.Equals(Globals, StringComparison.OrdinalIgnoreCase)) : all)
+                .Select(f => (f, GameFiles.Rel(game.InstallDir, f.FullName, d.Parent!.FullName, BuildPc)));
         });
     }
 }

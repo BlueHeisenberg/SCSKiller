@@ -5,13 +5,15 @@ using System.Text;
 using System.Text.RegularExpressions;
 using SCSKiller.Core.App;
 
-// The offline half of the signed update feed and of signed content files (plan-rules.json, news.json, game-verdicts.json).
+// The offline half of the signed update feed and of signed content files (plan-rules.json, news.json, game-verdicts.json, game-exes.json).
 // Same code as the client's checks (FeedTrust, ContentTrust).
 //   keygen <key-file> [--for rules]                                           new key; prints the public key to pin
 //   sign <releases.<c>.json> --key <key-file> --kid rel-a [--channel <c>]     writes <feed>.sig
 //   verify <releases.<c>.json> [--pub <base64>] [--kid rel-a] [--channel <c>] checks <feed>.sig (no --pub: the pinned keys)
 //   sign-content <body.json> --name <name> --key <key-file> --kid rules-a     writes <name>.json beside the body
 //   verify-content <name>.json [--pub <base64>] [--kid rules-a]               checks it (no --pub: the pinned rules keys)
+// <c> is an update channel, or <channel>-linux for the Linux build's feed (releases.alpha-linux.json signs as alpha-linux).
+// sign and verify refuse a feed that lists another OS's package (a Windows feed names no -linux- package, a Linux one only those).
 // The key file must be outside every git work tree. Release keys sign feeds, rules keys sign content: never swap them.
 
 try
@@ -58,11 +60,13 @@ static int Keygen(string file, bool rules)
 static int Sign(string feed, string keyFile, string kid, string? channel)
 {
     channel = ChannelOf(feed, channel);
+    var bytes = File.ReadAllBytes(feed);
+    OwnOsOnly(feed, channel, bytes);
     var seed = Convert.FromBase64String(File.ReadAllText(OutsideGit(keyFile)).Trim());
     try
     {
         if (seed.Length != 32) throw new FormatException($"{keyFile}: not a 32-byte Ed25519 seed");
-        File.WriteAllText(feed + ".sig", FeedTrust.Sign(seed, kid, channel, File.ReadAllBytes(feed), DateTimeOffset.UtcNow));
+        File.WriteAllText(feed + ".sig", FeedTrust.Sign(seed, kid, channel, bytes, DateTimeOffset.UtcNow));
     }
     finally { CryptographicOperations.ZeroMemory(seed); }
     Console.WriteLine($"wrote {feed}.sig ({channel}, {kid})");
@@ -73,9 +77,11 @@ static int Verify(string feed, string? pub, string kid, string? channel)
 {
     channel = ChannelOf(feed, channel);
     var keys = pub != null ? new Dictionary<string, string> { [kid] = pub } : FeedTrust.ReleaseKeys;
+    var bytes = File.ReadAllBytes(feed);
     var tmp = Directory.CreateTempSubdirectory("release-sign-");   // a fresh replay store: nothing seen yet
-    try { new FeedTrust(new AppStore(tmp.FullName), keys).Accept(channel, File.ReadAllBytes(feed), File.ReadAllBytes(feed + ".sig")); }
+    try { new FeedTrust(new AppStore(tmp.FullName), keys).Accept(channel, bytes, File.ReadAllBytes(feed + ".sig")); }
     finally { tmp.Delete(true); }
+    OwnOsOnly(feed, channel, bytes);
     Console.WriteLine($"{feed}.sig verifies ({channel}, {(pub != null ? kid : "pinned keys")})");
     return 0;
 }
@@ -91,6 +97,9 @@ static int SignContent(string bodyFile, string name, string keyFile, string kid)
     if (name == SCSKiller.Core.Games.GameVerdicts.Name && (SCSKiller.Core.Games.GameVerdicts.TryParse(body) is not { } verdicts
             || verdicts.Count != System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("games").GetArrayLength()))
         throw new ArgumentException($"{bodyFile}: the app would skip it or one of its games (fields, verdict, reason code, ids, dates)");
+    if (name == SCSKiller.Core.Games.GameExes.Name && (SCSKiller.Core.Games.GameExes.TryParse(body) is not { } exes
+            || exes.Count != System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("games").GetArrayLength()))
+        throw new ArgumentException($"{bodyFile}: the app would skip it or one of its games (fields, ids, exe path, dates)");
     string[] identities = [];
     if (name == SCSKiller.Core.Planning.RulesFile.Name)
     {
@@ -136,11 +145,17 @@ static int VerifyContent(string file, string? pub, string kid)
     return 0;
 }
 
+static void OwnOsOnly(string feed, string channel, byte[] bytes)
+{
+    if (UpdateFeeds.Unsignable(channel, bytes) is { } why) throw new ArgumentException($"{feed}: {why}");
+}
+
 static string ChannelOf(string feed, string? channel)
 {
-    channel ??= Regex.Match(Path.GetFileName(feed), @"^releases\.([a-z]+)\.json$").Groups[1].Value;
-    return UpdateChannels.All.Contains(channel) ? channel
-        : throw new ArgumentException($"no channel: name the feed releases.<channel>.json or pass --channel {string.Join('|', UpdateChannels.All)}");
+    channel ??= Regex.Match(Path.GetFileName(feed), @"^releases\.([a-z]+(?:-linux)?)\.json$").Groups[1].Value;
+    return UpdateChannels.All.Any(c => channel == c || channel == c + "-linux") ? channel
+        : throw new ArgumentException($"no channel: name the feed releases.<channel>.json or releases.<channel>-linux.json, or pass --channel"
+            + $" {string.Join('|', UpdateChannels.All)} (with -linux for the Linux feed)");
 }
 
 // Fails closed: only git's own "not a git repository" counts as outside.

@@ -86,7 +86,7 @@ public sealed class GameVerdicts
     // any store: an id of a store this version doesn't know never matches
     internal static bool IsId(string? id) => id is { Length: <= 120 } && id.IndexOf(':') is > 0 and var c && c < id.Length - 1 && !id.Any(char.IsWhiteSpace);
 
-    static bool Scope(string[]? s) => s == null || s is { Length: >= 1 and <= 16 } && s.All(v => ContentFile.Text(v, 60));
+    internal static bool Scope(string[]? s) => s == null || s is { Length: >= 1 and <= 16 } && s.All(v => ContentFile.Text(v, 60));
 
     /// <summary>The line for a reason code: the app's own, else the note, else one for the verdict.</summary>
     public static string Text(string verdict, string reason, string? note) =>
@@ -104,11 +104,13 @@ public sealed class GameVerdicts
     /// <summary>The unsupported or unsupported-yet verdict on the game; null when there is none.</summary>
     public Verdict? Unsupported(Game game, EngineInfo? engine) => Find(game, engine, UnsupportedVerdict) ?? Find(game, engine, UnsupportedYetVerdict);
 
-    // "Unreal 5.7" takes 5.7 and 5.7.4, not 5.70; builds are Game.Version values
     Verdict? Find(Game game, EngineInfo? engine, string verdict) =>
-        byId.GetValueOrDefault(game.Id)?.FirstOrDefault(e => e.Verdict == verdict
-            && (e.Engines == null || engine != null && $"{engine.Family} {engine.Version}" is var have
-                && e.Engines.Any(v => have.Equals(v, StringComparison.OrdinalIgnoreCase) || have.StartsWith(v + ".", StringComparison.OrdinalIgnoreCase)))
-            && (e.Builds == null || game.Version != null && e.Builds.Contains(game.Version))) is { } hit
+        byId.GetValueOrDefault(game.Id)?.FirstOrDefault(e => e.Verdict == verdict && InScope(e.Engines, e.Builds, game, () => engine)) is { } hit
             ? new(hit.Verdict, Text(hit.Verdict, hit.Reason, hit.Note)) : null;
+
+    // "Unreal 5.7" takes 5.7 and 5.7.4, not 5.70; builds are Game.Version values
+    internal static bool InScope(string[]? engines, string[]? builds, Game game, Func<EngineInfo?> engine) =>
+        (engines == null || engine() is { } en && $"{en.Family} {en.Version}" is var have
+            && engines.Any(v => have.Equals(v, StringComparison.OrdinalIgnoreCase) || have.StartsWith(v + ".", StringComparison.OrdinalIgnoreCase)))
+        && (builds == null || game.Version != null && builds.Contains(game.Version));
 }

@@ -40,8 +40,9 @@ public static class WarmInputs
 
         /// <param name="leaveOut">records that are no input: another texture filtering setting's (<see cref="Planning.SamplerVariants.Foreign"/>)</param>
         /// <param name="rayTracing">false: ray tracing state objects are no input (<see cref="Planner.LeftOutWithoutRt"/>)</param>
+        /// <param name="d3d11Only">DirectX 11 is decided (<see cref="Planner.D3D11Decided"/>): D3D12 records are no input (<see cref="Planner.LeftOutOnD3D11"/>)</param>
         public static Recorded Read(IReadOnlyList<string> recordings, Func<string, bool> elsewhere, bool nvidia = false, IReadOnlySet<string>? leaveOut = null,
-            bool rayTracing = true)
+            bool rayTracing = true, bool d3d11Only = false)
         {
             var blobs = new HashSet<string>();
             // NVIDIA keys on the NVAPI state a record is created with (selftest nvext). The replay's: the last 'N' per record
@@ -73,7 +74,7 @@ public static class WarmInputs
             foreach (var db in recordings.Where(File.Exists))
                 foreach (var r in PsoDb.Read(db))
                     if (r.Tag == 'B') { if (r.Payload.Length >= 20) blobs.Add(Hex(r.Payload.AsSpan(0, 20))); }
-                    else if (r.Tag is not ('N' or 'L' or 'W') && (rayTracing || !Planner.LeftOutWithoutRt(r)) && seen.Add(r.Key))
+                    else if (r.Tag is not ('N' or 'L' or 'W') && (rayTracing || !Planner.LeftOutWithoutRt(r)) && !(d3d11Only && Planner.LeftOutOnD3D11(r)) && seen.Add(r.Key))
                     {
                         if (!nvidia && IsStateObject(r.Tag) && (HasLaunchAlias(r) || Depends(r).Any(launch.Contains)))
                         {

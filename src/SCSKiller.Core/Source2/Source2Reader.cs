@@ -3,8 +3,8 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
-using SCSKiller.Core.Games;
 using SCSKiller.Core.Carved;
+using SCSKiller.Core.Games;
 using SCSKiller.Core.Unreal;
 using ValvePak;
 using ZstdSharp;
@@ -27,19 +27,20 @@ public sealed class Source2Reader : IEngineReader
     const int MinVersion = 70, MaxVersion = 72, ResourceHeaderVersion = 12;
     const int MaxBlock = 256 << 20;
 
-    static string Bin(Game game) => Path.Combine(game.InstallDir, "game", "bin", "win64");
+    static string Bin(Game game) => GameFiles.Find(game.InstallDir, @"game\bin\win64");
 
     public int ReaderVersion(EngineInfo engine) => 2;
 
     public EngineInfo? Detect(Game game)
     {
-        if (!File.Exists(Path.Combine(Bin(game), "engine2.dll"))) return null;
+        if (!File.Exists(GameFiles.Find(Bin(game), "engine2.dll"))) return null;
         var api = Api(game, UnrealRhi.LaunchOptions(game));
-        if (Vpks(game).FirstOrDefault() is not { } vpk) return new EngineInfo(Family, "", null, api, false, $"no {Vpk}");
+        if (Vpks(game).FirstOrDefault() is not { } vpk) return new EngineInfo(Family, "", null, api, false, $"no {Vpk}", OffersVulkan: true);
         using var pak = Open(vpk);
         var version = Programs(pak).Select(e => Version(Read(pak, e))).FirstOrDefault(v => v != null);
         return new EngineInfo(Family, version?.ToString() ?? "", null, api, false,
-            version is >= MinVersion and <= MaxVersion ? null : $"shader files {(version == null ? "of an older layout" : $"version {version}")}: SCSKiller reads versions {MinVersion} to {MaxVersion}");
+            version is >= MinVersion and <= MaxVersion ? null : $"shader files {(version == null ? "of an older layout" : $"version {version}")}: SCSKiller reads versions {MinVersion} to {MaxVersion}",
+            OffersVulkan: true);
     }
 
     public string DetectStamp(Game game, EngineInfo? engine) =>
@@ -56,7 +57,7 @@ public sealed class Source2Reader : IEngineReader
         foreach (var vpk in Vpks(game))
         {
             var f = new FileInfo(vpk);
-            var rel = Path.GetRelativePath(game.InstallDir, vpk);
+            var rel = GameFiles.Rel(game.InstallDir, vpk, vpk, $@"game\{GameFiles.FolderName(Path.GetDirectoryName(vpk)!)}\{Vpk}");
             stamp.Append(ContentStamps.Of(rel, f.FullName));
             using var pak = Open(vpk);
             foreach (var e in Programs(pak))
@@ -121,10 +122,10 @@ public sealed class Source2Reader : IEngineReader
     /// <summary>Each mod's shader package, the game's own mods before core.</summary>
     static IEnumerable<string> Vpks(Game game)
     {
-        var dir = Path.Combine(game.InstallDir, "game");
+        var dir = GameFiles.Find(game.InstallDir, "game");
         return !Directory.Exists(dir) ? []
-            : Directory.EnumerateDirectories(dir).Select(d => Path.Combine(d, Vpk)).Where(File.Exists)
-                .OrderBy(p => Path.GetFileName(Path.GetDirectoryName(p))!.Equals("core", StringComparison.OrdinalIgnoreCase)).ThenBy(p => p, StringComparer.OrdinalIgnoreCase);
+            : GameFiles.EnumerateDirectories(dir).Select(d => GameFiles.Find(d, Vpk)).Where(File.Exists)
+                .OrderBy(p => Path.GetFileName(Path.GetDirectoryName(p))!.Equals("core", StringComparison.OrdinalIgnoreCase)).ThenBy(p => p, GameFiles.PathOrder);
     }
 
     static Package Open(string path)
@@ -203,7 +204,7 @@ public sealed class Source2Reader : IEngineReader
         {
             var id = DictionaryId(frame);
             if (byId.TryGetValue(id, out var z)) return z;
-            dll ??= File.ReadAllBytes(Path.Combine(binDir, Dll));
+            dll ??= File.ReadAllBytes(GameFiles.Find(binDir, Dll));
             Span<byte> head = stackalloc byte[8];
             BinaryPrimitives.WriteUInt32LittleEndian(head, 0xEC30A437);
             BinaryPrimitives.WriteUInt32LittleEndian(head[4..], id);
@@ -246,9 +247,9 @@ public sealed class Source2Reader : IEngineReader
     /// <summary>Each mod's cfg\boot.vcfg that exists, in <see cref="Vpks"/>' order.</summary>
     static IEnumerable<string> BootConfigs(Game game)
     {
-        var dir = Path.Combine(game.InstallDir, "game");
+        var dir = GameFiles.Find(game.InstallDir, "game");
         return !Directory.Exists(dir) ? []
-            : Directory.EnumerateDirectories(dir).Select(d => Path.Combine(d, "cfg", "boot.vcfg")).Where(File.Exists)
-                .OrderBy(p => Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(p)))!.Equals("core", StringComparison.OrdinalIgnoreCase)).ThenBy(p => p, StringComparer.OrdinalIgnoreCase);
+            : GameFiles.EnumerateDirectories(dir).Select(d => GameFiles.Find(d, @"cfg\boot.vcfg")).Where(File.Exists)
+                .OrderBy(p => Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(p)))!.Equals("core", StringComparison.OrdinalIgnoreCase)).ThenBy(p => p, GameFiles.PathOrder);
     }
 }

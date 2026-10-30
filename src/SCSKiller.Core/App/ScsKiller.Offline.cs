@@ -7,6 +7,7 @@ using System.Text;
 using Microsoft.Win32.SafeHandles;
 using SCSKiller.Core.Games;
 using SCSKiller.Core.Planning;
+using SCSKiller.Core.Vulkan;
 using SCSKiller.Core.Warming;
 
 namespace SCSKiller.Core.App;
@@ -19,7 +20,7 @@ namespace SCSKiller.Core.App;
 // once it runs. A leftover recorder dll would still be loaded into a normal anti-cheat launch, so the session is recorded
 // (GameRecord.OfflineSession) before any file exists, and its cleanup (CleanOfflineSession) deletes each file that is still
 // the one it placed (by hash) when the process exits: in the app, in a helper process that outlives it (CleanupArg), at the
-// next logon (RunOnce) and at every scan and watcher pass, until none of them is left.
+// next logon on Windows (RunOnce) and at every scan and watcher pass, until none of them is left.
 public sealed partial class ScsKiller
 {
     public const string SteamAppIdFile = "steam_appid.txt";
@@ -49,7 +50,7 @@ public sealed partial class ScsKiller
     {
         null => neverSaw,
         _ when Unstamped(refused) || refused == "scskiller.ini changed while deciding" => UnboundSessionNote,
-        _ => $"The last launch wasn't recorded: {refused}.",
+        _ => NotRecordedNote(refused),
     };
     // game id -> a session whose files may still be in the game folder; null until the data folder was read once
     ConcurrentDictionary<string, bool>? _offlineLeft;
@@ -94,14 +95,9 @@ public sealed partial class ScsKiller
     }
 
     /// <summary>The cleanup helper of the game runs: it holds this mutex for its whole run.</summary>
-    static string HelperMutex(string gameId) => @"Local\SCSKiller-offline-cleanup-" + gameId.Replace('\\', '_');
+    internal static string HelperMutex(string gameId) => @"Local\SCSKiller-offline-cleanup-" + gameId.Replace('\\', '_');
 
-    static bool HelperRuns(string gameId)
-    {
-        if (!Mutex.TryOpenExisting(HelperMutex(gameId), out var m)) return false;
-        m.Dispose();
-        return true;
-    }
+    static bool HelperRuns(string gameId) => NamedMutex.Held(HelperMutex(gameId));
 
     /// <summary>Writes the logon entry (tests: none).</summary>
     internal Action<string, string> AddRunOnce { get; set; } = (gameId, exe) => RunOnce(gameId, exe);
@@ -112,8 +108,15 @@ public sealed partial class ScsKiller
     /// <summary>What a risk session of a store's game runs to start it (tests).</summary>
     internal Func<Game, ProcessStartInfo?> LaunchCommand { get; set; } = g => StoreLaunch.Command(g);
 
-    /// <summary>The exe that runs <see cref="CleanupArg"/> (the app's own); null: no helper and no logon entry (the CLI, tests).</summary>
+    /// <summary>The exe that runs <see cref="CleanupArg"/> (the app's own, <see cref="AppProgram"/>); null: no helper and no
+    /// logon entry (the CLI, tests).</summary>
     public string? CleanupHelper { get; set; }
+
+    /// <summary>The file that starts this app again once this process has exited, as the cleanup helper outlives it: an
+    /// AppImage's own file on Linux, never its mount, which goes with the AppImage's last process.</summary>
+    public static string? AppProgram => ThisAppProgram();
+
+    private static partial string? ThisAppProgram();
 
     /// <summary>Whether a process other than the session's runs from its folders, so its data files wait. Replaceable for tests.</summary>
     internal Func<OfflineSession, bool> OfflineRuns { get; set; }
@@ -124,10 +127,31 @@ public sealed partial class ScsKiller
         ExeNamesIn([s.InstallDir, Path.GetDirectoryName(s.Exe)]) is not { } names   // can't tell: as if one runs
         || all.Any(p => p.Pid != s.Pid && names.Contains(Path.GetFileNameWithoutExtension(p.Exe)));
 
-    /// <summary><see cref="OfflineEac.Of"/>, never for a game added by hand before its folder is confirmed (as the recorder); an
-    /// unsupported engine only while Settings.RecordAntiCheatGames is on.</summary>
+    /// <summary><see cref="OfflineEac.Of"/>, never for a game added by hand before its folder is confirmed (as the recorder), nor
+    /// where this OS has no offline sessions (<see cref="OfflineUnavailable"/>); an unsupported engine only while Settings.RecordAntiCheatGames is on.</summary>
     OfflineEacGame? OfflineEntry(Game g, AntiCheat antiCheat, EngineInfo? engine) =>
-        Unconfirmed(g) || RecorderCrashes(g) ? null : OfflineEac.Of(g, antiCheat, engine, unsupported: Settings.RecordAntiCheatGames);
+        OfflineUnavailable != null || Unconfirmed(g) || RecorderCrashes(g) ? null : OfflineEac.Of(g, antiCheat, engine, unsupported: Settings.RecordAntiCheatGames);
+
+    /// <summary>Why this OS has no offline sessions: they start the game suspended (<see cref="StartAttested"/>), which only
+    /// Windows does. Null where it has them.</summary>
+    string? OfflineUnavailable => RiskUnavailable ?? (OperatingSystem.IsWindows() ? null : OfflineOnWindowsOnly);
+
+    internal const string OfflineOnWindowsOnly = "offline sessions are available on Windows only";
+
+    /// <summary>Why this OS has no risk or offline sessions yet, null where it has them. Replaceable for tests.</summary>
+    internal string? RiskUnavailable { get; set; } = RiskUnavailableHere();
+
+    static string? RiskUnavailableHere()
+    {
+        string? why = null;
+        NoRiskSessions(ref why);
+        return why;
+    }
+
+    static partial void NoRiskSessions(ref string? why);
+
+    /// <summary>Settings.RecordAntiCheatGames, read as off where this OS has no risk sessions: settings.json keeps the user's value.</summary>
+    bool RecordsAntiCheat => RiskUnavailable == null && Settings.RecordAntiCheatGames;
 
     public void SetOfflineRecording(string gameId, bool on)
     {
@@ -219,7 +243,7 @@ public sealed partial class ScsKiller
     /// <summary>The game may record every launch now: a session is offered for it (RiskEligible, which includes
     /// Settings.RecordAntiCheatGames) and both its switches are on.</summary>
     bool AlwaysAllowed(string gameId) =>
-        Settings.RecordAntiCheatGames && Games.FirstOrDefault(s => s.Game.Id == gameId) is { RiskEligible: true } && Store.LoadGame(gameId) is { OfflineRecord: true, AlwaysRecord: true };
+        RecordsAntiCheat && Games.FirstOrDefault(s => s.Game.Id == gameId) is { RiskEligible: true } st && !IntelLocalDriver(st.Game) && Store.LoadGame(gameId) is { OfflineRecord: true, AlwaysRecord: true };
 
     /// <summary>Calls off the Always record sessions still waiting for a launch (null: every game's): each takes its files out
     /// as a session's end does. One already bound runs to its end. True when one was waiting.</summary>
@@ -257,17 +281,35 @@ public sealed partial class ScsKiller
     internal Func<Game, bool> StoreLaunches { get; set; } = StoreLaunch.Supported;
 
     bool RiskOfferedButLaunch(Game g, EngineInfo? engine, bool anyAntiCheat) =>
-        Settings.RecordAntiCheatGames && anyAntiCheat && !Unconfirmed(g) && !RecorderCrashes(g)
-        && engine is { } e && RecordsApi(e) && GameVerdicts.Current.Unsupported(g, engine) == null;
+        RecordsAntiCheat && anyAntiCheat && !Unconfirmed(g) && !RecorderCrashes(g)
+        && engine is { } e && RecordsApi(g, e) && GameVerdicts.Current.Unsupported(g, engine) == null;
 
-    /// <summary>A recorder can record the game's API on this GPU: DirectX 12, or DirectX 11 where its recording records (<see cref="Records11Api"/>).</summary>
-    bool RecordsApi(EngineInfo e) => e.GraphicsApi.Contains("D3D12") || Records11Api(e, Vendor.Caps);
+    /// <summary>A recorder can record the game's API on this OS and GPU: DirectX 12, DirectX 11 where its recording records
+    /// (<see cref="Records11Api"/>), Vulkan through the layer (a Steam launch's).</summary>
+    bool RecordsApi(Game g, EngineInfo e) =>
+        OperatingSystem.IsWindows() && (e.GraphicsApi.Contains("D3D12") || Records11Api(e, Vendor.Caps)) || ProtonDx12(g, e) || VulkanRoute(g, e);
+
+    /// <summary>Off Windows, a DirectX 12 game Steam runs under Proton: the session binds what Steam's reaper started
+    /// (<see cref="SteamLaunched"/>), and its d3d12.dll checks that against its Linux process (admit.h's wine_bound). A sandboxed
+    /// Steam's game doesn't see the recorder folder.</summary>
+    static bool ProtonDx12(Game g, EngineInfo e) => !OperatingSystem.IsWindows() && e.GraphicsApi.Contains("D3D12") && SteamRun(g)
+        && g.ExePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && SteamSandboxSkip == null;
+
+    static bool SteamRun(Game g) => (SteamSource.AppId(g.Id) ?? SteamShortcuts.AppId(g.Id)) != null;
+
+    /// <summary>Why no session is offered for the game on this OS whatever its anti-cheat; null where one can be.</summary>
+    public static string? RiskNotHere(GameState s) =>
+        OperatingSystem.IsWindows() || s.Engine is { } e && (VulkanPlan.IsVulkan(e) || ProtonDx12(s.Game, e)) ? null
+        : SteamSandboxSkip is { } sandboxed && s.Engine?.GraphicsApi.Contains("D3D12") == true && SteamRun(s.Game) ? Format.Sentence(sandboxed) + "."
+        : RiskSteamOnly;
+
+    public const string RiskSteamOnly = "On Linux, games with anti-cheat can be recorded only when Steam runs them on Vulkan or DirectX 12 for now.";
 
     /// <summary>The recorder a risk or offline session places: d3d11.dll for a DirectX 11 game whose D3D11 recording records
     /// (<see cref="Records11Api"/>, whatever the engine's support), and on such a GPU for an Unreal 4 game that may run on either
     /// (UE4 defaults to DirectX 11); d3d12.dll otherwise. One name only: two copies in one process would each append to the same
     /// scskiller.db and log.</summary>
-    internal static string RiskDll(EngineInfo? e, VendorCaps caps) =>
+    internal static string RiskDll(EngineInfo? e, VendorCaps caps) => e != null && VulkanPlan.IsVulkan(e) ? DllVulkan :
         Records11Api(e, caps) || e is { Family: "Unreal" } && ApiKey(e.GraphicsApi) == "11+12" && e.Version.StartsWith("4.") && !Planner.D3D11CoversVs(caps) ? Dll11 : Dll12;
 
     /// <summary>An offline session's note when its recorder never loaded: for a game that may run on either DirectX, the one it
@@ -325,27 +367,38 @@ public sealed partial class ScsKiller
         {
             var rec = Store.LoadGame(gameId);
             var dir = Path.GetDirectoryName(g.ExePath)!;
-            var manual = g.Store == Core.Store.Manual;
+            var launcher = LauncherStarts(g, s.Engine);
+            var manual = g.Store == Core.Store.Manual && !launcher;
             var dll = RiskDll(s.Engine, Vendor.Caps);
             var neverSaw = AntiCheatSessionNote;
-            string[] placed = [.. DefaultCopy ? [] : new[] { LedgerStamp }, dll, "scskiller.ini"];
+            // a Vulkan game's recorder is the layer's registration (VulkanLayer), its dll beside the exe as the proxy is: an
+            // anti-cheat game may load no module from outside its folder
+            var vulkan = dll == DllVulkan;
+            var key = VulkanLayer.Key(g);
+            string[] placed = [.. WritesLedger ? new[] { LedgerStamp } : [], dll, "scskiller.ini"];
             var stamp = Stamp(g.ExePath);   // before the fresh check below
             ProcessStartInfo? launch = null;
             AntiCheat found = AntiCheat.None;
             bool vac = false, changed = false;
             string? Refusal()
             {
+                if (RiskUnavailable is { } unavailable) return unavailable;
+                if (_removedFromAll) return RemovedFromAllNote;
                 if (!Settings.RecordAntiCheatGames) return "allow recording in games with anti-cheat in Settings first";
                 if (!s.RiskEligible) return "recording while you play isn't available for this game";
+                if (vulkan && key == null) return VulkanRecorderMissing;   // no layer key: the layer's route is Steam's there
+                if (dll == Dll12 && s.StreamlineFirst) return SkipStreamline;   // a session places no preloader beside anti-cheat
                 if (!rec.OfflineRecord) return "turn on Record while I play for this game first";
                 if (always != rec.AlwaysRecord) return always ? "Always record is off" : "Always record is on: every launch is recorded";
                 if (OfflineLive(gameId) || rec.OfflineSession != null) return "the last session's files are still being removed";
-                if (rec.RecorderFiles.Count > 0 || rec.RecorderChained != null || rec.RecorderExe != null || rec.RecorderMoveFrom != null || rec.RecorderRollback)
+                if (rec.RecorderFiles.Count > 0 || rec.RecorderChained != null || rec.RecorderExe != null || rec.RecorderMoveFrom != null || rec.RecorderRollback
+                    || rec.VulkanLayer != null)
                     return "a recorder's removal is still pending";
                 lock (_lock)
                     if (_current == gameId) return "a compile of it is in progress";
                 if (GameRunning(g)) return "it is running: close the game first";
-                if (_proxyDll == null || !File.Exists(_proxyDll)) return $"the recorder ({dll}) wasn't found next to SCSKiller";
+                if ((vulkan ? VulkanLayerSource : _proxyDll) is not { } src || !File.Exists(src)) return $"the recorder ({dll}) wasn't found next to SCSKiller";
+                if (vulkan && VulkanBlocked(g, key!, VulkanManifest(key!)) is { } blocked) return blocked;
                 if (stamp == null) return "its exe can't be read";
                 // fresh, not the scan's: what the confirmation named is what is there
                 (found, vac) = (GameFiles.DetectAntiCheat(g), VacCheck(g));
@@ -354,9 +407,12 @@ public sealed partial class ScsKiller
                     changed = true;
                     return $"{AntiCheatName(found, vac)} was found, not {AntiCheatName(shown, vac)}" + (always ? "" : ": confirm again");
                 }
-                if (!manual && !always && (launch = LaunchCommand(g)) == null) return "its store has no launch SCSKiller can start";
+                if (!manual && !launcher && !always && (launch = LaunchCommand(g)) == null) return "its store has no launch SCSKiller can start";
                 // a mod is left as it is: only one holding a name the session places refuses
-                if ((RecorderOwnFiles.Concat(placed).FirstOrDefault(f => Path.Exists(Path.Combine(dir, f))) ?? PreloadIn(dir)) is { } there) return $"{there} is already in its folder";
+                if (Foreign(dir)) return "another SCSKiller copy's recorder is in its folder";
+                if ((RecorderOwnFiles.Where(f => !f.StartsWith(Dll9, StringComparison.OrdinalIgnoreCase)).Concat(placed).FirstOrDefault(f => Path.Exists(Path.Combine(dir, f))) ?? PreloadIn(dir)) is { } there) return $"{there} is already in its folder";
+                if (ShaderInjectorIn(dir) != false) return SkipShaderInjector;
+                if (IntelLocalDriver(g)) return SkipIntelDriver;
                 if (ReShade.Detect(g) is { ProxyLibrary: true }) return "ReShade chains a proxy library ([PROXY])";
                 return null;
             }
@@ -384,13 +440,27 @@ public sealed partial class ScsKiller
             {
                 var now = Store.LoadGame(gameId);
                 if (now.OfflineSession == null) throw new InvalidOperationException("its session was cleaned up meanwhile");
-                now.RecorderFiles = new() { [dll] = ProxySha(dll)! };
+                var manifest = vulkan ? VulkanManifest(key!) : null;
+                if (manifest != null)
+                {
+                    (now.VulkanLayer, now.VulkanLayerSha) = (manifest, null);   // on the record before it's registered, no copy beside it
+                    if (VulkanInboxDir(g) is { } inbox && !now.VulkanInboxes.Contains(inbox, StringComparer.OrdinalIgnoreCase)) now.VulkanInboxes.Add(inbox);   // imported after Steam replaces the exe too
+                }
+                now.RecorderFiles = new() { [dll] = manifest != null ? Sha256(VulkanLayerSource!) : ProxySha(dll)! };
                 SetIni(Store, dir, _ => new IniOwner(dir, Hex(ini), Install: g.InstallDir));
                 also?.Invoke(now);
                 Store.SaveGame(gameId, now);
-                if (!DefaultCopy) Place(Path.Combine(dir, LedgerStamp), temp => WriteNew(temp, Path.GetFullPath(LedgerDir)));   // first: this copy's
-                Place(Path.Combine(dir, dll), temp => File.Copy(_proxyDll!, temp));
-                Place(Path.Combine(dir, "scskiller.ini"), temp => WriteNew(temp, ini));
+                // the Linux layer reads it as a Linux path, the proxy under Wine through its drives
+                RefuseForeign(dir);
+                if (WritesLedger) CreateLedger(Path.Combine(dir, LedgerStamp), manifest != null && !OperatingSystem.IsWindows() ? Path.GetFullPath(LedgerDir) : LedgerText(LedgerDir));   // first: this copy's
+                Place(Path.Combine(dir, dll), CopyOf(manifest != null ? VulkanLayerSource! : _proxyDll!));
+                if (manifest != null)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(manifest)!);
+                    Place(manifest, Text(VulkanLayer.Manifest(key!, Path.Combine(dir, dll))), replace: true);
+                    VulkanLayer.Register(manifest, g);
+                }
+                Place(Path.Combine(dir, "scskiller.ini"), Text(ini));
             }
             SafeProcessHandle? process = null;
             try
@@ -407,7 +477,7 @@ public sealed partial class ScsKiller
                     process = StartAttested(g.ExePath, OfflineArguments, (h, pid, started) =>
                     {
                         _offline[gameId] = h;
-                        Publish(IniText(g, rec, Signed(g.ExePath, RootValue(g), stamp!, BoundTo(pid, started) + RiskLine + SignedLines(g, rec, session: true, riskSession: true))),
+                        Publish(IniText(g, rec, Signed(g, stamp!, BoundTo(pid, started) + RiskLine + SignedLines(g, rec, session: true, riskSession: true))),
                             now => now.OfflineSession = session = session with { Pid = pid, Started = started });
                     }, () =>
                     {
@@ -419,7 +489,7 @@ public sealed partial class ScsKiller
                 {
                     _offline[gameId] = new SafeProcessHandle(0, false);   // until it is bound: no pass takes out or re-signs its files
                     Publish(IniText(g, rec));
-                    if (launch != null) Process.Start(launch)?.Dispose();
+                    if (launch != null) Process.Start(launch)?.Dispose();   // else the user starts it from its launcher
                 }
             }
             catch (Exception e)
@@ -437,41 +507,62 @@ public sealed partial class ScsKiller
             {
                 var stop = _armed[gameId] = new CancellationTokenSource();
                 RecorderLog($"{g.Name}: Always record: the session waits for the next {Path.GetFileName(g.ExePath)} that runs from {dir}");
-                task = Task.Run(() => BindRisk(g, stamp!, since, neverSaw, stop.Token, shown));
+                task = Task.Run(() => BindRisk(g, stamp!, since, neverSaw, vulkan && OperatingSystem.IsWindows(), stop.Token, shown));
             }
             else
             {
-                RecorderLog($"{g.Name}: session started through its store: it records the first {Path.GetFileName(g.ExePath)} that runs from {dir}");
-                task = Task.Run(() => BindRisk(g, stamp!, since, neverSaw));   // before the evaluation below: the store's game may reach its first device meanwhile
+                RecorderLog($"{g.Name}: session started through its {(launcher ? "launcher" : "store")}: it records the first {Path.GetFileName(g.ExePath)} that runs from {dir}");
+                if (launcher) _sessionNotes[gameId] = LauncherSessionNote;
+                task = Task.Run(() => BindRisk(g, stamp!, since, neverSaw, vulkan && OperatingSystem.IsWindows()));   // before the evaluation below: the store's game may reach its first device meanwhile
             }
         }
         Refresh(g);
         return task;
     }
 
+    /// <summary>A Vulkan game's session until this build carries the Vulkan recorder (the loader proxy and its layer).</summary>
+    public const string VulkanRecorderMissing = "this version of SCSKiller can't record Vulkan games yet";
+
+    /// <summary>A game the user added that only its own launcher starts (Star Citizen, from the RSI Launcher; Wuthering Waves,
+    /// whose exe asks for admin rights and quits without its launcher): its session binds the first process of its exe that
+    /// starts from its folder, like a store's launch, and SCSKiller starts nothing.</summary>
+    internal static bool LauncherStarts(Game g, EngineInfo? e) =>
+        g.Store == Core.Store.Manual && (e?.Family == StarEngine.StarEngineReader.Family || e?.Fork == "GAME_WutheringWaves");
+
+    /// <summary><see cref="LauncherStarts"/> for the game page: until its session binds, the card says <see cref="LauncherSessionNote"/>.</summary>
+    public static bool StartsFromLauncher(GameState s) => LauncherStarts(s.Game, s.Engine);
+
+    public const string LauncherSessionNote = "Start the game from its launcher now. SCSKiller records the first launch within 5 minutes.";
+
     /// <summary>The stamp line of a session at the user's own risk, after its binding (<see cref="BoundTo"/>), inside the signature.</summary>
     internal const string RiskLine = "risk=1\r\n";
 
     /// <summary>A store-launched risk session: the first process of the game's exe is bound (its pid and creation time, with
     /// risk=1, signed over the <paramref name="stamp"/> taken before the session's check), then left to run; nothing binds
-    /// within 5 minutes: the session ends.</summary>
+    /// within 5 minutes: the session ends. A <paramref name="vulkan"/> session's game run as administrator is said at once: the
+    /// loader reads no HKCU layer in an elevated process.</summary>
     /// <param name="armed">an Always record session's: no deadline, called off by <see cref="Disarm"/>; an exe changed since
     /// <paramref name="stamp"/> is checked again, and signed only while it still has <paramref name="confirmed"/></param>
-    async Task BindRisk(Game g, string stamp, DateTime since, string neverSaw, CancellationToken armed = default, AntiCheat confirmed = AntiCheat.None)
+    async Task BindRisk(Game g, string stamp, DateTime since, string neverSaw, bool vulkan, CancellationToken armed = default, AntiCheat confirmed = AntiCheat.None)
     {
         SafeProcessHandle? process = null;
+        OfflineSession? bound = null;
         int pid = 0;
         try
         {
+            // GetTickCount64 counts sleep and ignores clock changes; checked once found too: a suspended app's poll can find a
+            // launch long after the confirmation
             // ponytail: an Always record session polls every 50 ms for as long as it waits (a process list each time); a process
             // start notification if that ever shows in the app's CPU time
-            var deadline = armed.CanBeCanceled ? TimeSpan.MaxValue : TimeSpan.FromMinutes(5);
-            for (var clock = Stopwatch.StartNew(); (process = RunningExe(g, out pid)) == null; await Task.Delay(50, armed))
-                if (clock.Elapsed > deadline) throw new InvalidOperationException("the game didn't start within 5 minutes");
-            if (!GetProcessTimes(process, out var created, out _, out _, out _)) throw new Win32Exception();
+            var deadline = armed.CanBeCanceled ? long.MaxValue : Environment.TickCount64 + (long)TimeSpan.FromMinutes(5).TotalMilliseconds;
+            long created = 0;
+            while ((process = RunningExe(g, out pid, out created)) == null && Environment.TickCount64 <= deadline) await Task.Delay(50, armed);
+            if (Environment.TickCount64 > deadline) throw new InvalidOperationException("the game didn't start within 5 minutes");
             lock (_recorderLock)
             {
+                if (_removedFromAll) throw new RemovedFromAllException();   // a binding that waited while the removal left the running game's unsigned ini
                 armed.ThrowIfCancellationRequested();
+                if (IntelLocalDriver(g)) throw new InvalidOperationException(SkipIntelDriver);
                 if (armed.CanBeCanceled)
                 {
                     // as a confirmed session's start checks it, now: the session may have waited through an update or a change
@@ -492,13 +583,13 @@ public sealed partial class ScsKiller
                 var now = Store.LoadGame(g.Id);
                 if (now.OfflineSession == null) throw new InvalidOperationException("its session was cleaned up meanwhile");
                 // resumed: the launcher's process, never a suspended child of ours that a cleanup may end
-                now.OfflineSession = now.OfflineSession with { Pid = pid, Started = created, Resumed = true };
+                now.OfflineSession = bound = now.OfflineSession with { Pid = pid, Started = created, Resumed = true };
                 Store.SaveGame(g.Id, now);
                 _offline[g.Id] = process!;
                 var dir = Path.GetDirectoryName(g.ExePath)!;
                 var (state, judged) = JudgeIni(dir, Store, null, g.InstallDir);
-                var ini = IniText(g, now, Signed(g.ExePath, RootValue(g), stamp, BoundTo(pid, created) + RiskLine + SignedLines(g, now, session: true, riskSession: true)));
-                if (state != IniState.Ours || !WriteIni(dir, ini, judged, null, g.InstallDir, () => true, null))
+                var ini = IniText(g, now, Signed(g, stamp, BoundTo(pid, created) + RiskLine + SignedLines(g, now, session: true, riskSession: true)));
+                if (state != IniState.Ours || !WriteIni(dir, ini, judged, null, g.InstallDir, () => true, null, vulkan: VulkanIn(g, now)))
                     throw new InvalidOperationException("its scskiller.ini changed meanwhile");
                 _armed.TryRemove(g.Id, out _);
             }
@@ -506,49 +597,96 @@ public sealed partial class ScsKiller
         catch (Exception e)
         {
             if (_armed.TryGetValue(g.Id, out var stop) && stop.Token == armed) _armed.TryRemove(new KeyValuePair<string, CancellationTokenSource>(g.Id, stop));
+            _sessionNotes.TryRemove(new KeyValuePair<string, string>(g.Id, LauncherSessionNote));
             _offline.TryRemove(g.Id, out _);
             process?.Dispose();
             CleanOffline(g.Id);
             Refresh(g);
             throw new InvalidOperationException($"{g.Name}: the session didn't start: {e.Message}", e);
         }
+        _sessionNotes.TryRemove(new KeyValuePair<string, string>(g.Id, LauncherSessionNote));
         RecorderLog($"{g.Name}: session bound to process {pid} ({g.ExePath}): only that process records");
+        if (OperatingSystem.IsWindows())
+            try
+            {
+                // a bootstrapper between Steam and the game can drop SteamAppId, which the Vulkan layer's enable_environment needs
+                var all = Processes(true);
+                if (all.Find(p => p.Pid == pid) is { Exe: not null } self)
+                    RecorderLog(all.Find(p => p.Pid == self.Parent).Exe is { } parent
+                        ? $"{g.Name}: process {pid} was started by {parent} (pid {self.Parent})"
+                        : $"{g.Name}: process {pid} was started by parent pid {self.Parent}, not running");
+            }
+            catch (Exception) { }
+        // a risk session's game has anti-cheat, which may refuse its token to any reader
+        var elevated = vulkan && Elevated.OfProcess(process!, deniedIsElevated: false) == true;
+        if (elevated)
+        {
+            _sessionNotes[g.Id] = ElevatedSessionNote;
+            RecorderLog($"{g.Name}: the session's game runs as administrator, which loads no per-user Vulkan layer");
+        }
         Refresh(g);
-        await EndOffline(g, process!, since, true, neverSaw);
+        await EndOffline(g, process!, since, true, neverSaw, vulkan, elevated, bound);
     }
 
-    /// <summary>A process of the game's exe, by its path, opened; null when none runs.</summary>
-    SafeProcessHandle? RunningExe(Game g, out int pid)
+    /// <summary>A process of the game's exe, by its path, opened, and its creation time (the proxy's pid_time=); null when none
+    /// runs. Elsewhere than on Windows no handle (an invalid one): its start time, read before and after its path, names the
+    /// process the path was read of, and it must be a launch of the game's app by Steam (<see cref="SteamLaunched"/>).</summary>
+    SafeProcessHandle? RunningExe(Game g, out int pid, out long created)
     {
         var name = Path.GetFileName(g.ExePath);
         // the image path names the folder resolved: an install reached through a junction spells it otherwise (as Outside)
         var real = GameFiles.FinalPath(Path.GetDirectoryName(g.ExePath)!) is { } r ? Path.Combine(r, name) : null;
         bool Ours(int pid) => ProcessPath(pid) is { } path
-            && (path.Equals(g.ExePath, StringComparison.OrdinalIgnoreCase) || real != null && path.Equals(real, StringComparison.OrdinalIgnoreCase));
+            && (path.Equals(g.ExePath, GameFiles.Names) || real != null && path.Equals(real, GameFiles.Names));
         // by path first, without opening it: another game's process of the same exe name is never opened under its anti-cheat
-        foreach (var p in Processes(true).Where(p => p.Exe.Equals(name, StringComparison.OrdinalIgnoreCase) && Ours(p.Pid)))
+        var all = Processes(true);
+        foreach (var p in all.Where(p => p.Exe.Equals(name, StringComparison.OrdinalIgnoreCase) && Ours(p.Pid)))
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                var steam = false;
+                // the ancestry from a list taken after its start time was read: a pid reused since the first list isn't judged by the old one's
+                if (ProcessTree.Created(p.Pid) is { } at && Ours(p.Pid))
+                {
+                    SteamLaunched(g, p.Pid, at, Processes(true), ref steam);
+                    if (steam && ProcessTree.Created(p.Pid) == at)
+                    {
+                        (pid, created) = (p.Pid, at);
+                        return new SafeProcessHandle(0, false);
+                    }
+                }
+                continue;
+            }
             var h = OpenProcess(Synchronize | QueryLimitedInformation, false, p.Pid);
             // the open handle keeps the pid from being reused: the path read now is that process's
             if (!h.IsInvalid && Ours(p.Pid))
             {
+                if (!GetProcessTimes(h, out created, out _, out _, out _))
+                {
+                    h.Dispose();
+                    throw new Win32Exception();
+                }
                 pid = p.Pid;
                 return h;
             }
             h.Dispose();
         }
-        pid = 0;
+        (pid, created) = (0, 0);
         return null;
     }
+
+    /// <summary>Elsewhere than on Windows: the process, started at <paramref name="started"/>, is a launch of the game's app by
+    /// Steam, a descendant of Steam's reaper for that app.</summary>
+    partial void SteamLaunched(Game g, int pid, long started, List<(int Pid, int Parent, string Exe)> all, ref bool yes);
 
     internal const string RiskLogLine = "risk=1: recording at the user's own risk";
 
     /// <summary>The proxy admitted a process of the session: it opens scskiller.log only once it admits one, and under risk=1
     /// its first line there is <see cref="RiskLogLine"/>; the log is in the game folder, or in the data folder once the
-    /// session's cleanup moved it (newer than the session's start). Unreadable: taken as admitted.</summary>
+    /// session's cleanup moved it (newer than the session's start), or the Vulkan layer's inbox. Unreadable: taken as admitted.</summary>
     bool Admitted(Game g, DateTime since, bool risk)
     {
-        foreach (var dir in new[] { Path.GetDirectoryName(g.ExePath)!, OfflineSessionDir(Store, g.Id) })
+        foreach (var dir in new[] { Path.GetDirectoryName(g.ExePath)!, OfflineSessionDir(Store, g.Id), VulkanInboxDir(g) }.OfType<string>())
             try
             {
                 var log = new FileInfo(Path.Combine(dir, "scskiller.log"));
@@ -581,6 +719,7 @@ public sealed partial class ScsKiller
     {
         lock (_recorderLock)
         {
+            if (_removedFromAll) throw new RemovedFromAllException();   // the session places the recorder itself, not through Install
             var rec = Store.LoadGame(gameId);
             var dir = Path.GetDirectoryName(g.ExePath)!;
             var entry = OfflineEntry(g, s.AntiCheat, s.Engine);
@@ -588,11 +727,14 @@ public sealed partial class ScsKiller
             var addAppId = !File.Exists(appIdFile);   // else the user's own, with this id: left as it is
             var dll = RiskDll(s.Engine, Vendor.Caps);
             var neverSaw = OfflineNeverSaw(s.Engine, dll);
-            string[] placed = [.. DefaultCopy ? [] : new[] { LedgerStamp }, dll, "scskiller.ini", .. addAppId ? new[] { SteamAppIdFile } : []];
+            string[] placed = [.. WritesLedger ? new[] { LedgerStamp } : [], dll, "scskiller.ini", .. addAppId ? new[] { SteamAppIdFile } : []];
             var stamp = Stamp(g.ExePath);   // before the full check below
             string? Refusal()
             {
+                if (OfflineUnavailable is { } unavailable) return unavailable;
                 if (entry == null) return "offline sessions without EasyAntiCheat aren't available for this game";
+                if (dll == DllVulkan) return VulkanRecorderMissing;   // the layer is enabled by Steam's launch, which this session isn't
+                if (dll == Dll12 && s.StreamlineFirst) return SkipStreamline;   // a session places no preloader beside anti-cheat
                 if (GameVerdicts.Current.Unsupported(g, s.Engine) is { } why) return $"not supported: {why.Text}";
                 if (!rec.OfflineRecord) return "allow offline sessions for this game first";
                 if (OfflineLive(gameId) || rec.OfflineSession != null) return "the last offline session's files are still being removed";
@@ -607,7 +749,10 @@ public sealed partial class ScsKiller
                 if (GameFiles.DetectAntiCheat(g) != AntiCheat.EasyAntiCheat || GameFiles.DetectAntiCheat(g, ignore: AntiCheat.EasyAntiCheat) != AntiCheat.None)
                     return "its install has another anti-cheat, or couldn't be read whole";
                 // never alongside a mod: none of the names the session places may be there
-                if ((RecorderOwnFiles.Concat(placed).FirstOrDefault(f => Path.Exists(Path.Combine(dir, f))) ?? PreloadIn(dir)) is { } there) return $"{there} is already in its folder";
+                if (Foreign(dir)) return "another SCSKiller copy's recorder is in its folder";
+                if ((RecorderOwnFiles.Where(f => !f.StartsWith(Dll9, StringComparison.OrdinalIgnoreCase)).Concat(placed).FirstOrDefault(f => Path.Exists(Path.Combine(dir, f))) ?? PreloadIn(dir)) is { } there) return $"{there} is already in its folder";
+                if (ShaderInjectorIn(dir) != false) return SkipShaderInjector;
+                if (IntelLocalDriver(g)) return SkipIntelDriver;
                 if (!addAppId && File.ReadAllText(appIdFile).Trim() != entry.AppId) return $"its folder has a {SteamAppIdFile} with another app id";
                 if (ReShade.Detect(g) is { } mod) return $"ReShade ({Path.GetFileName(mod.Dll)}) is in its folder";
                 if (!ProcessNames().Contains("steam")) return SteamFirst;   // else the game restarts through Steam, with EasyAntiCheat
@@ -635,7 +780,7 @@ public sealed partial class ScsKiller
                 process = StartAttested(g.ExePath, OfflineArguments, (h, pid, started) =>
                 {
                     _offline[gameId] = h;
-                    var ini = IniText(g, rec, Signed(g.ExePath, RootValue(g), stamp!, BoundTo(pid, started) + SignedLines(g, rec, session: true)));
+                    var ini = IniText(g, rec, Signed(g, stamp!, BoundTo(pid, started) + SignedLines(g, rec, session: true)));
                     var now = Store.LoadGame(gameId);
                     if (now.OfflineSession == null) throw new InvalidOperationException("its session was cleaned up meanwhile");
                     // every hash final before its file exists: the cleanup deletes a placed name only while it holds these bytes (the
@@ -645,10 +790,11 @@ public sealed partial class ScsKiller
                     if (addAppId) now.RecorderFiles[SteamAppIdFile] = Hex(entry!.AppId);
                     now.OfflineSession = session = session with { Pid = pid, Started = started };
                     Store.SaveGame(gameId, now);
-                    if (!DefaultCopy) Place(Path.Combine(dir, LedgerStamp), temp => WriteNew(temp, Path.GetFullPath(LedgerDir)));   // first: this copy's
-                    Place(Path.Combine(dir, dll), temp => File.Copy(_proxyDll!, temp));
-                    Place(Path.Combine(dir, "scskiller.ini"), temp => WriteNew(temp, ini));
-                    if (addAppId) Place(Path.Combine(dir, SteamAppIdFile), temp => WriteNew(temp, entry!.AppId));
+                    RefuseForeign(dir);
+                    if (WritesLedger) CreateLedger(Path.Combine(dir, LedgerStamp), LedgerText(LedgerDir));   // first: this copy's
+                    Place(Path.Combine(dir, dll), CopyOf(_proxyDll!));
+                    Place(Path.Combine(dir, "scskiller.ini"), Text(ini));
+                    if (addAppId) Place(Path.Combine(dir, SteamAppIdFile), Text(entry!.AppId));
                     if (GameFiles.DetectAntiCheat(g, quick: true, ignore: AntiCheat.EasyAntiCheat) is not AntiCheat.None and var other)
                         throw new InvalidOperationException($"{other} appeared in its folder");
                 }, () =>
@@ -678,17 +824,16 @@ public sealed partial class ScsKiller
     /// <summary>Writes a file in a game's folder under a temp name beside it, then renames it into place: a write cut off (a
     /// full disk, the app closed) leaves no half file under the real name, and one it <paramref name="replace"/>s stays whole
     /// until the rename.</summary>
-    /// <param name="unique">the temp name is one nobody can know before it exists (<see cref="UniqueTemp"/>): write must fail
-    /// when it is there (File.Copy without overwrite), so a link planted beside it is never written through</param>
-    static void Place(string path, Action<string> write, bool replace = false, bool unique = false)
+    internal static void Place(string path, Action<Stream> write, bool replace = false, string suffix = TempSuffix)
     {
         // E2E: an antivirus refusing the recorder's copy (800700E1, 800700E2)
         if (Environment.GetEnvironmentVariable("SCSKILLER_TEST_PLACE_FAIL") is { Length: > 0 } hr && path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
             throw new IOException(hr, Convert.ToInt32(hr, 16));
-        var temp = unique ? UniqueTemp(path) : path + TempSuffix;
+        var (file, temp) = CreateTemp(path, suffix);
         try
         {
-            write(temp);
+            using (file) write(file);
+            RefuseLink(path);
             for (var attempt = 1; ; attempt++)
                 try
                 {
@@ -706,18 +851,43 @@ public sealed partial class ScsKiller
         }
     }
 
-    static void WriteNew(string path, string text)
+    /// <summary>A new file beside <paramref name="path"/>, and its name: one nobody can know before it exists, so a link
+    /// planted beside it is never written through.</summary>
+    internal static (FileStream File, string Name) CreateTemp(string path, string suffix)
     {
-        using var f = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
-        f.Write(Encoding.UTF8.GetBytes(text));
+        var temp = $"{path}.{Guid.NewGuid():N}{suffix}";
+        return (new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None), temp);
     }
+
+    /// <summary>Throws when <paramref name="path"/> is a link (on Linux a hard link too): someone else put it there.</summary>
+    internal static void RefuseLink(string path)
+    {
+        if (Linked(path)) throw new IOException($"{path} is a link: not replaced");
+    }
+
+    private static partial bool Linked(string path);
+
+    static Action<Stream> Text(string text) => f => f.Write(Encoding.UTF8.GetBytes(text));
+
+    static Action<Stream> CopyOf(string source) => f =>
+    {
+        using var s = File.OpenRead(source);
+        s.CopyTo(f);
+    };
 
     /// <summary>The cleanup, the moment the process exits (its handle, not the watcher, which lags a few polls). A
     /// <paramref name="risk"/> session lasts while any process runs from the game's folders (a launcher, a relaunch). Either
-    /// ends with <see cref="SessionNote"/> when the proxy admitted none of its processes since <paramref name="since"/>.</summary>
-    async Task EndOffline(Game g, SafeProcessHandle process, DateTime since, bool risk, string neverSaw)
+    /// ends with <see cref="SessionNote"/> when the proxy admitted none of its processes since <paramref name="since"/>; a
+    /// <paramref name="vulkan"/> session whose layer never loaded with why, where the game ran elevated or on DirectX.</summary>
+    /// <param name="bound">the session as bound: elsewhere than on Windows its process is waited for by its pid and start time</param>
+    async Task EndOffline(Game g, SafeProcessHandle process, DateTime since, bool risk, string neverSaw, bool vulkan = false, bool elevated = false, OfflineSession? bound = null)
     {
-        try { await Task.Factory.StartNew(() => WaitForSingleObject(process, uint.MaxValue), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default); }
+        try
+        {
+            if (OperatingSystem.IsWindows()) await Task.Factory.StartNew(() => WaitForSingleObject(process, uint.MaxValue), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            else
+                while (bound != null && Alive(bound)) await Task.Delay(250);
+        }
         finally
         {
             _offline.TryRemove(g.Id, out _);
@@ -737,9 +907,14 @@ public sealed partial class ScsKiller
         {
             // after the wait: another process of the session may have reached its first device meanwhile (a missing file reads as 1601)
             var why = File.GetLastWriteTimeUtc(RefusedFile(g.ExePath)) < since ? null : Refused(g.ExePath);
-            _sessionNotes[g.Id] = SessionNote(why, neverSaw);
-            RecorderLog($"{g.Name}: the {kind} recorded nothing: {(why != null ? "the recorder refused it: " + why : "the recorder never loaded, no scskiller.log written during the run")}");
+            var state = vulkan && why == null && !elevated ? Games.FirstOrDefault(s => s.Game.Id == g.Id) : null;
+            var ran = state == null ? null : RanApi(g, state.Engine, since);
+            _sessionNotes[g.Id] = why == null && elevated ? ElevatedSessionNote
+                : ran != null && ApiKey(ran) != "vk" ? RanOnNote(ran, state!.ApiOverride == DxApi.Vulkan) : SessionNote(why, neverSaw);
+            RecorderLog($"{g.Name}: the {kind} recorded nothing: {(why != null ? "the recorder refused it: " + why : "the recorder never loaded, no scskiller.log written during the run")}"
+                + (why == null && elevated ? ", the game ran as administrator" : ran != null ? $", the game ran on {ApiName(ran)}" : ""));
         }
+        else if (elevated) _sessionNotes.TryRemove(new KeyValuePair<string, string>(g.Id, ElevatedSessionNote));   // it loaded all the same
         Refresh(g);
         if (risk && done && Store.LoadGame(g.Id).AlwaysRecord) Arm(g.Id);   // else the watcher's next pass, once the files are out
     }
@@ -815,6 +990,11 @@ public sealed partial class ScsKiller
             if (s.Resumed || !EndSuspended(s)) return [.. rec.RecorderFiles.Keys];
             log($"{name}: the offline session's process {s.Pid} was never resumed: ended");
         }
+        if (rec is { VulkanLayer: not null, VulkanLayerSha: null })   // first: no launch loads the layer after this. A normal install's (its copy's hash) stays
+        {
+            if (!UnregisterVulkan(rec, store, name, log)) return ["the Vulkan recorder's registration"];
+            store.SaveGame(id, rec);
+        }
         var dir = Path.GetDirectoryName(s.Exe)!;
         if (!Directory.Exists(dir))
         {
@@ -837,12 +1017,17 @@ public sealed partial class ScsKiller
         // the ini never by its name (1.2's journals list it): by its folder's entry, as every removal takes it (StripIni)
         var created = (s.Created ?? []).Where(f => !data.Contains(f) && !f.Equals("scskiller.ini", StringComparison.OrdinalIgnoreCase)).ToHashSet(StringComparer.OrdinalIgnoreCase);
         try { StripIni(dir, store, null, s.InstallDir, name, log); }
+        catch (ForeignFolderException e)   // another copy's since the check above: nothing more here, the next cleanup leaves it to that copy
+        {
+            log($"{name}: {e.Message}");
+            return ["scskiller.ini"];
+        }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             left.Add("scskiller.ini");   // its folder's entry couldn't be read or saved: tried again
             log($"{name}: couldn't take {Path.Combine(dir, "scskiller.ini")} out ({e.Message}): tried again later");
         }
-        foreach (var n in new[] { Dll12, Dll11 })   // ours by its export, whatever the manifest says
+        foreach (var n in new[] { Dll12, Dll11, Dll9 })   // ours by its export, whatever the manifest says
             try { if (IsOurProxy(Path.Combine(dir, n))) File.Delete(Path.Combine(dir, n)); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { left.Add(n); }
         foreach (var n in PreloadNames)   // never a session's: a recorder's, left from before the anti-cheat was found
@@ -860,7 +1045,7 @@ public sealed partial class ScsKiller
             {
                 if (listed == null) { left.Add(file); continue; }
                 if (!listed.Contains(file)) { rec.RecorderFiles.Remove(file); continue; }
-                if (!Named(file) && !(file is Dll12 or Dll11 && IsOurProxy(path)) && Sha256(path) != hash)
+                if (!Named(file) && !(file is Dll12 or Dll11 or Dll9 && IsOurProxy(path)) && Sha256(path) != hash)
                 {
                     log($"{name}: left {path}: not the file the offline session placed");
                     rec.RecorderFiles.Remove(file);
@@ -880,11 +1065,20 @@ public sealed partial class ScsKiller
                 if (listed == null) { left.Add(file); continue; }
                 if (!listed.Contains(file)) continue;
                 // SCSKiller's own names by name; a dll only when it is our proxy, anything else only with the bytes it wrote
-                if (Named(file) || file is Dll12 or Dll11 && IsOurProxy(path) || rec.RecorderFiles.TryGetValue(file, out var hash) && Sha256(path) == hash) Delete(file);
+                if (Named(file) || file is Dll12 or Dll11 or Dll9 && IsOurProxy(path) || rec.RecorderFiles.TryGetValue(file, out var hash) && Sha256(path) == hash) Delete(file);
                 else log($"{name}: left {path}: not SCSKiller's");   // it leaves the journal below
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { left.Add(file); }   // read again at the retry
         }
+        // a write cut off by a crash leaves Place's own temp name (<name>.<guid>.scskiller-new), never the journaled one
+        foreach (var file in created.Where(f => f.EndsWith(TempSuffix, StringComparison.OrdinalIgnoreCase)))
+            try
+            {
+                var placed = file[..^TempSuffix.Length];
+                foreach (var temp in Directory.EnumerateFiles(dir, placed + ".*" + TempSuffix).Select(Path.GetFileName).OfType<string>().Where(t => PlaceTemp(t, placed)).ToList())
+                    File.Delete(Path.Combine(dir, temp));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { left.Add(file); }
         if (IniPending(store, dir)) left.Add("scskiller.ini");   // its folder's entry takes it out, the session stays till then
         // a name confirmed gone leaves the list: one put there later is never the session's
         if (s.Created != null) rec.OfflineSession = s = s with { Created = [.. s.Created.Where(f => left.Contains(f) || data.Contains(f) && File.Exists(Path.Combine(dir, f)))] };
@@ -936,12 +1130,7 @@ public sealed partial class ScsKiller
     }
 
     /// <summary>The session's process runs: its pid is a process created when the record says.</summary>
-    static bool Alive(OfflineSession s)
-    {
-        if (s.Pid == 0) return false;
-        using var h = OpenProcess(Synchronize | QueryLimitedInformation, false, s.Pid);
-        return !h.IsInvalid && GetProcessTimes(h, out var created, out _, out _, out _) && created == s.Started && WaitForSingleObject(h, 0) == WaitTimeout;
-    }
+    private static partial bool Alive(OfflineSession s);
 
     /// <summary>The folder doesn't exist, as the nearest ancestor that can be listed shows; false when none can (the drive
     /// unavailable) or one can't be read.</summary>
@@ -980,9 +1169,12 @@ public sealed partial class ScsKiller
     {
         othersRun ??= s => OthersRun(s, ProcessTree.Snapshot());
         void Log(string line) => RecordersLog(store.DataDir, "offline cleanup: " + line);
-        using var running = new Mutex(false, HelperMutex(gameId));   // while it runs, no update is applied (OfflineBlocksUpdate)
-        using var app = StartingApp();
-        bool SettingUp() => app != null && WaitForSingleObject(app, 0) == WaitTimeout;
+        using var running = NamedMutex.Open(HelperMutex(gameId));   // while it runs, no update is applied (OfflineBlocksUpdate)
+        var starting = StartingAppPid();
+        using var app = starting is { } a && OperatingSystem.IsWindows() ? OpenStartingApp(a) : null;
+        // its start time while it is still this helper's parent: once it exits, the helper is another's child
+        var appStarted = starting is { } b && !OperatingSystem.IsWindows() && ProcessTree.Created(b) is { } t && StartingAppPid() == b ? t : (long?)null;
+        bool SettingUp() => app != null ? WaitForSingleObject(app, 0) == WaitTimeout : appStarted != null && ProcessTree.Created(starting!.Value) == appStarted;
         for (var clock = Stopwatch.StartNew(); ; Thread.Sleep(SettingUp() ? 200 : 5000))
         {
             try
@@ -990,7 +1182,12 @@ public sealed partial class ScsKiller
                 if (store.LoadGame(gameId).OfflineSession is not { } s) return 0;
                 if (exe != null) RunOnce(gameId, exe);
                 if (s.Pid == 0 && SettingUp()) continue;
-                if (s.Pid != 0)
+                if (s.Pid != 0 && !OperatingSystem.IsWindows())
+                {
+                    // bound to its start time and running (BindRisk): waited for until it exits
+                    while (s.Resumed && Alive(s)) Thread.Sleep(1000);
+                }
+                else if (s.Pid != 0)
                     using (var h = OpenProcess(Synchronize | QueryLimitedInformation, false, s.Pid))
                         if (!h.IsInvalid && GetProcessTimes(h, out var created, out _, out _, out _) && created == s.Started)
                         {
@@ -1007,34 +1204,24 @@ public sealed partial class ScsKiller
 
     /// <summary>The SCSKiller that started this process (its parent, of the same exe name); null for one started otherwise
     /// (at logon, in tests).</summary>
-    static SafeProcessHandle? StartingApp()
+    static int? StartingAppPid()
     {
         var all = ProcessTree.Snapshot();
         var me = all.FirstOrDefault(p => p.Pid == Environment.ProcessId);
-        if (me.Parent == 0 || all.FirstOrDefault(p => p.Pid == me.Parent) is not { Pid: not 0 } parent
-            || !parent.Exe.Equals(Path.GetFileName(Environment.ProcessPath), StringComparison.OrdinalIgnoreCase)) return null;
-        var h = OpenProcess(Synchronize, false, parent.Pid);
+        return me.Parent == 0 || all.FirstOrDefault(p => p.Pid == me.Parent) is not { Pid: not 0 } parent
+            || !parent.Exe.Equals(Path.GetFileName(Environment.ProcessPath), StringComparison.OrdinalIgnoreCase) ? null : parent.Pid;
+    }
+
+    static SafeProcessHandle? OpenStartingApp(int pid)
+    {
+        var h = OpenProcess(Synchronize, false, pid);
         if (!h.IsInvalid) return h;
         h.Dispose();
         return null;
     }
 
-    /// <summary>The logon entry's value name and command: "!" defers Windows' deletion of it until the command has run.</summary>
-    internal static (string Name, string Command) RunOnceEntry(string gameId, string exe) =>
-        ($"!SCSKiller offline cleanup {gameId}", $"\"{exe}\" {CleanupArg} \"{gameId}\"");
-
-    /// <summary>HKCU's RunOnce entry that runs the cleanup at the next logon (<paramref name="exe"/>: the helper's); null removes it.</summary>
-    static void RunOnce(string gameId, string? exe)
-    {
-        try
-        {
-            using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\RunOnce");
-            var (name, command) = RunOnceEntry(gameId, exe ?? "");
-            if (exe != null) key.SetValue(name, command);
-            else if (key.GetValue(name) != null) key.DeleteValue(name, false);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException) { }
-    }
+    /// <summary>The logon entry that runs the cleanup at the next logon (<paramref name="exe"/>: the helper's); null removes it.</summary>
+    private static partial void RunOnce(string gameId, string? exe);
 
     /// <summary>Starts <paramref name="exe"/> in its folder, suspended (its loader hasn't run, so nothing is loaded yet);
     /// <paramref name="setUp"/> gets the process, its pid and creation time and places the recorder for that process alone;

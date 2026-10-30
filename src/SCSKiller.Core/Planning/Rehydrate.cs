@@ -52,7 +52,7 @@ public static class Rehydrate
     /// <param name="moreBlobs">asked once for the hashes the reader didn't give; yields (sha1, bytes), each checked by SHA-1</param>
     public static RehydrateResult Run(string hashOnlyDb, string outDb, Game game, EngineInfo engine, IEngineReader reader,
         ShaderIndex? index = null, string? expectedContentHash = null, CancellationToken ct = default,
-        Func<IReadOnlySet<string>, IEnumerable<(string Sha1, byte[] Bytes)>>? moreBlobs = null)
+        Func<IReadOnlySet<string>, IEnumerable<(string Sha1, byte[] Bytes)>>? moreBlobs = null, Action<string, long, long>? steps = null)
     {
         var have = Read(hashOnlyDb).Where(r => r.Tag == 'B').Select(r => Hex(r.Payload.AsSpan(0, 20))).ToHashSet();
         var refs = References(Read(hashOnlyDb));
@@ -71,7 +71,12 @@ public static class Rehydrate
                 if (want.Count > 0)
                     reader.ReadShaders(game, engine, want, (h, b) =>
                     {
-                        lock (found) if (want.Contains(h) && found.Add(h)) WriteBlob(f, h, b);
+                        lock (found)
+                            if (want.Contains(h) && found.Add(h))
+                            {
+                                WriteBlob(f, h, b);
+                                steps?.Invoke("recorded shaders read from the game", found.Count, want.Count);
+                            }
                     }, ct);
                 if (moreBlobs != null && want.Where(h => !found.Contains(h)).ToHashSet() is { Count: > 0 } rest)
                     foreach (var (h, b) in moreBlobs(rest))

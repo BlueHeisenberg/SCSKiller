@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Security.Principal;
 using System.Text.Json;
 
 namespace SCSKiller.Core.App;
@@ -10,15 +9,19 @@ namespace SCSKiller.Core.App;
 /// the file given by <see cref="ResultArg"/>; <see cref="YesArg"/> skips its y/N prompt (the app has already asked).
 /// UAC usually elevates the same account (split token); over-the-shoulder elevation runs as another administrator,
 /// which <see cref="ForUserArg"/> lets a command detect.</summary>
-public static class Elevated
+public static partial class Elevated
 {
     public const string YesArg = "--yes", ResultArg = "--result", ForUserArg = "--for-user";
     const int ErrorCancelled = 1223;   // the user said No to UAC
 
     public sealed record Result(bool Ok, string Message);
 
-    public static bool IsAdmin => new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
-    public static string CurrentUserSid => WindowsIdentity.GetCurrent().User!.Value;
+    public static partial bool IsAdmin { get; }
+    public static partial string CurrentUserSid { get; }
+
+    /// <summary>The process runs elevated. Null: can't tell, or no such thing on this OS. <paramref name="deniedIsElevated"/>
+    /// false: a token refused to us is unknown, as anti-cheat refuses it too.</summary>
+    public static partial bool? OfProcess(Microsoft.Win32.SafeHandles.SafeProcessHandle process, bool deniedIsElevated = true);
 
     /// <summary>Runs <c>scskiller &lt;args&gt; --yes --result &lt;file&gt;</c> elevated and waits for it. Null = UAC cancelled.</summary>
     public static Result? Run(params string[] args)

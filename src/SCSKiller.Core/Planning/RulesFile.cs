@@ -23,8 +23,9 @@ public sealed class RulesFile
     /// object config (<see cref="RtRule.Config"/>); rs.re.v1: RE Engine's construction with its parameters (<see cref="ReRule"/>);
     /// rs.re.v2: its <see cref="ReRule.DenyMesh"/>, <see cref="ReRule.CbvUavAbove"/> and <see cref="ReRule.BindlessSpaces"/>; rs.re.v3: its <see cref="ReRule.OtherCbvBase"/>;
     /// rs.samplers.v1: static samplers as raw descriptions; rs.stock.v2: <see cref="StockRule.DenyMesh"/>; rs.stock.v3: <see cref="StockRule.NvExtensionEverywhere"/>; rt.nv.v1: <see cref="RtRule.Nv"/>;
-    /// amd.ags.v1: <see cref="PlanRule.Ags"/>; nv.aftermath.v1: <see cref="PlanRule.Aftermath"/>; d3ds.identity.v1: an <see cref="IdentityRule"/>, alone.</summary>
-    public static readonly IReadOnlySet<string> Capabilities = new HashSet<string> { "rs.desc.v1", "rs.desc.v2", "rs.stock.v1", "rs.select.v1", "stagesets.v1", "rt.collection.v1", "rt.noconfig.v1", "rs.re.v1", "rs.re.v2", "rs.re.v3", "rs.samplers.v1", "rs.stock.v2", "rs.stock.v3", "rt.nv.v1", "amd.ags.v1", "nv.aftermath.v1", IdentityCap };
+    /// amd.ags.v1: <see cref="PlanRule.Ags"/>; nv.aftermath.v1: <see cref="PlanRule.Aftermath"/>; vi.v1: <see cref="PlanRule.ViewInstancing"/>;
+    /// passnames.v1: <see cref="PlanRule.PassNames"/>; d3ds.identity.v1: an <see cref="IdentityRule"/>, alone.</summary>
+    public static readonly IReadOnlySet<string> Capabilities = new HashSet<string> { "rs.desc.v1", "rs.desc.v2", "rs.stock.v1", "rs.select.v1", "stagesets.v1", "rt.collection.v1", "rt.noconfig.v1", "rs.re.v1", "rs.re.v2", "rs.re.v3", "rs.samplers.v1", "rs.stock.v2", "rs.stock.v3", "rt.nv.v1", "amd.ags.v1", "nv.aftermath.v1", "vi.v1", "passnames.v1", IdentityCap };
 
     public const string IdentityCap = "d3ds.identity.v1";
 
@@ -32,7 +33,7 @@ public sealed class RulesFile
     /// SRV tables of 128 when a shader carries Avalanche's bindless marker (<see cref="RootSig.MaxSrvsFor"/>); dagor /
     /// dagorCbvRanges: built from each shader's header (<see cref="Dagor.DagorRootSig"/>), constant buffers as root CBVs or in
     /// tables.</summary>
-    public static readonly IReadOnlySet<string> RsShapes = new HashSet<string> { "ff7", "bindless", "spaceBindless", "avalancheSrvs", "dagor", "dagorCbvRanges" };
+    public static readonly IReadOnlySet<string> RsShapes = new HashSet<string> { "ff7", "bindless", "spaceBindless", "avalancheSrvs", "dagor", "dagorCbvRanges", "snowdrop" };
 
     /// <summary>avalancheGlobal: Avalanche's fork's global root signature when the libraries carry its marker
     /// (<see cref="RtCollections.GlobalFor"/>); ue5Shape: only for libraries of 5.1's binding shape
@@ -131,7 +132,14 @@ public sealed class RulesFile
             || m.Fork != null && !(m.Fork is { Length: > 0 and <= 64 } && m.Fork.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or ' '))
             || m.Games != null && (!Needs("rs.desc.v2") || m.Games.Length is 0 or > 16 || !m.Games.All(g => ContentFile.Text(g, 64) && g.Contains(':'))))
             return "bad match";
-        if (r.RootSignature == null && r.Rt == null && r.Ags == null && r.Aftermath == null) return "no rule";
+        if (r.RootSignature == null && r.Rt == null && r.Ags == null && r.Aftermath == null && r.ViewInstancing == null && r.PassNames == null) return "no rule";
+        if (r.PassNames is { } pn && (!Needs("passnames.v1") || r.RootSignature != null || r.Rt != null || r.Ags != null || r.Aftermath != null || r.ViewInstancing != null
+                || pn.Count is 0 or > 4096 || !pn.All(p => p.Key is { Length: 8 } && p.Key.All(char.IsAsciiHexDigitLower) && p.Value is { Length: > 0 and <= 64 } && p.Value.All(c => char.IsAsciiLetterOrDigit(c) || c == '_'))))
+            return "bad passNames";
+        if (r.ViewInstancing is { } vi && (!Needs("vi.v1") || r.RootSignature != null || r.Rt != null || r.Ags != null || r.Aftermath != null || !ContentFile.Text(vi.Note, 300)
+                || vi.Views is not { Length: >= 1 and <= 4 } || vi.Views.Any(v => v is not [< 16, < 2048]) || vi.Flags > 1
+                || vi.Libraries is { } libs && (libs.Length is 0 or > 256 || !libs.All(l => ContentFile.Text(l, 64)))))
+            return "bad viewInstancing";
         if (r.Ags is { } ags && (!Needs("amd.ags.v1") || r.RootSignature != null || r.Rt != null
                 || ags.Profiles?.All(p => ContentFile.Text(p.Key, 64) && p.Value is { Length: 8 } && p.Value.All(char.IsAsciiHexDigit)) == false
                 || ags.Proven?.All(a => ContentFile.Text(a, 64)) == false))
@@ -146,7 +154,7 @@ public sealed class RulesFile
                 return "bad samplers";
             var samplers = RootSig.StaticSamplers(r);
             if (rs.Select != null && (!Needs("rs.select.v1") || !rs.Select.All(s => s != null && RsShapes.Contains(s)))) return "bad select";
-            var shapes = rs.Select?.Count(s => s is "ff7" or "dagor" or "dagorCbvRanges") ?? 0;
+            var shapes = rs.Select?.Count(s => s is "ff7" or "dagor" or "dagorCbvRanges" or "snowdrop") ?? 0;
             if (rs.ByStages != null)
             {
                 if (!Needs("rs.desc.v1") || rs.Stock != null || rs.Select != null || rs.Re != null || rs.ByStages.Length == 0) return "bad byStages";
@@ -240,6 +248,12 @@ public sealed class RulesFile
     /// <summary>The ray tracing collection rule matching the engine (a plan without recorded collections uses it).</summary>
     public PlanRule? RtFor(EngineInfo e) => First(e, r => r.Rt != null);
 
+    /// <summary>The view instancing rule matching the engine (a shader reading SV_ViewID that no recorded PSO shows uses it).</summary>
+    public PlanRule? ViFor(EngineInfo e) => First(e, r => r.ViewInstancing != null);
+
+    /// <summary>The render pass name rule matching the engine (a BlackSpace pass the exe doesn't name uses it).</summary>
+    public PlanRule? PassNamesFor(EngineInfo e) => First(e, r => r.PassNames != null);
+
     PlanRule? First(EngineInfo e, Func<PlanRule, bool> kind) =>
         Rules.Where(r => kind(r) && Matches(r.Match, e)).OrderBy(r => r.Match.Fork == null).ThenBy(r => r.Match.Games == null).FirstOrDefault();
 
@@ -258,7 +272,7 @@ public sealed class RulesFile
     /// only in layout hashes the same). A plan records it, and a change re-plans the game like a newer planner.</summary>
     public string Hash(EngineInfo e) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(
-            new[] { RuleFor(e), RtFor(e) }.OfType<PlanRule>().DistinctBy(r => r.Id).OrderBy(r => r.Id, StringComparer.Ordinal), Canonical))))[..32];
+            new[] { RuleFor(e), RtFor(e), ViFor(e), PassNamesFor(e) }.OfType<PlanRule>().DistinctBy(r => r.Id).OrderBy(r => r.Id, StringComparer.Ordinal), Canonical))))[..32];
 
     /// <summary>The newest kept rules among stable's and those of <paramref name="channels"/> (<see cref="Channels"/>; null: not
     /// known yet, every copy kept), <see cref="ContentTrust.Cached"/>.</summary>
@@ -293,10 +307,22 @@ public sealed record IdentityWhen(string Read, string? Exe = null, string? Packa
 /// collection rule. <paramref name="Verified"/>: confirmed by a real game whatever confirmed-engines.json says.
 /// <paramref name="Ags"/>: AMD AGS app names for every game, whatever the match (<see cref="Vendors.AmdAppCache.AgsKey"/>); unset, it is
 /// left out of <see cref="RulesFile.Hash"/>'s serialization. <paramref name="Aftermath"/>: how each game (by id) starts NVIDIA
-/// Aftermath, whatever the match (<see cref="Vendors.NvAftermath.Of"/>), left out the same way.</summary>
+/// Aftermath, whatever the match (<see cref="Vendors.NvAftermath.Of"/>), left out the same way. <paramref name="ViewInstancing"/>:
+/// the view instancing the engine creates its SV_ViewID shaders with, left out the same way. <paramref name="PassNames"/>: render
+/// pass hash (8 lowercase hex digits) -> the name as the exe spells it, for passes whose name the exe holds in no readable form
+/// (<see cref="BlackSpace.BlackSpaceReader"/>), left out the same way.</summary>
 public sealed record PlanRule(string Id, string[] Requires, RuleMatch Match, RootSigRule? RootSignature = null, string[][]? StageSets = null,
     RtRule? Rt = null, bool Verified = false, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] AgsRule? Ags = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] Dictionary<string, Vendors.AftermathInit>? Aftermath = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] Dictionary<string, Vendors.AftermathInit>? Aftermath = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] ViRule? ViewInstancing = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] Dictionary<string, string>? PassNames = null);
+
+/// <summary>A D3D12_VIEW_INSTANCING_DESC: per view its viewport and render target array index, and its flags; for the
+/// shaders of these libraries (<see cref="ShaderMap.Library"/>; none: every library).</summary>
+public sealed record ViRule(string Note, uint[][] Views, uint Flags = 0, string[]? Libraries = null)
+{
+    public byte[] Bytes() => PsoDb.ViewInstancingBytes([.. Views.Select(v => (v[0], v[1]))], Flags);
+}
 
 /// <summary>Driver app profiles matched on the AGS app name, exact case: app name -> DxcCache key, 8 hex digits. Proven: app
 /// names whose game's own process was seen holding the key they give, registered before the game has been seen.</summary>

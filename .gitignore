@@ -1,5 +1,7 @@
 # build outputs
 proxy/build/
+proxy/build-x86/
+proxy/build-linux/
 __pycache__/
 
 # game content and third-party binaries: never commit

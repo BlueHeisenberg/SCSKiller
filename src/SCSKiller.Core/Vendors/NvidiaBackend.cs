@@ -14,6 +14,7 @@ namespace SCSKiller.Core.Vendors;
 ///   setting absent from the base profile = driver default (the driver reports its default value: 0x4000 = 16 GB on 610.88)
 ///   N (1..0xFFFFFFFE) = N MiB;  0 = cache disabled;  0xFFFFFFFF = unlimited.
 /// Setting "default" deletes the override from the base profile. Saving needs admin.</summary>
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed unsafe class NvidiaBackend : IGpuVendorBackend, IRefreshableGpu
 {
     public const string CacheSizeSettingName = "Shader disk cache maximum size";
@@ -79,7 +80,8 @@ public sealed unsafe class NvidiaBackend : IGpuVendorBackend, IRefreshableGpu
     public VendorCaps Caps { get; } = new("nvidia-1", CacheKeyedByExeName: true, StateIndependentCache: true, CacheSizeConfigurable: true,
         PerStageCache: true,    // measured: a pipeline of stages cached in other pairings costs 0.40 ms, as an exact hit
         RtCacheGranularity: RtCacheGranularity.Collection,   // selftest dxr: collections cached on their own; Jedi's recorded ones 42.7 -> 3.35 ms after synthesized ones
-        PackageKeyed: true);
+        PackageKeyed: true,
+        VulkanKey: "exe-name");   // measured: GLCache is keyed on the replaying process's exe file name, its workers' too
 
     /// <summary>The D3D cache folder the driver writes: %LOCALAPPDATA%\NVIDIA\DXCache, or older drivers' folder below LocalLow
     /// (<see cref="NvidiaAppCache.LegacyTail"/>) when it holds the newest file. No driver setting names the folder.
@@ -101,9 +103,9 @@ public sealed unsafe class NvidiaBackend : IGpuVendorBackend, IRefreshableGpu
             .Max(f => (DateTime?)f.LastWriteTimeUtc) ?? default
         : default;
 
-    /// <summary>The DXCache's per-application files.</summary>
+    /// <summary>The DXCache's per-application files, and GLCache's.</summary>
     // ponytail: the folder is picked once, so a driver update that moves it shows after a restart
-    public NvidiaAppCache AppCache { get; } = new(CacheDir);
+    public NvidiaAppCache AppCache { get; } = new(CacheDir, Vulkan.VulkanPlan.DefaultCache(GpuVendor.Nvidia));
     IAppCache? IGpuVendorBackend.AppCache => AppCache;
 
     public CacheUsage GetCacheUsage() => new(AppCache.Dir, AppCacheFiles.Readable(AppCache.Dir)

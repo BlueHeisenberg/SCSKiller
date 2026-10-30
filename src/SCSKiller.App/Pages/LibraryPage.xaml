@@ -37,7 +37,7 @@
                     <TextBlock Text="{x:Bind Vm.RefreshNote, Mode=OneWay}" Visibility="{x:Bind Vm.HasRefreshNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                 </StackPanel>
                 <local:WrapPanel Grid.Row="1" Spacing="12" LineAlignment="Right">
-                    <Button ToolTipService.ToolTip="Re-reads every game's cache size, recordings and status, and finds new games. Shift+click also re-checks every game's engine and anti-cheat (slower)." Click="OnRefresh">
+                    <Button AutomationProperties.Name="Refresh" ToolTipService.ToolTip="Re-reads every game's cache size, recordings and status, and finds new games. Shift+click also re-checks every game's engine and anti-cheat (slower)." Click="OnRefresh">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <ProgressRing Width="16" Height="16" IsActive="{x:Bind Vm.Refreshing, Mode=OneWay}" Visibility="{x:Bind Vm.Refreshing, Mode=OneWay}" />
                             <TextBlock Text="Refresh" />
@@ -77,7 +77,7 @@
                             </StackPanel>
                         </Button>
                     </Grid>
-                    <Button Style="{StaticResource AccentButtonStyle}" Click="OnCompileQueue" IsEnabled="{x:Bind Vm.CanCompileQueue, Mode=OneWay}">
+                    <Button Style="{StaticResource AccentButtonStyle}" Click="OnCompileQueue" AutomationProperties.Name="{x:Bind Vm.CompileQueueText, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanCompileQueue, Mode=OneWay}">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <FontIcon Glyph="&#xE945;" FontSize="14" />
                             <TextBlock Text="{x:Bind Vm.CompileQueueText, Mode=OneWay}" />
@@ -98,7 +98,7 @@
             </Grid.ColumnDefinitions>
             <Border Style="{StaticResource Card}">
                 <StackPanel Spacing="8">
-                    <TextBlock Text="Driver shader cache" Style="{StaticResource Secondary}" />
+                    <TextBlock Text="Shader cache" Style="{StaticResource Secondary}" />
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <TextBlock Text="{x:Bind Vm.CacheUsed, Mode=OneWay}" Style="{StaticResource Big}" />
                         <TextBlock Text="{x:Bind Vm.CacheLimitText, Mode=OneWay}" Style="{StaticResource Secondary}" VerticalAlignment="Bottom" Margin="0,0,0,3" />
@@ -217,7 +217,7 @@
                     <Button Grid.Column="2" Style="{StaticResource SortHeader}" HorizontalAlignment="Right" Click="OnSortPipelines" ToolTipService.ToolTip="Sort by pipelines">
                         <TextBlock Text="{x:Bind Vm.PipelinesHeader, Mode=OneWay}" Style="{StaticResource Caption}" />
                     </Button>
-                    <Button Grid.Column="3" Style="{StaticResource SortHeader}" HorizontalAlignment="Right" Click="OnSortCache" ToolTipService.ToolTip="Sort by cache size">
+                    <Button Grid.Column="3" Style="{StaticResource SortHeader}" HorizontalAlignment="Right" Click="OnSortCache" ToolTipService.ToolTip="Sort by each game's driver and Windows shader cache">
                         <TextBlock Text="{x:Bind Vm.CacheHeader, Mode=OneWay}" Style="{StaticResource Caption}" />
                     </Button>
                     <TextBlock Grid.Column="4" Text="Time" Style="{StaticResource Caption}" TextAlignment="Right" VerticalAlignment="Center" />

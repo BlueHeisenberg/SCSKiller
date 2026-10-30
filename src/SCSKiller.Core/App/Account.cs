@@ -24,47 +24,65 @@ public sealed record AccountStatus(IReadOnlyList<string> Ent, DateTimeOffset? Un
 }
 
 /// <summary>A failure worded for the user.</summary>
-public sealed class AccountException(string message) : Exception(message);
+public sealed class AccountException(string message) : Exception(message)
+{
+    /// <summary>The system keyring kept the device token from the request (locked, unreadable or gone).</summary>
+    public bool Keyring { get; init; }
+}
 
-/// <summary>Sign in with Patreon. The device token lives DPAPI-protected in auth.dat;
-/// the access token only in memory. Every method reports failures through <see cref="Problem"/>, never by throwing, so
-/// the UI works with the server unreachable.</summary>
+/// <summary>Sign in with Patreon. The device token lives in auth.dat (<see cref="TokenFile{T}"/>: DPAPI on Windows, the
+/// system keyring or a file only this user can read on Linux); the access token only in memory. Every method reports
+/// failures through <see cref="Problem"/>, never by throwing, so the UI works with the server unreachable.</summary>
 public sealed class Account
 {
     public static readonly TimeSpan SignInTimeout = TimeSpan.FromMinutes(5);
     const string Unreachable = "Can't reach the SCSKiller server right now. Check your internet connection, or try again later.";
     const string NotRevoked = "Signed out on this PC. The server couldn't remove it from your account's devices. It drops off there after 90 days unused.";
+    const string KeptInFile = "The system keyring is locked or not running, so your sign-in is kept in a file only your user can read.";
+    const string KeyringLocked = "Your sign-in is in the system keyring, which is locked or not running. Unlock it, then click Refresh status.";
+    const string KeyringUnreadable = "Your sign-in in the system keyring can't be read. Sign out, then sign in again.";
 
-    readonly string file;
+    readonly TokenFile<Stored> file;
     readonly RouteFailover routes;
     readonly HttpClient http;
     readonly Action<Uri> openBrowser;
     readonly TimeProvider clock;
-    string? deviceToken, accessToken;
+    TokenFile<Stored>.Kept? kept;   // what auth.dat holds: the device token, or where the keyring keeps it
+    string? accessToken;
     long accessAt;           // clock.GetTimestamp() when the access token arrived
     TimeSpan accessLife;
     CancellationTokenSource? signIn;
 
-    public Account(string dataDir, RouteFailover? routes = null, Action<Uri>? openBrowser = null, TimeProvider? clock = null)
+    /// <param name="keyring">Linux: the system keyring, tried first. Null: the file only (the CLI, which never signs in or
+    /// reads the token).</param>
+    public Account(string dataDir, RouteFailover? routes = null, Action<Uri>? openBrowser = null, TimeProvider? clock = null,
+        IKeyring? keyring = null, IProgress<string>? log = null)
     {
-        file = Path.Combine(dataDir, "auth.dat");
+        file = new(Path.Combine(dataDir, "auth.dat"), "SCSKiller sign-in", keyring, log);
         this.routes = routes ?? RouteFailover.Default;
         http = new HttpClient(this.routes, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(60) };
         this.openBrowser = openBrowser ?? (u => Process.Start(new ProcessStartInfo(u.AbsoluteUri) { UseShellExecute = true })?.Dispose());
         this.clock = clock ?? TimeProvider.System;
-        deviceToken = Load();
+        kept = file.Peek(out var refused);   // another user's or a damaged file: signed out
+        if (refused != null) Problem = $"Your saved sign-in wasn't used because {refused}. Sign in again.";
     }
 
     /// <summary>Raised after any change of the properties below, on whatever thread made it.</summary>
     public event Action? Changed;
-    public bool SignedIn => deviceToken != null;
+    /// <summary>From auth.dat alone: also while the keyring that holds the token is locked.</summary>
+    public bool SignedIn => kept != null;
+    /// <summary>At start: deletes the keyring items an earlier sign-out couldn't reach (Linux). Never throws.</summary>
+    public Task SweepAsync() => file.SweepAsync();
     public bool SigningIn => signIn != null;
     public bool Busy { get; private set; }
     /// <summary>Null until a token has been received in this session.</summary>
     public AccountStatus? Status { get; private set; }
+    /// <summary>The access token received last, without a refresh; null when none came in this session.</summary>
+    internal string? AccessToken => accessToken;
     /// <summary>The last token carries "db" (the community database); false when signed out or not read yet.</summary>
     public bool HasDb => Status?.Ent.Contains("db") == true;
-    /// <summary>The last failure, in plain words; null after a success.</summary>
+    /// <summary>The last failure, or a sign-in's caveat (kept in a file, not the keyring), in plain words; null after a
+    /// plain success.</summary>
     public string? Problem { get; private set; }
     /// <summary>Signed in by <see cref="SignInAsync"/> in this session (not read back from auth.dat at start).</summary>
     public bool JustSignedIn { get; private set; }
@@ -97,9 +115,14 @@ public sealed class Account
             if (r.StatusCode == HttpStatusCode.BadRequest)   // invalid_grant: the one-time code expired (60 s) or was used
                 throw new AccountException("The sign-in expired or was already used. Please try again.");
             var json = await AnswerAsync(r, any.Token);
-            Save(json.GetProperty("device_token").GetString()!);
-            SetAccess(r, json);
-            JustSignedIn = true;
+            // committed only while this sign-in is the running one: another cancels it first, however long the keyring takes
+            await file.SaveAsync(new Stored(json.GetProperty("device_token").GetString()!), any.Token, (saved, inFile) =>
+            {
+                kept = saved;
+                SetAccess(r, json);
+                JustSignedIn = true;
+                if (inFile) Problem = KeptInFile;
+            });
             return true;
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested && !mine.IsCancellationRequested)
@@ -125,7 +148,7 @@ public sealed class Account
     /// <summary>"Refresh status": a new access token, which carries the current entitlements.</summary>
     public async Task RefreshAsync(CancellationToken ct = default)
     {
-        if (deviceToken == null) return;
+        if (kept == null) return;
         (Busy, Problem) = (true, null);
         Raise();
         try { await NewAccessTokenAsync(ct); }
@@ -141,7 +164,7 @@ public sealed class Account
     /// 24 h token, §2.2). A failed renewal keeps a token that hasn't expired. Null when signed out.</summary>
     public async Task<string?> GetAccessTokenAsync(CancellationToken ct = default)
     {
-        if (deviceToken == null) return null;
+        if (kept == null) return null;
         if (!NeedsRefresh) return accessToken;
         try { await NewAccessTokenAsync(ct); }
         catch (Exception e) when (e is HttpRequestException or AccountException && accessToken != null && AccessAge < accessLife) { }
@@ -156,7 +179,7 @@ public sealed class Account
     /// <summary>The access token when it carries <paramref name="flag"/>, else null; as <see cref="GetDbTokenAsync"/>.</summary>
     public async Task<string?> GetTokenAsync(string flag, bool fresh = false, CancellationToken ct = default)
     {
-        if (fresh && deviceToken != null) await NewAccessTokenAsync(ct);
+        if (fresh && kept != null) await NewAccessTokenAsync(ct);
         var token = await GetAccessTokenAsync(ct);
         return Status?.Ent.Contains(flag) == true ? token : null;
     }
@@ -169,12 +192,16 @@ public sealed class Account
     /// <summary>Revokes this PC at the server (POST /v1/auth/logout) and forgets it here, even when the server can't be reached.</summary>
     public async Task SignOutAsync(CancellationToken ct = default)
     {
-        if (deviceToken is not { } token) return;
+        if (kept is not { } signedIn) return;
         (Busy, Problem) = (true, null);
         Raise();
         try
         {
-            Forget();
+            string? token = null;
+            try { token = (await file.ReadAsync(signedIn, ct))?.Member; }
+            catch (Exception e) when (e is KeyringUnavailableException or KeyringItemUnreadableException or OperationCanceledException) { }
+            await ForgetAsync(signedIn);
+            if (token == null) { Problem = NotRevoked; return; }   // a keyring that can't give it: signed out here all the same
             using var r = await SendAsync(HttpMethod.Post, "v1/auth/logout", token, ct);
             if ((int)r.StatusCode >= 500) Problem = NotRevoked;
         }
@@ -189,12 +216,12 @@ public sealed class Account
 
     async Task NewAccessTokenAsync(CancellationToken ct)
     {
-        var token = deviceToken;
+        if (await DeviceTokenAsync(ct) is not { } token) return;
         using var r = await SendAsync(HttpMethod.Post, "v1/token", token, ct);
-        if (deviceToken != token) return;   // signed out, or in as another device, meanwhile: the answer is about a device no longer used
+        if (kept is not { } k || k.Value?.Member != token) return;   // signed out, or in as another device, meanwhile: the answer is about a device no longer used
         if (r.StatusCode == HttpStatusCode.Unauthorized)   // revoked: removed from the account, 6th device, or 90 days unused (§2.4, §2.5)
         {
-            Forget();
+            await ForgetAsync(k);
             throw new AccountException("This PC was signed out of your Patreon account (removed from its devices, or unused for 90 days). Sign in again.");
         }
         SetAccess(r, await AnswerAsync(r, ct));
@@ -240,25 +267,38 @@ public sealed class Account
         _ => e.Message,
     };
 
-    static string DeviceLabel() => "Windows PC · " + RandomNumberGenerator.GetString("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 4);   // §2.5: no machine name
+    internal static string DeviceLabel() => ThisDevice.Kind + " · " + RandomNumberGenerator.GetString("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 4);   // §2.5: no machine name
 
     void Raise() => Changed?.Invoke();
 
-    // auth.dat: {"Member":"sd1_..."} under DPAPI; the app and the CLI share it.
+    // auth.dat: {"Member":"sd1_..."} (TokenFile); the app and the CLI share it.
     sealed record Stored(string Member);
 
-    string? Load() => Dpapi.Load<Stored>(file)?.Member;   // another user's or a damaged file: signed out
-
-    void Save(string token)
+    /// <summary>The device token, read from the keyring the first time it's needed. Throws an <see cref="AccountException"/>
+    /// while the keyring can't give it, and signs out when the keyring no longer has it.</summary>
+    async Task<string?> DeviceTokenAsync(CancellationToken ct)
     {
-        Dpapi.Save(file, new Stored(token));
-        deviceToken = token;
+        if (kept is not { } k) return null;
+        if (k.Value is { } v) return v.Member;
+        Stored? read;
+        try { read = await file.ReadAsync(k, ct); }
+        catch (KeyringUnavailableException) { throw new AccountException(KeyringLocked) { Keyring = true }; }
+        catch (KeyringItemUnreadableException) { throw new AccountException(KeyringUnreadable) { Keyring = true }; }   // kept: signing out removes it
+        if (kept != k) return kept?.Value?.Member;   // signed out or in again meanwhile
+        if (read == null)
+        {
+            await ForgetAsync(k);
+            throw new AccountException("Your sign-in is no longer in the system keyring. Sign in again.") { Keyring = true };
+        }
+        kept = k with { Value = read };
+        return read.Member;
     }
 
-    void Forget()
+    // only the sign-in it was about: one that landed meanwhile, while the keyring answered, stays
+    async Task ForgetAsync(TokenFile<Stored>.Kept which)
     {
-        (deviceToken, accessToken, Status, JustSignedIn) = (null, null, null, false);
-        File.Delete(file);
+        if (kept is { } now && TokenFile<Stored>.Same(now, which)) (kept, accessToken, Status, JustSignedIn) = (null, null, null, false);
+        await file.DeleteAsync(which);
     }
 }
 

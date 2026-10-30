@@ -2,13 +2,14 @@
 
 ## Status
 
-SCSKiller has applied for free code signing from the [SignPath Foundation](https://signpath.org). Until it's granted,
-releases are **unsigned** and Windows shows "Unknown publisher". Each release lists the SHA-256 of its downloads.
+SCSKiller isn't code-signed yet. Windows shows "Unknown publisher", and the first run will probably show SmartScreen's
+"Windows protected your PC": click **More info**, then **Run anyway**. Updates never show it. Each release lists the
+SHA-256 of its downloads: compare it with the file's (PowerShell: `Get-FileHash <file>`).
 
-## What is signed
+## What will be signed
 
-Only binaries built from this repository's source by its GitHub Actions release workflow, from a stable release tag
-(`vX.Y.Z`):
+Once signing is set up, only binaries built from this repository's source by its GitHub Actions release workflow,
+from a stable release tag (`vX.Y.Z`):
 
 - `SCSKiller.exe` (the app)
 - `cli\scskiller.exe` and `cli\scskillerw.exe` (the command line)
@@ -29,7 +30,7 @@ this policy. Every signed file carries the product name `SCSKiller` and the rele
 | Approver (approves each signing request) | the maintainer |
 
 Contributions are reviewed in public pull requests before they're merged ([CONTRIBUTING.md](CONTRIBUTING.md)). Every
-signing request is approved by hand. All members use multi-factor authentication on GitHub and SignPath.
+signing request will be approved by hand. All members use multi-factor authentication on GitHub.
 
 ## Privacy
 

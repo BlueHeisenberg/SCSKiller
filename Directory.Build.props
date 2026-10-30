@@ -12,6 +12,11 @@
     <VersionSuffix>internal.0</VersionSuffix>
   </PropertyGroup>
 
+  <!-- Test hooks only when the build is explicitly versioned 0.0.0-internal*: a build that sets no version gets none -->
+  <PropertyGroup Condition="$(Version.StartsWith('0.0.0-internal'))">
+    <DefineConstants>$(DefineConstants);SCSK_TEST_HOOKS</DefineConstants>
+  </PropertyGroup>
+
   <!-- CET-compatible .NET exes fail-fast at start (0x80131506) on Windows 10 builds without CET special user-mode APCs -->
   <PropertyGroup>
     <CETCompat>false</CETCompat>

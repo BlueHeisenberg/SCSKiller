@@ -1,0 +1,26 @@
+LIBRARY d3d9
+EXPORTS
+    stub9_Ord16                                      @16 NONAME
+    stub9_Ord17                                      @17 NONAME
+    stub9_Ord18                                      @18 NONAME
+    stub9_Ord19                                      @19 NONAME
+    Direct3DCreate9On12 = stub9_Direct3DCreate9On12  @20
+    Direct3DCreate9On12Ex = stub9_Direct3DCreate9On12Ex @21
+    stub9_Ord22                                      @22 NONAME
+    stub9_Ord23                                      @23 NONAME
+    Direct3DShaderValidatorCreate9 = stub9_Direct3DShaderValidatorCreate9 @24
+    PSGPError = stub9_PSGPError                      @25
+    PSGPSampleTexture = stub9_PSGPSampleTexture      @26
+    D3DPERF_BeginEvent = stub9_D3DPERF_BeginEvent    @27
+    D3DPERF_EndEvent = stub9_D3DPERF_EndEvent        @28
+    D3DPERF_GetStatus = stub9_D3DPERF_GetStatus      @29
+    D3DPERF_QueryRepeatFrame = stub9_D3DPERF_QueryRepeatFrame @30
+    D3DPERF_SetMarker = stub9_D3DPERF_SetMarker      @31
+    D3DPERF_SetOptions = stub9_D3DPERF_SetOptions    @32
+    D3DPERF_SetRegion = stub9_D3DPERF_SetRegion      @33
+    DebugSetLevel = stub9_DebugSetLevel              @34
+    DebugSetMute = stub9_DebugSetMute                @35
+    Direct3D9EnableMaximizedWindowedModeShim = stub9_Direct3D9EnableMaximizedWindowedModeShim @36
+    Direct3DCreate9 = rec9_Direct3DCreate9           @37
+    Direct3DCreate9Ex = rec9_Direct3DCreate9Ex       @38
+    SCSKiller_StartWarm = rec9_StartWarm             @39

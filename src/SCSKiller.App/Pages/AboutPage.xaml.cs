@@ -57,8 +57,8 @@ public sealed record Notice(string Name, string Version, string Licence, string 
 
 public sealed class AboutVm : Bindable
 {
-    public string Version { get; } = "Version " + (typeof(AboutVm).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "?")
-        + $" · {char.ToUpperInvariant(AppVersion.Current.Channel[0])}{AppVersion.Current.Channel[1..]} channel";
+    static readonly string Build = "Version " + (typeof(AboutVm).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "?");
+    public string Version => $"{Build} · {UpdateChannels.Shown(App.Core.Settings.UpdateChannel, AppVersion.Current.Channel, App.Account.Status?.Ent, App.Account.SignedIn == true)}";
 
     // "Download source code": stable opens the public repo's tag; alpha and beta
     // fetch the source zip served next to the package (with the access token) into Downloads; none on internal/dev builds.
@@ -101,7 +101,7 @@ public sealed class AboutVm : Bindable
     public string UpdateNote => Updater.Downloading is { } d ? $"Downloading SCSKiller {d}…"
         : Updater.Checking ? "Checking for updates…"
         : Updater.Ready is { } v ? AutoInstall.ReadyNote(v, Updater.InstallsAutomatically)
-        : Updater.UpToDate ? "SCSKiller is up to date." : "";
+        : Updater.UpToDateOn is { } c ? UpdateChannels.UpToDate(c, App.Core.Settings.UpdateChannel, AppVersion.Current.Channel) : "";
     public string? UpdateProblem => Updater.Problem;
     public bool HasUpdateProblem => Updater.Problem != null;
 
@@ -121,10 +121,17 @@ public sealed class AboutVm : Bindable
     public void Watch(bool on)
     {
         Updater.Changed -= changed.Request;
+        App.Account.Changed -= changed.Request;
         if (!on) return;
         Updater.Changed += changed.Request;
+        App.Account.Changed += changed.Request;   // the channel line follows a sign-in
+        try { Problems = App.Core.ProblemsSent(); }
+        catch (Exception) { }   // unreadable: the list stays empty
         Changed();
     }
+
+    public IReadOnlyList<SentProblem> Problems { get; private set; } = [];
+    public bool NoProblems => Problems.Count == 0;
 
     public List<Notice> Components { get; }
     public string Trademarks { get; }

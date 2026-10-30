@@ -1,8 +1,9 @@
-# Build, test and package on a clean Windows runner.
+# Build and package on a clean Windows runner. The C# tests don't run in CI.
 # One file serves both repos. Private repo: PRs, workflow_dispatch, the nightly schedule (skipped when main didn't
 # change) and release tags (release.yml), every job on the runner the repository variable SCSK_RUNNER names (the team's
-# self-hosted Windows runner). Public repo: only release tags build, GitHub-hosted, without tests (the suite already
-# passed on the private repo, and a hosted runner has no Steam or GPU).
+# self-hosted Windows runner). Public repo: only pushed release tags build (release.yml), never a workflow_dispatch on
+# one, the Windows zip alone, GitHub-hosted.
+# The private repo's build job makes the Linux package too, in the self-hosted runner's WSL: no artifact passes between jobs.
 name: build
 
 on:
@@ -11,15 +12,10 @@ on:
     paths-ignore: ['**.md']
   pull_request:
     branches: [main, 'release/**']
-    paths-ignore: ['**.md', 'docs*/**', 'tools*/linux/**']   # nothing the Windows build or tests use ('*': not read as a private path by the export's leak scan)
+    paths-ignore: ['**.md', 'docs*/**', 'tools*/linux/**']   # nothing the Windows build uses ('*': not read as a private path by the export's leak scan)
   schedule:
     - cron: '17 3 * * *'   # nightly, 03:17 UTC
   workflow_dispatch:
-    inputs:
-      filter:
-        description: 'Only the tests this dotnet test filter selects (e.g. FullyQualifiedName~SomeTest), no publish'
-        required: false
-        default: ''
   workflow_call:   # release.yml
 
 concurrency:
@@ -50,10 +46,14 @@ jobs:
 
   build:
     needs: changed
-    if: ${{ !cancelled() && needs.changed.outputs.unchanged != 'yes' && (github.event.repository.private && github.event_name != 'push' || !github.event.repository.private && github.ref_type == 'tag') }}
-    # VS 2022 (MSVC x64, MASM, Windows SDK) and CMake: preinstalled on windows-2025, installed on the self-hosted runner
-    runs-on: ${{ vars.SCSK_RUNNER && fromJSON(vars.SCSK_RUNNER) || 'windows-2025' }}
-    timeout-minutes: 45     # green runs take 22-35 min with several runners on one PC, a hang still stops well short of 6 h
+    if: ${{ !cancelled() && needs.changed.outputs.unchanged != 'yes' && (github.event_name == 'push' && github.ref_type == 'tag' || github.event.repository.private && github.event_name != 'push') }}
+    # VS 2022 (MSVC x64, MASM, Windows SDK) and CMake: preinstalled on windows-2025, installed on the self-hosted
+    # runner. The private repo's Linux steps need WSL's Ubuntu-24.04 with podman and the .NET SDK, which not every
+    # self-hosted runner has: SCSK_WSL_RUNNER names the ones that do.
+    runs-on: ${{ vars.SCSK_WSL_RUNNER && fromJSON(vars.SCSK_WSL_RUNNER) || vars.SCSK_RUNNER && fromJSON(vars.SCSK_RUNNER) || 'windows-2025' }}
+    # Windows alone takes 22-35 min with several runners on one PC, then the Linux steps, which take turns in the WSL VM
+    # the runners share (ci-linux-package.sh's lock, waited for at most an hour); a hang stops well short of 6 h
+    timeout-minutes: 120
     env:
       DOTNET_NOLOGO: 'true'
       DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
@@ -92,29 +92,112 @@ jobs:
 
       # No Oodle DLL in anything that leaves the build (THIRD-PARTY-NOTICES.md); the app downloads it on first use.
       # Nothing is signed here: the release step signs these exact bytes after checking them against the sums.
-      # A tag build is stamped with the tag's version (publish.ps1 drops the v; a bad tag fails it). Otherwise the dev default.
-      # Private-repo PRs publish nothing (no artifact is kept), the nightly run still proves the packaging.
+      # A tag build is stamped with the tag's version (publish.ps1 drops the v; a bad tag fails it), the nightly and a
+      # dispatch with 0.0.1-internal.<run> (vpk packs no version below 0.0.1), a PR with the dev default.
+      # Private-repo PRs publish native\ alone (the Linux package's input), the nightly still proves the whole packaging.
       - name: Publish
-        if: ${{ !inputs.filter && (!github.event.repository.private || github.ref_type == 'tag' || github.event_name != 'pull_request') }}
         shell: powershell
         env:
-          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('0.0.1-internal.{0}', github.run_number) || '' }}
+          NATIVE_ONLY: ${{ github.event.repository.private && github.event_name == 'pull_request' && 'yes' || '' }}
         run: |
-          if ($env:TAG) { ./build/publish.ps1 -NoOodle -Version $env:TAG } else { ./build/publish.ps1 -NoOodle }
+          if ($env:VERSION) { ./build/publish.ps1 -NoOodle -Version $env:VERSION } elseif ($env:NATIVE_ONLY) { ./build/publish.ps1 -NoOodle -NativeOnly } else { ./build/publish.ps1 -NoOodle }
           $dist = (Resolve-Path dist).Path
           $sums = Get-ChildItem dist -Recurse -File -Exclude SHA256SUMS-unsigned.txt | Sort-Object FullName | ForEach-Object {
               "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.FullName.Substring($dist.Length + 1).Replace('\', '/')
           }
           [IO.File]::WriteAllText("$dist\SHA256SUMS-unsigned.txt", ($sums -join "`n") + "`n")   # sha256sum -c format (LF), paths relative to dist/
 
+      # Without SCSK_WSL_RUNNER the job may be on a runner with no WSL: the Windows steps run, the Linux ones stop here
+      - name: WSL runner (SCSK_WSL_RUNNER)
+        if: ${{ github.event.repository.private && !vars.SCSK_WSL_RUNNER }}
+        shell: cmd
+        run: |
+          echo ::error::SCSK_WSL_RUNNER isn't set: the Linux layer and package need a runner with WSL Ubuntu-24.04, podman and the .NET SDK
+          exit /b 1
+
+      # The Vulkan recorder layer for Linux, built in the Steam Runtime's sniper SDK with its glibc capped at 2.31
+      # (build/linux-layer.sh through build/ci-linux-package.sh --layer, podman in the runner's WSL Ubuntu-24.04), then
+      # `selftest_linux vkrec` on Mesa's lavapipe.
+      # The script is checked out again: git doesn't rewrite an unchanged file when its eol attribute changes, so a
+      # persistent workspace can still hold a CRLF copy.
+      - name: Linux layer (sniper SDK, WSL)
+        if: github.event.repository.private
+        shell: cmd
+        run: |
+          wsl -d Ubuntu-24.04 -e podman --version || (echo ::error::No WSL Ubuntu-24.04 with podman on this runner: SCSK_WSL_RUNNER names the runners that have it & exit /b 1)
+          pushd build && del linux-layer.sh && popd && git checkout -- build/linux-layer.sh && wsl -d Ubuntu-24.04 -e bash build/ci-linux-package.sh --layer
+
+      # The Linux package (build/ci-linux-package.sh in WSL): build/publish-linux.sh on Publish's native files and the
+      # Linux layer, then build/check-linux-package.sh, in a clone of this commit on WSL's own filesystem, where the
+      # package keeps its file modes. With Publish's version, vpk's Linux pack too, as a release packs it: a tag keeps
+      # the release files (dist/release-linux) for its draft, the nightly and a dispatch only prove the pack works.
+      # WSL's Ubuntu also needs the .NET SDK the script pins, python3, binutils, desktop-file-utils and squashfs-tools.
+      - name: Linux package (WSL)
+        if: github.event.repository.private
+        shell: powershell
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('0.0.1-internal.{0}', github.run_number) || '' }}
+          RELEASE: ${{ github.ref_type == 'tag' && 'yes' || '' }}
+        run: |
+          $a = @(); if ($env:VERSION) { $a += '--version', $env:VERSION, '--pack' }
+          if ($env:RELEASE) { $a += '--release', 'dist/release-linux' }
+          wsl -d Ubuntu-24.04 -e bash build/ci-linux-package.sh @a
+
       # Archived (not archive: false): `gh run download`, which the release step uses, can't read unarchived artifacts.
+      # release.yml's draft takes the zip and, from the private repo's runner, the Linux release files.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
-        if: ${{ !inputs.filter && (!github.event.repository.private || github.ref_type == 'tag') }}   # private: storage is billed, only release tags need it
+        if: ${{ github.ref_type == 'tag' && (github.event_name == 'push' || github.event.repository.private) }}   # private: storage is billed, only release tags need it
         with:
           name: SCSKiller-unsigned
           path: |
             dist/SCSKiller.zip
             dist/SHA256SUMS-unsigned.txt
+            dist/release-linux/
           compression-level: 0    # the zip is already compressed
           retention-days: 7       # artifact storage is billed on private repos
           if-no-files-found: error
+
+  # macOS: the UI and Core publish for Apple silicon and Intel, then --screenshots renders the design data on the
+  # arm64 app. Private repo only, on the runner SCSK_MAC_RUNNER names, never a hosted one: skipped while it isn't set.
+  mac:
+    needs: changed
+    if: ${{ !cancelled() && needs.changed.outputs.unchanged != 'yes' && vars.SCSK_MAC_RUNNER && github.event.repository.private && github.event_name != 'push' }}
+    runs-on: ${{ fromJSON(vars.SCSK_MAC_RUNNER) }}
+    timeout-minutes: 30
+    env:
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+
+      # the runner's own .NET SDK, no download: a runner started with run.sh doesn't apply its .path
+      - name: .NET SDK on PATH
+        run: |
+          d=${DOTNET_ROOT:-$HOME/.dotnet}
+          "$d/dotnet" --version
+          echo "$d" >> "$GITHUB_PATH"
+
+      # NuGet's global packages folder stays, as on the Windows runners: it's the one the account's own builds fill
+      - name: Publish (osx-arm64, osx-x64)
+        run: |
+          for rid in osx-arm64 osx-x64; do
+            dotnet publish src/SCSKiller.Ui -c Release -f net10.0 -r "$rid" --self-contained -o "$RUNNER_TEMP/mac/ui-$rid"
+            dotnet publish src/SCSKiller.Core -c Release -f net10.0 -r "$rid" -o "$RUNNER_TEMP/mac/core-$rid"
+          done
+
+      # TMPDIR: the design data's temp folders end up in the run's folder too
+      - name: Screenshots (osx-arm64)
+        env:
+          TMPDIR: ${{ runner.temp }}/mac/tmp
+        run: |
+          mkdir -p "$TMPDIR"
+          dotnet "$RUNNER_TEMP/mac/ui-osx-arm64/SCSKiller.Ui.dll" --screenshots "$RUNNER_TEMP/mac/shots"
+          n=$(find "$RUNNER_TEMP/mac/shots" -name '*.png' | wc -l); echo "$n screenshots"; (( n > 0 ))
+
+      # the Mac has little free disk: nothing of a run stays behind
+      - name: Clean up
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/mac" && git clean -ffdxq

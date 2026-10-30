@@ -78,15 +78,17 @@
                                     <ItemsRepeater.ItemTemplate>
                                         <DataTemplate x:DataType="local:CacheItemRow">
                                             <Grid ColumnSpacing="12">
-                                                <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <FontIcon Glyph="&#xF0E2;" FontSize="16" Visibility="{x:Bind NoIcon}" Opacity="0.6" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                <Image Source="{x:Bind Icon}" Width="24" Height="24" />
+                                                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                                                     <TextBlock Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" />
                                                     <TextBlock Text="{x:Bind Note}" Visibility="{x:Bind HasNote}" Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                                 </StackPanel>
-                                                <HyperlinkButton Grid.Column="1" Content="Open folder" Tag="{x:Bind Folder}" Click="OnOpenFolder" Padding="0"
+                                                <HyperlinkButton Grid.Column="2" Content="Open folder" Tag="{x:Bind}" Click="OnOpenFolder" Padding="0"
                                                                  Visibility="{x:Bind HasFolder}" VerticalAlignment="Center" />
-                                                <TextBlock Grid.Column="2" Text="{x:Bind Size}" VerticalAlignment="Center" />
-                                                <HyperlinkButton Grid.Column="3" Content="Delete" Tag="{x:Bind}" Click="OnDeleteItem" Padding="0"
+                                                <TextBlock Grid.Column="3" Text="{x:Bind Size}" VerticalAlignment="Center" />
+                                                <HyperlinkButton Grid.Column="4" Content="Delete" Tag="{x:Bind}" Click="OnDeleteItem" Padding="0"
                                                                  IsEnabled="{x:Bind Enabled}" VerticalAlignment="Center" />
                                             </Grid>
                                         </DataTemplate>

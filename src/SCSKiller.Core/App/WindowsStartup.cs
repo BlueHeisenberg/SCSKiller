@@ -38,6 +38,16 @@ public static class WindowsStartup
         return true;
     }
 
+    /// <summary>The app's call: <paramref name="byUser"/> is <see cref="Set"/>, otherwise the start's <see cref="Reconcile"/>.
+    /// Only a <paramref name="release"/> build touches the value: a Debug build from a checkout or worktree must not point the
+    /// sign-in entry at itself. A policy-locked key leaves the setting saved but unapplied. True if the value changed.</summary>
+    public static bool Apply(bool byUser, bool release, bool on, string appExe, bool installed, Func<string?> read, Action<string?> write, Func<string, bool> exists)
+    {
+        if (!release) return false;
+        try { return byUser ? Set(on, appExe, read, write) : Reconcile(on, appExe, installed, read, write, exists); }
+        catch (Exception e) when (e is UnauthorizedAccessException or System.Security.SecurityException or IOException) { return false; }
+    }
+
     /// <summary>Whether a Run command starts <paramref name="exe"/>: the same full path, ignoring quotes, arguments, case
     /// and the \\?\ prefix.</summary>
     public static bool PointsAt(string? command, string exe) =>

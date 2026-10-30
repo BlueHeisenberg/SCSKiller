@@ -8,11 +8,13 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>scskiller</AssemblyName>
     <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Linux: the native CLI, run as dotnet scskiller.dll. EnableWindowsTargeting builds the Windows one anywhere. -->
+    <TargetFramework Condition="!$([MSBuild]::IsOSPlatform('Windows')) And '$(EnableWindowsTargeting)' != 'true'">net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- .NET is bundled (also in dev builds): end users must never get the "install .NET" prompt. -->
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier Condition="'$(TargetFramework)' == 'net10.0-windows'">win-x64</RuntimeIdentifier>
+    <SelfContained Condition="'$(TargetFramework)' == 'net10.0-windows'">true</SelfContained>
   </PropertyGroup>
 
 </Project>

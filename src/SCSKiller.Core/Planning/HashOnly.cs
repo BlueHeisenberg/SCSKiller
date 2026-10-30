@@ -291,6 +291,11 @@ public static class HashOnly
 
     public static bool IsDrawsKey(string? key) => key is { Length: 46 } && key.StartsWith("d3d11:", StringComparison.Ordinal) && key[6..].All(char.IsAsciiHexDigitLower);
 
+    /// <summary>The key of a Steam build's Vulkan entry: "vulkan:&lt;store build key&gt;" (a Vulkan game has no content hash).
+    /// Its content hash is <see cref="PackHash"/> of it, its manifest records are 'V', its records Fossilize entries
+    /// (<see cref="Vulkan.Foz.SharedRecords"/>).</summary>
+    public static string VulkanKey(string storeBuildKey) => "vulkan:" + storeBuildKey;
+
     /// <summary>A game build's entry holds no 'D' records: InvalidDataException otherwise.</summary>
     public static List<Rec> CheckNoDraws(List<Rec> canonical) =>
         canonical.Any(r => r.Tag == 'D') ? throw new InvalidDataException("a game build's entry holds no D3D11 draws ('D' records): they go to its draws entry") : canonical;

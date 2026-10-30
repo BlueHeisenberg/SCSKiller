@@ -1,11 +1,23 @@
-// Version resource of d3d12.dll, scskiller_warm.exe (SCSK_RC_WARM) and the preloader (SCSK_RC_PRELOAD). Same product metadata as Directory.Build.props.
+// Version resource of d3d12.dll, scskiller_warm.exe (SCSK_RC_WARM) and fossilize-replay.exe (SCSK_RC_REPLAY), VkLayer_scskiller.dll (SCSK_RC_VKLAYER), the DirectX 9 recorder d3d9.dll (SCSK_RC_D3D9) and the preloader (SCSK_RC_PRELOAD). Same product metadata as Directory.Build.props.
 #include <winres.h>
 #include "version.h"
 
-#ifdef SCSK_RC_WARM
+#if defined(SCSK_RC_WARM)
 #define SCSK_DESC "SCSKiller driver shader cache warmer"
 #define SCSK_NAME "scskiller_warm.exe"
 #define SCSK_TYPE VFT_APP
+#elif defined(SCSK_RC_VKLAYER)
+#define SCSK_DESC "SCSKiller Vulkan recorder layer (Fossilize)"
+#define SCSK_NAME "VkLayer_scskiller.dll"
+#define SCSK_TYPE VFT_DLL
+#elif defined(SCSK_RC_REPLAY)
+#define SCSK_DESC "SCSKiller Vulkan pipeline replayer (Fossilize)"
+#define SCSK_NAME "fossilize-replay.exe"
+#define SCSK_TYPE VFT_APP
+#elif defined(SCSK_RC_D3D9)
+#define SCSK_DESC "SCSKiller DirectX 9 recorder"
+#define SCSK_NAME "d3d9.dll"
+#define SCSK_TYPE VFT_DLL
 #elif defined(SCSK_RC_PRELOAD)
 #define SCSK_DESC "SCSKiller recorder preloader"
 #define SCSK_NAME "preload"

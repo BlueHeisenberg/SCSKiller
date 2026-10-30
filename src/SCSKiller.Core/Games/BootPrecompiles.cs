@@ -10,7 +10,7 @@ namespace SCSKiller.Core.Games;
 public sealed class BootPrecompiles
 {
     public const string ContentPath = "v1/content/precompiles-at-boot.json";
-    public const string Reason = "builds its shaders at the main menu; in-game stutter isn't from shader compilation";
+    public const string Reason = "builds its shaders at the main menu. In-game stutter isn't from shader compilation";
     public const int MaxGames = 200;
 
     sealed record Entry(string Name, string[] Ids, string Source, string Date);

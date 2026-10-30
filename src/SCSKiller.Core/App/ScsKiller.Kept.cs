@@ -70,7 +70,7 @@ public sealed partial class ScsKiller
                 }
                 var keys = OwnKeys(gameId, Store.LoadGame(gameId));
                 // a reset (Adrenalin, Disk Cleanup) empties DxcCache; an eviction leaves it just under the cap
-                if (amd.D3D12FileNames(keys).Count == 0 && amd.DxcBytes() < AmdAppCache.DxcCacheCap / 2)
+                if (amd.D3D12FileNames(keys).Count == 0 && OperatingSystem.IsWindows() && amd.DxcBytes() < AmdAppCache.DxcCacheCap / 2)
                 {
                     Drop(k, gameId, "the driver's cache was reset");
                     return true;
@@ -144,8 +144,9 @@ public sealed partial class ScsKiller
     void ShowKept(string gameId)
     {
         var kept = KeptState(gameId);
+        if (Games.FirstOrDefault(x => x.Game.Id == gameId) is not { } listed) return;
         var rec = Store.LoadGame(gameId);
-        var (disk, windows) = (rec.CacheKeys is { Count: > 0 } keys && AppCache != null ? AppCache.SizeOf(keys) : (long?)null, Games.FirstOrDefault(x => x.Game.Id == gameId) is { } listed ? WindowsCacheOf(listed.Game, rec) : null);
+        var (disk, windows) = (CacheOnDiskOf(listed.Game, listed.Engine, rec), WindowsCacheOf(listed.Game, rec));
         GameState? state = null;
         lock (_lock)
             if (_games.FindIndex(x => x.Game.Id == gameId) is var i and >= 0 && (_games[i].Kept != kept || _games[i].CacheOnDisk != disk || _games[i].WindowsCache != windows))

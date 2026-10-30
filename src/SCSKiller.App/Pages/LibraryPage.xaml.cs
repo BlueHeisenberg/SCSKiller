@@ -17,7 +17,7 @@ public sealed partial class LibraryPage : Page
         var refresh = new Coalesced(DispatcherQueue, Vm.Refresh);
         var step = new Coalesced(DispatcherQueue, Vm.ScanStep);
         void OnChanged(GameState _) => refresh.Request();
-        void OnQueue(QueueItem q) { if (q.Stage is not (QueueStage.Warming or QueueStage.Merging or QueueStage.Saving or QueueStage.Finishing)) refresh.Request(); }   // progress ticks change nothing here
+        void OnQueue(QueueItem q) { if (!Format.ProgressTick(q)) refresh.Request(); }   // progress ticks change nothing here
         Loaded += (_, _) =>
         {
             App.Core.GameChanged += OnChanged; App.Core.QueueChanged += OnQueue; Icons.Failed += refresh.Request;
@@ -81,6 +81,10 @@ public sealed partial class LibraryPage : Page
         var add = new MenuFlyoutItem { Text = "Add a folder of games…", Icon = new FontIcon { Glyph = "\uE710" } };
         add.Click += OnAddFolder;
         FoldersMenu.Items.Add(add);
+        var leave = new MenuFlyoutItem { Text = "Leave out a folder…", Icon = new FontIcon { Glyph = "" } };
+        ToolTipService.SetToolTip(leave, "Games installed in it are not listed or read");
+        leave.Click += OnLeaveOutFolder;
+        FoldersMenu.Items.Add(leave);
         var folders = Fmt.Added?.Folders ?? [];
         if (folders.Count > 0) FoldersMenu.Items.Add(new MenuFlyoutSeparator());
         foreach (var folder in folders)
@@ -96,6 +100,38 @@ public sealed partial class LibraryPage : Page
             };
             FoldersMenu.Items.Add(item);
         }
+        var leftOut = App.Core.Settings.LeftOutFolders ?? [];
+        if (leftOut.Count > 0) FoldersMenu.Items.Add(new MenuFlyoutSeparator());
+        foreach (var folder in leftOut)
+        {
+            var item = new MenuFlyoutItem { Text = $"Left out: {folder}", Icon = new FontIcon { Glyph = "" } };
+            ToolTipService.SetToolTip(item, "Look for games here again");
+            item.Click += async (_, _) =>
+            {
+                await Task.Run(() => App.Core.ScanFolderAgain(folder));
+                Vm.Rescan(force: false);
+            };
+            FoldersMenu.Items.Add(item);
+        }
+    }
+
+    async void OnLeaveOutFolder(object _, RoutedEventArgs __)
+    {
+        string? path;
+        try
+        {
+            var picker = new Microsoft.Windows.Storage.Pickers.FolderPicker(App.Main.AppWindow.Id) { CommitButtonText = "Leave out this folder" };
+            path = (await picker.PickSingleFolderAsync())?.Path;
+        }
+        catch (Exception ex) { await Message("Couldn't open the folder picker", ex.Message); return; }
+        if (path == null) return;
+        try { await Task.Run(() => App.Core.LeaveOutFolder(path)); }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            await Message("Couldn't leave out this folder", ex.Message);
+            return;
+        }
+        Vm.Rescan(force: false);
     }
 
     // Each folder in it is taken for one game, its exe found as for a store's install

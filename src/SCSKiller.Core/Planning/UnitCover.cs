@@ -14,7 +14,8 @@ public sealed record UnitPick(List<LayoutElem> Layout, uint Topology, string Sha
 /// shapes, max(L, S) PSOs cover them all (zipped), not L x S. Units:
 ///   VS = (VS, read layout, topology, next stage: PS / none / GS / HS, root signature as the VS sees it)
 ///   PS = (PS, root signature, export shape); CS, MS, AS, GS, HS, DS = (shader, root signature)
-/// with each state part only when the policy keys on it (NVIDIA: shader + whole root signature).</summary>
+/// with each state part only when the policy keys on it (NVIDIA: shader + whole root signature), and every stage of a
+/// pipeline with view instancing keyed on it too (NVIDIA keys a compile on it).</summary>
 public sealed class UnitCover(ExactLayouts facts)
 {
     public ExactLayouts Facts { get; } = facts;
@@ -41,20 +42,25 @@ public sealed class UnitCover(ExactLayouts facts)
     {
         var read = s.Stages.TryGetValue((int)Stage.Vertex, out var vs) && x.Shaders.TryGetValue(vs, out var vi)
             ? ExactLayouts.ReadLayout(ExactLayouts.Explicit(s.Layout), vi) : ExactLayouts.Explicit(s.Layout); // no signature: the whole layout
-        return Units(x, s.Stages, s.Rs, read, s.Topology, x.ShapeOf(s));
+        return Units(x, s.Stages, s.Rs, read, s.Topology, x.ShapeOf(s), s.ViewInstancing);
     }
 
-    /// <summary>The units of one PSO: <paramref name="readLayout"/> as <see cref="ExactLayouts.ReadLayout"/> returns it.</summary>
-    public static IEnumerable<Unit> Units(ExactLayouts x, IReadOnlyDictionary<int, string> stages, string rs, IReadOnlyList<LayoutElem> readLayout, uint topology, string shape)
+    /// <summary>The units of one PSO: <paramref name="readLayout"/> as <see cref="ExactLayouts.ReadLayout"/> returns it,
+    /// <paramref name="views"/> its view instancing (<see cref="PsoDb.PsoState.ViewInstancing"/>).</summary>
+    public static IEnumerable<Unit> Units(ExactLayouts x, IReadOnlyDictionary<int, string> stages, string rs, IReadOnlyList<LayoutElem> readLayout, uint topology, string shape,
+        byte[]? views = null)
     {
         foreach (var (st, sh) in stages)
         {
             var stage = (Stage)st;
-            yield return stage == Stage.Vertex ? VsUnit(x, stages, sh, rs, readLayout, topology, shape)
+            var u = stage == Stage.Vertex ? VsUnit(x, stages, sh, rs, readLayout, topology, shape)
                 : stage == Stage.Pixel ? PsUnit(x, sh, rs, shape)
                 : new Unit(stage, sh, x.RsKey(rs));
+            yield return Viewed(u, views);
         }
     }
+
+    static Unit Viewed(Unit u, byte[]? views) => views == null ? u : u with { Key = u.Key + "|vi:" + Convert.ToHexStringLower(views) };
 
     static Unit VsUnit(ExactLayouts x, IReadOnlyDictionary<int, string> stages, string vs, string rs, IReadOnlyList<LayoutElem> readLayout, uint topology, string shape)
     {
@@ -94,37 +100,39 @@ public sealed class UnitCover(ExactLayouts facts)
     /// <param name="pairsOnly">emit only PSOs that cover a new VS unit and a new PS unit at once (<see cref="CoverAll"/>'s
     /// first pass)</param>
     public List<UnitPick> Cover(IReadOnlyDictionary<int, string> stages, string rs, IReadOnlyList<List<LayoutElem>> layouts,
-        IReadOnlyList<uint> topologies, IReadOnlyList<string> shapes, bool pairsOnly = false)
+        IReadOnlyList<uint> topologies, IReadOnlyList<string> shapes, bool pairsOnly = false, byte[]? views = null)
     {
         if (pairsOnly && !(stages.ContainsKey((int)Stage.Vertex) && stages.ContainsKey((int)Stage.Pixel))) return [];
         List<(List<LayoutElem>, uint)> vsVariants = layouts.Count == 0 || !stages.ContainsKey((int)Stage.Vertex) ? [([], 0u)]
             : [.. layouts.SelectMany(l => (topologies.Count == 0 ? [3u] : topologies).Select(t => (l, t)))];
-        List<string> psShapes = shapes.Count == 0 || !stages.ContainsKey((int)Stage.Pixel) ? [""] : [.. shapes];
         // each stage's unit once per candidate (a PS unit doesn't depend on the VS variant; a VS unit only on whether the
         // shape binds a render target, so VS variants come per such binding among the shapes)
         var vsSha = stages.GetValueOrDefault((int)Stage.Vertex);
         var psSha = stages.GetValueOrDefault((int)Stage.Pixel);
+        var side = psSha == null ? Side(null, rs, [], views) : psSides.TryGetValue((psSha, rs, shapes, views), out var known) ? known
+            : psSides[(psSha, rs, shapes, views)] = Side(psSha, rs, shapes, views);
         var keyed = Policy.NextStage && psSha != null && vsSha != null; // the VS unit depends on the binding (else one VS unit for all shapes)
-        var bindings = keyed ? psShapes.Select(Bound).Distinct().ToList() : [psShapes.Any(Bound)];
+        var bindings = keyed ? side.Bindings : [side.AnyBound];
         var vsUnits = vsVariants.SelectMany(v => bindings.Select(b => (V: v, Bound: b,
-            U: vsSha == null ? (Unit?)null : VsUnit(Facts, stages, vsSha, rs, v.Item1, v.Item2, b ? psShapes.First(Bound) : "")))).DistinctBy(v => v.U).ToList();
-        var psUnits = psShapes.Select(s => (S: s, U: psSha == null ? (Unit?)null : PsUnit(Facts, psSha, rs, s))).DistinctBy(s => s.U).ToList();
-        var others = stages.Where(s => s.Key is not ((int)Stage.Vertex or (int)Stage.Pixel)).Select(s => new Unit((Stage)s.Key, s.Value, Facts.RsKey(rs))).ToList();
+            U: vsSha == null ? (Unit?)null : Viewed(VsUnit(Facts, stages, vsSha, rs, v.Item1, v.Item2, b ? side.FirstBound! : ""), views)))).DistinctBy(v => v.U).ToList();
+        var psUnits = side.Units;
+        var others = stages.Where(s => s.Key is not ((int)Stage.Vertex or (int)Stage.Pixel)).Select(s => Viewed(new Unit((Stage)s.Key, s.Value, Facts.RsKey(rs)), views)).ToList();
         bool IsNew(Unit? u) => u is { } x && !Covered.Contains(x);
         var newVs = vsUnits.Count(v => IsNew(v.U));
-        var newPs = psUnits.Count(s => IsNew(s.U));
+        var newPs = side.Done ? 0 : psUnits.Count(s => IsNew(s.U));
+        side.Done = newPs == 0;
         if (newVs == 0 && newPs == 0 && !others.Any(u => IsNew(u))) return []; // the common case on a big library: nothing to emit
 
         // one variant per unit (NVIDIA: every layout is the same VS unit), zipped per render-target binding (a VS unit is
         // keyed on it): the uncovered ones first, the covered ones fill the zip
         var vs = vsUnits.OrderBy(v => !IsNew(v.U)).ToList();
-        var ps = psUnits.OrderBy(s => !IsNew(s.U)).ToList();
+        var ps = newPs == 0 ? psUnits : psUnits.OrderBy(s => !IsNew(s.U)).ToList();
         var zip = new List<((List<LayoutElem>, uint) V, string S, Unit? Vu, Unit? Su)>();
         foreach (var b in bindings)
         {
             var bv = vs.Where(v => v.Bound == b).ToList() is { Count: > 0 } l ? l : vs; // no VS (mesh): one null unit for all
-            var bp = keyed ? ps.Where(s => Bound(s.S) == b).ToList() : ps;
-            int nv = bv.Count(v => IsNew(v.U)), np = bp.Count(s => IsNew(s.U));
+            var bp = !keyed ? ps : newPs == 0 ? side.ByBinding.GetValueOrDefault(b, []) : ps.Where(s => Bound(s.S) == b).ToList();
+            int nv = bv.Count(v => IsNew(v.U)), np = newPs == 0 ? 0 : bp.Count(s => IsNew(s.U));
             var n = pairsOnly ? Math.Min(nv, np) : Math.Max(nv, np);
             for (var i = 0; i < n; i++)
             {
@@ -151,9 +159,30 @@ public sealed class UnitCover(ExactLayouts facts)
         return picks;
     }
 
-    /// <summary>One candidate stage set with its resolved state candidates (see <see cref="Cover"/>).</summary>
+    /// <summary>A PS's side of <see cref="Cover"/>, the same for every VS it pairs with: its shapes' units, the render-target
+    /// bindings among them, and whether all its units are covered yet (<see cref="Covered"/> only grows).</summary>
+    sealed class PsSide(IReadOnlyList<string> shapes, List<(string S, Unit? U)> units)
+    {
+        public List<(string S, Unit? U)> Units { get; } = units;
+        public List<bool> Bindings { get; } = shapes.Select(Bound).Distinct().ToList();
+        public bool AnyBound => Bindings.Contains(true);
+        public string? FirstBound { get; } = shapes.FirstOrDefault(Bound);
+        public Dictionary<bool, List<(string S, Unit? U)>> ByBinding { get; } = units.GroupBy(u => Bound(u.S)).ToDictionary(g => g.Key, g => g.ToList());
+        public bool Done { get; set; }
+    }
+
+    // by the shape list's instance: a planner resolves one list per PS
+    readonly Dictionary<(string Ps, string Rs, IReadOnlyList<string> Shapes, byte[]? Views), PsSide> psSides = [];
+
+    PsSide Side(string? ps, string rs, IReadOnlyList<string> shapes, byte[]? views)
+    {
+        IReadOnlyList<string> psShapes = shapes.Count == 0 || ps == null ? [""] : shapes;
+        return new(psShapes, psShapes.Select(s => (S: s, U: ps == null ? (Unit?)null : Viewed(PsUnit(Facts, ps, rs, s), views))).DistinctBy(s => s.U).ToList());
+    }
+
+    /// <summary>One candidate stage set with its resolved state candidates (see <see cref="Cover"/>) and view instancing.</summary>
     public sealed record Candidate(IReadOnlyDictionary<int, string> Stages, string Rs, IReadOnlyList<List<LayoutElem>> Layouts,
-        IReadOnlyList<uint> Topologies, IReadOnlyList<string> Shapes);
+        IReadOnlyList<uint> Topologies, IReadOnlyList<string> Shapes, byte[]? Views = null);
 
     /// <summary>Covers many stage sets in two passes: first only PSOs that bring a new VS and a new PS unit together (a greedy
     /// matching: pairing two uncovered units in one PSO is what gets a cover near max(#VS units, #PS units)), then
@@ -166,7 +195,7 @@ public sealed class UnitCover(ExactLayouts facts)
             {
                 tick?.Invoke();
                 var c = candidates[i];
-                picks.AddRange(Cover(c.Stages, c.Rs, c.Layouts, c.Topologies, c.Shapes, pairsOnly).Select(p => (i, c, p)));
+                picks.AddRange(Cover(c.Stages, c.Rs, c.Layouts, c.Topologies, c.Shapes, pairsOnly, c.Views).Select(p => (i, c, p)));
             }
         return picks.OrderBy(p => p.Item1).Select(p => (p.Item2, p.Item3)).ToList();
     }

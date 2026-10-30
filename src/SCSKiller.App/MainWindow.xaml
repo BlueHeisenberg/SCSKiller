@@ -29,7 +29,7 @@
             <!-- a downloaded update (Updater): quiet, never a dialog -->
             <TitleBar.RightHeader>
                 <StackPanel Orientation="Horizontal" Spacing="4">
-                    <Button x:Name="UpdateButton" Visibility="Collapsed" Click="OnRestartToUpdate" Padding="10,3">
+                    <Button x:Name="UpdateButton" Visibility="Collapsed" Click="OnRestartToUpdate" Padding="10,3" AutomationProperties.Name="{Binding Text, ElementName=UpdateText}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon Glyph="&#xE777;" FontSize="13" />
                             <TextBlock x:Name="UpdateText" Text="Restart to update" FontSize="13" />

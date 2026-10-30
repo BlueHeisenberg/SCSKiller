@@ -35,10 +35,12 @@ public partial class App : Application
     static readonly TimeSpan SessionEndWait = TimeSpan.FromSeconds(10);
 
     static Tray? tray;
-    static bool notifications, quitting, checkingDriver, checkAgain;
+    static SCSKiller.Ui.Models.AwakeGuard? awake;
+    static bool newsReady, notifications, quitting, checkingDriver, checkAgain;
     static string? toldDriver;   // the driver and games the last driver-update notification was about
     static Dictionary<string, string>? told;   // NewShaders' notified store
     static readonly HashSet<string> autoQueued = [];   // games NotifyNewShaders queued, while they wait for idle
+    static readonly HashSet<string> newGamesTried = [];   // NewShaders.NewGames' once per session
     static readonly DateTimeOffset session = DateTimeOffset.UtcNow;   // NewShaders.Plan: what an earlier one queued was lost with it
     static Coalesced? newShadersCheck;
     static TaskCompletionSource? quitNow;   // set while quitting waits for the compile to finish: the tray's Quit again ends it
@@ -57,32 +59,44 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs e)
     {
-        try { Launch(); }
-        catch (Exception ex)
+        var args = Environment.GetCommandLineArgs();
+        void Start(Account? signedIn)
         {
-            Program.StartFailed(ex, Environment.GetCommandLineArgs());
-            throw;
+            try { Launch(args, signedIn); }
+            catch (Exception ex)
+            {
+                Program.StartFailed(ex, args);
+                throw;
+            }
         }
+        if (Program.IsDesignRun(args) || !AlphaGate.Needed(AppVersion.Current) || AlphaGate.Passed(AppStore.DefaultDir)) { Start(null); return; }
+        // before the core exists: a refused alpha scans nothing and places nothing
+        var account = new Account(AppStore.DefaultDir);
+        // someone is at the PC: the window shows whatever started it, and a toast's activation expires meanwhile
+        args = args.Where(a => a != WindowsStartup.TrayArg && a != "--driver-updated" && !a.StartsWith("----AppNotificationActivated:", StringComparison.Ordinal)).ToArray();
+        var gate = new GateWindow(account, AppStore.DefaultDir, () => Start(account));
+        gate.Activate();
+        _ = gate.StartAsync();
     }
 
     // Args: --fake (sample data), --screenshots <dir> (fake data, off-screen, never activated, then exit),
     // --driver-updated (PLATFORM's scheduled task after a driver update leaves stale games in Ask mode),
     // --tray (the sign-in entry, WindowsStartup: starts in the notification area, no window).
-    void Launch()
+    void Launch(string[] args, Account? signedIn)
     {
-        var args = Environment.GetCommandLineArgs();
         int shots = Array.IndexOf(args, "--screenshots");
         bool driverUpdated = args.Contains("--driver-updated");
         Core = shots >= 0 || args.Contains("--fake") ? new FakeScsKiller() : ScsKiller.CreateDefault();
         // The design data starts signed out and never touches the real auth.dat.
         var fakeDir = Path.Combine(Path.GetTempPath(), $"SCSKiller-fake-{Environment.ProcessId}");
-        Account = shots >= 0 ? FakeAccount.Create(fakeDir) : new Account(Core is FakeScsKiller ? fakeDir : AppStore.DefaultDir);   // screenshots: a fake server
+        Account = shots >= 0 ? FakeAccount.Create(fakeDir) : signedIn ?? new Account(Core is FakeScsKiller ? fakeDir : AppStore.DefaultDir);   // screenshots: a fake server
         Store = Core is ScsKiller ks ? ks.Store : new AppStore(fakeDir);
+        (Updater.Host.Core, Updater.Host.Account, Updater.Host.Quitting) = (Core, Account, () => Quitting);
         if (Core is ScsKiller real)
         {
-            real.Log = new AppLog(real.Store.DataDir);
-            Codecs.Log = real.Log;
-            real.Log.Report($"SCSKiller {AppVersion.Current} started on Windows {Environment.OSVersion.Version}, {real.Vendor.Gpu.Name}, driver {real.Vendor.Gpu.DriverVersion}");
+            var applog = new AppLog(real.Store.DataDir);
+            real.Log = Codecs.Log = applog;
+            applog.Start($"Windows {Environment.OSVersion.Version}, {real.Vendor.Gpu.Name}, driver {real.Vendor.Gpu.DriverVersion}");
             real.Community = new Community(AppStore.DefaultDir, Account.GetDbTokenAsync) { TokenWith = Account.GetTokenAsync };
             real.DbEntitled = () => Account.SignedIn && (Account.Status == null || Account.HasDb);
             real.Sharing = new Sharing(AppStore.DefaultDir, () => real.Settings.ShareRecordings);   // anonymous: never the Patreon sign-in
@@ -120,7 +134,8 @@ public partial class App : Application
         catch (Exception ex) { toastError = ex.Message; }   // the app works without notifications
         notifications = toastError == null;
         // after Register(): a toast click's relaunch fail-fasts in the Windows App SDK when the args are read first
-        var activation = AppInstance.GetCurrent().GetActivatedEventArgs();
+        // after the gate a toast's activation has expired, and reading it waits and throws: a plain launch then (null)
+        var activation = signedIn == null ? AppInstance.GetCurrent().GetActivatedEventArgs() : null;
 
         if (shots >= 0)
         {
@@ -133,6 +148,9 @@ public partial class App : Application
                 File.WriteAllText(Path.Combine(dir, "toast-new-shaders.xml"), NewShadersToast([Core.Games[0] with { RecordedSinceWarm = 42 }]).Payload);
                 File.WriteAllText(Path.Combine(dir, "toast-new-shaders-games.xml"), NewShadersToast(Core.Games.Take(3).ToList()).Payload);
                 File.WriteAllText(Path.Combine(dir, "toast-new-shaders-compiling.xml"), NewShadersToast([Core.Games[0] with { RecordedSinceWarm = 42 }], compiling: true).Payload);
+                var sample = NewsState.Sample;
+                File.WriteAllText(Path.Combine(dir, "toast-news.xml"), NewsToast(sample.Title, NewsState.FirstLine(sample.Body)).Payload);
+                File.WriteAllText(Path.Combine(dir, "toast-news-more.xml"), NewsToast("SCSKiller news", NewsState.MoreLine(4)).Payload);
             }
             _ = Main.TakeScreenshotsAsync(dir, (FakeScsKiller)Core);
             return;   // no tray icon, no notification, no single-instance registration
@@ -144,16 +162,23 @@ public partial class App : Application
         if (!Core.Settings.WelcomeSeen)
         {
             WhatsNew.AtStart(Store, firstRun: true, AppVersion.Current);
-            WhenShown(root => ShowWelcomeAsync(root, Core is FakeScsKiller ? Task.FromResult<WelcomeContent?>(null) : WelcomeContent.FetchAsync()));
+            WhenShown(async root =>
+            {
+                await ShowWelcomeAsync(root, Core is FakeScsKiller ? Task.FromResult<WelcomeContent?>(null) : WelcomeContent.FetchAsync());
+                if (TraversalFix.Asks(Core.Settings)) await AskTraversalAsync(root);
+            });
         }
         else WhenShown(async root =>   // one dialog at a time
         {
             if (ActiveCheck.Asks(Core.Settings)) await AskActiveCheckAsync(root);
             if (Diagnostics.Asks(Core.Settings)) await AskDiagnosticsAsync(root);
+            if (TraversalFix.Asks(Core.Settings)) await AskTraversalAsync(root);
             if (WhatsNew.AtStart(Store, firstRun: false, AppVersion.Current) is { } news) await ShowWhatsNewAsync(root, news);
         });
 
         tray = CreateTray();
+        // SetThreadExecutionState belongs to the calling thread: set and clear it on the UI thread, which lives as long as the app
+        awake = new(Core, on => Main.DispatcherQueue.TryEnqueue(() => SetThreadExecutionState(on ? EsContinuous | EsSystemRequired : EsContinuous)));
         UpdateTip();
         if (Core is not FakeScsKiller)   // the design data never touches the registry or the running app
         {
@@ -174,9 +199,10 @@ public partial class App : Application
                 Task.Run(Core.RefreshCacheSizes);
             };
             if (Core is ScsKiller gpu) gpu.GpuChanged += () => Main.DispatcherQueue.TryEnqueue(OnGpuChanged);
+            if (Core is ScsKiller ends) ends.QueueChanged += q => { if (notifications && ends.EndedNotice(q) is { } n) Main.DispatcherQueue.TryEnqueue(() => ShowEnded(q.GameId, n)); };
             ApplyStartWithWindows(byUser: false);
             Updater.Start();
-            if (activation.Kind == ExtendedActivationKind.Launch) _ = Updater.ApplyAtStartAsync(args[1..]);
+            if (activation is null or { Kind: ExtendedActivationKind.Launch }) _ = Updater.ApplyAtStartAsync(args[1..]);
             if (Core is ScsKiller k && !driverUpdated)
             {
                 var check = newShadersCheck = new Coalesced(Main.DispatcherQueue, () => NotifyNewShaders(k.Store));
@@ -190,7 +216,7 @@ public partial class App : Application
                 _ = Core.ScanAsync(CancellationToken.None);
         }
 
-        if (activation.Kind == ExtendedActivationKind.AppNotification)
+        if (activation is { Kind: ExtendedActivationKind.AppNotification })
         {
             // Relaunched by a toast click: OnToast activates the window for everything but "idle" and "skip".
             var toastArgs = ((AppNotificationActivatedEventArgs)activation.Data).Arguments;
@@ -208,6 +234,8 @@ public partial class App : Application
 
         if (!args.Contains(WindowsStartup.TrayArg)) Main.Activate();
         ShowDriverToast();
+        newsReady = true;
+        ToastNews();
     }
 
     /// <summary>One scan at a time (UI thread): a request while one runs scans again after it, since only a scan started
@@ -224,13 +252,24 @@ public partial class App : Application
                 checkAgain = false;
                 NotifyDriverUpdate(exitIfNothing);
             }
-            else if (!ShowDriverToast() && exitIfNothing) _ = QuitAsync();
+            else if (ShowDriverToast() is var shown && exitIfNothing && !IsWindowVisible(WinRT.Interop.WindowNative.GetWindowHandle(Main)))   // opened meanwhile: stays
+            {
+                if (!shown) _ = QuitAsync();
+                // Right away queued them: the unattended launch leaves once they are compiled, unless the window was opened
+                else if (Core is ScsKiller { Settings.DriverRightAway: true } k)
+                    _ = k.WhenQueueIdle().ContinueWith(_ => Main.DispatcherQueue.TryEnqueue(() =>
+                    {
+                        if (!IsWindowVisible(WinRT.Interop.WindowNative.GetWindowHandle(Main))) _ = QuitAsync();
+                    }));
+            }
         }));
     }
 
-    /// <summary>The driver-update notification, once per driver and set of stale games; false when there is nothing to notify.</summary>
+    /// <summary>The driver-update notification, once per driver and set of stale games, or Right away's compile with no
+    /// notification; false when there is nothing to notify or compile.</summary>
     static bool ShowDriverToast()
     {
+        if ((Core as ScsKiller)?.RewarmRightAway() > 0) return true;
         if (!notifications || !Core.ShouldNotifyStale()) return false;
         var stale = Core.DriverStaleGames();
         var about = $"{(Core as ScsKiller)?.DriverId}|{string.Join('|', stale.Select(g => g.Game.Id).Order())}";
@@ -238,6 +277,20 @@ public partial class App : Application
         toldDriver = about;
         return true;
     }
+
+    /// <summary>A notification for each unread news item not shown yet (<see cref="NewsState.ToastDue"/>), once the window and
+    /// the notification area exist.</summary>
+    public static void ToastNews()
+    {
+        if (!newsReady || !notifications) return;
+        var (shown, _) = MainWindow.Notifications();
+        var (show, more) = NewsState.ToastDue(Store, shown, MainWindow.Feed(), DateOnly.FromDateTime(DateTime.Now));
+        foreach (var item in show) AppNotificationManager.Default.Show(NewsToast(item.Title, NewsState.FirstLine(item.Body)));
+        if (more > 0) AppNotificationManager.Default.Show(NewsToast("SCSKiller news", NewsState.MoreLine(more)));
+    }
+
+    static AppNotification NewsToast(string title, string text) =>
+        new AppNotificationBuilder().AddArgument("action", "news").AddText(title).AddText(text).BuildNotification();
 
     /// <summary>A driver update found by a scan, a compile or the watcher's check: the scan that follows lists the games it
     /// made stale.</summary>
@@ -289,6 +342,10 @@ public partial class App : Application
             .AddText("It's in the notification area, right-click the icon to quit.")
             .BuildNotification());
     }
+
+    /// <summary>A compile the user started finished or failed (<see cref="ScsKiller.EndedNotice"/>): a click opens its page.</summary>
+    static void ShowEnded(string gameId, (string Title, string Text) n) => AppNotificationManager.Default.Show(new AppNotificationBuilder()
+        .AddArgument("action", "shaders-show").AddArgument("games", gameId).AddText(n.Title).AddText(n.Text).BuildNotification());
 
     /// <summary>A toast for a step the user takes in another app, shown over it; gone from the notification center after
     /// a few minutes, when the step is stale.</summary>
@@ -372,6 +429,32 @@ public partial class App : Application
         PrimaryButtonText = "Turn it on", CloseButtonText = "Keep it off", DefaultButton = ContentDialogButton.None,   // no nudge either way
     };
 
+    /// <summary>The traversal stutter fix's one-time question (<see cref="TraversalFix.Asks"/>): Keep it off or Esc answers it, off.</summary>
+    static async Task AskTraversalAsync(XamlRoot root)
+    {
+        ContentDialogResult result;
+        try { result = await Themed(TraversalDialog(root, TraversalFix.LowVram(Core.Vendor.Gpu))).ShowAsync(); }
+        catch (COMException) { return; }   // another dialog is open: next start
+        Core.Settings = TraversalFix.Answered(Core.Settings, result switch
+        {
+            ContentDialogResult.Primary => TraversalMode.All, _ => TraversalMode.Off,
+        });
+    }
+
+    public static ContentDialog TraversalDialog(XamlRoot root, bool? lowVram)
+    {
+        var panel = new StackPanel { Spacing = 8, Children = { new TextBlock { Text = TraversalFix.AskIntro, TextWrapping = TextWrapping.Wrap }, new TextBlock { Text = TraversalFix.AskBody, TextWrapping = TextWrapping.Wrap } } };
+        panel.Children.Add(lowVram == true
+            ? (UIElement)new InfoBar { Severity = InfoBarSeverity.Warning, IsOpen = true, IsClosable = false, Message = TraversalFix.LowVramWarning }
+            : new TextBlock { Text = TraversalFix.VramLine, TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(new TextBlock { Text = TraversalFix.AskFooter, TextWrapping = TextWrapping.Wrap, Style = (Style)Current.Resources["Caption"] });
+        return new()
+        {
+            XamlRoot = root, Title = TraversalFix.Title, Content = panel, PrimaryButtonText = TraversalFix.AskAll,
+            CloseButtonText = TraversalFix.AskNotNow, DefaultButton = lowVram == true ? ContentDialogButton.Close : ContentDialogButton.None,
+        };
+    }
+
     /// <summary>The one-time diagnostics question (<see cref="Diagnostics.Asks"/>): either button, or Esc, answers it.</summary>
     static async Task AskDiagnosticsAsync(XamlRoot root)
     {
@@ -391,7 +474,7 @@ public partial class App : Application
         Core.Settings = Diagnostics.Answered(Core.Settings, result == ContentDialogResult.Primary);
     }
 
-    /// <summary>The bullets of a version's CHANGELOG section.</summary>
+    /// <summary>The headings and bullets of a version's CHANGELOG section.</summary>
     public static async Task ShowWhatsNewAsync(XamlRoot root, WhatsNewSection section)
     {
         try { await Themed(WhatsNewDialog(root, section)).ShowAsync(); }
@@ -401,11 +484,18 @@ public partial class App : Application
     public static ContentDialog WhatsNewDialog(XamlRoot root, WhatsNewSection section)
     {
         var panel = new StackPanel { Spacing = 10 };
-        foreach (var b in section.Bullets)
+        foreach (var l in section.Lines)
         {
             var text = new TextBlock { TextWrapping = TextWrapping.Wrap };
+            if (l.Heading)
+            {
+                text.Text = l.Text;
+                text.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+                panel.Children.Add(text);
+                continue;
+            }
             text.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "• " });
-            foreach (var s in WhatsNew.Spans(b))
+            foreach (var s in WhatsNew.Spans(l.Text))
             {
                 Microsoft.UI.Xaml.Documents.Inline inline = s.Kind switch
                 {
@@ -482,6 +572,7 @@ public partial class App : Application
             QuitLabel = () => quitNow != null ? "Quit now (loses unsaved cache)" : "Quit",
             SessionEnding = hwnd =>
             {
+                SetExitReason("session end (shutdown or log-off)");
                 if (Running() == null) return;
                 ShutdownBlockReasonCreate(hwnd, "Stopping the compile so the graphics driver can save its shader cache");
                 StopAll();
@@ -491,6 +582,7 @@ public partial class App : Application
                 Main.SavePlacement();
                 // the session ends when this returns: bounded, then the warm job kills whatever is left
                 for (var clock = System.Diagnostics.Stopwatch.StartNew(); Running() != null && clock.Elapsed < SessionEndWait;) Thread.Sleep(100);
+                if (Core is ScsKiller { Log: AppLog log }) log.FlushAsync(TimeSpan.FromSeconds(1)).Wait();
                 ShutdownBlockReasonDestroy(hwnd);
             },
         };
@@ -525,11 +617,17 @@ public partial class App : Application
     /// ("finishing, the driver is saving the shader cache") and exit once the warm has exited, however long the driver's
     /// cache write takes (scskiller_warm bounds it: 600 s after its last line; a warm that ignores the stop is ended after
     /// 30 s). Quit again meanwhile ("Quit now (loses unsaved cache)") exits at once: the warm job kills the warm.</summary>
+    static void SetExitReason(string why, bool over = false)
+    {
+        if (Core is ScsKiller { Log: AppLog log } && (over || log.ExitReason == "exit")) log.ExitReason = why;
+    }
+
     public static async Task QuitAsync()
     {
         if (quitNow != null) { quitNow.TrySetResult(); return; }
         if (quitting) return;
         quitting = true;
+        SetExitReason("quit", over: true);
         Main.SavePlacement();
         try
         {
@@ -550,6 +648,7 @@ public partial class App : Application
         }
         finally
         {
+            awake?.Dispose();
             ReportWindow.CloseAll();
             Current.Exit();   // Quit quits, whatever went wrong before
         }
@@ -588,6 +687,11 @@ public partial class App : Application
             Core.Remove(id);
             autoQueued.Remove(id);
         }
+        foreach (var s in NewShaders.NewGames(Core.Games, Core.Queue, Core.Settings, Core.Compiling, newGamesTried))
+        {
+            Core.EnqueueWhenIdle(s.Game.Id);
+            autoQueued.Add(s.Game.Id);
+        }
         told ??= store.LoadNotified();
         var (due, compile, notified) = NewShaders.Plan(Core.Games, Core.Queue, told, Core.DriverStaleGames().Select(s => s.Game.Id).ToHashSet(),
             DateTimeOffset.UtcNow, s => NewShaders.ModeOf(s, Core.Settings), Core.Compiling, forget.ToHashSet(), session);
@@ -595,7 +699,7 @@ public partial class App : Application
         store.SaveNotified(told = notified);   // before showing: never twice
         foreach (var s in compile)
         {
-            Core.EnqueueWhenIdle(s.Game.Id);
+            NewShaders.Queue(Core, s.Game.Id);
             autoQueued.Add(s.Game.Id);
         }
         if (!notifications) return;
@@ -615,8 +719,8 @@ public partial class App : Application
             .AddArgument("action", "shaders-show").AddArgument("games", ids);
         if (compiling)
             b.AddText("Compiling new shaders")
-                .AddText(games.Count == 1 ? $"{games[0].Game.Name} has {n:N0} new pipeline{(n == 1 ? "" : "s")}. They compile when the PC is idle."
-                    : $"{games.Count} games have new shaders. They compile when the PC is idle.");
+                .AddText(games.Count == 1 ? $"{games[0].Game.Name} has {n:N0} new pipeline{(n == 1 ? "" : "s")}. {NewShaders.When(Core.Settings)}"
+                    : $"{games.Count} games have new shaders. {NewShaders.When(Core.Settings)}");
         else
             b.AddText("New shaders to compile")
                 .AddText(games.Count == 1 ? $"{games[0].Game.Name} has {n:N0} new pipeline{(n == 1 ? "" : "s")}. Compile now so they don't stutter."
@@ -655,6 +759,13 @@ public partial class App : Application
             case "now":
                 AfterScan(() => CompileNow(Ids()));
                 break;
+            case "news":
+                AfterScan(() =>
+                {
+                    ShowWindow();
+                    Main.OpenBell();
+                });
+                break;
             case "idle":
                 AfterScan(() => { foreach (var id in Ids()) Core.EnqueueWhenIdle(id); });
                 break;
@@ -675,7 +786,7 @@ public partial class App : Application
     /// them normal ones). Plan checks aren't listed: Enqueue would turn them into compiles of games nobody picked.</summary>
     public static void CompileQueue()
     {
-        foreach (var q in Core.Queue.Where(q => q.Stage == QueueStage.Waiting && q.Note == ScsKiller.WhenIdleNote && !q.PlanCheck).ToList()) Core.Enqueue(q.GameId);
+        foreach (var q in Core.Queue.Where(q => ScsKiller.WaitsOnItsOwn(q) && !q.PlanCheck).ToList()) Core.Enqueue(q.GameId);
         Core.StartQueue();
     }
 
@@ -689,6 +800,8 @@ public partial class App : Application
 
     static string? ActionOf(IDictionary<string, string> args) => args.TryGetValue("action", out var a) ? a : null;
 
+    const uint EsContinuous = 0x80000000, EsSystemRequired = 1;
+    [DllImport("kernel32.dll")] static extern uint SetThreadExecutionState(uint flags);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(nint hwnd);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(nint hwnd);
     [DllImport("user32.dll")] static extern bool IsIconic(nint hwnd);

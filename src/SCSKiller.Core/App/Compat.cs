@@ -15,24 +15,43 @@ public enum CompatStatus { Compiled, Partly, NotSupported, Failed, NotCompiled }
 public enum SimilarSystems { Helped, NoHelp, Warning }
 
 /// <summary>POST /v1/compat's body, the whole of what a compatibility report sends, as snake_case JSON (<see cref="Json"/>).
-/// Sent only when the user presses Send rating. A null member is sent as null: not known on this PC.</summary>
+/// Sent only when the user presses Send rating. A null member is sent as null: not known on this PC. From Linux
+/// <see cref="WindowsBuild"/> is null and <see cref="Linux"/> adds os, os_build and proton_version.</summary>
 public sealed record CompatReport(string GameId, string StoreBuildKey, CompatChoice Choice, bool FrameGen, bool Upscaler, bool Mods,
-    string? CpuModel, string? GpuModel, string GpuVendor, string? DriverVersion, string WindowsBuild, string AppVersion, CompatCompile Compile)
+    string? CpuModel, string? GpuModel, string GpuVendor, string? DriverVersion, string? WindowsBuild, string AppVersion, CompatCompile Compile)
 {
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) },
     };
 
-    public byte[] Body() => JsonSerializer.SerializeToUtf8Bytes(this, Json);
+    /// <summary>The system of a report from Linux. Null from Windows, whose body names no system but its build.</summary>
+    [JsonIgnore] public LinuxSystem? Linux { get; init; }
+
+    public byte[] Body()
+    {
+        if (Linux is not { } linux) return JsonSerializer.SerializeToUtf8Bytes(this, Json);
+        var o = JsonSerializer.SerializeToNode(this, Json)!.AsObject();
+        o["os"] = "linux";
+        o["os_build"] = linux.Kernel;
+        o["proton_version"] = linux.Proton;
+        return JsonSerializer.SerializeToUtf8Bytes(o, Json);
+    }
+
+    /// <summary>What the rating popup says a report sends.</summary>
+    public static string WhatIsSent => OperatingSystem.IsWindows()
+        ? "Sent with the rating: your CPU model, GPU model, driver version, Windows version, and what SCSKiller compiled for this game. Nothing else."
+        : "Sent with the rating: your CPU model, GPU model, driver version, Linux kernel version, the game's Proton version, and what SCSKiller compiled for this game. Nothing else.";
 
     /// <summary>Why the game page's Rate this compile is off for <paramref name="s"/> on the GPU vendor <paramref name="vendor"/>
-    /// ("nvidia", "amd"; null: another); null when it is on: a store build compiled and played at least once since, or whose
-    /// last compile failed or was refused.</summary>
-    public static string? WhyNot(GameState s, string? vendor) =>
+    /// (<see cref="ScsKiller.PackGpu"/>; the server takes "nvidia" and "amd" only); null when it is on: a store build compiled and played at least once since, or whose
+    /// last compile failed or was refused. <paramref name="linuxRefused"/>: this start's server refused a report from Linux
+    /// (<see cref="Sharing.RefusesLinux"/>).</summary>
+    public static string? WhyNot(GameState s, string? vendor, bool linuxRefused = false) =>
+        linuxRefused ? Sharing.LinuxRefused
         // a game the user added has an id made from a path on this PC: never sent
-        s.Game.Store == Store.Manual || s.Game.Version == null ? NoBuild
-        : vendor == null ? "Ratings are for NVIDIA and AMD GPUs."
+        : s.Game.Store == Store.Manual || s.Game.Version == null ? NoBuild
+        : vendor is not ("nvidia" or "amd") ? "Ratings are for NVIDIA and AMD GPUs."
         : s.CompileFailed ? null   // "could not be compiled" needs no launch
         : s.WarmedAt == null ? "Compile the game and play it once to rate how it ran."
         : !(s.PlayedAt > s.WarmedAt) ? "Play the game once since it compiled to rate how it ran."
@@ -46,12 +65,24 @@ public sealed record CompatReport(string GameId, string StoreBuildKey, CompatCho
     /// <summary>"10.0.26300": Windows' major, minor and build number only.</summary>
     public static string ThisWindows => Environment.OSVersion.Version is var v ? $"{v.Major}.{v.Minor}.{v.Build}" : "";
 
+    /// <summary>The problem report's system line: "Windows: 10.0.26300", or from Linux "Linux: 7.2, Proton GE-Proton11-7".</summary>
+    public static string SystemLine(LinuxSystem? linux) =>
+        linux == null ? $"Windows: {ThisWindows}" : $"Linux: {linux.Kernel}, Proton {linux.Proton ?? "unknown"}";
+
     public static CompatCompile CompileOf(GameState s, bool maximumPlans) => new(
         s.Status == GameStatus.Unsupported && (s.WarmedAt != null || s.CompileFailed) ? CompatStatus.NotSupported
         : s.CompileFailed ? CompatStatus.Failed
         : s.WarmedAt == null ? CompatStatus.NotCompiled
         : ScsKiller.IsPartlyCompiled(s) ? CompatStatus.Partly : CompatStatus.Compiled,
         ScsKiller.ShownPercent(s), s.Plan?.Recorded > 0, s.MaximumForGame ?? maximumPlans);
+}
+
+/// <summary>A report's system on Linux: the kernel's major and minor numbers (<paramref name="Kernel"/>, "7.2", nothing
+/// after them) and the build name of the Proton the game last ran on (<paramref name="Proton"/>, "GE-Proton11-7"; null: not
+/// known).</summary>
+public sealed record LinuxSystem(string Kernel, string? Proton)
+{
+    public static string ThisKernel => Environment.OSVersion.Version is var v ? $"{v.Major}.{v.Minor}" : "";
 }
 
 /// <summary><see cref="CompatReport.Compile"/>: the compile's status, the share of the game's pipelines it covered (null:

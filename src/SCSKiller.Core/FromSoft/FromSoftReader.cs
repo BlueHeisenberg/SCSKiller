@@ -2,8 +2,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
-using SCSKiller.Core.Games;
 using SCSKiller.Core.Carved;
+using SCSKiller.Core.Games;
 using SCSKiller.Core.Planning;
 using SCSKiller.Core.Unreal;
 
@@ -63,7 +63,7 @@ public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? downlo
         if (dir == null || !Directory.Exists(dir)) return null;
         var title = TitleOf(game);
         if (title == null)
-            return Directory.EnumerateFiles(dir, "*.bhd").Any(b => File.Exists(Path.ChangeExtension(b, ".bdt")) && IsEncryptedBhd(b))
+            return GameFiles.EnumerateFiles(dir, "*.bhd").Any(b => File.Exists(GameFiles.ChangeExtension(b, ".bdt")) && IsEncryptedBhd(b))
                 ? new EngineInfo(Family, "-", null, UnrealRhi.Ambiguous, false, "FromSoftware archives SCSKiller has no key for (a title it doesn't know yet)") // not Encrypted: no user key opens them
                 : null;
         if (Archives(game, dir, title, null, out var why) is not { } archives) return new EngineInfo(Family, "-", title.Name, title.Api, false, why);
@@ -91,7 +91,7 @@ public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? downlo
     public string DetectStamp(Game game, EngineInfo? engine) => IndexStamp(game);
 
     public string IndexStamp(Game game) => TitleOf(game) is { Archives.Length: > 0 } title && Path.GetDirectoryName(game.ExePath) is { } dir
-        ? string.Join(',', keys.Unstored(game, SourceFiles(dir, title).Select(f => Path.GetFileNameWithoutExtension(f.Name)))) : "";
+        ? string.Join(',', keys.Unstored(game, SourceFiles(dir, title).Select(f => Path.GetFileNameWithoutExtension(f.Rel)))) : "";
 
     /// <summary>A BHD5 header is RSA-encrypted when it doesn't start with the magic in the clear.</summary>
     static bool IsEncryptedBhd(string path)
@@ -174,8 +174,8 @@ public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? downlo
 
         using var content = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
         content.AppendData(Encoding.UTF8.GetBytes($"{Family} {IndexVersion}\n"));
-        foreach (var f in title.Archives.Length == 0 ? SourceFiles(dir, title) : archives.Select(a => a.Bhd)) // a key found later changes it
-            content.AppendData(Encoding.UTF8.GetBytes(ContentStamps.Of(Path.GetRelativePath(dir, f.FullName), f.FullName)));
+        foreach (var (rel, f) in title.Archives.Length == 0 ? SourceFiles(dir, title) : archives.Select(a => (a.Rel, a.Bhd))) // a key found later changes it
+            content.AppendData(Encoding.UTF8.GetBytes(ContentStamps.Of(GameFiles.Rel(dir, f.FullName, f.FullName, rel), f.FullName)));
         var platforms = shaders.Keys.Select(s => platformOf[s]).Distinct()
             .OrderBy(p => p is CarvedReader.Platform or D3D11 ? 0 : 1).ThenBy(p => p, StringComparer.Ordinal).ToList();
         log?.Report($"{title.Name}: {files} shader files, {shaders.Count} shaders ("
@@ -212,25 +212,27 @@ public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? downlo
     static string Pool(string at)
     {
         var parts = at.Split('|');
-        return string.Join('|', (parts.Length > 1 ? parts[..^1] : parts).Select((p, i) => i == 0 ? p : Path.GetFileName(p)));
+        // a binder's file names are Windows paths (N:\...\x.shaderbdle)
+        return string.Join('|', (parts.Length > 1 ? parts[..^1] : parts).Select((p, i) => i == 0 ? p : Path.GetFileName(GameFiles.Under("", p))));
     }
 
-    /// <summary>What the shaders come from (the content hash): the title's archive headers, or its loose shader files.</summary>
-    static IEnumerable<FileInfo> SourceFiles(string dir, Title title) => title.Archives.Length == 0
-        ? new DirectoryInfo(Path.Combine(dir, "shader")).EnumerateFiles("*.dcx").OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
-        : title.Archives.Select(a => new FileInfo(Path.Combine(dir, a + ".bhd"))).Where(f => f.Exists && File.Exists(Path.ChangeExtension(f.FullName, ".bdt")));
+    /// <summary>What the shaders come from (the content hash): the title's archive headers, or its loose shader files; each with
+    /// its path under <paramref name="dir"/> as Windows spells it (an archive's: its <see cref="Title.Archives"/> name).</summary>
+    static IEnumerable<(string Rel, FileInfo File)> SourceFiles(string dir, Title title) => title.Archives.Length == 0
+        ? GameFiles.EnumerateFiles(new DirectoryInfo(GameFiles.Find(dir, "shader")), "*.dcx").OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase).Select(f => ($@"shader\{f.Name}", f))
+        : title.Archives.Select(a => (a + ".bhd", new FileInfo(GameFiles.Find(dir, a + ".bhd")))).Where(f => f.Item2.Exists && File.Exists(GameFiles.ChangeExtension(f.Item2.FullName, ".bdt")));
 
     /// <summary>The title's archives present (a .bhd with its .bdt) that a key opens, in <see cref="Title.Archives"/> order,
     /// each with its key; the others are left out. <paramref name="why"/>, a line for the user: which shaders are left out,
     /// or, null returned, why none can be read. Where a user can put the keys goes to <paramref name="log"/> only.
     /// <paramref name="fetch"/>: may download them (<see cref="Title.Uxm"/>).</summary>
-    List<(FileInfo Bhd, string Key)>? Archives(Game game, string dir, Title title, IProgress<string>? log, out string? why, bool fetch = true)
+    List<(FileInfo Bhd, string Rel, string Key)>? Archives(Game game, string dir, Title title, IProgress<string>? log, out string? why, bool fetch = true)
     {
         why = null;
         if (title.Archives.Length == 0) return [];
         var present = SourceFiles(dir, title).ToList();
-        var found = keys.Get(game, present.ToDictionary(f => Path.GetFileNameWithoutExtension(f.Name), f => f.FullName), fetch ? title.Uxm : null, out var missing, log);
-        var opened = present.Where(f => found.ContainsKey(Path.GetFileNameWithoutExtension(f.Name))).Select(f => (f, found[Path.GetFileNameWithoutExtension(f.Name)])).ToList();
+        var found = keys.Get(game, present.ToDictionary(f => Path.GetFileNameWithoutExtension(f.Rel), f => f.File.FullName), fetch ? title.Uxm : null, out var missing, log);
+        var opened = present.Where(f => found.ContainsKey(Path.GetFileNameWithoutExtension(f.Rel))).Select(f => (f.File, f.Rel, found[Path.GetFileNameWithoutExtension(f.Rel)])).ToList();
         if (missing.Count == 0) return opened;
         log?.Report($"{title.Name}: no key for its archives {string.Join(", ", missing)}: the game's exe doesn't carry them in the clear"
             + (title.Uxm != null ? " and none that opens them could be downloaded (UXM Selective Unpack's)" : "")
@@ -246,12 +248,12 @@ public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? downlo
 
     /// <summary>The title's shader files (name, raw bytes). <paramref name="sample"/>: smallest archive and file first (the
     /// caller stops when it has enough). <paramref name="only"/>: just these names.</summary>
-    static IEnumerable<(string Name, byte[] Bytes)> ShaderFilesOf(string dir, Title title, IEnumerable<(FileInfo Bhd, string Key)> archives, bool sample,
+    static IEnumerable<(string Name, byte[] Bytes)> ShaderFilesOf(string dir, Title title, IEnumerable<(FileInfo Bhd, string Rel, string Key)> archives, bool sample,
         IReadOnlySet<string>? only, CancellationToken ct)
     {
         if (title.Archives.Length == 0)
         {
-            var loose = SourceFiles(dir, title).Select(f => (Name: "/shader/" + f.Name, File: f)).Where(f => only?.Contains(f.Name) != false);
+            var loose = SourceFiles(dir, title).Select(f => (Name: "/shader/" + f.File.Name, f.File)).Where(f => only?.Contains(f.Name) != false);
             foreach (var (name, f) in sample ? loose.OrderBy(f => f.File.Length) : loose)
             {
                 ct.ThrowIfCancellationRequested();
@@ -260,11 +262,11 @@ public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? downlo
             yield break;
         }
         var byHash = ShaderFiles.Where(n => only?.Contains(n) != false).ToDictionary(n => Souls.NameHash(n, title.Hash64), n => n);
-        foreach (var (bhd, key) in sample ? archives.OrderBy(a => a.Bhd.Length) : archives)
+        foreach (var (bhd, _, key) in sample ? archives.OrderBy(a => a.Bhd.Length) : archives)
         {
             if (byHash.Count == 0) yield break;
             var entries = Souls.ParseBhd(Souls.DecryptBhd(File.ReadAllBytes(bhd.FullName), key), title.Hash64).Where(e => byHash.ContainsKey(e.Hash)).ToList();
-            using var bdt = File.OpenHandle(Path.ChangeExtension(bhd.FullName, ".bdt"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var bdt = File.OpenHandle(GameFiles.ChangeExtension(bhd.FullName, ".bdt"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             foreach (var e in sample ? entries.OrderBy(e => e.Size) : entries.OrderBy(e => e.Offset))
             {
                 ct.ThrowIfCancellationRequested();

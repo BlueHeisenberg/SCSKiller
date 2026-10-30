@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
 using Microsoft.Win32.SafeHandles;
+using SCSKiller.Core.Games;
 
 namespace SCSKiller.Core.Tank;
 
@@ -32,8 +33,8 @@ public static class StaticContainer
 
     /// <summary>The data files, by name; the encoding file (data.000.000) and the rest alike.</summary>
     public static IEnumerable<FileInfo> Files(string installDir) =>
-        Directory.Exists(Path.Combine(installDir, Dir))
-            ? new DirectoryInfo(Path.Combine(installDir, Dir)).EnumerateFiles("data.*.*", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 })
+        GameFiles.Find(installDir, Dir) is var dir && Directory.Exists(dir)
+            ? GameFiles.EnumerateFiles(new DirectoryInfo(dir), "data.*.*", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 })
                 .Where(f => IsDataName(f.Name)).OrderBy(f => f.Name, StringComparer.Ordinal)
             : [];
 
@@ -58,7 +59,7 @@ public static class StaticContainer
     }
 
     /// <summary>The build config's text; null when it can't be read.</summary>
-    public static string? BuildConfigText(string installDir) => SmallText(Path.Combine(installDir, Dir, BuildConfig));
+    public static string? BuildConfigText(string installDir) => SmallText(GameFiles.Find(installDir, $@"{Dir}\{BuildConfig}"));
 
     /// <summary>build-config's values (key = value lines, '#' comments), the first one of each key; empty when it can't be read.</summary>
     public static Dictionary<string, string> ReadBuildConfig(string installDir)

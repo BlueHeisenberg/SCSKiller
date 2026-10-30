@@ -5,5 +5,7 @@
     </Project>
     <Project Path="src/SCSKiller.Cli/SCSKiller.Cli.csproj" />
     <Project Path="src/SCSKiller.Core/SCSKiller.Core.csproj" />
+    <Project Path="src/SCSKiller.Ui.Models/SCSKiller.Ui.Models.csproj" />
+    <Project Path="src/SCSKiller.Ui/SCSKiller.Ui.csproj" />
   </Folder>
 </Solution>

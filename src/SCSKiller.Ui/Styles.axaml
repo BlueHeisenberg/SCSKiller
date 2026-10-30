@@ -1,0 +1,204 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="using:SCSKiller.Ui.Controls">
+    <Styles.Resources>
+        <FontFamily x:Key="IconFont">/Assets#FluentSystemIcons-Regular</FontFamily>
+    </Styles.Resources>
+
+    <!-- The WinUI app's styles (App.xaml) as classes of the same names -->
+    <Style Selector="Border.Card">
+        <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="Padding" Value="16" />
+    </Style>
+    <Style Selector="TextBlock.Secondary">
+        <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+    </Style>
+    <Style Selector="TextBlock.Caption">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+    </Style>
+    <Style Selector="TextBlock.CaptionText">
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="TextBlock.Title">
+        <Setter Property="FontSize" Value="28" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.Big">
+        <Setter Property="FontSize" Value="22" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.Section">
+        <Setter Property="FontSize" Value="16" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.BodyStrong">
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.Icon">
+        <Setter Property="FontFamily" Value="{StaticResource IconFont}" />
+        <Setter Property="FontSize" Value="16" />
+    </Style>
+
+    <!-- Status text colours; chosen per game by class (StyleKey) so they follow the element's theme. -->
+    <Style Selector="TextBlock.StatusAccent">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+    </Style>
+    <Style Selector="TextBlock.StatusPrimary">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+    </Style>
+    <Style Selector="TextBlock.StatusWarn">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource WarnBrush}" />
+    </Style>
+    <Style Selector="TextBlock.StatusMuted">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+    </Style>
+
+    <Style Selector="Button.Warn">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource WarnBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource WarnBrush}" />
+    </Style>
+    <!-- a Library column header that sorts: flat until hovered -->
+    <Style Selector="Button.SortHeader">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="4,2" />
+        <Setter Property="Margin" Value="-4,0" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Border.Chip">
+        <Setter Property="Height" Value="26" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="CornerRadius" Value="13" />
+        <Setter Property="Background" Value="{DynamicResource ControlFillColorSecondaryBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <!-- WinUI's look for the Fluent theme's controls -->
+    <!-- WinUI fills a background inside its border, so a translucent stroke shows -->
+    <Style Selector="Border">
+        <Setter Property="BackgroundSizing" Value="InnerBorderEdge" />
+    </Style>
+    <Style Selector="ContentPresenter">
+        <Setter Property="BackgroundSizing" Value="InnerBorderEdge" />
+    </Style>
+    <!-- WinUI's 8 px chevron where its glyph sits; the template fixes the icon's size and margin -->
+    <Style Selector="ComboBox /template/ PathIcon#DropDownGlyph">
+        <Setter Property="RenderTransform" Value="translate(-4px, -1px) scale(0.667)" />
+    </Style>
+    <Style Selector="Expander /template/ ToggleButton#ExpanderHeader /template/ Path#ExpandCollapseChevron">
+        <Setter Property="Data" Value="M 0,0 L 4,4 L 8,0" />
+    </Style>
+    <Style Selector="DropDownButton /template/ PathIcon#DropDownGlyph">
+        <Setter Property="RenderTransform" Value="translate(-2px, 0px) scale(0.667)" />
+    </Style>
+    <!-- WinUI shows a scroll indicator only while the pointer is over it -->
+    <Style Selector="ScrollViewer /template/ ScrollBar">
+        <Setter Property="Opacity" Value="0" />
+    </Style>
+    <Style Selector="ScrollViewer:pointerover /template/ ScrollBar">
+        <Setter Property="Opacity" Value="1" />
+    </Style>
+    <!-- WinUI's HyperlinkButton isn't underlined -->
+    <Style Selector="HyperlinkButton AccessText">
+        <Setter Property="TextDecorations" Value="{x:Null}" />
+    </Style>
+    <!-- WinUI's InfoBar pulls a link back by its padding: its text lines up with the message -->
+    <Style Selector="ui|InfoBar HyperlinkButton">
+        <Setter Property="Margin" Value="-12,0,0,0" />
+    </Style>
+    <Style Selector="ui|ProgressRing">
+        <Setter Property="Foreground" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+    </Style>
+    <!-- a 1 px track under a 3 px bar -->
+    <Style Selector="ProgressBar">
+        <Setter Property="MinHeight" Value="3" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Panel Height="3">
+                    <Border Height="1" VerticalAlignment="Center" Background="{DynamicResource ControlStrongStrokeColorDefaultBrush}" />
+                    <Border Name="PART_Indicator" HorizontalAlignment="Left" CornerRadius="1.5" Background="{DynamicResource AccentFillColorDefaultBrush}" />
+                </Panel>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+
+    <!-- Flat buttons: the title bar's, the navigation items and the Library rows -->
+    <Style Selector="Button.Subtle, Button.Nav, Button.Row">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Button.Subtle:pointerover /template/ ContentPresenter#PART_ContentPresenter, Button.Nav:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+    </Style>
+    <Style Selector="Button.Subtle:pressed /template/ ContentPresenter#PART_ContentPresenter, Button.Nav:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource SubtleFillColorTertiaryBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+    </Style>
+    <Style Selector="Button.Nav">
+        <Setter Property="Height" Value="36" />
+        <Setter Property="Margin" Value="4,2" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="VerticalContentAlignment" Value="Stretch" />
+    </Style>
+    <Style Selector="Button.Nav.Selected /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+    </Style>
+    <Style Selector="Button.Nav Border.Pill">
+        <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <Style Selector="Button.Nav.Selected Border.Pill">
+        <Setter Property="IsVisible" Value="True" />
+    </Style>
+    <!-- a ListView item: its highlight is inset, the rows touch -->
+    <Style Selector="Button.Row">
+        <Setter Property="Margin" Value="4,0" />
+        <Setter Property="Padding" Value="12,0" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="VerticalContentAlignment" Value="Stretch" />
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Panel>
+                    <Border Name="Highlight" Margin="0,2" CornerRadius="{TemplateBinding CornerRadius}" Background="{TemplateBinding Background}" />
+                    <ContentPresenter Name="PART_ContentPresenter" Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
+                                      Padding="{TemplateBinding Padding}" Foreground="{TemplateBinding Foreground}"
+                                      HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                      VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
+                </Panel>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+    <Style Selector="Button.Row:pointerover /template/ ContentPresenter#PART_ContentPresenter, Button.Row:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+    </Style>
+    <Style Selector="Button.Row:pointerover /template/ Border#Highlight">
+        <Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+    </Style>
+    <Style Selector="Button.Row:pressed /template/ Border#Highlight">
+        <Setter Property="Background" Value="{DynamicResource SubtleFillColorTertiaryBrush}" />
+    </Style>
+    <!-- a slider's track halves and thumb: screen readers otherwise read their class names -->
+    <Style Selector="Slider /template/ RepeatButton#PART_DecreaseButton">
+        <Setter Property="AutomationProperties.Name" Value="Decrease" />
+    </Style>
+    <Style Selector="Slider /template/ RepeatButton#PART_IncreaseButton">
+        <Setter Property="AutomationProperties.Name" Value="Increase" />
+    </Style>
+    <Style Selector="Slider /template/ Thumb">
+        <Setter Property="AutomationProperties.Name" Value="{Binding $parent[Slider].(AutomationProperties.Name)}" />
+    </Style>
+</Styles>

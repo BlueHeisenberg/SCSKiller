@@ -14,8 +14,10 @@ public sealed partial class CachePage : Page
         InitializeComponent();
         var games = new Coalesced(DispatcherQueue, Vm.GamesChanged);
         void OnGame(Core.GameState _) => games.Request();
-        Loaded += (_, _) => App.Core.GameChanged += OnGame;
-        Unloaded += (_, _) => App.Core.GameChanged -= OnGame;
+        var icons = new Coalesced(DispatcherQueue, Vm.IconsChanged);
+        void OnIconFailed() => icons.Request();
+        Loaded += (_, _) => { App.Core.GameChanged += OnGame; Icons.Failed += OnIconFailed; };
+        Unloaded += (_, _) => { App.Core.GameChanged -= OnGame; Icons.Failed -= OnIconFailed; };
     }
 
     /// <summary>--screenshots: the lower groups.</summary>
@@ -26,8 +28,26 @@ public sealed partial class CachePage : Page
 
     void OnOpenFolder(object sender, RoutedEventArgs _)
     {
-        if ((sender as FrameworkElement)?.Tag is string { Length: > 0 } dir && Directory.Exists(dir))
-            Process.Start(new ProcessStartInfo(dir) { UseShellExecute = true })?.Dispose();
+        switch ((sender as FrameworkElement)?.Tag)
+        {
+            case string dir: Open(dir); break;
+            case CacheItemRow { Folders: [var dir] }: Open(dir); break;
+            case CacheItemRow r:
+                var menu = new MenuFlyout();
+                foreach (var dir in r.Folders)
+                {
+                    var item = new MenuFlyoutItem { Text = dir };
+                    item.Click += (_, _) => Open(dir);
+                    menu.Items.Add(item);
+                }
+                menu.ShowAt((FrameworkElement)sender);
+                break;
+        }
+    }
+
+    static void Open(string dir)
+    {
+        if (dir.Length > 0 && Directory.Exists(dir)) Process.Start(new ProcessStartInfo(dir) { UseShellExecute = true })?.Dispose();
     }
 
     void OnDeleteItem(object sender, RoutedEventArgs e)

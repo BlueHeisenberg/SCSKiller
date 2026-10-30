@@ -43,18 +43,36 @@ public static class Wine
     /// the driver of a process it starts (measured: the driver sees the Linux environment Wine started with). So the warm
     /// runs in a Wine session started with <c>Warm</c>, under an app name of its own, and the game, with <c>Game</c>,
     /// writes a file of its own and reads every numbered file of the warm's. vkd3d-proton's cache, named by the exe, is
-    /// shared. <paramref name="unixRoot"/>: the game's cache folder (nvidia/ and vkd3d/ in it).</summary>
-    public static (List<(string Name, string Value)> Warm, List<(string Name, string Value)> Game) CacheEnvironment(string unixRoot, string exe)
+    /// shared. <paramref name="unixRoot"/>: the game's cache folder (nvidia/ and vkd3d/ in it). <paramref name="size"/>: what
+    /// the driver keeps there (<see cref="NvidiaLinux.CacheSize"/>, <see cref="NvidiaLinux.PlacedCacheSize"/>).</summary>
+    public static (List<(string Name, string Value)> Warm, List<(string Name, string Value)> Game) CacheEnvironment(string unixRoot, string exe, long size = NvidiaLinux.CacheSize)
     {
-        var stem = new string(Path.GetFileNameWithoutExtension(exe).Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' ? c : '_').ToArray());
+        var stem = Stem(exe);
         List<(string, string)> common = [
             ("__GL_SHADER_DISK_CACHE_PATH", unixRoot + "/nvidia"),
-            ("__GL_SHADER_DISK_CACHE_SIZE", "10737418240"),   // the default deletes whole files past about 1 GiB; a big game's warm is more
+            ("__GL_SHADER_DISK_CACHE_SIZE", size.ToString(System.Globalization.CultureInfo.InvariantCulture)),   // the default deletes whole files past about 1 GiB; a big game's warm is more
             ("VKD3D_SHADER_CACHE_PATH", unixRoot + "/vkd3d")];
-        var warm = $"scskiller_{stem}";
+        var warm = WarmAppName(exe);
         return ([.. common, ("__GL_SHADER_DISK_CACHE_APP_NAME", warm)],
             [.. common, ("__GL_SHADER_DISK_CACHE_APP_NAME", stem),
                 ("__GL_SHADER_DISK_CACHE_READ_ONLY_APP_NAME", string.Join(';', Enumerable.Range(0, WarmFiles).Select(i => warm + i)))]);
+    }
+
+    /// <summary>The app name the warm of exe file <paramref name="exe"/> writes NVIDIA's cache under (<see cref="CacheEnvironment"/>).</summary>
+    public static string WarmAppName(string exe) => $"scskiller_{Stem(exe)}";
+
+    static string Stem(string exe) =>
+        new(Path.GetFileNameWithoutExtension(exe).Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' ? c : '_').ToArray());
+
+    /// <summary>The game's cache folder for <see cref="CacheEnvironment"/>, proton-cache in its data folder
+    /// <paramref name="gameDir"/>, made with its nvidia and vkd3d folders unless <paramref name="make"/> is false: NVIDIA's
+    /// driver keeps no cache in a folder that doesn't exist.</summary>
+    public static string CacheRoot(string gameDir, bool make = true)
+    {
+        var root = Path.GetFullPath(Path.Combine(gameDir, "proton-cache"));
+        if (make)
+            foreach (var d in new[] { "nvidia", "vkd3d" }) Directory.CreateDirectory(Path.Combine(root, d));
+        return root;
     }
 
     /// <summary>VkPhysicalDeviceProperties.driverVersion as the driver numbers itself: NVIDIA packs 10, 8, 8 and 6 bits
