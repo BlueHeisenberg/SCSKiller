@@ -1,0 +1,131 @@
+# The Linux release on a GitHub-hosted runner, public repo only (the private repo's build.yml makes it in its runner's
+# WSL): build/ci-linux-package.sh's layer and package, natively, on the Windows build's SCSKiller.zip, then provenance
+# for the AppImage and the full package. Nothing here signs or publishes: the feed goes into the draft unsigned.
+#   workflow_call      release.yml, on the release run's own SCSKiller-unsigned: the files go to its draft as an artifact
+#   workflow_dispatch  an existing tag whose draft lacks them: SCSKiller-unsigned from that tag's release run, the
+#                      Linux files uploaded to its DRAFT release (never the Windows ones, never a published release)
+name: release-linux
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'the release tag (v1.4.2)'
+        required: true
+      run_id:
+        description: "the tag's release run, whose SCSKiller-unsigned artifact this packages"
+        required: true
+
+permissions: {}
+
+jobs:
+  linux:
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read          # SCSKiller-unsigned of another run (dispatch)
+      id-token: write        # attestation
+      attestations: write
+    env:
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          persist-credentials: false
+
+      # the SDK ci-linux-package.sh pins, alone in its folder: the image's own SDKs would win global.json's roll-forward
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68   # v6.0.0
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: 10.0.402
+
+      # squashfs-tools makes the AppImage, desktop-file-utils checks its .desktop: noble's own builds, as WSL's Ubuntu-24.04
+      # has them. Lavapipe only runs the layer's selftest.
+      - name: Packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends squashfs-tools=1:4.6.1-1build1 desktop-file-utils=0.27-2build1 \
+            libvulkan1 mesa-vulkan-drivers
+          podman --version
+
+      - if: ${{ !inputs.run_id }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
+        with:
+          name: SCSKiller-unsigned
+          path: ${{ runner.temp }}/windows
+      - if: ${{ inputs.run_id }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
+        with:
+          name: SCSKiller-unsigned
+          path: ${{ runner.temp }}/windows
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+
+      # the dist/ layout ci-linux-package.sh reads, as Publish leaves it: SCSKiller/native and the sums
+      - name: Windows build
+        run: |
+          cd "$RUNNER_TEMP/windows"
+          grep '  SCSKiller.zip$' SHA256SUMS-unsigned.txt | sha256sum -c -
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          unzip -q SCSKiller.zip 'SCSKiller/native/*' -d "$GITHUB_WORKSPACE/dist"
+          cp SHA256SUMS-unsigned.txt "$GITHUB_WORKSPACE/dist/"
+
+      - name: Linux layer (sniper SDK)
+        run: bash build/ci-linux-package.sh --layer
+
+      - name: Linux package
+        env:
+          CI_LINUX_DOTNET: ${{ runner.temp }}/dotnet
+        run: bash build/ci-linux-package.sh --version "$TAG" --pack --release dist/release-linux
+
+      - name: AppImage runs
+        run: |
+          d=$(mktemp -d) && cd "$d"
+          "$GITHUB_WORKSPACE/dist/release-linux/SCSKiller-x86_64.AppImage" --appimage-extract >/dev/null
+          got=$(SCSKILLER_DATA_DIR="$d/data" squashfs-root/AppRun --cli --version)
+          [ "$got" = "${TAG#v}" ] || { echo "::error::the AppImage's --cli --version prints '$got', not ${TAG#v}"; exit 1; }
+          echo "SCSKiller --cli --version: $got"
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8   # v4.2.2
+        with:
+          subject-path: |
+            dist/release-linux/SCSKiller-x86_64.AppImage
+            dist/release-linux/*-linux-full.nupkg
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: SCSKiller-linux
+          path: dist/release-linux/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  upload:
+    needs: linux
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest   # 1x minutes; only uploads
+    timeout-minutes: 10
+    permissions:
+      contents: write        # the draft's assets
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
+        with:
+          name: SCSKiller-linux
+          path: release-linux
+
+      - name: Add the Linux files to the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          (cd release-linux && sha256sum -c --strict SHA256SUMS-linux.txt)
+          [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ] || { echo "::error::$TAG has no draft release"; exit 1; }
+          gh release upload "$TAG" release-linux/* --clobber
