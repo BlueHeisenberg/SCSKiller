@@ -631,7 +631,7 @@ public sealed partial class ScsKiller : IScsKiller
     static string SourceName(IGameSource s) => s switch
     {
         SteamSource => "Steam", EpicSource => "Epic Games", XboxSource => "Xbox", EaSource => "EA app", GogSource => "GOG",
-        UbisoftSource => "Ubisoft Connect", BattleNetSource => "Battle.net", PurpleSource => "PURPLE", HoYoPlaySource => "HoYoPlay", HeroicSource => "Heroic", LutrisSource => "Lutris", GryphlineSource => "GRYPHLINK",
+        UbisoftSource => "Ubisoft Connect", BattleNetSource => "Battle.net", PurpleSource => "PURPLE", HoYoPlaySource => "HoYoPlay", HeroicSource => "Heroic", LutrisSource => "Lutris", FaugusSource => "Faugus", GryphlineSource => "GRYPHLINK",
         GaijinSource => "Gaijin", RiotSource => "Riot Client", ManualSource => "your games and folders", SteamShortcutSource => "Steam's non-Steam games",
         _ => s.Store.ToString(),
     };
@@ -745,7 +745,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// again, and a game read again only when it isn't the one listed (another build, exe or folder).</summary>
     IReadOnlyList<GameState> Listed(long started, long discovering, List<GameState> kept, List<Game> before)
     {
-        var (found, unresolved, failed) = Discover(before, s => s.Store is Core.Store.Steam or Core.Store.Xbox or Core.Store.Manual || s is SteamShortcutSource or HeroicSource or LutrisSource ? s.Discover()
+        var (found, unresolved, failed) = Discover(before, s => s.Store is Core.Store.Steam or Core.Store.Xbox or Core.Store.Manual || s is SteamShortcutSource or HeroicSource or LutrisSource or FaugusSource ? s.Discover()
             : before.Where(g => g.Store == s.Store && !SteamShortcuts.Is(g.Id)).ToList());
         if (failed) lock (_lock) _discoveryFailed = Math.Max(_discoveryFailed, started);
         var was = kept.DistinctBy(s => s.Game.Id).ToDictionary(s => s.Game.Id);
@@ -833,6 +833,7 @@ public sealed partial class ScsKiller : IScsKiller
             else if (source is ManualSource manual) manual.Known = known;
             else if (source is SteamShortcutSource shortcuts) shortcuts.Log = Log;
             else if (source is LutrisSource lutris) lutris.Log = Log;
+            else if (source is FaugusSource faugus) faugus.Log = Log;
         foreach (var source in _sources)
             try
             {

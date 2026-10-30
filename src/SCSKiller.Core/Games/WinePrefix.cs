@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 namespace SCSKiller.Core.Games;
 
 /// <summary>A Wine prefix by its folder <paramref name="Dir"/> (system.reg, user.reg, drive_c, dosdevices), read from its files
-/// only: a Proton prefix (compatdata's pfx), a launcher's on Linux (Heroic, Lutris), a CrossOver bottle on macOS.</summary>
+/// only: a Proton prefix (compatdata's pfx), a launcher's on Linux (Heroic, Lutris, Faugus), a CrossOver bottle on macOS.</summary>
 public sealed record WinePrefix(string Dir)
 {
     public string DriveC => Path.Combine(Dir, "drive_c");
@@ -115,14 +115,14 @@ static class WineReg
 /// Flatpak's), null for the user's own.</summary>
 public sealed record LauncherPrefix(string Launcher, string Prefix, string Bin, bool Proton, string? CacheHome)
 {
-    /// <summary>A game Heroic or Lutris lists: Linux's alone, where epic: and gog: ids are Heroic's.</summary>
-    public static bool Is(Game g) => OperatingSystem.IsLinux() && (HeroicSource.RunnerOf(g.Id) != null || LutrisSource.Is(g.Id));
+    /// <summary>A game Heroic, Lutris or Faugus lists: Linux's alone, where epic: and gog: ids are Heroic's.</summary>
+    public static bool Is(Game g) => OperatingSystem.IsLinux() && (HeroicSource.RunnerOf(g.Id) != null || LutrisSource.Is(g.Id) || FaugusSource.Is(g.Id));
 
     /// <summary>The prefix the game's launcher runs it in, read now; null with the reason when it can't be told.</summary>
     public static LauncherPrefix? Of(Game g, out string? why)
     {
-        if (Is(g)) return HeroicSource.RunnerOf(g.Id) != null ? HeroicSource.PrefixOf(g, out why) : LutrisSource.PrefixOf(g, out why);
-        why = "it isn't a game of Heroic or Lutris";
+        if (Is(g)) return HeroicSource.RunnerOf(g.Id) != null ? HeroicSource.PrefixOf(g, out why) : FaugusSource.Is(g.Id) ? FaugusSource.PrefixOf(g, out why) : LutrisSource.PrefixOf(g, out why);
+        why = "it isn't a game of Heroic, Lutris or Faugus";
         return null;
     }
 

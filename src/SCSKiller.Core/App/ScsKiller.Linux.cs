@@ -21,7 +21,7 @@ public sealed partial class ScsKiller
         SteamSandboxCompile = WarmHost.FlatpakSteamGames(steam, MesaLinux.Is(vendor.Caps));
         SteamSandboxSkip = SteamSource.Sandbox(steam) switch { "Flatpak" => LinuxStartup.InFlatpak ? WarmHost.InFlatpakError : SkipFlatpak, "Snap" => SkipSandboxed, _ => null };
         // macOS: no game until its stores and a compile there exist
-        var k = new ScsKiller(OperatingSystem.IsMacOS() ? [] : [new SteamSource(steam), new SteamShortcutSource(steam), .. HeroicSource.Runners.Select(r => new HeroicSource(r, steamRoot: steam)), new LutrisSource(steamRoot: steam)],
+        var k = new ScsKiller(OperatingSystem.IsMacOS() ? [] : [new SteamSource(steam), new SteamShortcutSource(steam), .. HeroicSource.Runners.Select(r => new HeroicSource(r, steamRoot: steam)), new LutrisSource(steamRoot: steam), new FaugusSource(steamRoot: steam)],
             vendor, DefaultReaders(), new Planner(Path.Combine(AppStore.DefaultDir, "packs"), SharedPackDir(AppStore.DefaultDir, vendor.Vendor)), new Warmer(vendor) { SteamRoot = steam },
             AppStore.DefaultDir, NativeTools.Find("d3d12.dll")) { Adapters = GpuBackends.Adapters, AgsDll = NativeTools.Find("scskiller_ags.dll"), SteamRoot = steam };
         k.RedetectGpu();   // DriverId from Vulkan before anything compares it

@@ -4,6 +4,15 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**New**
+
+- Linux: lists and compiles the Windows games you added to Faugus Launcher, on the Proton build Faugus runs them with.
+
+**Fixed**
+
+- Linux: a game whose prefix a launcher set up without a Steam folder (an empty STEAM_COMPAT_CLIENT_INSTALL_PATH, as Faugus
+  runs umu) is no longer refused as needing a first run from its launcher.
+
 ## [1.4.3] - 2026-10-30
 
 **Improved**

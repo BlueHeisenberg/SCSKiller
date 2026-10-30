@@ -32,12 +32,12 @@ public static class Fmt
     public static string? StutterTip(GameState s) => s.KnownStutter is { } k
         ? $"{(k.Severity == StutterSeverity.Severe ? "Severe" : "Moderate")} shader-compilation stutter: {k.Reason}.\nSource: {k.Source} (checked {k.Date})" : null;
     /// <summary>Library sections, in list order. Steam's non-Steam games, GOG, Ubisoft, Battle.net, PURPLE, HoYoPlay, Gaijin and Riot Client games are Store.Other: told apart by their id prefix.</summary>
-    public static readonly string[] Stores = ["Steam", SteamShortcut, "Epic Games", "Xbox / Game Pass", "EA app", "GOG", "Ubisoft Connect", "Battle.net", "PURPLE", "HoYoPlay", "Gaijin", "Riot Client", "Other", AddedByYou];
+    public static readonly string[] Stores = ["Steam", SteamShortcut, "Epic Games", "Xbox / Game Pass", "EA app", "GOG", "Ubisoft Connect", "Battle.net", "PURPLE", "HoYoPlay", "Gaijin", "Riot Client", "Faugus", "Other", AddedByYou];
     public const string AddedByYou = "Added by you", SteamShortcut = "Steam (non-Steam game)";
     public static string StoreName(Game g) => g.Store switch
     {
         Store.Steam => "Steam", Store.Epic => "Epic Games", Store.Xbox => "Xbox / Game Pass", Store.EA => "EA app", Store.Manual => AddedByYou,
-        _ => g.Id[..Math.Max(0, g.Id.IndexOf(':'))] switch { "steam-shortcut" => SteamShortcut, "gog" => "GOG", "ubisoft" => "Ubisoft Connect", "battlenet" => "Battle.net", "purple" => "PURPLE", "hoyoplay" => "HoYoPlay", "gryphline" => "GRYPHLINK", "gaijin" => "Gaijin", "riot" => "Riot Client", _ => "Other" },
+        _ => g.Id[..Math.Max(0, g.Id.IndexOf(':'))] switch { "steam-shortcut" => SteamShortcut, "gog" => "GOG", "ubisoft" => "Ubisoft Connect", "battlenet" => "Battle.net", "purple" => "PURPLE", "hoyoplay" => "HoYoPlay", "gryphline" => "GRYPHLINK", "gaijin" => "Gaijin", "riot" => "Riot Client", "faugus" => "Faugus", _ => "Other" },
     };
     /// <summary>The stores the Library's summary says games of these <see cref="StoreName"/>s were found in: a non-Steam game's
     /// is Steam, a game added by hand's none.</summary>
