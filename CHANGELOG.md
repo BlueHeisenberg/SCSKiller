@@ -4,16 +4,47 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
-## [1.4.3] - 2026-10-30
+## [1.4.3] - 2026-10-31
+
+**New**
+
+- SCSKiller can keep Windows' automatic disk cleanup from clearing compiled shaders, with one click on the game page or
+  in Settings, and lets it clear them again from Settings.
 
 **Improved**
 
+- The Library's summary is two slim tiles, and the shader cache line says what is on disk, the driver cache against
+  its limit and the Windows shader cache, the same way as the Cache page.
+- Starting a game while its compile is still going into the game's cache shows a notification.
+- A game's "Use shared shader hashes" follows the Settings switch until you change it on the game's page, and a
+  "Follow Settings" link puts it back.
+- The game page says under the ring when its coverage rests on an engine rule no recording has confirmed, says why a
+  recording that doesn't match that rule covers fewer combinations, and shows a DirectX 11 game's own shader count.
+- The cache size estimate follows the game's measured cache after its first compile, and Wuthering Waves' first
+  estimate is about half what it was.
+- The Windows app uses the Segoe UI font again, as in 1.3.
 - Problem reports include how well SCSKiller rebuilds the game's root signatures from a recording.
 
 **Fixed**
 
 - Turning Record while I play on takes over a recorder another SCSKiller copy or an older version put in the game's
   folder, instead of switching back off.
+- A compile stopped or quit while it goes into the game's cache no longer says it's compiled. The rest goes in at the
+  next start or when the game closes, with its progress on the Queue page, in the Library and in the tray.
+- Start SCSKiller when Windows starts no longer switches itself back off after a click, and in the portable version it
+  shows whether SCSKiller really starts at sign-in.
+- Star Wars Outlaws no longer crashes at start with the traversal stutter fix on.
+- Crimson Desert's shader cache is found again after the Enhanced update.
+- On NVIDIA, a Vulkan game's compiled shader cache no longer shows as gone while its files are there, and a compile
+  after a cache that really is gone compiles everything again instead of nothing.
+- Unreal games that load ReShade from their Binaries folder, like Phantom Blade Zero, compile through RenoDX, and a
+  recording made with RenoDX no longer lowers their coverage.
+- The Library's Game folders button shows its menu again instead of an empty box, and folders with an underscore in
+  their name show it.
+- Compiles no longer crawl through shaders the NVIDIA driver takes over a minute to build, as in Phantom Blade Zero.
+- On Linux, a DirectX game under Proton with only Steam's shader cache no longer fails to compile at Planning.
+- On Linux, compiles no longer pause for low disk space when the data folder is on a different drive from a full or
+  read-only system drive.
 
 ## [1.4.2] - 2026-10-30
 

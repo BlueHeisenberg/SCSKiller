@@ -461,6 +461,9 @@ sealed class WarmRun : IWarmRun
     static readonly TimeSpan StalledAfter = TimeSpan.FromSeconds(int.TryParse(Environment.GetEnvironmentVariable("SCSKILLER_TEST_STALLED_S"), out var s) ? s : 600);
     // Known state objects skipped in one compile before the retries lower the ray tracing threads too (a crash storm).
     const int MaxKnownSkips = 8;
+    const string StuckVariable = "SCSKILLER_WARM_STUCK_S";
+    // under StalledAfter: an item given up on still moves the warm before the app calls it stalled
+    const int MaxStuckS = 300;
     // "memory" retries in one run: a restart every few hours on a 10 h compile (Marvel Rivals grew 2.4 GB/h), each needs
     // the PC low on memory for 10 min after a third of the budget's growth, so it can't loop fast.
     const int MaxMemoryRestarts = 8;
@@ -500,6 +503,8 @@ sealed class WarmRun : IWarmRun
         var rt = 0;   // the ray tracing threads of the last process
         IReadOnlyList<long> isolated = [];   // the items it created alone first
         var memoryRestarts = 0;
+        // the proxy's per-item limit: hung items that compile alone were slow on many threads (Phantom Blade Zero on NVIDIA)
+        var stuckS = int.TryParse(System.Environment.GetEnvironmentVariable(StuckVariable), out var s0) && s0 > 0 ? s0 : 60;
         long Whole(long done) => passes?.Overall(pass, done) ?? done;
         IWarmProcess Launch(long start, int rtThreads, List<long> skip, IReadOnlyList<long> isolate)
         {
@@ -533,7 +538,8 @@ sealed class WarmRun : IWarmRun
             if (!o.Vulkan) Keys("--known-keys", o.KnownKeys ?? []);
             if (isolate.Count > 0) { args.Add("--isolate"); args.Add(string.Join(',', isolate)); }
             if (passes != null) { args.Add("--pass"); args.Add(passes.Number(pass).ToString()); }
-            return host.Start(exe, args, env ?? System.Collections.ObjectModel.ReadOnlyDictionary<string, string>.Empty,
+            var all = new Dictionary<string, string>(env ?? new Dictionary<string, string>()) { [StuckVariable] = stuckS.ToString() };
+            return host.Start(exe, args, all,
                 l => { stderr.Enqueue(l); log?.Report($"{game.Name}: compile: {l}"); });
         }
         _p = Launch(from, 0, [], []);
@@ -712,6 +718,11 @@ sealed class WarmRun : IWarmRun
                         : freed ? "restarted to free memory"
                         : r.FailedItem >= 0 ? $"skipping a ray tracing state object that crashed ({rtThreads} {(rtThreads == 1 ? "thread" : "threads")})"
                         : $"retrying ray tracing with fewer threads ({rtThreads})";
+                    if (hung && isolated.Count > 0 && freshKeys == 0 && r.Culprits is not { Count: > 0 } && stuckS < MaxStuckS)
+                    {
+                        stuckS = Math.Min(stuckS * 2, MaxStuckS);
+                        log?.Report($"{game.Name}: compile: the pipelines that hung on many threads compiled alone, so each gets {stuckS} s from now");
+                    }
                     noteTill = removed || hung || freed ? Whole(r.From) : long.MaxValue;
                     progress?.Report(new WarmProgress(Whole(r.Done), passes?.Total ?? r.Total, carried, 0, Growth(), Note: note, DriverSkipped: carriedSkips));
                     _p = Launch(r.From, rtThreads, skip, removed || hung ? r.Isolate ?? [] : []);

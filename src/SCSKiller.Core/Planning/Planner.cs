@@ -402,7 +402,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         }
         Directory.CreateDirectory(workDir);
         var mainDb = Path.Combine(workDir, "scskiller.db");
-        if (recording != null) CopyRaw(recording.DbPath, mainDb);
+        if (recording != null && File.Exists(recording.DbPath)) CopyRaw(recording.DbPath, mainDb);
         else File.WriteAllBytes(mainDb, []);
         var inMain = new HashSet<string>(); // blob hashes and PSO keys already in scskiller.db
         // 'L' (a community recording's): the record names a shader only a recording on this PC has, not for the proxy

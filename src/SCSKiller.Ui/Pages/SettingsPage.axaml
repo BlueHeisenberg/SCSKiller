@@ -87,6 +87,21 @@
                         </StackPanel>
                         <ToggleSwitch Grid.Column="1" IsChecked="{Binding KeepCachesAside, Mode=TwoWay}" AutomationProperties.Name="Keep compiled caches aside" />
                     </Grid>
+                    <StackPanel Spacing="8" IsVisible="{Binding ShowsShaderCleanup, Mode=OneTime}">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                            <StackPanel Spacing="2" VerticalAlignment="Center">
+                                <TextBlock Text="Windows' automatic disk cleanup" Classes="BodyStrong" />
+                                <TextBlock Text="Storage Sense can delete the DirectX shader cache." Classes="Secondary" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Click="OnShaderCleanup" VerticalAlignment="Center" AutomationProperties.Name="{Binding ShaderCleanupAction}" IsEnabled="{Binding CanApplyShaderCleanup}">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Shield}" FontSize="14" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding ShaderCleanupAction}" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                        <c:InfoBar IsVisible="{Binding HasShaderCleanupMessage}" Message="{Binding ShaderCleanupMessage}" Severity="{Binding ShaderCleanupSeverity}" IsClosable="False" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

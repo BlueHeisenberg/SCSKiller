@@ -445,6 +445,8 @@ public sealed partial class DetailPage : Page
         if (on != Vm.SharedOn) Set((vm, p) => vm.SharedPending = p, on, id => App.Core.SetGameUseShared(id, on));
     }
 
+    void OnSharedFollow(object _, RoutedEventArgs __) => Set((vm, p) => vm.SharedPending = p, Vm.SharedOn, id => App.Core.SetGameUseShared(id, null));
+
     void SetCareful(bool on) => Set((vm, p) => vm.CarefulPending = p, on, id => App.Core.SetCarefulCompile(id, on));
 
     async void OnCacheCapChanged(object _, SelectionChangedEventArgs __)

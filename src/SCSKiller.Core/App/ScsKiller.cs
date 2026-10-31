@@ -21,11 +21,11 @@ public sealed partial class ScsKiller : IScsKiller
     public const double DefaultBytesPerPso = 24 * 1024, DefaultPsoPerSecond = 450;
 
     /// <summary>The cache a plan item adds until a compile measures it. Wuthering Waves (Kuro's fork): 32.3 GB measured for its
-    /// 742,531 raster pipelines, up to 80 GB estimated with its 125,035 ray tracing collections, so its estimate is that upper end.
-    /// Marvel Rivals: 34 KB to 53 KB per pipeline measured (96 GB for 1,824,233), its estimate the upper end too.</summary>
+    /// 742,531 raster pipelines (36 GB for 864,324 items with its ray tracing collections).
+    /// Marvel Rivals: 34 KB to 53 KB per pipeline measured (96 GB for 1,824,233), its estimate the upper end.</summary>
     public static double DefaultBytesPerPsoOf(EngineInfo? e) => e?.Fork switch
     {
-        "GAME_WutheringWaves" => 80.0 * (1L << 30) / (738_342 + 125_035),
+        "GAME_WutheringWaves" => 32.3 * (1L << 30) / 742_531,
         "GAME_MarvelRivals" => 96e9 / 1_824_233,
         _ => DefaultBytesPerPso,
     };
@@ -148,7 +148,7 @@ public sealed partial class ScsKiller : IScsKiller
         _reader = reader;
         if ((reader as UnrealReader ?? (reader as EngineReaders)?.Get<UnrealReader>()) is { } unreal) unreal.UserCaches = g => UnrealUserCache.FilesOf(g, SavedRoots(g));
         _planner = planner;
-        if (planner is Planner p) p.UsesShared = UsesShared;
+        if (planner is Planner p) p.UsesShared = id => SharedHashesOn(id, free: true);
         _warmer = warmer;
         Store = new AppStore(dataDir);
         DeleteLedger();   // first: every 1.2 proxy is a pass-through from here on, whatever fails later
@@ -426,7 +426,7 @@ public sealed partial class ScsKiller : IScsKiller
     public string RoamingAppData { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
     public string ProgramData { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
     /// <summary>The community database's read side (the app sets it: it holds the sign-in); null = local only. What was
-    /// downloaded is used either way while Settings.UseCommunityDb is on.</summary>
+    /// downloaded is used either way while <see cref="SharedHashesOn"/>.</summary>
     public Community? Community { get; set; }
     /// <summary>The user is entitled to "db", or signed in with entitlements not read yet: Settings.UseCommunityDb is theirs to
     /// turn off. Everyone else gets the official recordings any install may download whatever that setting holds.</summary>
@@ -530,6 +530,8 @@ public sealed partial class ScsKiller : IScsKiller
     public event Action<GameState>? GameChanged;
     public IReadOnlyList<QueueItem> Queue { get { lock (_lock) return _queue.ToList(); } }
     public event Action<QueueItem>? QueueChanged;
+    /// <summary>A notification for the game outside the queue's: its fold put the rest of its compile in, or the game started during a fold.</summary>
+    public event Action<string, (string Title, string Text)>? Notice;
 
     /// <summary>Completes when the queue has nothing left to run.</summary>
     public Task WhenQueueIdle() { lock (_lock) return _worker ?? Task.CompletedTask; }
@@ -604,7 +606,7 @@ public sealed partial class ScsKiller : IScsKiller
         get
         {
             if (Volatile.Read(ref _updateScans) > 0) return AfterUpdateText;
-            if (_folds.Keys.FirstOrDefault(f => !f.Queued && f.Percent >= 0) is { } fold) return FoldText(fold.Name + "'s", fold.Percent, fold.Writing);
+            if (FoldingLine is { } fold) return fold;
             lock (_lock)
                 if (_queue.Where(q => q.PlanCheck && !Finished(q.Stage)).ToList() is { Count: > 0 } checks && checks.Any(q => q.GameId == _current || _prompt.Contains(q.GameId)))
                 {
@@ -762,7 +764,7 @@ public sealed partial class ScsKiller : IScsKiller
             else if (was.GetValueOrDefault(g.Id) is { } listed && listed.Game == g && !IsUnchecked(listed))
             {
                 var rec = Store.LoadGame(g.Id);
-                states.Add(listed with { Playing = IsPlaying(g.Id), NewShadersOverride = rec.NewShaders, RtSkipped = !RayTracing(rec), RayTracingOverride = rec.RayTracing, TraversalOverride = rec.Traversal, LeftOutOfAddAll = rec.LeftOutOfAddAll, NoSharedHashes = rec.NoSharedHashes, CacheCapGB = rec.CacheCapGB, PlanCacheCapGB = rec.PlanCacheCapGB, ExeChosen = rec.ChosenExe != null });
+                states.Add(listed with { Playing = IsPlaying(g.Id), NewShadersOverride = rec.NewShaders, RtSkipped = !RayTracing(rec), RayTracingOverride = rec.RayTracing, TraversalOverride = rec.Traversal, LeftOutOfAddAll = rec.LeftOutOfAddAll, SharedHashes = SharedHashesOn(g.Id, free: true), SharedChoice = SharedChoice(rec), CacheCapGB = rec.CacheCapGB, PlanCacheCapGB = rec.PlanCacheCapGB, ExeChosen = rec.ChosenExe != null });
                 driverStale.Add(rec.WarmedAt != null && !CurrentDriver(gpu, rec.WarmedDriverId, rec.WarmedDriverVersion));
             }
             else
@@ -1476,7 +1478,7 @@ public sealed partial class ScsKiller : IScsKiller
         if (engine != null && check.Reason.Contains(Planner.Untested) && RootSig.Verified(engine))
             check = check with { Reason = check.Reason.Replace(Planner.Untested, Planner.NoRecording) };
         else if (antiCheat != AntiCheat.None || vac) check = check with { Reason = check.Reason.Replace(Planner.Untested, Planner.UntestedNote) };
-        var manifest = rec.NoSharedHashes ? null : LocalManifest();
+        var manifest = SharedHashesOn(g.Id, free: true) ? LocalManifest() : null;
         var entry = manifest != null ? DbEntry(manifest, g, rec, FullEntries) : null;
         bool? inDb = manifest != null && !CarvedReader.RecordedOnly(engine) ? entry != null : null;   // hash-only entries can't plan it
         var entitled = DbEntitled();
@@ -1613,14 +1615,17 @@ public sealed partial class ScsKiller : IScsKiller
         var playing = IsPlaying(g.Id);
         GameState? listed = null;
         if (playing) lock (_lock) listed = _games.Find(x => x.Game.Id == g.Id);
+        var onDisk = CacheOnDiskOf(g, engine, rec);
         var state = WithRecorder(new GameState(g, engine, antiCheat, status, reason,
                 Collections.Member(g.Id) != null && !Indexed(g, rec) ? null : rec.ShaderCount,   // an index of another exe: the whole install's, from before the split
                 rec.Plan?.Stats,
-            psos * (long)(rec.BytesPerPso ?? DefaultBytesPerPsoOf(engine)),
+            // NVIDIA's per-game keys: the game's measured cache per item its last compile created, over one warm's sample
+            AppCache is Vendors.NvidiaAppCache && rec.WarmedAt != null && onDisk is > 0 && rec.WarmedPlanCount - (rec.LastWarmFailed ?? 0) is > 0 and var made ? psos * onDisk / made
+                : psos * (long)(rec.BytesPerPso ?? DefaultBytesPerPsoOf(engine)),
             rec.Careful && careful != null ? careful : fast,
             rec.WarmedDriverVersion, rec.WarmedAt, rec.LastWarmTime, ours,
             Frames11Play(engine, Vendor.Caps) ? null : playing ? listed?.LastSession : session,   // the frames-only recorder writes no creates
-            CacheOnDiskOf(g, engine, rec),
+            onDisk,
             rec.LaunchedExeName,
             // ponytail: re-detected on every evaluation (one directory listing); cache with the scan if listings get slow
             antiCheat == AntiCheat.None ? Middleware.Tags(Middleware.Detect(exeDir), d => SeedsPacks(g) ? (_planner as Planner)?.PackPipelines(d, OnAmd) ?? 0 : 0) : null,
@@ -1633,7 +1638,7 @@ public sealed partial class ScsKiller : IScsKiller
                 LastWarmUnbuilt = rec.LastWarmUnbuilt, LastWarmInvalid = rec.LastWarmInvalid, LastWarmUnsupported = rec.LastWarmUnsupported,
                 LastWarmTried = rec.LastWarmTried ?? rec.WarmedPlanCount, LastWarmFailedBy = rec.LastWarmFailedBy,
                 Careful = cap != null ? new CarefulCompile(rec.Careful, rec.FirstLaunch?.Compiled, careful, recorded) : null,
-                NewShadersOverride = rec.NewShaders, RtSkipped = rtSkipped, RayTracingOverride = rec.RayTracing, TraversalOverride = rec.Traversal, LeftOutOfAddAll = rec.LeftOutOfAddAll, NoSharedHashes = rec.NoSharedHashes, CacheCapGB = rec.CacheCapGB, PlanCacheCapGB = rec.PlanCacheCapGB,
+                NewShadersOverride = rec.NewShaders, RtSkipped = rtSkipped, RayTracingOverride = rec.RayTracing, TraversalOverride = rec.Traversal, LeftOutOfAddAll = rec.LeftOutOfAddAll, SharedHashes = SharedHashesOn(g.Id, free: true), SharedChoice = SharedChoice(rec), CacheCapGB = rec.CacheCapGB, PlanCacheCapGB = rec.PlanCacheCapGB,
                 ApiOverride = rec.ApiOverride, ApiDetected = apiDetected, ExeChosen = rec.ChosenExe != null,
                 RecordedSinceWarm = pending.Recorded, NewOnly = status == GameStatus.Stale && !pending.Unknown && WarmChanged(g, rec, engine, gpuNow) == null, CommunityDbPsos = entry?.Psos ?? 0, PsoPerSecond = RateOn(rec, gpuNow.Id),
                 Official = OfficialInUse(g.Id) is { } o ? new CommunityInfo(o.Psos, o.DownloadedAt, File.Exists(RecordingPath(g.Id))) : null,
@@ -2228,9 +2233,30 @@ public sealed partial class ScsKiller : IScsKiller
             : "not seen in a recording yet") + ")";
     }
 
-    /// <summary>The game page's line for a plan whose left-out stage sets no recording showed yet.</summary>
-    public static string NotSeenNote(bool recordOn) => "SCSKiller hasn't seen how the game sets the rest up yet. "
+    /// <summary>The game page's line for a plan whose left-out stage sets no recording showed yet; with a recording the
+    /// rule didn't match (<see cref="LearnedOnly"/>), why only what it saw is planned.</summary>
+    public static string NotSeenNote(bool recordOn, PlanStats? p = null) => (LearnedOnly(p) ? LearnedNote + " " : "") + "SCSKiller hasn't seen how the game sets the rest up yet. "
         + (recordOn ? "Keep playing with recording on. What it sees is added the next time it compiles." : "Playing longer with recording on teaches it.");
+
+    public const string LearnedNote = "Your recording showed this game builds its shaders differently, so SCSKiller compiles the combinations it saw.";
+
+    /// <summary>A plan from a recording whose root signatures the engine version's rule didn't rebuild: only the stage sets
+    /// the recording showed are planned (PlanBuilder's learned lookup, no rule fallback), most of the rest not seen yet.</summary>
+    public static bool LearnedOnly(PlanStats? p) => p is { Recorded: > 0, RootSigRuleVerified: false, RuleFallback: null or 0 } && p.Uncovered * 2 < p.LeftOut;
+
+    /// <summary>An Unreal plan whose root signatures come from the engine version's rule that no recording has confirmed.</summary>
+    public static bool RuleUnconfirmed(GameState s) => s is { Plan: { Recorded: 0, RootSigRuleVerified: false }, Engine.Family: "Unreal" };
+
+    /// <summary>The game page's coverage headline after its verb ("Covers", "Will cover").</summary>
+    public static string CoverageWhat(GameState s, int pct) => pct < 100 ? $" about {pct}% of the shader combinations found in this game"
+        : RuleUnconfirmed(s) ? " the shader combinations found in the game. A recording confirms them." : " all the shader combinations found in this game";
+
+    /// <summary>The game page's shader count: a DirectX 11-only plan's own (<see cref="PlanStats.D3D11Shaders"/>), else every
+    /// platform's in the game files.</summary>
+    public static long? PageShaders(GameState s) => s.Plan is { StageSets: 0, Generated: 0, D3D11Shaders: > 0 } p ? p.D3D11Shaders : s.ShaderCount;
+
+    /// <summary>The page shader count's tooltip when it isn't every platform's; null otherwise.</summary>
+    public static string? AllShadersTip(GameState s) => s.ShaderCount is { } n && PageShaders(s) != n ? $"{n:N0} in the game files, for every graphics API" : null;
 
     /// <summary>The game page's line for a plan whose left-out stage sets use root signature slots the engine adds.</summary>
     public static string EngineSlotsNote(bool recordOn) => "The rest use shader slots this game's engine adds. "
@@ -2809,7 +2835,7 @@ public sealed partial class ScsKiller : IScsKiller
         r.WarmedAt != null && (!CurrentPlanner(r.PlanVersion, r.PlanRules, r.PlanReaderVersion, e) || r.PlanCommunity != CommunityObjects(g.Id)
             || r.PlanOfficial != OfficialInUse(g.Id)?.Object || r.PlanSteam != SteamDownloads(g, e) || r.PlanPsoCache != PsoCacheInUse(g, e) || OtherApi(r, e) || OtherEngine(r, e) || r.PlanFiltering != Filtering(g.Id, false, e)
             || r.PlanRayTracing != RayTracing(r) && r.Plan?.Stats is { RtLibraries: > 0 } or { RtStateObjects: > 0 }
-            || r.PlanMiddleware?.Contains("|shared:") == true && !UsesShared(g.Id) || RuleFallbackDue(r)) && WarmChanged(g, r, e) == null
+            || r.PlanMiddleware?.Contains("|shared:") == true && !SharedHashesOn(g.Id, free: true) || RuleFallbackDue(r)) && WarmChanged(g, r, e) == null
         || RtPlanCheck(r, e));
 
     /// <summary>The plan was built for another DirectX than the engine has now: a choice, a recording, or the game's log or
@@ -3279,9 +3305,10 @@ public sealed partial class ScsKiller : IScsKiller
         : null;
 
     /// <summary>NVIDIA from 621 keeps a D3D12 game's compiled pipelines in its D3DSCache folder: the plan has D3D12 items and
-    /// the last complete warm, on 621 or later, kept its dbs there. Null: the DXCache files tell.</summary>
+    /// the last complete warm, on 621 or later, kept its dbs there. Null: the DXCache files tell, also for a Vulkan plan,
+    /// whose pipelines are in GLCache (a Vulkan process leaves only small D3DSCache dbs).</summary>
     PlanStats? D3D12Kept(GameRecord r) => OperatingSystem.IsWindows() && AppCache is NvidiaAppCache
-        && r is { WarmedD3DSCache: true, Plan.Stats: { } st } && st.Recorded + st.Generated + st.MiddlewareItems > 0
+        && r is { WarmedD3DSCache: true, Plan: { Platform: not VulkanPlan.Platform, Stats: { } st } } && st.Recorded + st.Generated + st.MiddlewareItems > 0
         && NvidiaMajor(r.WarmedDriverVersion) >= 621 ? st : null;
 
     /// <summary>Measured on 621: the game reads PSOs only from its D3DSCache folder, ray tracing state objects and D3D11 shaders
@@ -3294,19 +3321,19 @@ public sealed partial class ScsKiller : IScsKiller
     /// Cleanup empties D3DSCache): all gone. The dbs the last warm left (<see cref="GameRecord.WarmedD3DSCacheBytes"/>) lost
     /// more than <see cref="TrimmedShare"/> of their length, a db gone or made again since (the game rebuilt it cold) counting
     /// as empty: part gone. Only lengths and creation times are read, never the dbs. Null while a compile of the game runs or
-    /// a folder can't be read.</summary>
-    string? D3DSCacheTrimmed(string gameId, GameRecord r)
+    /// a folder can't be read, except for that compile's own check before its fold (<paramref name="compiling"/>).</summary>
+    string? D3DSCacheTrimmed(string gameId, GameRecord r, bool compiling = false)
     {
         var own = Store.GameDir(gameId);
         var work = Path.Combine(own, "work");
-        if (D3DSCacheNames(r) is not { Count: > 0 } names || !NoCompile(work) || D3DSCacheDbs(names) is not { } now) return null;
+        if (D3DSCacheNames(r) is not { Count: > 0 } names || !compiling && !NoCompile(work) || D3DSCacheDbs(names) is not { } now) return null;
         // per db: one db's growth doesn't hide another's loss
         long Held(string name) => now.Where(d => d.Name.Equals(name, StringComparison.OrdinalIgnoreCase) && !(d.Made > r.WarmedD3DSCacheAt?.UtcDateTime))
             .Select(d => d.Bytes).DefaultIfEmpty().Max();
         var t = now.Count == 0 ? Holds(Path.Combine(own, D3DSCacheWaiting), "*", dirs: true) == false ? TrimmedAllReason : null
             : r.WarmedD3DSCacheBytes is { Count: > 0 } was && was.Sum(w => Math.Min(Held(w.Key), w.Value)) < was.Values.Sum() * (1 - TrimmedShare)
                 ? TrimmedPartReason : null;
-        return NoCompile(work) ? t : null;
+        return compiling || NoCompile(work) ? t : null;
     }
 
     static List<string> D3DSCacheNames(GameRecord r) => new[] { r.D3DSCacheFolder, r.D3DSCacheMade }.OfType<string>().Where(IsFolderName).ToList();
@@ -3604,7 +3631,7 @@ public sealed partial class ScsKiller : IScsKiller
         (rec.LastWarmFailed, rec.LastWarmSkipped, rec.LastWarmNeedsRecording, rec.LastWarmCrashed, rec.LastWarmDriverSkipped, rec.LastWarmUnbuilt, rec.LastWarmInvalid,
             rec.LastWarmUnsupported, rec.LastWarmKnown, rec.LastWarmCrashedBefore) = (null, null, null, null, null, null, null, null, null, null);
         (rec.LastWarmTried, rec.LastWarmFailedBy) = (null, null);
-        rec.WarmedRoomLeft = null;
+        (rec.WarmedRoomLeft, rec.CompiledUntold) = (null, false);
         (rec.WarmedCareful, rec.FirstLaunch, rec.WarmedFiles, rec.WarmedFileIds, rec.WarmedD3DSCacheBytes, rec.WarmedD3DSCacheAt, rec.D3DSCacheFoldKeys) = (false, null, null, null, null, null, null);
         (rec.WarmedSteamParcId, rec.WarmedSteamParcBytes) = (null, null);
     }
@@ -4419,7 +4446,7 @@ public sealed partial class ScsKiller : IScsKiller
 
     /// <summary>The community recording downloaded for the game while the setting is on, whether this install matches it or not.</summary>
     CommunityDownload? CommunityKept(string gameId) =>
-        Settings.UseCommunityDb && UsesShared(gameId) && Community.Downloaded(Store.GameDir(gameId)) is { } d && (!d.Full || FullEntries) ? d : null;
+        SharedHashesOn(gameId) && Community.Downloaded(Store.GameDir(gameId)) is { } d && (!d.Full || FullEntries) ? d : null;
 
     /// <summary><see cref="CommunityKept"/> unless it was made for another build and has none of the installed build's shaders,
     /// or was made for an index without shaders (<see cref="OtherVersion"/>):
@@ -4436,7 +4463,7 @@ public sealed partial class ScsKiller : IScsKiller
     CommunityDownload? DrawsInUse(string gameId)
     {
         var dir = Store.GameDir(gameId);
-        if (!Settings.UseCommunityDb || !UsesShared(gameId) || Community.DownloadedDraws(dir) is not { } d) return null;
+        if (!SharedHashesOn(gameId) || Community.DownloadedDraws(dir) is not { } d) return null;
         var db = new FileInfo(Path.Combine(dir, "draws.db"));
         try
         {
@@ -4464,7 +4491,7 @@ public sealed partial class ScsKiller : IScsKiller
     };
 
     /// <summary>The Vulkan entry downloaded for the game while the setting is on.</summary>
-    CommunityDownload? VulkanInUse(string gameId) => Settings.UseCommunityDb && UsesShared(gameId) ? Community.DownloadedVulkan(Store.GameDir(gameId)) : null;
+    CommunityDownload? VulkanInUse(string gameId) => SharedHashesOn(gameId) ? Community.DownloadedVulkan(Store.GameDir(gameId)) : null;
 
     bool ScannedVulkan(Game g)
     {
@@ -4473,23 +4500,34 @@ public sealed partial class ScsKiller : IScsKiller
 
     /// <summary>The official recording downloaded for the game, used as <see cref="OfficialAllowed"/> says.</summary>
     CommunityDownload? OfficialInUse(string gameId) =>
-        UsesShared(gameId) && Community.DownloadedOfficial(Store.GameDir(gameId)) is { } d && OfficialAllowed(d.Visibility) ? d : null;
+        Community.DownloadedOfficial(Store.GameDir(gameId)) is { } d && OfficialAllowed(gameId, d.Visibility) ? d : null;
 
-    readonly ConcurrentDictionary<string, (DateTime At, bool Uses)> _usesShared = new(StringComparer.OrdinalIgnoreCase);
+    readonly ConcurrentDictionary<string, (DateTime At, bool? Choice)> _sharedChoice = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The game's "Use shared shader hashes" (<see cref="GameRecord.NoSharedHashes"/>), read again whenever its record changed.</summary>
-    bool UsesShared(string gameId)
+    static bool? SharedChoice(GameRecord r) => r.NoSharedHashes ? false : r.SharedHashesOn ? true : null;
+
+    /// <summary>The game's own "Use shared shader hashes", read again whenever its record changed; null = Settings.UseCommunityDb.</summary>
+    bool? SharedChoice(string gameId)
     {
         var at = File.GetLastWriteTimeUtc(Path.Combine(Store.GameDir(gameId), "state.json"));
-        if (_usesShared.TryGetValue(gameId, out var known) && known.At == at) return known.Uses;
-        var uses = !Store.LoadGame(gameId).NoSharedHashes;
-        _usesShared[gameId] = (at, uses);
-        return uses;
+        if (_sharedChoice.TryGetValue(gameId, out var known) && known.At == at) return known.Choice;
+        var choice = SharedChoice(Store.LoadGame(gameId));
+        _sharedChoice[gameId] = (at, choice);
+        return choice;
     }
 
-    /// <summary>With Settings.UseCommunityDb, or one for everyone while the user isn't entitled to "db": the setting is
-    /// shown off and can't be changed without it.</summary>
-    bool OfficialAllowed(OfficialVisibility? v) => Settings.UseCommunityDb || v == OfficialVisibility.Everyone && !DbEntitled();
+    /// <summary>Shared shader hashes for the game: its own choice, else Settings.UseCommunityDb. Every download (the manifest
+    /// included) and every use of one asks this first.</summary>
+    /// <param name="free">the downloads any install gets without "db" (the official recordings for everyone, the packs): the
+    /// setting isn't the user's to turn off while not entitled, and a game's On adds nothing to it then</param>
+    bool SharedHashesOn(string gameId, bool free = false) => SharedChoice(gameId) switch
+    {
+        false => false,
+        true when DbEntitled() => true,
+        _ => Settings.UseCommunityDb || free && !DbEntitled(),
+    };
+
+    bool OfficialAllowed(string gameId, OfficialVisibility? v) => SharedHashesOn(gameId, free: v == OfficialVisibility.Everyone);
 
     /// <summary>The downloaded recordings in use: community.db, official.db, then draws.db.</summary>
     List<string> Downloads(string gameId) =>
@@ -4526,8 +4564,8 @@ public sealed partial class ScsKiller : IScsKiller
         }
     }
 
-    /// <summary>The shared packs (<see cref="SyncPacks"/>, whatever the settings and the sign-in), then with
-    /// Settings.UseCommunityDb (or without "db", for the official recordings for everyone) the manifest, then a download for every
+    /// <summary>The shared packs (<see cref="SyncPacks"/>), then for the games <see cref="SharedHashesOn"/> lets download the
+    /// manifest, then a download for every
     /// game whose build has an entry or official recording other than the one it has; each game that got one, or whose entry
     /// the manifest check changed, is re-evaluated. Never throws.</summary>
     async Task SyncCommunity(IReadOnlyList<Game> games)
@@ -4535,7 +4573,7 @@ public sealed partial class ScsKiller : IScsKiller
         try
         {
             foreach (var g in await SyncPacks(games, CancellationToken.None)) Refresh(g);
-            if (!Settings.UseCommunityDb && DbEntitled()) return;
+            if (!games.Any(g => SharedHashesOn(g.Id, free: true))) return;
             foreach (var g in games)
                 if (await SyncCommunity(g, null, CancellationToken.None) || DbEntryChanged(g)) Refresh(g);
         }
@@ -4550,9 +4588,9 @@ public sealed partial class ScsKiller : IScsKiller
     {
         var changed = new List<Game>();
         if (Community is not { } community || (_planner as Planner)?.SharedPacks is not { } shared || PackGpu(Vendor.Vendor) is not { } gpu) return changed;
-        var dlls = games.Where(g => UsesShared(g.Id)).SelectMany(g => Dlls(g).Where(d => d.Packable && Middleware.SharedVendors.Contains(d.Vendor)).Select(d => (Game: g, Dll: d))).ToList();
-        // no DLL is hashed unless the manifest lists a pack at all
-        if (dlls.Count == 0 || await community.ManifestAsync(ct) is not { HasPacks: true } manifest) return changed;
+        var dlls = games.Where(g => SharedHashesOn(g.Id, free: true)).SelectMany(g => Dlls(g).Where(d => d.Packable && Middleware.SharedVendors.Contains(d.Vendor)).Select(d => (Game: g, Dll: d))).ToList();
+        // no DLL is hashed unless the manifest lists a pack at all, and no manifest once every game was switched off meanwhile
+        if (!dlls.Any(x => SharedHashesOn(x.Game.Id, free: true)) || await community.ManifestAsync(ct) is not { HasPacks: true } manifest) return changed;
         var keyed = dlls.Select(x => (x.Game, x.Dll, Image: Middleware.TryScan(x.Dll.Path))).Where(x => x.Image != null)
             .Select(x => (x.Game, x.Dll, x.Image, Key: HashOnly.PackKey(gpu, x.Dll.Vendor, x.Dll.Name, x.Image!.ContentHash))).ToList();
         foreach (var pack in keyed.GroupBy(x => x.Key))
@@ -4560,7 +4598,7 @@ public sealed partial class ScsKiller : IScsKiller
             var (_, d, image, key) = pack.First();
             if (manifest.FindPack(key) is not { } e || shared.Load(d, image!)?.Header.Object == e.Object) continue;
             var users = pack.Select(x => x.Game).DistinctBy(g => g.Id).ToList();
-            if (!users.Any(g => UsesShared(g.Id))) continue;   // switched off meanwhile
+            if (!users.Any(g => SharedHashesOn(g.Id, free: true))) continue;   // switched off meanwhile
             if (await community.DownloadPackAsync(e, d, image!, shared, gpu == "amd", ct) is not { } n)
             {
                 if (community.Problem is { } why) Log?.Report($"{d.Name}: shared pack: {why}");
@@ -4611,7 +4649,7 @@ public sealed partial class ScsKiller : IScsKiller
     {
         var dir = Store.GameDir(g.Id);
         var dlls = Dlls(g).Where(d => d.Packable).ToList();
-        var packs = _planner is Planner p && SeedsPacks(g) ? new[] { p.Packs, UsesShared(g.Id) ? p.SharedPacks : null }.OfType<MiddlewarePacks>().ToList() : [];
+        var packs = _planner is Planner p && SeedsPacks(g) ? new[] { p.Packs, SharedHashesOn(g.Id, free: true) ? p.SharedPacks : null }.OfType<MiddlewarePacks>().ToList() : [];
         var packFiles = packs.SelectMany(x => dlls.Where(d => Directory.Exists(Path.Combine(x.Dir, d.Vendor)))
             .Select(d => Middleware.TryScan(d.Path) is { } i ? x.PathOf(d.Vendor, d.Name, i.ContentHash) : null));
         return ([RecordingPath(g.Id), .. Downloads(g.Id), r.Plan?.FilePath, Path.Combine(dir, Sharing.ShippedFile), .. dlls.Select(d => d.Path), .. packFiles],
@@ -4621,7 +4659,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// <summary>What the packs of the DLLs next to the game's exe seed on this GPU (<see cref="PackSeeds"/>).</summary>
     List<(List<PsoDb.Rec> Entries, List<string> RootSignatures)> SeedsNow(Game g) =>
         _planner is Planner p && SeedsPacks(g)
-            ? [.. new[] { p.Packs, UsesShared(g.Id) ? p.SharedPacks : null }.OfType<MiddlewarePacks>().SelectMany(x => Dlls(g).Where(d => d.Packable).Select(d => PackSeeds(x, d)))]
+            ? [.. new[] { p.Packs, SharedHashesOn(g.Id, free: true) ? p.SharedPacks : null }.OfType<MiddlewarePacks>().SelectMany(x => Dlls(g).Where(d => d.Packable).Select(d => PackSeeds(x, d)))]
             : [];
 
     /// <summary>The blobs on disk a warm of this game finds outside its recordings and plan, for the count and the warm's
@@ -4836,7 +4874,7 @@ public sealed partial class ScsKiller : IScsKiller
     {
         if (Games.FirstOrDefault(s => s.Game.Id == g.Id) is not { } s) return false;
         var rec = Store.LoadGame(g.Id);
-        var m = rec.NoSharedHashes ? null : LocalManifest();
+        var m = SharedHashesOn(g.Id, free: true) ? LocalManifest() : null;
         var e = m != null ? DbEntry(m, g, rec, FullEntries) : null;
         return s.InCommunityDb != (m != null ? e != null : null) || s.CommunityDbPsos != (e?.Psos ?? 0);
     }
@@ -4919,7 +4957,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// download for a game whose compile reads its downloads is held until that compile ends, and doesn't count.</summary>
     async Task<bool> SyncCommunity(Game g, string? contentHash, CancellationToken ct, IReadOnlyList<string>? legacyHashes = null)
     {
-        if (Community is not { } community || !UsesShared(g.Id) || !Settings.UseCommunityDb && DbEntitled() || await community.ManifestAsync(ct) is not { } manifest) return false;
+        if (Community is not { } community || !SharedHashesOn(g.Id, free: true) || await community.ManifestAsync(ct) is not { } manifest) return false;
         var rec = contentHash != null ? null : Store.LoadGame(g.Id);
         var entry = rec == null ? manifest.FindRichest(g, contentHash, legacyHashes, FullEntries) : DbEntry(manifest, g, rec, FullEntries);
         var official = rec == null ? manifest.FindOfficial(g, contentHash) ?? manifest.FindOfficial(g, null) : OfficialEntry(manifest, g, rec);
@@ -4937,7 +4975,7 @@ public sealed partial class ScsKiller : IScsKiller
         const string untilCompiled = ", held until the compile ends";
         // a compile saves its own record after this, and plans and warms the download anyway
         // a download kept as 'X' where the 'E' is read goes again, also when both cuts name the same object
-        if (UsesShared(g.Id) && Settings.UseCommunityDb && entry != null && Community.Downloaded(dir) is var had && (entry.Object != had?.Object || had?.Full == true && !entry.Full)
+        if (SharedHashesOn(g.Id) && entry != null && Community.Downloaded(dir) is var had && (entry.Object != had?.Object || had?.Full == true && !entry.Full)
             && !HeldAlready("community", entry.Object, entry.Full))
         {
             if (await community.DownloadAsync(entry, dir, ct, Hold("community", entry.Object, entry.Full)) is { } d)
@@ -4947,7 +4985,7 @@ public sealed partial class ScsKiller : IScsKiller
             }
             else if (community.Problem is { } why) Log?.Report($"{g.Name}: community database: {why}");
         }
-        if (UsesShared(g.Id) && Settings.UseCommunityDb && draws != null && draws.Object != Community.DownloadedDraws(dir)?.Object && !HeldAlready("draws", draws.Object))
+        if (SharedHashesOn(g.Id) && draws != null && draws.Object != Community.DownloadedDraws(dir)?.Object && !HeldAlready("draws", draws.Object))
         {
             if (await community.DownloadDrawsAsync(draws, dir, ct, Hold("draws", draws.Object)) is { } d)
             {
@@ -4957,7 +4995,7 @@ public sealed partial class ScsKiller : IScsKiller
             else if (community.Problem is { } why) Log?.Report($"{g.Name}: community database: {why}");
         }
         // a Steam build's Vulkan pipelines: planned only beside an archive of this PC (VulkanRecording)
-        if (UsesShared(g.Id) && Settings.UseCommunityDb && VulkanLayer.AppId(g) != null && g.Version is { } version && ScannedVulkan(g)
+        if (SharedHashesOn(g.Id) && VulkanLayer.AppId(g) != null && g.Version is { } version && ScannedVulkan(g)
             && manifest.FindVulkan($"{g.Id}@{version}") is { } vk && vk.Object != Community.DownloadedVulkan(dir)?.Object && !HeldAlready("vulkan", vk.Object))
         {
             if (await community.DownloadVulkanAsync(vk, dir, ct, Hold("vulkan", vk.Object)) is { } d)
@@ -4979,7 +5017,7 @@ public sealed partial class ScsKiller : IScsKiller
                 lock (_restateFailed) first = _restateFailed.Add(g.Id);
                 if (first) Log?.Report($"{g.Name}: official recording: its visibility couldn't be updated ({x.Message})");
             }
-        if (UsesShared(g.Id) && official != null && OfficialAllowed(official.Visibility) && official.Object != Community.DownloadedOfficial(dir)?.Object
+        if (official != null && OfficialAllowed(g.Id, official.Visibility) && official.Object != Community.DownloadedOfficial(dir)?.Object
             && !HeldAlready("official", official.Object))
         {
             if (await community.DownloadOfficialAsync(official, dir, ct, Hold("official", official.Object)) is { } d)
@@ -8964,6 +9002,7 @@ public sealed partial class ScsKiller : IScsKiller
         if (q is not { Stage: QueueStage.Done or QueueStage.Failed, PlanCheck: false, StartedAt: { } at }) return null;
         lock (_lock)
             if (_whenIdle.Contains(q.GameId) || !_toldEnded.Add((q.GameId, at))) return null;
+        if (q.Stage == QueueStage.Done && Store.LoadGame(q.GameId).CompiledUntold) return null;   // TellCompiled says it once the rest is in
         var name = Games.FirstOrDefault(s => s.Game.Id == q.GameId)?.Game.Name ?? q.GameId;
         return q.Stage == QueueStage.Done ? ($"{name} is compiled", $"Started {at.LocalDateTime:t}, finished {DateTime.Now:t}")
             : ($"{name}: the compile failed", q.Error ?? $"Started {at.LocalDateTime:t}");
@@ -9479,7 +9518,7 @@ public sealed partial class ScsKiller : IScsKiller
         string? indexed = null;   // this build's content hash, once this compile has indexed it
         var replans = 0;
         var started = DateTime.UtcNow;
-        bool refreshed = false, completed = false, foldRan = false, stoppedHere = false;
+        bool refreshed = false, completed = false, foldRan = false, stoppedHere = false, foldCut = false;
         // a staged exe's own runtime cache folder, never read again: its dbs go to the game's folder, or wait for the game's
         // first run to make one (MergeD3DSCache)
         void Fold()
@@ -9510,12 +9549,12 @@ public sealed partial class ScsKiller : IScsKiller
                         {
                             writing = over;
                             Stage(QueueStage.Merging);
-                        }, () => !_go.IsSet || _foldHalt) && !_foldHalt && !ct.IsCancellationRequested)
+                        }, () => !_go.IsSet || _foldHalt, () => foldCut = true) && !_foldHalt && !ct.IsCancellationRequested)
                         {
                             SetCurrent(QueueStage.Paused);
                             while (!_go.IsSet && !_foldHalt && !ct.IsCancellationRequested) _go.Wait(Poll);
                             if (!_go.IsSet) break;
-                            (copying, writing) = (null, false);
+                            (copying, writing, foldCut) = (null, false, false);
                         }
                     }
                     finally { if (ended != null) Set(ended); }
@@ -9554,6 +9593,23 @@ public sealed partial class ScsKiller : IScsKiller
                 }
             }
             catch (Exception e) { Log?.Report($"{game.Name}: D3DSCache not cleaned: {e.Message}"); }
+        }
+        // a fold cut short leaves the compile out of the game's cache: a stop or a quit ends the item Stopped, and the fold that
+        // puts the rest in says it's compiled (TellCompiled)
+        QueueStage Handed()
+        {
+            foldCut = false;
+            Fold();
+            bool idle;
+            lock (_lock) idle = _whenIdle.Contains(id);
+            rec.CompiledUntold = !idle && (foldCut || rec.CompiledUntold && Undelivered(id, Store.LoadGame(id)));
+            AppStore.Locked(Path.Combine(Store.GameDir(id), "state.json"), () =>
+            {
+                var r = Store.LoadGame(id);
+                r.CompiledUntold = rec.CompiledUntold;
+                Store.SaveGame(id, r);
+            });
+            return foldCut && (_foldHalt || ct.IsCancellationRequested) ? QueueStage.Stopped : QueueStage.Done;
         }
         bool Low() { lock (_lock) return Background || _planOnly.Contains(id) || _whenIdle.Contains(id); }   // read at each stage: a Compile click makes it the user's
         bool Checking() { lock (_lock) return _planOnly.Contains(id); }
@@ -9700,7 +9756,9 @@ public sealed partial class ScsKiller : IScsKiller
             }
             if (current || planOnly)
             {
-                Set(new QueueItem(id, QueueStage.Done, null, null, current ? "already compiled: the new plan adds nothing"
+                rec.CompiledUntold = Store.LoadGame(id).CompiledUntold;
+                var end = current && rec.CompiledUntold ? Handed() : QueueStage.Done;   // a cut fold's compile added again: the rest goes in first
+                Set(new QueueItem(id, end, null, null, current ? "already compiled: the new plan adds nothing"
                     : rec.WarmedAt != null && StaleReason(game, rec, engine) is { } why ? why : "plan built"));
                 return;
             }
@@ -9761,7 +9819,7 @@ public sealed partial class ScsKiller : IScsKiller
                 Fold();
                 foldRan = false;   // this compile's own staged dbs still need theirs
             }
-            if (FullReplayReason(game, rec, engine, Snapshot()) is { } all)
+            if (FullReplayReason(game, rec, engine, Snapshot(), compiling: true) is { } all)
             {
                 if (all == NothingOnRecord && StoppedLeftOut(game, rec, indexed, Snapshot().Id) is { } stopped)
                 {
@@ -9847,7 +9905,7 @@ public sealed partial class ScsKiller : IScsKiller
                 }
                 // the waits may have brought another driver, a launch or an evicted cache: then everything goes in again
                 if (compiled != null && (stoppedUsed ? StoppedLeftOut(game, rec, indexed, driverId) == null ? StoppedGone : null
-                        : FullReplayReason(game, rec, engine, snap)) is { } lost)
+                        : FullReplayReason(game, rec, engine, snap, compiling: true)) is { } lost)
                 {
                     Log?.Report($"{game.Name}: replaying every pipeline: {lost}");
                     await Lowered(Threads(), Low(), () => { _planner.Materialize(rec.Plan!, game, engine, _reader, recording, work, ct); return 0; });
@@ -10222,8 +10280,8 @@ public sealed partial class ScsKiller : IScsKiller
                             // the hook's outcome, not the plan: without d3dscache's import the warm ran at the flushing rate
                             (rec.PsoPerSecond, rec.PsoPerSecondDriver) = (items / seconds, RateDriver(driverId, result.D3DSCacheNoFlush));
                             SeedWarmRate(rec.PsoPerSecond.Value, driverId, result.D3DSCacheNoFlush);
-                            var n = result.Done - options.StartAt;   // the growth is the last segment's
-                            if (result.CacheGrowthBytes > 0 && n > 0) rec.BytesPerPso = (double)result.CacheGrowthBytes / n;
+                            // a resumed warm measures its last segment only, the plan's tail where ray tracing collections compile
+                            if (options.StartAt == 0 && result.CacheGrowthBytes > 0 && result.Done > 0) rec.BytesPerPso = (double)result.CacheGrowthBytes / result.Done;
                         }
                         Store.SaveGame(id, rec);
                         Store.PruneKeyFiles(id);
@@ -10232,15 +10290,16 @@ public sealed partial class ScsKiller : IScsKiller
                         SendDiagnostics(game, indexed!, work, null, result.Crashed);
                         SteamPlaceSoon(id, exited: false);
                         Finishing(false);
-                        Fold();   // before Done shows: a game started then gets the dbs, or waits while it runs
+                        var end = Handed();   // before Done shows: a game started then gets the dbs, or waits while it runs
                         Finishing(true, FinishingAfter);
                         Close();
                         Bookkept();
                         Ended("done");
-                        Stage(QueueStage.Done);
+                        Stage(end);
                         break;
                     case WarmOutcome.Stopped:
                         KeepResume();
+                        rec.CompiledUntold = false;   // an earlier compile's: this one changed what the cache gets
                         Store.SaveGame(id, rec);
                         Bookkept();
                         Ended("stopped");
@@ -10249,6 +10308,7 @@ public sealed partial class ScsKiller : IScsKiller
                     default:
                         if (result.Resumable) KeepResume();
                         if (result.Resumable && Warmer.GaveUp(result.Error)) SkipPast();
+                        rec.CompiledUntold = false;
                         Store.SaveGame(id, rec);
                         SendDiagnostics(game, indexed!, work, DiagnosticFailure.FromWarm(result.Error), result.Crashed);
                         Bookkept();
@@ -10334,21 +10394,27 @@ public sealed partial class ScsKiller : IScsKiller
     /// folder made before the game's first run goes into the game's own once that turned out another (a launcher starting the
     /// exe under another casing of its path): the dbs stay on disk once. True when <paramref name="halt"/> stopped it: what it
     /// hadn't merged stays pending.</summary>
-    bool MergeD3DSCache(Game g, bool own = false, Action<long, long>? progress = null, Action<bool>? past = null, Func<bool>? halt = null)
+    bool MergeD3DSCache(Game g, bool own = false, Action<long, long>? progress = null, Action<bool>? past = null, Func<bool>? halt = null, Action? cut = null)
     {
         if (!OperatingSystem.IsWindows()) return false;
         // a game that opens its db while a merge holds it runs without its cache until it exits: never while it runs
         if (CacheInUse(g))
         {
             Log?.Report($"{g.Name} is running: the compile's D3DSCache dbs go in when it exits");
+            if (Undelivered(g.Id, Store.LoadGame(g.Id)))
+            {
+                cut?.Invoke();
+                Notice?.Invoke(g.Id, StartedNotice(g.Name));
+            }
             return false;
         }
         var shown = new Folding(g.Id, g.Name, progress != null);
+        var whole = true;
         _folds.TryAdd(shown, 0);
         try
         {
             // after the add: a clear either sees this fold and waits for it, or this fold sees the clear
-            return !Clearing(g.Id) && FoldD3DSCache(g, own, new FoldProgress((done, total) =>
+            var halted = !Clearing(g.Id) && FoldD3DSCache(g, own, new FoldProgress((done, total) =>
             {
                 progress?.Invoke(done, total);
                 if (total > 0 && (int)(100 * done / total) is var p && p != shown.Percent)
@@ -10361,7 +10427,9 @@ public sealed partial class ScsKiller : IScsKiller
                 shown.Writing = over;
                 if (shown.Percent >= 0) ScanProgressed?.Invoke();
                 past?.Invoke(over);
-            }), halt);
+            }), halt, () => { whole = false; cut?.Invoke(); });
+            if (whole && !own && !Clearing(g.Id) && !Warming(g.Id)) TellCompiled(g);
+            return halted;
         }
         finally
         {
@@ -10370,7 +10438,44 @@ public sealed partial class ScsKiller : IScsKiller
         }
     }
 
-    bool FoldD3DSCache(Game g, bool own, FoldProgress fold, Func<bool>? halt)
+    /// <summary>A staged db not in the game's folder yet: still in D3DSCache, or waiting for the game's folder. Not while the game's
+    /// folder is a link the fold refuses (D3DSCacheLinked): no later fold puts them in.</summary>
+    bool Undelivered(string gameId, GameRecord r) => r.D3DSCacheLinked == null
+        && (r.D3DSCacheSince != null || Holds(Path.Combine(Store.GameDir(gameId), D3DSCacheWaiting), "*", dirs: true) == true);
+
+    public static (string Title, string Text) CompiledNotice(string name) => ($"{name} is compiled", $"Finished {DateTime.Now:t}");
+    public static (string Title, string Text) StartedNotice(string name) => ($"{name} started before its compile was in the game's cache.", "The rest goes in when the game closes.");
+
+    /// <summary>A compile whose own fold was cut short is compiled once a later fold put every staged db in: one notification,
+    /// and its Stopped item ends Done.</summary>
+    void TellCompiled(Game g)
+    {
+        var told = false;
+        AppStore.Locked(Path.Combine(Store.GameDir(g.Id), "state.json"), () =>
+        {
+            var r = Store.LoadGame(g.Id);
+            if (!r.CompiledUntold || Undelivered(g.Id, r)) return;
+            r.CompiledUntold = false;
+            Store.SaveGame(g.Id, r);
+            told = true;
+        });
+        if (!told) return;
+        QueueItem? done = null;
+        lock (_lock)
+            if (_queue.FindIndex(q => q is { Stage: QueueStage.Stopped, PlanCheck: false } && q.GameId == g.Id) is var i and >= 0)
+            {
+                _queue[i] = done = _queue[i] with { Stage = QueueStage.Done };
+                if (done.StartedAt is { } at) _toldEnded.Add((g.Id, at));   // this notification is its EndedNotice
+            }
+        if (done != null)
+        {
+            QueueChanged?.Invoke(done);
+            BeforeAfterQueued(done);
+        }
+        Notice?.Invoke(g.Id, CompiledNotice(g.Name));
+    }
+
+    bool FoldD3DSCache(Game g, bool own, FoldProgress fold, Func<bool>? halt, Action cut)
     {
         var check = Stopwatch.StartNew();
         Stopwatch? started = null;
@@ -10472,11 +10577,13 @@ public sealed partial class ScsKiller : IScsKiller
         bool Stopped()
         {
             if (started == null) return false;
+            if (!cleared) cut();   // a clear drops the dbs: nothing is left to hand in
             Log?.Report(cleared ? $"{g.Name}: Clear cache stopped the D3DSCache fold, its db released {started.ElapsedMilliseconds} ms after"
                 : halted ? $"{g.Name}: the D3DSCache fold stopped with the queue, its db released {started.ElapsedMilliseconds} ms after"
                 : low ? $"{g.Name}: the D3DSCache fold stopped below {Format.Bytes(D3DSCache.DiskFloor)} free on {D3DSCache.Drive(volume ?? root)}, its db released {started.ElapsedMilliseconds} ms after"
                 : $"{g.Name} started during the D3DSCache fold: stopped, its db released {started.ElapsedMilliseconds} ms after, the rest goes in when it exits");
             if (low) NoRoom(g, retry: false);   // the poll folding again would fill the disk again
+            if (!cleared && !halted && !low) Notice?.Invoke(g.Id, StartedNotice(g.Name));
             return true;
         }
     }
@@ -10651,6 +10758,12 @@ public sealed partial class ScsKiller : IScsKiller
 
     public const string FoldingNote = "SCSKiller is handing the last compile to the game's cache";
 
+    /// <summary>A fold the queue doesn't show, with the game's name: the Library's and the tray's line; null = none.</summary>
+    public string? FoldingLine => _folds.Keys.FirstOrDefault(f => !f.Queued && f.Percent >= 0) is { } f ? FoldText(f.Name + "'s", f.Percent, f.Writing) : null;
+
+    /// <summary>The games with a fold the queue doesn't show: the Queue page's rows.</summary>
+    public IReadOnlyList<string> FoldingGames => [.. _folds.Keys.Where(f => !f.Queued && f.Percent >= 0).Select(f => f.Id).Distinct()];
+
     /// <summary>The game page's line while a fold the queue doesn't show runs for the game; null = none.</summary>
     public string? FoldLine(string gameId) =>
         _folds.Keys.FirstOrDefault(f => f.Id == gameId && !f.Queued && f.Percent >= 0) is { } f ? FoldText("the game's", f.Percent, f.Writing)
@@ -10789,8 +10902,10 @@ public sealed partial class ScsKiller : IScsKiller
     public const string D3DSCacheLinkedReason = "the game's shader cache folder ";
 
     /// <summary>The status reasons the game page shows as Not reached yet.</summary>
-    public static bool NotReached(string? reason) => reason is D3DSCachePendingReason or D3DSCacheDamagedReason
-        || reason?.StartsWith(D3DSCacheLinkedReason, StringComparison.Ordinal) == true;
+    public static bool NotReached(string? reason) => reason is D3DSCachePendingReason or D3DSCacheDamagedReason;
+
+    /// <summary>The game's D3DSCache folder is a link the fold doesn't merge into (<see cref="D3DSCacheLinkedReason"/>).</summary>
+    public static bool LinkedAway(string? reason) => reason?.StartsWith(D3DSCacheLinkedReason, StringComparison.Ordinal) == true;
 
     /// <summary>MergeD3DSCache off the caller's thread, then the game's status again.</summary>
     void MergeD3DSCacheSoon(Game g) => _ = Task.Run(() =>
@@ -11037,7 +11152,7 @@ public sealed partial class ScsKiller : IScsKiller
     {
         var name = to;
         for (var n = 2; Directory.Exists(to) || Directory.Exists(to + Copying); n++) to = $"{name}-{n}";
-        if (string.Equals(Path.GetPathRoot(Path.GetFullPath(from)), Path.GetPathRoot(Path.GetFullPath(to)), StringComparison.OrdinalIgnoreCase))
+        if (D3DSCache.SameVolume(from, to))
         {
             Directory.Move(from, to);
             return to;
@@ -11328,8 +11443,8 @@ public sealed partial class ScsKiller : IScsKiller
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{StoppedFile} not removed: {e.Message}"); }
     }
 
-    string? FullReplayReason(Game g, GameRecord r, EngineInfo? e, GpuSnapshot snap) => ColdWarm(r, snap.Id) ? (r is { WarmedDriverId: LostD3DSCache, D3DSCacheDamaged: false } ? "once, because SCSKiller 1.3.0 removed this driver's cache after its compiles" : NothingOnRecord)
-        : WarmChanged(g, r, e, snap) ?? ReplayAgain(r) ?? DeliveryChanged(g, r) ?? CacheFilesChanged(g.Id, r);
+    string? FullReplayReason(Game g, GameRecord r, EngineInfo? e, GpuSnapshot snap, bool compiling = false) => ColdWarm(r, snap.Id) ? (r is { WarmedDriverId: LostD3DSCache, D3DSCacheDamaged: false } ? "once, because SCSKiller 1.3.0 removed this driver's cache after its compiles" : NothingOnRecord)
+        : WarmChanged(g, r, e, snap) ?? ReplayAgain(r) ?? DeliveryChanged(g, r) ?? CacheFilesChanged(g.Id, r, compiling: compiling);
 
     /// <summary>The last complete warm left out what the game's Advanced Shader Delivery served, and that delivery is gone or another.</summary>
     static string? DeliveryChanged(Game g, GameRecord r) =>
@@ -11351,15 +11466,15 @@ public sealed partial class ScsKiller : IScsKiller
     /// On Mesa a file gone and Steam's own files don't count: Steam's pre-cache replaces and rotates those (<see cref="MesaLinux.SteamsFile"/>).
     /// NVIDIA from 621 (<see cref="D3D12Kept"/>): the game's D3DSCache dbs, and the files only where <see cref="DxCacheCounts"/>.
     /// AMD into Steam's AMDv1: its .parc (<see cref="SteamParc"/>) gone, unreadable, another file, or shorter unless
-    /// <paramref name="during"/> a warm.</summary>
-    string? CacheFilesChanged(string gameId, GameRecord r, bool during = false)
+    /// <paramref name="during"/> a warm. <paramref name="compiling"/>: the compile's own check (<see cref="D3DSCacheTrimmed"/>).</summary>
+    string? CacheFilesChanged(string gameId, GameRecord r, bool during = false, bool compiling = false)
     {
         // the game and the warms only grow it: a shorter file lost entries
         if (r.WarmedSteamParcId is { } was && SteamParc(gameId, r, out var parc))
             return parc is { } p && p.Id == was && (during || p.Length >= r.WarmedSteamParcBytes) ? null : SteamParcChanged;
         if (D3D12Kept(r) is { } st)
         {
-            if (D3DSCacheTrimmed(gameId, r) != null) return "some of the game's D3DSCache dbs are gone or hold less";
+            if (D3DSCacheTrimmed(gameId, r, compiling) != null) return "some of the game's D3DSCache dbs are gone or hold less";
             if (!DxCacheCounts(r, st)) return null;
         }
         if (AppCache is not { } cache || r.WarmedKeys is not { Count: > 0 } keys || r.WarmedFiles is not { Count: > 0 } files || r.WarmedFileBytes is null)
@@ -11537,12 +11652,12 @@ public sealed partial class ScsKiller : IScsKiller
         Refresh(s.Game);
     }
 
-    public void SetGameUseShared(string gameId, bool on)
+    public void SetGameUseShared(string gameId, bool? on)
     {
         var s = Find(gameId);
         var rec = Store.LoadGame(gameId);
-        if (rec.NoSharedHashes == !on) return;
-        rec.NoSharedHashes = !on;
+        if (SharedChoice(rec) == on) return;
+        (rec.NoSharedHashes, rec.SharedHashesOn) = (on == false, on == true);
         using (Recordings.Lock(RecordingPath(gameId)))   // never while a compile (any process's) prepares the downloads it labels its plan with
             Store.SaveGame(gameId, rec);
         Refresh(s.Game);   // its downloads leave or join its inputs: the plan turns stale
@@ -11551,7 +11666,7 @@ public sealed partial class ScsKiller : IScsKiller
         if (CheckPlans && now.Engine != null && now.Status != GameStatus.Unsupported && (NeedsPlanCheck(s.Game, rec, now.Engine)
                 || rec.WarmedAt != null && ((_planner as Planner)?.PackFingerprint(s.Game) ?? "") != (rec.PlanMiddleware ?? "")))
             CheckPlan(gameId);
-        if (on) StartCommunitySync([now]);
+        if (SharedHashesOn(gameId, free: true)) StartCommunitySync([now]);
     }
 
     /// <summary>Turns Maximum mode on or off for the game alone (the suggestion's "Turn on for this game"). The game turns

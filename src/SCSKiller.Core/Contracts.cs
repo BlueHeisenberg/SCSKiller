@@ -423,7 +423,8 @@ public sealed record GameState(
     bool? RayTracingOverride = null,   // the game page's override of Settings.CompileRayTracing; null = the global setting
     bool? TraversalOverride = null,    // the game page's override of Settings.Traversal; null = the global setting
     bool LeftOutOfAddAll = false,      // the game page's "Leave out of Add all ready" (GameRecord.LeftOutOfAddAll)
-    bool NoSharedHashes = false,       // the game page's "Use shared shader hashes" is off (GameRecord.NoSharedHashes)
+    bool SharedHashes = true,          // the game page's "Use shared shader hashes" in effect (ScsKiller.SharedHashesOn)
+    bool? SharedChoice = null,         // ...set for this game (GameRecord.NoSharedHashes, SharedHashesOn); null = Settings.UseCommunityDb
     int? CacheCapGB = null,            // the game page's compile size limit (GameRecord.CacheCapGB); null = none
     int? PlanCacheCapGB = null,        // the limit the plan was built with (GameRecord.PlanCacheCapGB): what its left-out row names
     bool RecordedEnough = false,       // GameRecord.RecordedLong: asking for "5 minutes" again says nothing
@@ -874,7 +875,7 @@ public interface IScsKiller
     /// <summary>Whether "Add all ready" skips the game; adding it by hand still works.</summary>
     void SetGameLeftOutOfAddAll(string gameId, bool on);
     /// <summary>The game page's "Use shared shader hashes": off, nothing is downloaded for the game and its plans leave the downloads out.</summary>
-    void SetGameUseShared(string gameId, bool on);
+    void SetGameUseShared(string gameId, bool? on);   // null = Settings.UseCommunityDb
     /// <summary>Why the game can't start a before and after recording now, one line; null = it can.</summary>
     string? BeforeAfterBlocked(string gameId);
     /// <summary>Clears the game's caches (the game's own too), remembers the driver and the build, and arms the before run:

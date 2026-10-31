@@ -103,7 +103,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     /// <summary>The whole reason: the row's tooltip and the game page's status text.</summary>
     public string FullNote => s.Status switch
     {
-        _ when s.CompileUnreached || PartlyCompiled || ScsKiller.NotReached(s.StatusReason) => s.StatusReason,
+        _ when s.CompileUnreached || PartlyCompiled || ScsKiller.NotReached(s.StatusReason) || ScsKiller.LinkedAway(s.StatusReason) => s.StatusReason,
         GameStatus.Warmed when Partly => $"driver {s.WarmedDriverVersion} · {s.Careful!.LaunchCompiled * 100:0}% still compiled at its first launch",
         GameStatus.Warmed => $"driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? " · a recording compiles the rest"
             : ScsKiller.RtAfterRecording(s) ? " · " + ScsKiller.RtAfterRecordingNote : "") + Format.KeyNote(s),
@@ -118,13 +118,16 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     public string? Note => Format.ShortNote(s);
     // a mod the compile runs through takes the note's place; the tooltip keeps the full reason
     string? ListNote => s.ShaderModLayer ? $"{(s.Status == GameStatus.Warmed ? "Compiled" : "Compiles")} through {s.ShaderMod}" : Note;
-    public string RowNote => Playing ? "Playing now" + (ListNote is { } n ? " · " + n : "") : ListNote ?? "";
+    public string RowNote => Playing ? "Playing now" + (ListNote is { } n ? " · " + n : "") : fold ?? ListNote ?? "";
+    string? fold;
+    /// <summary>A fold's share moved: only a row whose line changed updates.</summary>
+    public void ShowFold() { if (Fmt.FoldLine(Id) is var f && f != fold) { fold = f; Changed(); } }
     public bool HasRowNote => RowNote.Length > 0;
     public string RowTip => (Playing ? "Playing now · " : "") + FullNote;
     /// <summary>The status text's style: StatusAccent, StatusPrimary, StatusWarn or StatusMuted.</summary>
     public string StatusStyle => s.Status switch
     {
-        _ when s.CompileUnreached || PartlyCompiled || ScsKiller.NotReached(s.StatusReason) => "StatusWarn",
+        _ when s.CompileUnreached || PartlyCompiled || ScsKiller.NotReached(s.StatusReason) || ScsKiller.LinkedAway(s.StatusReason) => "StatusWarn",
         GameStatus.Warmed when Partly => "StatusWarn",
         GameStatus.Warmed => "StatusAccent",
         GameStatus.Ready => "StatusPrimary",
@@ -191,7 +194,13 @@ public sealed class LibraryVm : Bindable
     readonly BackgroundRead<(CacheUsage Usage, CacheLimit? Limit, long? Capped, long OldDriver, long? Fullest)> cache;
 
     public LibraryVm() => cache = new("Library cache", () => (Host.Core.Vendor.GetCacheUsage(), Host.Core.Vendor.GetCacheLimit(), (Host.Core.Vendor as AmdBackend)?.AppCache.DxcBytes(),
-        Host.Core.OldDriverBytes(), Host.Core.Vendor.AppCache switch { NvidiaLinuxAppCache n => n.Fullest(), MesaLinuxAppCache m => m.Fullest(), IntelAppCache i => i.Fullest(), _ => (long?)null }), ShowCache);
+        Host.Core.OldDriverBytes(), Fullest()), ShowCache);
+
+    /// <summary>A Linux driver's limit and Intel's are each game's own: the fullest game's cache; null for the other drivers.</summary>
+    internal static long? Fullest() => Host.Core.Vendor.AppCache switch
+    {
+        NvidiaLinuxAppCache n => n.Fullest(), MesaLinuxAppCache m => m.Fullest(), IntelAppCache i => i.Fullest(), _ => null,
+    };
 
     public IReadOnlyList<GameRow> Games { get; private set; } = [];   // every game, sorted; the list shows Groups
     /// <summary>The list: rows matching <see cref="Filter"/> per store, empty stores left out. Filtering reuses the rows
@@ -270,32 +279,18 @@ public sealed class LibraryVm : Bindable
     public string CompileQueueText => $"Compile queue ({WaitingCount})";
     public bool CanCompileQueue => WaitingCount > 0;
 
-    public string CacheUsed { get; private set; } = "";
-    public string CacheLimitText { get; private set; } = "";
-    public double CachePercent { get; private set; }
-    public bool CacheWarn { get; private set; }
-    public string CacheWarnText { get; private set; } = "";
+    public string CacheLine { get; private set; } = "";
+    public string? CacheUpperNote { get; private set; }
+    public bool CacheWarn => CacheWarnText != null;
+    public string? CacheWarnText { get; private set; }
     public bool CanRaiseLimit => Host.Core.Vendor.Caps.CacheSizeConfigurable;
     /// <summary>Below this, what an older NVIDIA driver left (old-type files of desktop apps, a few MB) isn't worth a line.</summary>
     const long OldDriverShown = 1L << 30;
     public string? OldDriverNote { get; private set; }
     public bool HasOldDriver => OldDriverNote != null;
 
-    public bool CanChangeDriverMode => Host.Platform.DriverUpdateModes;
-    public string DriverMode => !CanChangeDriverMode ? "Manual" : DriverUpdateChoice.Of(Host.Core.Settings) switch
-    {
-        0 => "Ask me first", 1 => "When the PC is idle", 2 => "Right away", _ => "Off",
-    };
-    public string DriverModeNote => !CanChangeDriverMode ? "Games to rebuild show as Needs rebuilding" : DriverUpdateChoice.Of(Host.Core.Settings) switch
-    {
-        0 => "A notification offers compile now, when idle, or skip",
-        1 => Host.Platform.IdleRebuildNote,
-        2 => "Rebuilds on its own, paused while a game runs",
-        _ => "Rebuild games yourself from the Library",
-    };
     public string Threads => ScsKiller.UsedThreads(Host.Core.Settings.Threads).ToString();
     public string ThreadsOf => $"of {Environment.ProcessorCount} threads";
-    public string SpeedNote { get; private set; } = "";
 
     public void Load()
     {
@@ -317,6 +312,7 @@ public sealed class LibraryVm : Bindable
     {
         if (Games.Count == 0 && Host.Core.Games.Count > 0) Refresh();
         else Changed();
+        foreach (var r in Games) r.ShowFold();
     }
     public string ScanBusyNote => forced ? "Re-reading every game's engine and anti-cheat. Each game updates as it's checked."
         : "Each game updates as it's checked.";
@@ -356,6 +352,7 @@ public sealed class LibraryVm : Bindable
             row.Update(g, q, compiling);
             return row;
         })];
+        foreach (var shown in Games) shown.ShowFold();
         ApplyFilter();
         Hidden = [.. core.HiddenGames.Select(g => new HiddenRow(g.Id, g.Name, Fmt.StoreName(g)))];
 
@@ -369,10 +366,6 @@ public sealed class LibraryVm : Bindable
             : $"{list.Count} {(allUnreal ? "Unreal Engine " : "")}game{(list.Count == 1 ? "" : "s")} found{(storeText.Length > 0 ? " in " + storeText : "")} · {ready} ready to compile";
 
         cache.Request();
-
-        var rate = ScsKiller.MeasuredRate(list);
-        SpeedNote = (core.Settings.Priority == WarmPriority.BelowNormal ? "Below-normal priority" : "Idle priority")
-                    + (rate is { } r ? $" · about {r:N0} pipelines/s measured" : "");
         Changed();
     }
 
@@ -410,17 +403,10 @@ public sealed class LibraryVm : Bindable
         var (usage, limit, capped, old, _) = c;
         var fullest = limit?.Bytes != null ? c.Fullest : null;   // with no limit the header shows the whole cache
         OldDriverNote = old >= OldDriverShown ? $"{Format.Bytes(old)} the new driver no longer uses" : null;
-        // the Cache page's total: NVIDIA from 621 keeps part of the cache in the games' D3DSCache folders
-        var windows = fullest == null ? Host.Core.WindowsCacheBytes : 0;
-        var up = usage.UpperBound ? "≤ " : "";
-        CacheUsed = fullest is { } f ? Format.Bytes(f) : up + Format.Bytes(usage.BytesOnDisk + windows);
-        CacheLimitText = windows > 0 ? $"driver {up}{Format.Bytes(usage.BytesOnDisk)}" + (limit is null ? ", limit unknown" : limit.Bytes is { } wl ? $" of {Format.Bytes(wl)}" : ", no limit")
-            : limit is null ? "limit unknown" : limit.Bytes is { } lb ? fullest != null ? $"of {Format.Bytes(lb)} in the fullest game"
-            : capped is { } cb ? $"· DirectX 12 {Format.Bytes(cb)} of {Format.Bytes(lb)} limit" : $"of {Format.Bytes(lb)} limit" : "no limit";
-        CachePercent = limit?.Bytes is { } max && max > 0 ? Math.Min(100, 100.0 * (fullest ?? capped ?? usage.BytesOnDisk) / max) : 0;
-        CacheWarn = limit?.Bytes is not null && (limit.IsDriverDefault || CachePercent > 75);
-        CacheWarnText = limit?.IsDriverDefault == true ? "Driver default limit may evict games" : fullest != null ? "A game's cache is nearly full" : "The cache is nearly full";
-        if (Format.CacheOffLine(Host.Core.Vendor.Vendor, limit) is { } off) (CacheWarn, CacheWarnText) = (true, off);
+        CacheLine = fullest is { } f && limit?.Bytes is { } lb ? $"{Format.Bytes(f)} of {Format.Bytes(lb)} in the fullest game"
+            : Format.CacheSplit(usage, limit, capped, Host.Core.WindowsCacheBytes);
+        CacheUpperNote = Format.CacheUpperNote(usage);
+        CacheWarnText = Format.CacheWarning(Host.Core.Vendor.Vendor, limit, fullest ?? capped ?? usage.BytesOnDisk, fullest != null);
         Changed();
     }
 

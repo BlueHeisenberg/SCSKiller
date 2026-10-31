@@ -217,7 +217,7 @@ public static partial class GameFiles
     /// <summary>The &lt;Project&gt;\Binaries\Win* folders of the install root and of projects one or two levels under it, or three
     /// through a WindowsNoEditor folder (Client\WindowsNoEditor\&lt;Project&gt;). Win32 is left out: a 32-bit exe never creates the
     /// game's D3D12 device.</summary>
-    static IEnumerable<string> UnrealFolders(string installDir) =>
+    internal static IEnumerable<string> UnrealFolders(string installDir) =>
         PlatformFolders(EnumerateDirectories(installDir, "*", Flat)
             .SelectMany(d => EnumerateDirectories(d, "*", Flat).SelectMany(Packaged).Prepend(d)).Prepend(installDir));
 

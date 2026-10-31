@@ -11,7 +11,7 @@
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                 <StackPanel Spacing="4">
                     <TextBlock Text="Cache" Classes="Title" />
-                    <TextBlock Text="{Binding Total}" Classes="Secondary" />
+                    <TextBlock Text="{Binding Total}" Classes="Secondary" TextWrapping="Wrap" ToolTip.Tip="{Binding UpperNote}" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Top">
                     <Button Content="Clear everything" Click="OnClearEverything" IsEnabled="{Binding CanClearEverything}" />
@@ -20,6 +20,7 @@
             </Grid>
 
             <c:InfoBar IsVisible="{Binding HasResult}" Message="{Binding Result}" Severity="{Binding ResultSeverity}" IsClosable="False" />
+            <c:InfoBar IsVisible="{Binding HasWarning}" Message="{Binding Warning}" Severity="Warning" IsClosable="False" />
             <c:InfoBar IsVisible="{Binding HasOldDriver}" Message="{Binding OldDriverText}" Severity="Informational" IsClosable="False">
                 <c:InfoBar.ActionButton>
                     <Button Content="{Binding FreeText}" Click="OnFreeOldDriver" IsEnabled="{Binding CanDelete}" />

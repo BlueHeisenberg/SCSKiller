@@ -75,47 +75,36 @@
             <c:InfoBar Severity="Informational" IsVisible="{Binding HasGpuNotice}" Message="{Binding GpuNotice}" CloseButtonClick="OnDismissGpuNotice" />
         </StackPanel>
 
-        <Grid Grid.Row="1" ColumnDefinitions="*,*,*" ColumnSpacing="12">
-            <Border Classes="Card">
-                <StackPanel Spacing="8">
-                    <TextBlock Text="Shader cache" Classes="Secondary" />
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <TextBlock Text="{Binding CacheUsed}" Classes="Big" />
-                        <TextBlock Text="{Binding CacheLimitText}" Classes="Secondary" VerticalAlignment="Bottom" Margin="0,0,0,3" />
-                    </StackPanel>
-                    <ProgressBar Value="{Binding CachePercent}" AutomationProperties.Name="Driver shader cache use" />
-                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6" IsVisible="{Binding CacheWarn}">
-                        <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Warning}" FontSize="14" Foreground="{DynamicResource WarnBrush}" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1" Text="{Binding CacheWarnText}" Classes="CaptionText" Foreground="{DynamicResource WarnBrush}"
-                                   TextWrapping="Wrap" VerticalAlignment="Center" />
-                    </Grid>
-                    <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasOldDriver}">
-                        <TextBlock Text="{Binding OldDriverNote}" Classes="Caption" VerticalAlignment="Center" />
-                        <HyperlinkButton Content="Free it" Padding="0" FontSize="12" Click="OnCache" AutomationProperties.Name="Free the cache the new driver no longer uses" />
-                    </StackPanel>
-                    <HyperlinkButton Content="Change" Padding="0" FontSize="12" Click="OnSettings" IsVisible="{Binding CanRaiseLimit}"
-                                     AutomationProperties.Name="Change the driver shader cache size" />
-                </StackPanel>
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+            <Border Classes="Card" Padding="16,8">
+                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="2">
+                    <WrapPanel ItemSpacing="12" LineSpacing="2">
+                        <TextBlock Text="Shader cache" Classes="Caption" VerticalAlignment="Center" />
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="4" IsVisible="{Binding CacheWarn}">
+                            <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Warning}" FontSize="12" Foreground="{DynamicResource WarnBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="{Binding CacheWarnText}" Classes="CaptionText" Foreground="{DynamicResource WarnBrush}"
+                                       TextWrapping="Wrap" VerticalAlignment="Center" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" IsVisible="{Binding HasOldDriver}">
+                            <TextBlock Text="{Binding OldDriverNote}" Classes="Caption" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            <HyperlinkButton Grid.Column="1" Content="Free it" Padding="0" FontSize="12" Click="OnCache" VerticalAlignment="Center"
+                                             AutomationProperties.Name="Free the cache the new driver no longer uses" />
+                        </Grid>
+                    </WrapPanel>
+                    <HyperlinkButton Grid.Column="1" Content="Change" Padding="0" FontSize="12" Click="OnSettings" IsVisible="{Binding CanRaiseLimit}"
+                                     VerticalAlignment="Top" AutomationProperties.Name="Change the driver shader cache size" />
+                    <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding CacheLine}" TextWrapping="Wrap" ToolTip.Tip="{Binding CacheUpperNote}" />
+                </Grid>
             </Border>
-            <Border Grid.Column="1" Classes="Card">
-                <StackPanel Spacing="8">
-                    <TextBlock Text="After a driver update" Classes="Secondary" />
-                    <TextBlock Text="{Binding DriverMode}" Classes="Big" />
-                    <TextBlock Text="{Binding DriverModeNote}" Classes="Caption" TextWrapping="Wrap" />
-                    <HyperlinkButton Content="Change" Padding="0" FontSize="12" Click="OnSettings" IsVisible="{Binding CanChangeDriverMode, Mode=OneTime}"
-                                     AutomationProperties.Name="Change what happens after a driver update" />
-                </StackPanel>
-            </Border>
-            <Border Grid.Column="2" Classes="Card">
-                <StackPanel Spacing="8">
-                    <TextBlock Text="Compile speed" Classes="Secondary" />
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <TextBlock Text="{Binding Threads}" Classes="Big" />
-                        <TextBlock Text="{Binding ThreadsOf}" Classes="Secondary" VerticalAlignment="Bottom" Margin="0,0,0,3" />
+            <Border Grid.Column="1" Classes="Card" Padding="16,8">
+                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="16" RowSpacing="2">
+                    <TextBlock Text="Compile speed" Classes="Caption" />
+                    <HyperlinkButton Grid.Column="1" Content="Change" Padding="0" FontSize="12" Click="OnSettings" AutomationProperties.Name="Change compile speed" />
+                    <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="{Binding Threads}" Classes="BodyStrong" />
+                        <TextBlock Text="{Binding ThreadsOf}" Classes="Secondary" />
                     </StackPanel>
-                    <TextBlock Text="{Binding SpeedNote}" Classes="Caption" TextWrapping="Wrap" />
-                    <HyperlinkButton Content="Change" Padding="0" FontSize="12" Click="OnSettings" AutomationProperties.Name="Change compile speed" />
-                </StackPanel>
+                </Grid>
             </Border>
         </Grid>
 

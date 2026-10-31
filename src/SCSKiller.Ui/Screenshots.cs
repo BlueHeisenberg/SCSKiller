@@ -103,6 +103,24 @@ static partial class Screenshots
             await Dialog(StartDialogs.Welcome(WelcomeContent.Default).Dialog, "welcome");   // the bundled text
         }
 
+        // "Use shared shader hashes" on the game page against Settings' "Download shared shader hashes", dark only.
+        // SCSKILLER_SHOTS=shared takes only these.
+        var sharedWas = fake.Settings;
+        main.RequestedThemeVariant = ThemeVariant.Dark;
+        foreach (var (name, global, choice) in new (string, bool, bool?)[] { ("shared-follow-global-on", true, null), ("shared-follow-global-off", false, null),
+                     ("shared-on-global-off", false, true), ("shared-off-global-on", true, false) })
+        {
+            fake.Settings = sharedWas with { UseCommunityDb = global };
+            fake.SetGameUseShared(ff7, choice);
+            main.Navigate(typeof(DetailPage), ff7);
+            await Task.Delay(1000);
+            Detail().ScrollToShared();
+            await Shot(name, 600);
+        }
+        fake.Settings = sharedWas;
+        fake.SetGameUseShared(ff7, null);
+        if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") == "shared") return;
+
         // The traversal stutter fix: its one-time question, Settings and the game page (FF7, then an anti-cheat game), with more
         // than 8 GB of VRAM and with 8 GB. SCSKILLER_SHOTS=traversal takes only these.
         var (gpuWas, settingsWas) = (fake.Vendor, fake.Settings);
@@ -297,10 +315,15 @@ static partial class Screenshots
             main.Navigate(typeof(DetailPage), "steam:3489700");
             await Shot("detail-planning");
             fake.JumpTo(0.548);
-            // a D3DSCache fold after the game's exit: the Library's line and the game page's
+            // a D3DSCache fold after the game's exit: the Library's line, the queue's row and the game page's
             (fake.Folding, fake.AfterUpdateLine) = (ff7, ScsKiller.FoldText(fake.Games[0].Game.Name + "'s", 42));
             main.Navigate(typeof(LibraryPage));
             await Shot("library-folding");
+            Library().SearchText = fake.Games[0].Game.Name;
+            await Shot("library-folding-row");
+            Library().SearchText = "";
+            main.Navigate(typeof(QueuePage));
+            await Shot("queue-folding");
             main.Navigate(typeof(DetailPage), ff7);
             await Shot("detail-folding");
             (fake.FoldWriting, fake.AfterUpdateLine) = (true, ScsKiller.FoldText(fake.Games[0].Game.Name + "'s", 42, true));
@@ -338,7 +361,8 @@ static partial class Screenshots
                                                    ("ran-other-exe", "ubisoft:13504"), ("game-changed", "steam:3900030"), ("never-loaded", "steam:3900040"), ("other-exe", "steam:3900050"),
                                                    ("foreign", "steam:3900060"), ("foreign-on", "steam:3900060"), ("foreign-off", "steam:3900060"),
                                                    ("guess-picked", "xbox:CoffeeStainStudios.DeepRockGalactic"), ("guess-overruled", "steam:3900020"), ("sure-picked", "steam:1139900"),
-                                                   ("vulkan-pick", "steam:3900170"), ("dx11-frames", "steam:3900300") })
+                                                   ("vulkan-pick", "steam:3900170"), ("dx11-frames", "steam:3900300"),
+                                                   ("learned", "steam:4115450") })
                 {
                     if (name is "guess-both" or "guess-dx" or "ghostrunner") { fake.ProveApi(id, null); fake.SetApiOverride(id, null); }
                     if (name == "guess-picked") fake.SetApiOverride(id, DxApi.D3D12);

@@ -197,6 +197,38 @@
                                      AutomationProperties.Name="Compile progress" />
                     </Grid>
 
+                    <ItemsControl ItemsSource="{Binding Folds}" IsVisible="{Binding HasFolds}" AutomationProperties.Name="Handing compiles to the games' caches">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="m:QueueRow">
+                                <Button Classes="Row" Click="OnGameClick" AutomationProperties.Name="{Binding StringFormat='{}{0}'}">
+                                    <Grid ColumnSpacing="12" MinHeight="48">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="16" />
+                                            <ColumnDefinition Width="24" />
+                                            <ColumnDefinition Width="32" />
+                                            <ColumnDefinition MinWidth="160" />
+                                            <ColumnDefinition Width="96" />
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="320" />
+                                        </Grid.ColumnDefinitions>
+                                        <Panel Grid.Column="2" Width="32" Height="32">
+                                            <Border Classes="Tile" Background="{Binding Tile, Converter={x:Static ui:Converters.ArgbBrush}}" IsVisible="{Binding NoIcon}">
+                                                <TextBlock Text="{Binding Initials}" />
+                                            </Border>
+                                            <Image Source="{Binding Icon, Converter={x:Static ui:Converters.Image}}" />
+                                        </Panel>
+                                        <StackPanel Grid.Column="3" VerticalAlignment="Center" Spacing="2">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding Note}" Classes="Caption" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="4" Text="{Binding Time}" TextAlignment="Right" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="5" Text="{Binding Cache}" TextAlignment="Right" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
                     <Panel>
                         <ListBox x:Name="WaitingList" ItemsSource="{Binding Waiting}" SelectionMode="Multiple" SelectionChanged="OnSelection"
                                  AutomationProperties.Name="Waiting games">

@@ -85,6 +85,8 @@ static partial class Notifications
         ("toast-new-shaders-compiling.xml", Build(Toasts.NewShaders([core.Games[0] with { RecordedSinceWarm = 42 }], compiling: true)).Payload),
         ("toast-news.xml", Build(Toasts.News(NewsState.Sample)).Payload),
         ("toast-news-more.xml", Build(Toasts.NewsMore(4)).Payload),
+        ("toast-compiled-later.xml", Build(Toasts.Ended(core.Games[0].Game.Id, ScsKiller.CompiledNotice(core.Games[0].Game.Name))).Payload),
+        ("toast-started-during-fold.xml", Build(Toasts.Ended(core.Games[0].Game.Id, ScsKiller.StartedNotice(core.Games[0].Game.Name))).Payload),
     ];
 
     static AppNotification Build(Toast t)

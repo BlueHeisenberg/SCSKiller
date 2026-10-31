@@ -39,7 +39,7 @@ const string Usage = """
       record remove-all                           take the recorder out of every game, as SCSKiller's uninstall does
       record clear <game>                         delete the game's recording (the recorder's data files and SCSKiller's copy, asks first)
       record alongside <game> on|off              let the recorder chain to a mod's d3d12.dll (renamed, put back on removal)
-      shared <game> on|off                        use the shared shader hashes for the game: off, nothing is downloaded for it and its plans leave them out
+      shared <game> on|off|follow                 use the shared shader hashes for the game: off, nothing is downloaded for it and its plans leave them out, follow = Settings
       key <game> <hex>                            give a game's AES key or game key (verified, stored locally only)
       index <game> --out <dir>                    debug: dump the engine reader's shader index
       rehydrate <game> <hash-only.db> --out <db> [--expect <content hash>]
@@ -47,6 +47,7 @@ const string Usage = """
       reference export <game> [--out <file>]      the game build's shader list for the community server's `admin reference import`:
                                                   the index's shaders and those this PC's recording saw (default <game id>.reference.json)
       task register|unregister                    the logon/idle "re-warm after a driver update" task
+      shader-cleanup keep|allow                   keep Windows' automatic disk cleanup from clearing compiled shaders, or allow it again (admin)
       steam-place <game> [--remove]               Linux: put the game's compiled cache in Steam's cache folder for it
                                                   once, or take it out, and show what each file holds
       fetch-codecs <dir>                          packaging: the pinned Oodle/zlib DLLs in <dir>, downloaded if missing
@@ -99,6 +100,7 @@ try
         "reference" when args.ElementAtOrDefault(1) == "export" => await ReferenceExport(),
         "key" => await Key(),
         "task" => TaskCommand(),
+        "shader-cleanup" => ShaderCleanup(),
         "proton-env" => await ProtonEnv(),
         "steam-place" => await SteamPlace(),
         "nvidia-snapshot" => NvidiaSnapshot(),
@@ -241,7 +243,7 @@ async Task<int> Status(string? query)
           middleware {(g.Middleware is { Count: > 0 } mw ? MiddlewareLine(mw, true) : "-")}
           estimate   {(g.EstimatedCacheBytes is { } est ? Format.Bytes(est) : "-")} of cache, {Hms(g.EstimatedWarmTime)}
           careful    {CarefulLine(g.Careful, g.Plan)}
-          shared     {(g.NoSharedHashes ? "not used: nothing is downloaded for this game and its plans leave the downloads out (shared <game> on)" : "used")}
+          shared     {(g.SharedHashes ? "used" : "not used: nothing is downloaded for this game and its plans leave the downloads out")}, {(g.SharedChoice == null ? "follows Settings" : "set for this game (shared <game> follow)")}
           warmed     {(g.WarmedAt is { } w ? $"{w:yyyy-MM-dd HH:mm} for driver {g.WarmedDriverVersion} in {Hms(g.LastWarmTime)}" + (ScsKiller.WarmCounts(g.LastWarmFailed ?? 0, g.LastWarmSkipped ?? 0, g.LastWarmCrashed ?? 0, g.LastWarmDriverSkipped ?? 0, g.LastWarmUnbuilt ?? 0, g.Plan, g.LastWarmInvalid ?? 0, g.LastWarmUnsupported ?? 0, g.LastWarmKnown ?? 0, g.LastWarmFailedBy, g.LastWarmCrashedBefore ?? 0) is { } counts ? $", {counts}" : "") : "never")}
           failed     {ScsKiller.RefusedLine(g) ?? "-"}{(k.WhyFailed(g.Game.Id) is { } failedWhy ? $" Why: {failedWhy}" : "")}
           covered    {(ScsKiller.ShownPercent(g) is { } pct ? $"{pct}%" : "-")} for {(g.Engine is { } api && ScsKiller.ApiKey(api.GraphicsApi) is { } key ? ScsKiller.KeyName(key) : "-")}
@@ -622,11 +624,11 @@ int Cache()
 
 async Task<int> UseShared()
 {
-    if (args.Length != 3 || args[2] is not ("on" or "off")) return Fail("shared <game> on|off");
+    if (args.Length != 3 || args[2] is not ("on" or "off" or "follow")) return Fail("shared <game> on|off|follow");
     var k = await Open();
     var g = Match(k.Games, args[1]);
-    k.SetGameUseShared(g.Game.Id, args[2] == "on");
-    Console.WriteLine($"{g.Game.Name}: use shared shader hashes {args[2]}");
+    k.SetGameUseShared(g.Game.Id, args[2] switch { "on" => true, "off" => false, _ => null });
+    Console.WriteLine($"{g.Game.Name}: use shared shader hashes {(args[2] == "follow" ? "as Settings says" : args[2])}");
     return 0;
 }
 
@@ -830,6 +832,15 @@ int NvidiaAutoShader()
         return 1;
     Outcome.Message = nv.SetAutoShaderCompilation(level);
     Console.WriteLine($"{Outcome.Message} now: {nv.GetAutoShaderCompilation()?.ToString() ?? "not readable"}");
+    return 0;
+}
+
+int ShaderCleanup()
+{
+    if (args.ElementAtOrDefault(1) is not ("keep" or "allow") || !OperatingSystem.IsWindows()) return Fail("shader-cleanup keep|allow (Windows)");
+    if (!Elevated.IsAdmin) return Fail("changing Windows' disk cleanup needs an elevated (administrator) prompt");
+    Outcome.Message = D3DSCache.KeepFromCleanup(args[1] == "keep");
+    Console.WriteLine(Outcome.Message);
     return 0;
 }
 

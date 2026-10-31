@@ -1676,7 +1676,7 @@ static bool removed() {
 
 static SIZE_T g_fault_item = SIZE_MAX;  // SCSKILLER_WARM_FAULT=<item>[-<last>]:<av|hang|die|hold<ms>> (development): a fault / hang in that state object; in PSOs (each up to last) with SCSK_TEST_HOOKS
 static SIZE_T g_fault_last = SIZE_MAX;
-static int g_fault_kind;                // 1 access violation after the create, 2 a create that never returns, 3 the process dies, 4 a PSO create that takes g_fault_hold_ms (a PSO, with SCSK_TEST_HOOKS)
+static int g_fault_kind;                // 1 access violation after the create, 2 a create that never returns, 3 the process dies, 4 a PSO create that takes g_fault_hold_ms unless created alone (PSOs, with SCSK_TEST_HOOKS)
 static DWORD g_fault_hold_ms;
 
 // SCSKILLER_WARM_SO_MS=<ms> (development): no driver call for state objects; each create takes ms per state object it
@@ -1951,7 +1951,7 @@ static __declspec(noinline) int replay_one(size_t j, size_t nrec) {
     if (j == g_fault_item && g_fault_kind == 1 && !is_so(j, nrec)) *(volatile int*)nullptr = 0;
     if (j >= g_fault_item && j <= g_fault_last && g_fault_kind == 2 && !is_so(j, nrec)) Sleep(INFINITE);
     if (j == g_fault_item && g_fault_kind == 3) TerminateProcess(GetCurrentProcess(), 0xC0000005);  // as a driver fault no handler sees ends it
-    if (j == g_fault_item && g_fault_kind == 4 && !is_so(j, nrec)) Sleep(g_fault_hold_ms);
+    if (j >= g_fault_item && j <= g_fault_last && g_fault_kind == 4 && !t_alone && !is_so(j, nrec)) Sleep(g_fault_hold_ms);
 #endif
     return j < nrec ? replay(j, g_recs[j]) : replay_plan(j, g_plan[j - nrec]);
 }
@@ -2384,7 +2384,7 @@ static void warm_main() {
     // In flight when an earlier process's device was removed, or hung in an earlier process's mass hang: each alone, before
     // the workers, so a removal or a hang names its item. Each runs on a thread of its own, given up on as the supervisor
     // gives up on a stuck worker: one that hangs alone is skipped for this compile and is a culprit, and the run goes on.
-    wchar_t stuck_env[16] = {};  // SCSKILLER_WARM_STUCK_S (development): the per-item limit, default 60 s
+    wchar_t stuck_env[16] = {};  // SCSKILLER_WARM_STUCK_S: the per-item limit, default 60 s (Warmer raises it when hung items compile alone)
     double stuck_ms = env(L"SCSKILLER_WARM_STUCK_S", stuck_env) ? 1000.0 * _wtoi(stuck_env) : 60000, stuck_stop_ms = 2000;
     g_stuck_ms = stuck_ms;
     struct Alone {

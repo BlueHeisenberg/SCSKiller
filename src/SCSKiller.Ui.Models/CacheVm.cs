@@ -31,17 +31,18 @@ public sealed class CacheVm : Bindable
     CacheInventory? read;
     HashSet<string> games = [];   // the library the last read attributed by
     string split = "";
-    readonly BackgroundRead<(CacheInventory Inventory, CacheUsage Usage, CacheLimit? Limit, long? Capped)> cache;
+    readonly BackgroundRead<(CacheInventory Inventory, CacheUsage Usage, CacheLimit? Limit, long? Capped, long? Fullest)> cache;
 
     public CacheVm()
     {
-        cache = new("Cache page", () => (Host.Core.CacheInventory(), Host.Core.Vendor.GetCacheUsage(), Host.Core.Vendor.GetCacheLimit(), (Host.Core.Vendor as AmdBackend)?.AppCache.DxcBytes()),
+        cache = new("Cache page", () => (Host.Core.CacheInventory(), Host.Core.Vendor.GetCacheUsage(), Host.Core.Vendor.GetCacheLimit(), (Host.Core.Vendor as AmdBackend)?.AppCache.DxcBytes(), LibraryVm.Fullest()),
             r =>
             {
                 read = r.Inventory;
-                // AMD's limit is of its DirectX 12 cache alone
-                split = Format.CacheSplit(r.Limit?.Bytes != null ? r.Capped ?? r.Usage.BytesOnDisk : r.Usage.BytesOnDisk, r.Usage.UpperBound, r.Limit?.Bytes,
-                    Host.Core.WindowsCacheBytes);
+                split = Format.CacheSplit(r.Usage, r.Limit, r.Capped, Host.Core.WindowsCacheBytes);
+                UpperNote = Format.CacheUpperNote(r.Usage);
+                var fullest = r.Limit?.Bytes != null ? r.Fullest : null;
+                Warning = Format.CacheWarning(Host.Core.Vendor.Vendor, r.Limit, fullest ?? r.Capped ?? r.Usage.BytesOnDisk, fullest != null);
                 Changed();
             });
         Refresh();
@@ -61,6 +62,9 @@ public sealed class CacheVm : Bindable
 
     public CacheInventory? Inventory => read;
     public string Total => read == null ? "Reading the caches…" : split;
+    public string? UpperNote { get; private set; }
+    public string? Warning { get; private set; }
+    public bool HasWarning => Warning != null;
     public bool NoFolders => read is { Folders.Count: 0, Groups.Count: 0 };
 
     public bool Deleting { get; private set; }

@@ -40,6 +40,7 @@ public partial class App
         var tip = new Coalesced(Host.Ui, UpdateTip);
         core.QueueChanged += _ => tip.Request();
         core.GameChanged += _ => tip.Request();
+        if (core is ScsKiller k) k.ScanProgressed += tip.Request;   // a fold the queue doesn't run
 
         Main.Closing += (_, e) =>
         {
@@ -96,7 +97,8 @@ public partial class App
     {
         if (tray == null) return;
         var q = QuitFlow.Running(Host.Core);
-        tray.Tip = "SCSKiller: " + Format.TrayStatus(q, q == null ? null : Host.Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId, quit.Quitting).Line;
+        tray.Tip = "SCSKiller: " + (q == null && !quit.Quitting && Fmt.FoldingLine is { } fold ? fold
+            : Format.TrayStatus(q, q == null ? null : Host.Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId, quit.Quitting).Line);
     }
 
     static void DisposeTray()

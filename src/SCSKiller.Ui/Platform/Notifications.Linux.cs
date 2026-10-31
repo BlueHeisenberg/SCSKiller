@@ -106,5 +106,7 @@ static partial class Notifications
         ("toast-new-shaders-compiling.txt", DesktopNotifier.Describe(Toasts.NewShaders([core.Games[0] with { RecordedSinceWarm = 42 }], compiling: true))),
         ("toast-news.txt", DesktopNotifier.Describe(Toasts.News(NewsState.Sample))),
         ("toast-news-more.txt", DesktopNotifier.Describe(Toasts.NewsMore(4))),
+        ("toast-compiled-later.txt", DesktopNotifier.Describe(Toasts.Ended(core.Games[0].Game.Id, ScsKiller.CompiledNotice(core.Games[0].Game.Name)))),
+        ("toast-started-during-fold.txt", DesktopNotifier.Describe(Toasts.Ended(core.Games[0].Game.Id, ScsKiller.StartedNotice(core.Games[0].Game.Name)))),
     ];
 }

@@ -123,8 +123,19 @@ public sealed class DetailVm(string id) : Bindable
     public bool HasGuessNote => GuessNote != null;
     public string? DeliveryLine => ScsKiller.DeliveryLine(s);
     public bool HasDeliveryLine => DeliveryLine != null;
-    public string? CleanupLine => ScsKiller.CleanupLine(s);
+    // read live: a game's state keeps the flag until its next refresh
+    public string? CleanupLine => D3DSCache.CleanupKept() == true ? null : ScsKiller.CleanupLine(s);
     public bool HasCleanupLine => CleanupLine != null;
+    public bool CanKeepShaders { get; private set; } = true;
+    public async Task KeepShadersAsync()
+    {
+        CanKeepShaders = false;
+        Changed();
+        var r = await SettingsVm.KeepShadersAsync(true);
+        CanKeepShaders = true;
+        if (r is { Ok: false }) { Error = "Not changed: " + r.Message; Changed(); }
+        else RefreshGame();
+    }
     public string? VulkanRtNote => ScsKiller.VulkanRtNote(s, GpuBackends.OwnDriver(Host.Core.Vendor));
     public bool HasVulkanRtNote => VulkanRtNote != null;
     // warmed: nothing urgent, unless only partly (the careful compile is offered); RT: Record comes first; no shader stutter: not needed
@@ -231,8 +242,10 @@ public sealed class DetailVm(string id) : Bindable
     public bool? CarefulPending { get; set; }
     public bool LeftOutOn => LeftOutPending ?? s.LeftOutOfAddAll;
     public bool? LeftOutPending { get; set; }
-    public bool SharedOn => SharedPending ?? !s.NoSharedHashes;
+    public bool SharedOn => SharedPending ?? s.SharedHashes;
     public bool? SharedPending { get; set; }
+    public string SharedNote => s.SharedChoice == null ? "Follows Settings" : "Set for this game";
+    public bool ShowSharedFollow => SharedPending == null && s.SharedChoice != null;
     public bool CarefulOn => CarefulPending ?? s.Careful?.On == true;
     public bool CanToggleCareful => CarefulPending == null && !Queued;
     public string CarefulNote => "Only for games whose compile fails. " + (s.Careful is { Recorded: 0 } ? "Compiles the pipelines recorded in the game in passes on few threads, so the driver keeps more of them. This game has no recording yet, so there is nothing to compile carefully."
@@ -480,7 +493,9 @@ public sealed class DetailVm(string id) : Bindable
         : Dx11Only && Pct is null or 100 ? (Compiled ? "Covers" : "Will cover") + " every DirectX 11 shader in the game files" + (Core.Planning.Planner.D3D11CoversVs(Host.Core.Vendor.Caps) || P.D3D11Draws > 0 ? "" : " but the vertex shaders")
         : Pct is not { } pct ? "Measured again on the next compile"
         : (Compiled || s.NewOnly ? "Covers" : s.WarmedAt != null ? "Its last compile covered" : "Will cover")
-          + (pct == 100 ? " all the shader combinations found in this game" : $" about {pct}% of the shader combinations found in this game");
+          + ScsKiller.CoverageWhat(s, pct);
+    // the headline's own words under the ring while no recording has confirmed the engine rule
+    public bool HasRuleNote => Pct == 100 && !Dx11Only && ScsKiller.RuleUnconfirmed(s);
     bool Rt => ScsKiller.NeedsRtRecording(s);
     bool RtUnseen => s.RtUnseen;
     bool RtInline => ScsKiller.RtInlineCovers(P);
@@ -559,7 +574,7 @@ public sealed class DetailVm(string id) : Bindable
                 : "Anything else compiles while you play: DLSS on NVIDIA blocks the recording that would find it.",
             Left.EngineSlots => ScsKiller.EngineSlotsNote(RecordOn),
             Left.UnknownSlots => "The rest use shader slots SCSKiller can't rebuild yet, so they still compile while you play.",
-            Left.NotSeen => ScsKiller.NotSeenNote(RecordOn),
+            Left.NotSeen => ScsKiller.NotSeenNote(RecordOn, P),
             Left.Recording => "Recording is on: anything new you play is added the next time it compiles.",
             Left.PlayedCompiles => $"Last time you played, {PlayCompiles(L!):N0} still had to compile." + (tipAsks ? "" : " Recording picks them up."),
             _ when Rt || RtUnseen || RtInline => null,   // ray tracing is what's left
@@ -603,7 +618,8 @@ public sealed class DetailVm(string id) : Bindable
     // the kept-aside copy of what the driver removed takes disk space too
     long? OnDisk => s.DiskBytes + (s.Kept?.Frees ?? 0);
     public bool HasShaderCount => s.ShaderCount != null;
-    public string ShaderCount => Fmt.N(s.ShaderCount);
+    public string ShaderCount => Fmt.N(ScsKiller.PageShaders(s));
+    public string? ShaderCountTip => ScsKiller.AllShadersTip(s);
     // measured frames when the recorder timed them, else the compile count
     long? StutterCount => F is { } f ? Format.NoPlay(f.Low1PctFps) ? null : ShaderHitches.Count : L is { } l ? PlayCompiles(l) : null;
     public bool HasStutterTile => HasSession && StutterCount != null;
@@ -617,7 +633,7 @@ public sealed class DetailVm(string id) : Bindable
     public IReadOnlyList<DetailRow> Details => new DetailRow?[]
     {
         P is { } p ? new("Pipelines in the plan", Fmt.N(p.Recorded + p.Generated + p.MiddlewareItems + p.Variants)) : null,
-        s.ShaderCount != null ? new("Shaders in the game files", Fmt.N(s.ShaderCount)) : null,
+        s.ShaderCount != null ? new("Shaders in the game files", ShaderCount) : null,
         P is { StageSets: > 0 } ? new("Shader combinations found", Fmt.N(P.StageSets)) : null,
         P is { LeftOut: > 0 } ? new("Left out", ScsKiller.LeftOutValue(P)) : null,
         P is { StageSets: 0, Uncovered: > 0 } ? new("Left out for shader slots SCSKiller can't rebuild", Fmt.N(P.Uncovered)) : null,

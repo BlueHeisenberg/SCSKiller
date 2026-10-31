@@ -57,5 +57,7 @@ sealed class FakeDesign(FakeScsKiller fake) : IDesignData
     public string? ScanProgress => fake.ScanProgress;
     public string? AfterUpdateLine => fake.AfterUpdateLine;
     public string? FoldLine(string gameId) => fake.FoldLine(gameId);
+    public string? FoldingLine => fake.Folding == null ? null : fake.AfterUpdateLine;
+    public IReadOnlyList<string> FoldingGames => fake.Folding is { } id ? [id] : [];
     public void RenameManualGame(string gameId, string name) => fake.RenameManualGame(gameId, name);
 }

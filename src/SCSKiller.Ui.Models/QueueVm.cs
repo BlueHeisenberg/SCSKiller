@@ -39,13 +39,16 @@ public sealed class QueueVm : Bindable
 
     public ObservableCollection<QueueRow> Waiting { get; } = [];
     public ObservableCollection<QueueRow> Finished { get; } = [];
+    /// <summary>Folds the queue doesn't run (the app's start, the game's exit): the compile's last step.</summary>
+    public ObservableCollection<QueueRow> Folds { get; } = [];
+    public bool HasFolds => Folds.Count > 0;
     public bool Dragging { get; set; }   // don't rebuild Waiting under a drag in progress
 
     public QueueRow Current { get; private set; } = new("", 1, "", "", "", "", "", QueueStage.Waiting);
     public bool HasCurrent => cur != null;
     public bool Idle => cur == null && !Host.Core.QueueRunning;   // a running queue's button is Stop, also while it waits to start an item
     public bool CanStop => cur != null || Host.Core.QueueRunning;
-    public bool Empty => cur == null && Waiting.Count == 0;
+    public bool Empty => cur == null && Waiting.Count == 0 && Folds.Count == 0;
     public bool HasFinished => Finished.Count > 0;
     public bool CanClear => Waiting.Count > 0 || Finished.Count > 0;
     public bool CanStart => !Host.Core.QueueRunning && Waiting.Count > 0;
@@ -91,6 +94,8 @@ public sealed class QueueVm : Bindable
         int first = cur != null ? 2 : 1;
         if (!Dragging) Sync(Waiting, waiting.Select((q, i) => Row(q, first + i, i == 0, i == waiting.Count - 1)));
         Sync(Finished, queue.Where(q => !Fmt.Active(q)).Select(q => Row(q, 0)));
+        Sync(Folds, Fmt.FoldingGames.Select(games.GetValueOrDefault).OfType<GameState>()
+            .Select(g => new QueueRow(g.Game.Id, 0, g.Game.Name, g.Game.ExePath, Fmt.FoldLine(g.Game.Id) ?? "", Format.Dash, Fmt.Cache(g), QueueStage.Merging)));
 
         var pending = queue.Where(Fmt.Active).ToList();
         var total = TimeSpan.FromTicks(pending.Sum(q => Left(q)?.Ticks ?? 0));
@@ -131,6 +136,7 @@ public sealed class QueueVm : Bindable
     static string NoteOf(QueueItem q, GameState? g) => q.Stage switch
     {
         QueueStage.Failed => "Failed: " + q.Error,
+        QueueStage.Stopped when (Fmt.FoldLine(q.GameId) ?? (ScsKiller.NotReached(g?.StatusReason) ? Format.Sentence(g!.StatusReason) : null)) is { } fold => fold,
         QueueStage.Stopped when q.Progress is { } p => $"Stopped at {p.Done:N0} of {p.Total:N0}: add it again to continue" + (q.Note is { } n ? " · " + n : ""),
         QueueStage.Stopped => "Stopped",
         QueueStage.Done => q.Note is { } n ? "Done · " + n : "Done",

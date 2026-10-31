@@ -7,12 +7,14 @@ namespace SCSKiller.Core.BlackSpace;
 
 /// <summary>A Pearl Abyss archive group's index, <c>NNNN\0.pamt</c>, over its data files <c>NNNN\&lt;i&gt;.paz</c>.
 /// Little-endian: u32 hash (<see cref="PazCrypto.Hash"/> of the bytes from offset 12, the group's row in meta\0.papgt),
-/// u32 paz count, a byte, 3 key bytes (their XOR is <see cref="KeyByte"/>); per paz {u32 index, u32 crc, u32 size}; the
+/// u32 paz count, a byte, 3 key bytes (their XOR is <see cref="KeyByte"/>); per paz {u32 number (its file name, not always the row), u32 crc, u32 size}; the
 /// folder names and the file names, each a u32 byte length and a trie of {u32 parent offset (FFFFFFFF: none), u8 length,
 /// bytes} whose path is its parents' text then its own; u32 folder count, per folder {u32 hash of its path, u32 name offset, u32 first file, u32 file count}; u32 file count, per
-/// file {u32 name offset, u32 paz offset, u32 stored size, u32 size, u16 paz index, u16 flags}. Flags: low 4 bits the
+/// file {u32 name offset, u32 paz offset, u32 stored size, u32 size, u16 paz number, u16 flags}. Flags: low 4 bits the
 /// compression (0 none, 2 an LZ4 block), the next 4 the encryption (0 none, 1 ICE, 2 AES, 3 <see cref="PazCrypto"/>); only
-/// those read here are opened.</summary>
+/// those read here are opened. The compact layout (Crimson Desert 2.04): a trie node's parent is a LEB128 distance back to it
+/// (0: none), file names lack their extension, the high byte of the flags indexes a table after the file table, a u32 byte
+/// length and NUL-terminated extensions ("" first).</summary>
 public sealed class Pamt
 {
     public sealed record Entry(string Path, int Paz, uint Offset, uint Stored, uint Size, ushort Flags)
@@ -25,7 +27,7 @@ public sealed class Pamt
     public const uint MaxEntry = 64 << 20;
     /// <summary>An index's size, at most (the game's largest: 20 MB), and a path's length.</summary>
     public const int MaxIndex = 64 << 20, MaxPath = 1024;
-    /// <summary>The characters of all names and paths an index expands to, per byte of it (the game's: up to 3.6), and in all.</summary>
+    /// <summary>The characters of all names and paths an index expands to, per byte of it (the game's: up to 4.1), and in all.</summary>
     const long MaxExpansion = 16, MaxChars = 192L << 20;
     /// <summary>LZ4's best ratio is under 255: a bigger size is no LZ4 block of the stored bytes.</summary>
     const ulong MaxRatio = 255;
@@ -35,11 +37,11 @@ public sealed class Pamt
     public uint Hash { get; }
     /// <summary>The group's part of its entries' keys.</summary>
     public byte KeyByte { get; }
-    public IReadOnlyList<uint> PazSizes { get; }
+    public IReadOnlyDictionary<uint, uint> PazSizes { get; }
     public IReadOnlyList<string> Folders { get; }
     public IReadOnlyList<Entry> Files { get; }
 
-    Pamt(uint hash, byte keyByte, IReadOnlyList<uint> paz, IReadOnlyList<string> folders, IReadOnlyList<Entry> files) =>
+    Pamt(uint hash, byte keyByte, IReadOnlyDictionary<uint, uint> paz, IReadOnlyList<string> folders, IReadOnlyList<Entry> files) =>
         (Hash, KeyByte, PazSizes, Folders, Files) = (hash, keyByte, paz, folders, files);
 
     public static Pamt Read(string path) => Parse(Bytes(path));
@@ -74,7 +76,7 @@ public sealed class Pamt
         var len = BinaryPrimitives.ReadUInt32LittleEndian(Head(at + 4).AsSpan((int)at));
         var trie = Head(at + 4 + len).AsSpan((int)at + 4);
         var budget = Budget(trie.Length);
-        return [.. Trie(trie, ref budget).Values];
+        return [.. Trie(trie, Compact(trie), ref budget).Values];
     }
 
     public static Pamt Parse(ReadOnlySpan<byte> b)
@@ -84,15 +86,24 @@ public sealed class Pamt
         var npaz = r.U32();
         r.Skip(1);
         var keyByte = (byte)(r.U8() ^ r.U8() ^ r.U8());
-        var paz = new uint[r.Count(npaz, 12)];
-        for (var i = 0; i < paz.Length; i++) { r.Skip(8); paz[i] = r.U32(); }
+        var paz = new Dictionary<uint, uint>();
+        for (var i = r.Count(npaz, 12); i > 0; i--)
+        {
+            var number = r.U32();
+            r.Skip(4);
+            if (!paz.TryAdd(number, r.U32())) throw new InvalidDataException("a .paz listed twice");
+        }
         var budget = Budget(b.Length);
-        var folderNames = Trie(r.Bytes(r.U32()), ref budget);
-        var fileNames = Trie(r.Bytes(r.U32()), ref budget);
+        var folderTrie = r.Bytes(r.U32());
+        var fileTrie = r.Bytes(r.U32());
+        var compact = Compact(folderTrie.IsEmpty ? fileTrie : folderTrie);
+        var folderNames = Trie(folderTrie, compact, ref budget);
+        var fileNames = Trie(fileTrie, compact, ref budget);
         var folders = new (uint Name, uint First, uint Count)[r.Count(r.U32(), 16)];
         for (var i = 0; i < folders.Length; i++) { r.Skip(4); folders[i] = (r.U32(), r.U32(), r.U32()); }
         var rows = new (uint Name, uint Offset, uint Stored, uint Size, ushort Paz, ushort Flags)[r.Count(r.U32(), 20)];
         for (var i = 0; i < rows.Length; i++) rows[i] = (r.U32(), r.U32(), r.U32(), r.U32(), r.U16(), r.U16());
+        var extensions = compact ? Extensions(r.Bytes(r.U32())) : [];
         if (!r.AtEnd) throw new InvalidDataException("bytes after the file table");
         var files = new List<Entry>(rows.Length);
         var listed = new bool[rows.Length];
@@ -104,11 +115,14 @@ public sealed class Pamt
             for (var i = first; i < first + count; i++)
             {
                 var f = rows[i];
-                if (!fileNames.TryGetValue(f.Name, out var file) || f.Paz >= paz.Length || f.Size > MaxEntry || f.Stored > MaxEntry
-                        || (ulong)f.Offset + f.Stored > paz[f.Paz] || (f.Flags & 0xF) == 2 && f.Size > MaxRatio * f.Stored + 16)
+                if (!fileNames.TryGetValue(f.Name, out var file) || !paz.TryGetValue(f.Paz, out var pazSize) || f.Size > MaxEntry || f.Stored > MaxEntry
+                        || (ulong)f.Offset + f.Stored > pazSize || (f.Flags & 0xF) == 2 && f.Size > MaxRatio * f.Stored + 16
+                        || compact && f.Flags >> 8 >= extensions.Length)
                     throw new InvalidDataException("a file outside the tables");
-                if ((budget -= dir.Length + 1 + file.Length) < 0) throw new InvalidDataException("names longer than the index holds");
-                files.Add(new Entry(dir + "/" + file, f.Paz, f.Offset, f.Stored, f.Size, f.Flags));
+                var flags = f.Flags;
+                if (compact) (file, flags) = (file + extensions[f.Flags >> 8], (ushort)(f.Flags & 0xFF));
+                if (file.Length > MaxPath || (budget -= dir.Length + 1 + file.Length) < 0) throw new InvalidDataException("names longer than the index holds");
+                files.Add(new Entry(dir + "/" + file, f.Paz, f.Offset, f.Stored, f.Size, flags));
             }
         }
         // the game's entries never share bytes: rows that would make a read cost more than the archive holds
@@ -124,16 +138,22 @@ public sealed class Pamt
         return new(hash, keyByte, paz, [.. folders.Select(f => folderNames[f.Name])], files);
     }
 
+    /// <summary>A trie starts with a node without a parent: FFFFFFFF in the old layout, a 0 distance in the compact one.</summary>
+    static bool Compact(ReadOnlySpan<byte> trie) => trie is [0, ..];
+
+    static string[] Extensions(ReadOnlySpan<byte> b) =>
+        b is [.., 0] && Encoding.UTF8.GetString(b[..^1]).Split('\0', 257) is { Length: <= 256 } e ? e : throw new InvalidDataException("an extension table without its end, or longer than a byte indexes");
+
     /// <summary>Each node's full text by its offset; a parent comes before its children. <paramref name="budget"/>: the
     /// characters all texts may take, less theirs.</summary>
-    static Dictionary<uint, string> Trie(ReadOnlySpan<byte> b, ref long budget)
+    static Dictionary<uint, string> Trie(ReadOnlySpan<byte> b, bool compact, ref long budget)
     {
         var text = new Dictionary<uint, string>();
         var r = new Reader(b);
         while (!r.AtEnd)
         {
             var at = (uint)r.Position;
-            var parent = r.U32();
+            var parent = !compact ? r.U32() : r.Varint() is var d and > 0 ? (d <= at ? at - d : at) : uint.MaxValue;
             var own = Encoding.UTF8.GetString(r.Bytes(r.U8()));
             if (parent == uint.MaxValue) text[at] = own;
             else if (parent < at && text.TryGetValue(parent, out var p) && p.Length + own.Length <= MaxPath) text[at] = p + own;
@@ -184,6 +204,18 @@ public sealed class Pamt
         public byte U8() => Take(1)[0];
         public ushort U16() => BinaryPrimitives.ReadUInt16LittleEndian(Take(2));
         public uint U32() => BinaryPrimitives.ReadUInt32LittleEndian(Take(4));
+        public uint Varint()
+        {
+            uint v = 0;
+            // 28 bits: more than an index holds
+            for (var shift = 0; shift < 28; shift += 7)
+            {
+                var x = U8();
+                v |= (uint)(x & 0x7F) << shift;
+                if (x < 0x80) return v;
+            }
+            throw new InvalidDataException("a number too long");
+        }
         /// <summary>A count of rows of <paramref name="size"/> bytes the rest of the index can hold.</summary>
         public readonly int Count(uint n, int size) => n <= (uint)(b.Length - at) / (uint)size ? (int)n : throw new InvalidDataException("a count past the end of the index");
     }

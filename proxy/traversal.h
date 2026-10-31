@@ -394,9 +394,10 @@ using PFN_Heap = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, const D3D12_HEAP_DES
 using PFN_Heap1 = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device4*, const D3D12_HEAP_DESC*, ID3D12ProtectedResourceSession*, REFIID, void**);
 using PFN_Residency = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, UINT, ID3D12Pageable* const*);
 using PFN_Enqueue = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device3*, D3D12_RESIDENCY_FLAGS, UINT, ID3D12Pageable* const*, ID3D12Fence*, UINT64);
+using PFN_Priority = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device1*, UINT, ID3D12Pageable* const*, const D3D12_RESIDENCY_PRIORITY*);
 // vtslots.cpp checks these against d3d12.h at compile time
 enum { SLOT_CR = 27, SLOT_HEAP = 28, SLOT_PLACED = 29, SLOT_RESERVED = 30, SLOT_MAKERESIDENT = 34, SLOT_EVICT = 35, SLOT_ENQUEUE = 50,
-       SLOT_CR1 = 53, SLOT_HEAP1 = 54, SLOT_RESERVED1 = 55, SLOT_CR2 = 69, SLOT_PLACED1 = 70, SLOT_CR3 = 76, SLOT_PLACED2 = 77, SLOT_RESERVED2 = 78 };
+       SLOT_PRIORITY = 46, SLOT_CR1 = 53, SLOT_HEAP1 = 54, SLOT_RESERVED1 = 55, SLOT_CR2 = 69, SLOT_PLACED1 = 70, SLOT_CR3 = 76, SLOT_PLACED2 = 77, SLOT_RESERVED2 = 78 };
 static PFN_CR o_cr;
 static PFN_CR1 o_cr1;
 static PFN_CR2 o_cr2;
@@ -411,6 +412,7 @@ static PFN_Heap o_heap;
 static PFN_Heap1 o_heap1;
 static PFN_Residency o_resident, o_evict;
 static PFN_Enqueue o_enqueue;
+static PFN_Priority o_priority;
 using PFN_Queue = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, const D3D12_COMMAND_QUEUE_DESC*, REFIID, void**);
 using PFN_Queue1 = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device9*, const D3D12_COMMAND_QUEUE_DESC*, REFIID, REFIID, void**);
 enum { SLOT_QUEUE = 8, SLOT_QUEUE1 = 75 };  // vtslots.cpp checks these
@@ -978,6 +980,20 @@ static HRESULT STDMETHODCALLTYPE hk_resident(ID3D12Device* dev, UINT n, ID3D12Pa
 static HRESULT STDMETHODCALLTYPE hk_evict(ID3D12Device* dev, UINT n, ID3D12Pageable* const* o) {
     return timed(EVICT, [&] { return unplaced(n, o, [&](UINT k, ID3D12Pageable* const* p) { return k || !n ? o_evict(dev, k, p) : S_OK; }); });
 }
+// 865: a placed resource's residency priority is its heap's, set by the heap, never by the resource (INVALID_CALL removes
+// the device): placed resources left out, with their priorities; none left of a non-empty call, S_OK.
+static HRESULT STDMETHODCALLTYPE hk_priority(ID3D12Device1* dev, UINT n, ID3D12Pageable* const* o, const D3D12_RESIDENCY_PRIORITY* pr) {
+    if (!g_ever.load(std::memory_order_relaxed) || !o || !pr) return o_priority(dev, n, o, pr);
+    std::vector<ID3D12Pageable*> keep;
+    std::vector<D3D12_RESIDENCY_PRIORITY> kp;
+    for (UINT i = 0; i < n; ++i)
+        if (UINT size = 0; !o[i] || FAILED(o[i]->GetPrivateData(kPlaced, &size, nullptr)) || !size) keep.push_back(o[i]), kp.push_back(pr[i]);
+    if (keep.size() == n) return o_priority(dev, n, o, pr);
+    g_filtered.fetch_add(n - keep.size(), std::memory_order_relaxed);
+    static std::atomic<bool> said;
+    if (!said.exchange(true)) logf("traversal: SetResidencyPriority named placed resources: left out (865)");
+    return keep.empty() ? S_OK : o_priority(dev, (UINT)keep.size(), keep.data(), kp.data());
+}
 static HRESULT STDMETHODCALLTYPE hk_enqueue(ID3D12Device3* dev, D3D12_RESIDENCY_FLAGS fl, UINT n, ID3D12Pageable* const* o, ID3D12Fence* f, UINT64 v) {
     return timed(ENQUEUE_RESIDENT, [&] {
         // never a CPU signal of the game's fence: always the runtime's call, placed resources as their heaps
@@ -1434,6 +1450,7 @@ static void install(ID3D12Device* dev) {
     patch(vt, SLOT_QUEUE, (void*)hk_queue, o_queue);
     if (ID3D12Device9* d9; SUCCEEDED(dev->QueryInterface(IID_PPV_ARGS(&d9)))) patch(*(void***)d9, SLOT_QUEUE1, (void*)hk_queue1, o_queue1), d9->Release();
     if (ID3D12Device3* d3; SUCCEEDED(dev->QueryInterface(IID_PPV_ARGS(&d3)))) patch(*(void***)d3, SLOT_ENQUEUE, (void*)hk_enqueue, o_enqueue), d3->Release();
+    if (ID3D12Device1* d1; SUCCEEDED(dev->QueryInterface(IID_PPV_ARGS(&d1)))) patch(*(void***)d1, SLOT_PRIORITY, (void*)hk_priority, o_priority), d1->Release();
     if (ID3D12Device4* d4; SUCCEEDED(dev->QueryInterface(IID_PPV_ARGS(&d4)))) {
         void** v4 = *(void***)d4;
         patch(v4, SLOT_CR1, (void*)hk_cr1, o_cr1), patch(v4, SLOT_HEAP1, (void*)hk_heap1, o_heap1), patch(v4, SLOT_RESERVED1, (void*)hk_reserved1, o_reserved1);

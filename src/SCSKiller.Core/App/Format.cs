@@ -12,14 +12,31 @@ public static class Format
     /// <summary>The Library cache card's line while the NVIDIA shader cache is turned off (<see cref="ScsKiller.CacheOff"/>); null otherwise.</summary>
     public static string? CacheOffLine(GpuVendor vendor, CacheLimit? limit) => ScsKiller.CacheOff(vendor, limit) ? "The NVIDIA shader cache is turned off" : null;
 
-    /// <summary>The Cache page's summary, from sizes the app already measured: the driver cache (with its limit when finite), and with a
-    /// Windows shader cache (NVIDIA 621 and later) that and the total.</summary>
-    public static string CacheSplit(long driver, bool upperBound, long? limit, long windows)
+    /// <summary>The driver cache's warning (the Library tile's icon, the Cache page's line): <see cref="CacheOffLine"/>, the driver's
+    /// default limit, or over 75% of the limit; null otherwise. <paramref name="used"/>: what the limit counts, the fullest game's
+    /// when the limit is each game's own (<paramref name="perGame"/>).</summary>
+    public static string? CacheWarning(GpuVendor vendor, CacheLimit? limit, long used, bool perGame) =>
+        CacheOffLine(vendor, limit) ?? (limit?.Bytes is not { } max ? null
+        : limit.IsDriverDefault ? "Driver default limit may evict games"
+        : max > 0 && used * 4 > max * 3 ? perGame ? "A game's cache is nearly full" : "The cache is nearly full" : null);
+
+    /// <summary>The cache's line on the Library and the Cache page, from sizes the app already measured: the driver cache against
+    /// its limit, AMD's DirectX 11 cache apart (<paramref name="capped"/>: its DirectX 12 one, which the limit counts) and the Windows
+    /// shader cache (NVIDIA 621 and later), led by what they hold on disk together.</summary>
+    public static string CacheSplit(CacheUsage usage, CacheLimit? limit, long? capped, long windows)
     {
-        var up = upperBound ? "≤ " : "";
-        var line = $"Driver cache {up}{Bytes(driver)}{(limit is { } l ? $" of {Bytes(l)}" : "")}";
-        return windows <= 0 ? line : $"{line} · Windows shader cache {Bytes(windows)} · Total {up}{Bytes(driver + windows)}";
+        var driver = capped ?? usage.BytesOnDisk;
+        var dx11 = capped is { } c ? Math.Max(0, usage.BytesOnDisk - c) : 0;
+        List<string> parts = [$"driver cache {Bytes(driver)}" + (limit is null ? ", limit unknown" : limit.Bytes is { } l ? $" of its {Bytes(l)} limit" : ", no limit")];
+        if (dx11 > 0) parts.Add($"DirectX 11 {Bytes(dx11)}");
+        if (windows > 0) parts.Add($"Windows {Bytes(windows)}");
+        if (parts.Count > 1) parts.Insert(0, $"{Bytes(driver + dx11 + windows)} on disk");
+        else parts[0] = "D" + parts[0][1..];
+        return string.Join(" · ", parts);
     }
+
+    /// <summary>The tooltip of <see cref="CacheSplit"/>'s line when the driver's size is only an upper bound; null otherwise.</summary>
+    public static string? CacheUpperNote(CacheUsage usage) => usage.UpperBound ? "The driver sizes its files ahead, so they can hold less than this." : null;
 
     /// <summary>Locales group digits with U+00A0 or U+202F, which UI fonts draw wide or as a fallback glyph: a plain space instead, on every thread.</summary>
     public static void PlainGroupSeparator()
@@ -148,6 +165,7 @@ public static class Format
             GameStatus.Warmed when r is ScsKiller.OverCacheLimitReason or ScsKiller.OverGameCapReason or ScsKiller.OverCompileFolderReason => "Too big for the shader cache",
             GameStatus.Warmed when r == ScsKiller.CacheFullReason => "Shader cache full",
             _ when ScsKiller.NotReached(r) => "Not in the game's cache yet",
+            _ when ScsKiller.LinkedAway(r) => Sentence(r),
             GameStatus.Warmed when ScsKiller.IsPartlyCompiled(s) => Sentence(ScsKiller.PartlyCompiledNote(s)),
             GameStatus.Warmed when partly => $"Driver {s.WarmedDriverVersion} · {s.Careful!.LaunchCompiled * 100:0}% still compiled",
             GameStatus.Warmed when ScsKiller.RtAfterRecording(s) && s.NoStutter == null => (s.RecorderInstalled ? "Recorder on: play with ray tracing"

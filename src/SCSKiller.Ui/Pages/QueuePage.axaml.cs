@@ -32,6 +32,7 @@ public sealed partial class QueuePage : UserControl
     {
         base.OnLoaded(e);
         Host.Core.QueueChanged += OnChanged; Host.Core.GameChanged += OnGame; Host.Icons.Changed += refresh.Request;
+        if (Host.Core is ScsKiller k) k.ScanProgressed += refresh.Request;   // a fold's share (Folds)
         Refresh();
     }
 
@@ -39,6 +40,7 @@ public sealed partial class QueuePage : UserControl
     {
         base.OnUnloaded(e);
         Host.Core.QueueChanged -= OnChanged; Host.Core.GameChanged -= OnGame; Host.Icons.Changed -= refresh.Request;
+        if (Host.Core is ScsKiller k) k.ScanProgressed -= refresh.Request;
     }
 
     static QueueRow RowOf(object? sender) => (QueueRow)((Control)sender!).DataContext!;

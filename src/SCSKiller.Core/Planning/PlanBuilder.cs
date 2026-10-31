@@ -278,7 +278,7 @@ sealed class PlanBuilder
     void ReadRecording()
     {
         long read = 0;
-        if (recording != null)
+        if (recording != null && File.Exists(recording.DbPath))   // a Steam-only recording (VulkanSources) has no db
             foreach (var r in recBlobs.Read(recording.DbPath))   // every record but 'B', which recBlobs keeps
             {
                 Steps?.Invoke("recording entries read", ++read, 0);
@@ -308,6 +308,8 @@ sealed class PlanBuilder
                 : rule.RootSignature?.Stock?.NvExtensionEverywhere == true;
         var unbuilt = 0;
         long checkedRecs = 0;
+        // compiles run through a copy of the game's layer, whose add-on injects into the rule's root signatures as into the game's
+        var injecting = Games.ReShade.Detect(game, engine) is { Layered: true, ShaderMod.Kind: Games.AddonKind.LayoutInjecting };
         foreach (var r in recs)
         {
             Steps?.Invoke("recorded pipelines checked", ++checkedRecs, recs.Count);
@@ -320,7 +322,8 @@ sealed class PlanBuilder
                 ownN++;
                 if (own == pso.Rs) ownOk++;
             }
-            if (recBlobs.TryGetValue(pso.Rs, out var rsBlob))
+            // recorded through the add-on with no 'W' pair: ReShade re-serializes what it changes, so its bytes never match the rule
+            if (recBlobs.TryGetValue(pso.Rs, out var rsBlob) && !(injecting && Injected(rsBlob, st)))
             {
                 // the rule's rebuild with these samplers the runtime won't serialize (its ranges overlap them): the rule
                 // doesn't reproduce this one, which still replays as recorded
@@ -569,6 +572,18 @@ sealed class PlanBuilder
     /// 1,923 pairs a recording drew). Same-signature VS x PS pairs per shader of a pool, measured: Ghost of Tsushima at
     /// most 35, every other installed DirectX 12 game at most 25, R&amp;C's 67 and 329.</summary>
     const int CrossProductRatio = 50;
+
+    /// <summary>The root signature ends with a root descriptor or constants at a register none of the stages declares: an
+    /// add-on's injection (RenoDX appends its own after the game's parameters).</summary>
+    internal static bool Injected(byte[] rs, IReadOnlyDictionary<Stage, ShaderInfo> stages)
+    {
+        try
+        {
+            return RootSig.LastRootValue(rs) is var (cls, reg, space) && !stages.Values.SelectMany(s => s.Bindings).Any(b =>
+                b.Class == cls && (uint)b.Space == space && (uint)b.Lower <= reg && (b.Count < 0 || reg < (ulong)(uint)b.Lower + (uint)b.Count));
+        }
+        catch (Exception e) when (e is ArgumentException or InvalidDataException) { return false; }
+    }
 
     /// <summary>The share of a recording's root signatures the rule must rebuild exactly to plan, in a learned lookup, the stage
     /// sets the recording has none for: a guess that is right that often beats leaving them out. 0.5 until measured.</summary>

@@ -309,6 +309,18 @@ public static unsafe partial class RootSig
         return new Ranges(U(20), [.. slots]);
     }
 
+    /// <summary>The last root parameter when it is a root descriptor or root constants: its binding class, register and space;
+    /// null otherwise.</summary>
+    public static (string Class, uint Register, uint Space)? LastRootValue(byte[] blob)
+    {
+        var b = Rts0(blob);
+        uint U(uint o) => BitConverter.ToUInt32(b, (int)o);
+        if (U(4) == 0) return null;
+        var at = U(8) + 12 * (U(4) - 1);
+        var (type, p) = (U(at), U(at + 8));
+        return type switch { 1 or 2 => ("cbv", U(p), U(p + 4)), 3 => ("srv", U(p), U(p + 4)), 4 => ("uav", U(p), U(p + 4)), _ => null };
+    }
+
     /// <summary>The first resource a shader declares that the root signature doesn't give its stage (no range of that type and
     /// space visible to it covers the registers, or the stage is denied), as "stage class space"; null = all covered. The D3D12
     /// runtime rejects such a pipeline (E_INVALIDARG: "root signature doesn't match shader"). An unbounded shader range only

@@ -120,6 +120,8 @@ public static class Fmt
     public static string? ScanProgress => Host.Core is ScsKiller k ? k.ScanProgress : Host.Design?.ScanProgress;
     public static string? AfterUpdateLine => Host.Core is ScsKiller k ? k.AfterUpdateLine : Host.Design?.AfterUpdateLine;
     public static string? FoldLine(string gameId) => Host.Core is ScsKiller k ? k.FoldLine(gameId) : Host.Design?.FoldLine(gameId);
+    public static string? FoldingLine => Host.Core is ScsKiller k ? k.FoldingLine : Host.Design?.FoldingLine;
+    public static IReadOnlyList<string> FoldingGames => Host.Core is ScsKiller k ? k.FoldingGames : Host.Design?.FoldingGames ?? [];
     public static void Rename(string gameId, string name)
     {
         if (Host.Core is ScsKiller k) k.RenameManualGame(gameId, name);

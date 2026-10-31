@@ -85,6 +85,7 @@ public sealed partial class SettingsPage : UserControl
     static Task<bool> Confirm(string title, string text, string yes) => App.ConfirmAsync(title, text, yes);
     async void OnApply(object? _, RoutedEventArgs __) => await Vm.ApplyLimitAsync(Confirm);
     async void OnApplyAuto(object? _, RoutedEventArgs __) => await Vm.ApplyAutoAsync(Confirm);
+    async void OnShaderCleanup(object? _, RoutedEventArgs __) => await Vm.ApplyShaderCleanupAsync();
 
     // Stands in for the website's recorder-anti-cheat page until it exists.
     public static ContentDialog AntiCheatDetailsDialog() => new()

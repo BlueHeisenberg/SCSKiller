@@ -294,7 +294,7 @@
                                     <TextBlock Text="{x:Bind Vm.StuttersValue, Mode=OneWay}" Style="{StaticResource StatValue}" Visibility="{x:Bind Vm.NoStutters, Mode=OneWay}" />
                                     <TextBlock Text="{x:Bind Vm.StuttersValue, Mode=OneWay}" Style="{StaticResource StatValue}" Foreground="{ThemeResource WarnBrush}" Visibility="{x:Bind Vm.HasStutters, Mode=OneWay}" />
                                 </StackPanel>
-                                <StackPanel Spacing="2" Visibility="{x:Bind Vm.HasShaderCount, Mode=OneWay}">
+                                <StackPanel Spacing="2" Visibility="{x:Bind Vm.HasShaderCount, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind Vm.ShaderCountTip, Mode=OneWay}">
                                     <TextBlock Text="Shaders in the game" Style="{StaticResource Secondary}" />
                                     <TextBlock Text="{x:Bind Vm.ShaderCount, Mode=OneWay}" Style="{StaticResource StatValue}" />
                                 </StackPanel>
@@ -307,6 +307,7 @@
                             </StackPanel>
                         </local:WrapPanel>
                     </Grid>
+                    <TextBlock Text="{x:Bind Vm.CoverageHeadline, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" Visibility="{x:Bind Vm.HasRuleNote, Mode=OneWay}" />
 
                     <Expander x:Name="DetailsExpander" Header="Details" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                         <ItemsRepeater ItemsSource="{x:Bind Vm.Details, Mode=OneWay}" ItemTemplate="{StaticResource DetailRow}">
@@ -449,9 +450,15 @@
                                 <ColumnDefinition />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="Use shared shader hashes" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Use shared shader hashes" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                <TextBlock Text="{x:Bind Vm.SharedNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                                <HyperlinkButton Content="Follow Settings" Click="OnSharedFollow" Padding="0" Margin="0,2,0,0"
+                                                 Visibility="{x:Bind Vm.ShowSharedFollow, Mode=OneWay}" />
+                            </StackPanel>
                             <ToggleSwitch x:Name="SharedSwitch" Grid.Column="1" MinWidth="0" VerticalAlignment="Top" OnContent="" OffContent=""
-                                          IsOn="{x:Bind Vm.SharedOn, Mode=OneWay}" Toggled="OnSharedToggled" AutomationProperties.Name="Use shared shader hashes" />
+                                          IsOn="{x:Bind Vm.SharedOn, Mode=OneWay}" Toggled="OnSharedToggled" AutomationProperties.Name="Use shared shader hashes"
+                                          AutomationProperties.HelpText="{x:Bind Vm.SharedNote, Mode=OneWay}" />
                         </Grid>
                         <InfoBar Severity="Warning" IsClosable="False" IsOpen="{x:Bind Vm.HasRecorderFailure, Mode=OneWay}" Visibility="{x:Bind Vm.HasRecorderFailure, Mode=OneWay}"
                                  Message="{x:Bind Vm.RecorderFailure, Mode=OneWay}" />

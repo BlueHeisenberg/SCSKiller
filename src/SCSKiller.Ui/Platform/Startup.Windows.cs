@@ -17,13 +17,21 @@ public partial class App
     static Task ApplyStartWithWindows(bool byUser)
     {
         if (Environment.ProcessPath is not { } exe) return Task.CompletedTask;
+        // a portable copy's start never writes the value, so its setting follows the value
+        if (!byUser && StartsAtSignIn() is { } on && on != Host.Core.Settings.StartWithWindows)
+            Host.Core.Settings = Host.Core.Settings with { StartWithWindows = on };
         WindowsStartup.Apply(byUser, ReleaseBuild, Host.Core.Settings.StartWithWindows, exe, ReleaseBuild && Updater.Installed && !AppStore.IsPortable,
             WindowsStartup.ReadRegistry, WindowsStartup.WriteRegistry, File.Exists);
         return Task.CompletedTask;
     }
 
-    /// <summary>Settings shows the setting.</summary>
-    static bool? StartsAtSignIn() => null;
+    /// <summary>A portable Release copy shows whether the value starts this exe, any other copy shows the setting.</summary>
+    static bool? StartsAtSignIn()
+    {
+        if (!ReleaseBuild || !AppStore.IsPortable || Environment.ProcessPath is not { } exe) return null;
+        try { return WindowsStartup.PointsAt(WindowsStartup.ReadRegistry(), exe); }
+        catch (Exception e) when (e is UnauthorizedAccessException or System.Security.SecurityException or IOException) { return null; }
+    }
 
     /// <summary>None on Windows: the task runs the CLI itself.</summary>
     public static int? RunCli(string[] args) => null;

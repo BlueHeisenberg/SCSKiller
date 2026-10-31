@@ -376,7 +376,11 @@ public static partial class D3DSCache
         return need > 0 && FreeBytes(to) is { } free && free < need ? $"{NoRoomWhy}: it needs {Format.Bytes(need)} free on {Drive(to)}" : null;
     }
 
-    public static string Drive(string path) => Path.GetPathRoot(Path.GetFullPath(path))?.TrimEnd('\\') ?? path;
+    public static string Drive(string path) => Volume(path)?.TrimEnd('\\') ?? path;
+
+    // a Unix path's root is always "/": Linux asks the mount (links followed), macOS has no statx
+    static string? Volume(string path) => OperatingSystem.IsWindows() ? Path.GetPathRoot(Path.GetFullPath(path))
+        : OperatingSystem.IsLinux() ? Games.GameFiles.VolumeOf(Path.GetFullPath(path)) : null;
 
     /// <summary>Free bytes on <paramref name="path"/>'s volume, null when unknown. SCSKILLER_TEST_DISK_FREE names a file whose
     /// number stands for every volume's, read at each call (E2E).</summary>
@@ -386,7 +390,11 @@ public static partial class D3DSCache
         {
             if (Environment.GetEnvironmentVariable("SCSKILLER_TEST_DISK_FREE") is { Length: > 0 } test)
                 return long.TryParse(File.ReadAllText(test).Trim(), out var n) ? n : null;
-            return new DriveInfo(Path.GetPathRoot(Path.GetFullPath(path))!).AvailableFreeSpace;
+            if (OperatingSystem.IsWindows()) return new DriveInfo(Path.GetPathRoot(Path.GetFullPath(path))!).AvailableFreeSpace;
+            // statvfs of the nearest folder that exists, links followed
+            var dir = Path.GetFullPath(path);
+            while (!Directory.Exists(dir) && Path.GetDirectoryName(dir) is { } up) dir = up;
+            return new DriveInfo(dir).AvailableFreeSpace;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return null; }
     }
@@ -749,8 +757,8 @@ public static partial class D3DSCache
     /// bytes to another volume.</summary>
     static long Work(long size, long? game, bool sameVolume, bool full) => game is { } g ? 2 * size + (full ? g : 0) : sameVolume ? size : 2 * size;
 
-    static bool SameVolume(string a, string b) =>
-        string.Equals(Path.GetPathRoot(Path.GetFullPath(a)), Path.GetPathRoot(Path.GetFullPath(b)), StringComparison.OrdinalIgnoreCase);
+    internal static bool SameVolume(string a, string b) => Volume(a) is { } v
+        && string.Equals(v, Volume(b), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     /// <summary>The progress units <see cref="MergeInto"/> reports for the staged folder <paramref name="from"/> going into
     /// <paramref name="to"/> (null: no folder of the game's yet), with the full checks due by <paramref name="checkedDbs"/>.</summary>
@@ -860,13 +868,61 @@ public static partial class D3DSCache
         if (!OperatingSystem.IsWindows()) return false;
         try
         {
-            using var handler = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\D3D Shader Cache");
+            using var handler = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(CleanupHandler);
             using var policy = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Policies\Microsoft\Windows\StorageSense");
             using var sense = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy");
             // the SilentCleanup maintenance task runs cleanmgr /autocleanstoragesense: Autorun puts the handler in it, Storage Sense runs it (the task's state needs admin)
             return handler?.GetValue("Autorun") is 1 && (policy?.GetValue("AllowStorageSenseGlobal") ?? sense?.GetValue("01")) is 1;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException) { return false; }
+    }
+
+    // the only cleanup handler that empties D3DSCache (its subfolders), NVIDIA's and AMD's folders have none
+    const string CleanupHandler = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\D3D Shader Cache";
+    const string KeptAutorun = "SCSKillerAutorun";   // Autorun before KeepFromCleanup(true), -1 = none
+
+    /// <summary>Windows' automatic cleanup leaves D3DSCache alone: its handler's Autorun is 0 (a manual Disk Cleanup still
+    /// offers it). Null: no handler, unreadable, or not Windows.</summary>
+    public static bool? CleanupKept()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        try
+        {
+            using var handler = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(CleanupHandler);
+            return handler == null ? null : handler.GetValue("Autorun") is 0;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException) { return null; }
+    }
+
+    /// <summary>Keeps Windows' automatic cleanup (Storage Sense, the maintenance task) from emptying D3DSCache: Autorun 0, the
+    /// value before it kept beside it. False puts that value back (1, Windows' default, when none was kept). Needs admin.
+    /// Returns the outcome line, throws when the value read back differs.</summary>
+    public static string KeepFromCleanup(bool keep)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows' disk cleanup is Windows only");
+        using var handler = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(CleanupHandler, true)
+            ?? throw new InvalidOperationException("Windows' disk cleanup has no shader cache entry on this PC");
+        var now = handler.GetValue("Autorun");
+        int? want = 0;
+        if (keep)
+        {
+            if (now is not 0)
+            {
+                if (now is not (null or int) || Equals(now, -1)) throw new InvalidOperationException($"Windows' disk cleanup setting holds an unexpected value ({now}), left as it is");
+                if (handler.GetValue(KeptAutorun) is not int) handler.SetValue(KeptAutorun, now is int n ? n : -1, Microsoft.Win32.RegistryValueKind.DWord);
+                handler.SetValue("Autorun", 0, Microsoft.Win32.RegistryValueKind.DWord);
+            }
+        }
+        else
+        {
+            want = handler.GetValue(KeptAutorun) switch { -1 => null, int n => n, _ => 1 };
+            if (want is { } w) handler.SetValue("Autorun", w, Microsoft.Win32.RegistryValueKind.DWord);
+            else handler.DeleteValue("Autorun", false);
+        }
+        if (handler.GetValue("Autorun") is var after && (after as int?) != want)
+            throw new InvalidOperationException($"Windows' disk cleanup setting reads {after ?? "nothing"} after the change, not {want?.ToString() ?? "nothing"}");
+        if (!keep) handler.DeleteValue(KeptAutorun, false);
+        return keep ? "Windows' automatic disk cleanup no longer clears compiled shaders." : "Windows' automatic disk cleanup can clear compiled shaders again.";
     }
 
     /// <summary>The registration the runtime applies to <paramref name="exe"/> (HKLM and HKCU): its ExePath is the exe's final

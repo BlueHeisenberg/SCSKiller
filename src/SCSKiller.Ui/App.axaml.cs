@@ -34,7 +34,7 @@ public partial class App : Application
     /// <summary>Selawik has Segoe UI's metrics, so the pages lay out as the WinUI app's do. Glyphs it lacks (≤, ≈) come from the system's fonts.</summary>
     public static AppBuilder WithSelawik(AppBuilder builder) => builder
         .ConfigureFonts(fonts => fonts.AddFontCollection(new EmbeddedFontCollection(new("fonts:Selawik"), Asset("Selawik"))))
-        .With(new FontManagerOptions { DefaultFamilyName = "fonts:Selawik#Selawik" });
+        .With(new FontManagerOptions { DefaultFamilyName = OperatingSystem.IsWindows() ? "Segoe UI" : "fonts:Selawik#Selawik" });
 
     public override void Initialize()
     {
@@ -221,6 +221,7 @@ public partial class App : Application
         Channels();
         watcher = real.WatchGames(stopWatching.Token);
         real.QueueChanged += q => { if (real.EndedNotice(q) is { } n) Host.Ui.TryEnqueue(() => Notifications.Show(Toasts.Ended(q.GameId, n))); };
+        real.Notice += (id, n) => Host.Ui.TryEnqueue(() => Notifications.Show(Toasts.Ended(id, n)));
 
         Main = new MainWindow();
         Main.ApplyTheme(real.Settings.Theme);

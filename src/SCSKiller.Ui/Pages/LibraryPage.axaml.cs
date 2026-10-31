@@ -23,6 +23,8 @@ public sealed partial class LibraryPage : UserControl
         DataContext = Vm;
         refresh = new(Host.Ui, Vm.Refresh);
         step = new(Host.Ui, Vm.ScanStep);
+        // MenuFlyout's presenter keeps the list Items holds when it is first built, before Opening: create it now
+        ((MenuFlyout)FoldersButton.Flyout!).Items.Clear();
         // a refresh's Shift: the press's, by mouse or keyboard
         RefreshButton.AddHandler(PointerPressedEvent, (_, e) => shiftOnPress = e.KeyModifiers.HasFlag(KeyModifiers.Shift), RoutingStrategies.Tunnel, handledEventsToo: true);
         RefreshButton.AddHandler(KeyDownEvent, (_, e) => shiftOnPress = e.KeyModifiers.HasFlag(KeyModifiers.Shift), RoutingStrategies.Tunnel, handledEventsToo: true);
@@ -116,7 +118,8 @@ public sealed partial class LibraryPage : UserControl
         if (folders.Count > 0) menu.Items.Add(new Separator());
         foreach (var folder in folders)
         {
-            var item = new MenuItem { Header = folder, Icon = Glyph(Glyphs.Dismiss) };
+            // a header's "_" marks an access key: doubled, it shows
+            var item = new MenuItem { Header = folder.Replace("_", "__"), Icon = Glyph(Glyphs.Dismiss) };
             ToolTip.SetTip(item, "Stop looking for games here");
             item.Click += async (_, _) =>
             {
@@ -131,7 +134,7 @@ public sealed partial class LibraryPage : UserControl
         if (leftOut.Count > 0) menu.Items.Add(new Separator());
         foreach (var folder in leftOut)
         {
-            var item = new MenuItem { Header = $"Left out: {folder}", Icon = Glyph(Glyphs.Refresh) };
+            var item = new MenuItem { Header = $"Left out: {folder.Replace("_", "__")}", Icon = Glyph(Glyphs.Refresh) };
             ToolTip.SetTip(item, "Look for games here again");
             item.Click += async (_, _) =>
             {

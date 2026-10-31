@@ -218,7 +218,7 @@ public sealed class SettingsVm : Bindable
         set
         {
             if (value is not { } v || v == StartWithWindows) return;
-            Save(S with { StartWithWindows = v });
+            S = S with { StartWithWindows = v };   // no Refresh before it applies: the read-back would undo the click
             _ = ApplyStartAsync();
         }
     }
@@ -340,6 +340,32 @@ public sealed class SettingsVm : Bindable
 
     // the elevated CLI acts on the adapter this process runs on, not on a GPU picked since
     static string[] RunningGpu => [ScsKiller.AdapterArg, V.Gpu.AdapterLuid.ToString("X16")];
+
+    /// <summary>Keeps Windows' automatic disk cleanup from clearing compiled shaders, or allows it again, behind one UAC
+    /// prompt. A design window writes nothing. Null = the user cancelled the prompt.</summary>
+    public static Task<Elevated.Result?> KeepShadersAsync(bool keep) =>
+        AsAdminAsync(() => Host.Design != null ? "Design data: nothing changed." : D3DSCache.KeepFromCleanup(keep), () => ["shader-cleanup", keep ? "keep" : "allow"]);
+
+    public bool ShowsShaderCleanup => D3DSCache.CleanupKept() != null;
+    public string ShaderCleanupAction => D3DSCache.CleanupKept() == true ? "Let Windows clear them again" : "Keep Windows from clearing compiled shaders";
+    public bool CanApplyShaderCleanup { get; private set; } = true;
+    public string? ShaderCleanupMessage { get; set; }
+    public InfoBarSeverity ShaderCleanupSeverity { get; set; }
+    public bool HasShaderCleanupMessage => ShaderCleanupMessage != null;
+
+    public async Task ApplyShaderCleanupAsync()
+    {
+        CanApplyShaderCleanup = false;
+        Changed();
+        (ShaderCleanupMessage, ShaderCleanupSeverity) = await KeepShadersAsync(D3DSCache.CleanupKept() != true) switch
+        {
+            null => ("Cancelled.", InfoBarSeverity.Informational),
+            { Ok: true } r => (r.Message, InfoBarSeverity.Success),
+            var r => ("Not changed: " + r.Message, InfoBarSeverity.Error),
+        };
+        CanApplyShaderCleanup = true;
+        Changed();
+    }
 
     public bool CanApplyLimit { get; private set; } = true;
     public bool CanApplyAuto { get; private set; } = true;

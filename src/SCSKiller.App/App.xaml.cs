@@ -200,6 +200,7 @@ public partial class App : Application
             };
             if (Core is ScsKiller gpu) gpu.GpuChanged += () => Main.DispatcherQueue.TryEnqueue(OnGpuChanged);
             if (Core is ScsKiller ends) ends.QueueChanged += q => { if (notifications && ends.EndedNotice(q) is { } n) Main.DispatcherQueue.TryEnqueue(() => ShowEnded(q.GameId, n)); };
+            if (Core is ScsKiller folds) folds.Notice += (id, n) => { if (notifications) Main.DispatcherQueue.TryEnqueue(() => ShowEnded(id, n)); };
             ApplyStartWithWindows(byUser: false);
             Updater.Start();
             if (activation is null or { Kind: ExtendedActivationKind.Launch }) _ = Updater.ApplyAtStartAsync(args[1..]);

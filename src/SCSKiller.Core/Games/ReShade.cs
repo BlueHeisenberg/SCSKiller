@@ -201,12 +201,12 @@ public static class ReShade
     /// for a DirectX 11 game (<paramref name="engine"/>). Each file is read once while its size and write time stay the same.</summary>
     public static ReShadeInstall? Detect(Game game, EngineInfo? engine = null)
     {
-        var r = Locate(game);
+        var r = Locate(game, engine);
         return r == null || engine != null && ScsKiller.Dx11Only(engine) || !r.Addons.Any(a => a.Mod == "Luma") ? r
             : r with { Addons = [.. r.Addons.Select(a => a.Mod == "Luma" ? a with { Mod = null, Kind = AddonKind.NotPipeline } : a)] };
     }
 
-    static ReShadeInstall? Locate(Game game)
+    static ReShadeInstall? Locate(Game game, EngineInfo? engine)
     {
         var exeDir = GameFiles.DirKey(Path.GetDirectoryName(game.ExePath)!);
         var root = PackageRoot(game);
@@ -216,17 +216,46 @@ public static class ReShade
             return packaged;
         foreach (var dir in new[] { exeDir, GameFiles.DirKey(game.InstallDir) }.Distinct(StringComparer.OrdinalIgnoreCase))
             if (At(dir, game, exeDir, root) is { } r) return r;
+        // an Unreal exe outside its project's Binaries that loads DLLs from there (Phantom Blade Zero's platform\steam\PBZ.exe):
+        // only a ReShade whose log says this exe loaded it
+        if (engine is not (null or { Family: "Unreal" }) || GameFiles.InBinaries(game.ExePath)) return null;
+        string[] binaries;
+        try { binaries = [.. GameFiles.UnrealFolders(game.InstallDir).Select(GameFiles.DirKey).Where(d => !d.Equals(exeDir, StringComparison.OrdinalIgnoreCase) && !Linked(d, game.InstallDir))]; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return null; }
+        // looked at as the exe's folder: its Special K and OptiScaler count as they would there
+        foreach (var dir in binaries)
+            if (At(dir, game, exeDir, root, loaded: true) is { Log: { } log } r && LoadedInto(new FileInfo(log), r.Dll, game.ExePath)) return r;
         return null;
     }
+
+    /// <summary>A folder of the install reached through a junction or symlink below <paramref name="installDir"/>.</summary>
+    static bool Linked(string dir, string installDir)
+    {
+        for (var d = new DirectoryInfo(dir); d != null && !GameFiles.DirKey(d.FullName).Equals(GameFiles.DirKey(installDir), StringComparison.OrdinalIgnoreCase); d = d.Parent)
+            if (d.LinkTarget != null) return true;
+        return false;
+    }
+
+    static readonly Regex Initializing = new(@"\| Initializing crosire's ReShade .* loaded from '(.+)' into '(.+)'");
+
+    /// <summary>ReShade.log, written after <paramref name="dll"/>, starts with that DLL loaded into <paramref name="exe"/>.</summary>
+    static bool LoadedInto(FileInfo log, string dll, string exe) =>
+        log.LastWriteTimeUtc > File.GetLastWriteTimeUtc(dll) && Cached(log, "loadedinto", () =>
+        {
+            using var r = new StreamReader(new FileStream(log.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
+            var head = new char[4096];   // its first line, not a whole line of any length
+            var first = new string(head, 0, r.ReadBlock(head)).Split('\n')[0];
+            return Initializing.Match(first) is { Success: true } m ? $"{FullPath(m.Groups[1].Value)}|{FullPath(m.Groups[2].Value)}" : "";
+        }) as string is { } loaded && loaded.Equals($"{FullPath(dll)}|{FullPath(exe)}", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>An Xbox app game's package root: its install folder (Content, with MicrosoftGame.config), searched for
     /// DLLs before the exe's folder; null = another store's game.</summary>
     public static string? PackageRoot(Game game) => game.Store == Store.Xbox ? GameFiles.DirKey(game.InstallDir) : null;
 
-    static ReShadeInstall? At(string dir, Game game, string exeDir, string? root)
+    static ReShadeInstall? At(string dir, Game game, string exeDir, string? root, bool loaded = false)
     {
         var files = List(dir);
-        var besideExe = dir.Equals(exeDir, StringComparison.OrdinalIgnoreCase);
+        var besideExe = loaded || dir.Equals(exeDir, StringComparison.OrdinalIgnoreCase);
         var dll = files?.FirstOrDefault(f => (Ext(f, ".dll") || Ext(f, ".asi")) && IsReShade(f));
         var sk = besideExe || dir.Equals(root, StringComparison.OrdinalIgnoreCase)
             ? files?.FirstOrDefault(f => f != dll && Array.FindIndex(ReShadeInstall.Loaded, n => n.Equals(f.Name, StringComparison.OrdinalIgnoreCase)) is var i and >= 0

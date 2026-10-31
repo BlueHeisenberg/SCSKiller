@@ -25,8 +25,6 @@ public sealed record AppPlatform
     public bool Tray { get; init; }
     /// <summary>The driver-update setting's sign-in and idle check, which notifies or compiles (ScheduledTask).</summary>
     public bool DriverUpdateModes { get; init; }
-    /// <summary>The Library's line for the "When idle" rebuild after a driver update.</summary>
-    public string IdleRebuildNote { get; init; } = "Rebuilds on its own while you're away from the PC";
     /// <summary>NVIDIA App's Automatic Shader Compilation, a setting of the Windows driver.</summary>
     public bool AutoShaderCompilation { get; init; }
     /// <summary>The OS's own shader cache of each game (Windows' D3DSCache), which clearing a game's caches deletes too.</summary>
@@ -51,8 +49,6 @@ public sealed record AppPlatform
     {
         // the flags left off are features Linux doesn't have yet, each turned on once it does
         Name = "Linux", Stores = ["Steam", "Heroic", "Lutris"], UpdatingStores = "Steam", SystemTheme = "Use system setting", Runtime = "Proton", Tray = true, StartAtSignIn = true, DriverUpdateModes = true,
-        // no input idle time: the background compile starts at once and pauses only for a game
-        IdleRebuildNote = "Rebuilds in the background and pauses while a game runs",
         NoGamesNote = () => steam() ? "SCSKiller lists the Windows games you installed with Steam, Heroic or Lutris, and the ones you added to Steam with Proton."
             : "SCSKiller lists the Windows games of Steam, Heroic and Lutris.",
         SteamLaunchLine = true, RecordAntiCheatGames = true,

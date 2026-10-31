@@ -130,6 +130,7 @@ public sealed partial class DetailPage : UserControl, INavigable
     }
 
     void OnRefreshGame(object? _, RoutedEventArgs __) => Vm.RefreshGame();
+    async void OnKeepShaders(object? _, RoutedEventArgs __) => await Vm.KeepShadersAsync();
     async void OnCopyLaunchLine(object? _, RoutedEventArgs __) => await Vm.CopyLaunchLine();
     void OnPlay(object? _, RoutedEventArgs __) => Vm.Play();
 
@@ -439,6 +440,11 @@ public sealed partial class DetailPage : UserControl, INavigable
     }
 
     /// <summary>Screenshots: the traversal stutter fix's choice in the middle; false without it.</summary>
+    public void ScrollToShared()
+    {
+        if (SharedSwitch.TranslatePoint(default, Scroller) is { } at) Scroller.Offset = new(0, Math.Max(0, Scroller.Offset.Y + at.Y - 300));
+    }
+
     public bool ScrollToTraversal()
     {
         if (!Vm.ShowTraversal || TraversalBox.TranslatePoint(default, Scroller) is not { } at) return false;
@@ -484,6 +490,8 @@ public sealed partial class DetailPage : UserControl, INavigable
         var on = SharedSwitch.IsChecked == true;
         if (on != Vm.SharedOn) Set((vm, p) => vm.SharedPending = p, on, id => Host.Core.SetGameUseShared(id, on));
     }
+
+    void OnSharedFollow(object? _, RoutedEventArgs __) => Set((vm, p) => vm.SharedPending = p, Vm.SharedOn, id => Host.Core.SetGameUseShared(id, null));
 
     void SetCareful(bool on) => Set((vm, p) => vm.CarefulPending = p, on, id => Host.Core.SetCarefulCompile(id, on));
 

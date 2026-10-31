@@ -56,6 +56,7 @@ public sealed class GameRecord
     public string? TrimmedLogged { get; set; }              // the trimmed cache reason app.log last reported: once per eviction, not per start
     public DateTime? D3DSCacheSince { get; set; }           // staged warms' runtime cache folders made since then aren't folded yet
     public bool D3DSCacheStrandChecked { get; set; }        // AdoptStranded looked once for a 1.3.1 warm's unfolded staged folders
+    public bool CompiledUntold { get; set; }                // a compile the user started ended before its fold put every db in: no "is compiled" yet
     public bool D3DSCacheDamaged { get; set; }              // a staged db failed SQLite's check at the fold: compile again
     public Dictionary<string, string>? D3DSCacheChecked { get; set; }   // the game's D3DSCache dbs by path as the last fold checked or wrote them (D3DSCache.CheckStamp), a refused identity under "<path>|identity"
     public IdentityStamp? D3DSCacheStamp { get; set; }      // the identity the last fold that put dbs in stamped, and why (outcome reports)
@@ -185,7 +186,8 @@ public sealed class GameRecord
     public bool? RayTracing { get; set; }                   // ray tracing state objects and collections for this game (ScsKiller.SetGameRayTracing); null = Settings.CompileRayTracing
     public bool? Traversal { get; set; }                    // the traversal stutter fix for this game (ScsKiller.SetGameTraversal); null = Settings.Traversal
     public bool LeftOutOfAddAll { get; set; }               // "Add all ready" skips the game (ScsKiller.SetGameLeftOutOfAddAll)
-    public bool NoSharedHashes { get; set; }                // "Use shared shader hashes" off: nothing is downloaded for the game, its plans leave the downloads out (ScsKiller.SetGameUseShared)
+    public bool NoSharedHashes { get; set; }                // "Use shared shader hashes" off for this game: nothing is downloaded for it, its plans leave the downloads out (ScsKiller.SetGameUseShared)
+    public bool SharedHashesOn { get; set; }                // ...on for this game whatever Settings.UseCommunityDb holds; neither = the setting
     public int? PlanCacheCapGB { get; set; }                // CacheCapGB the plan was built with
     public int? CacheCapGB { get; set; }                    // what a compile's plan may add to the game's shader cache (ScsKiller.SetGameCacheCap); null = no cap of the user's
     public bool Hidden { get; set; }                        // removed from the library by the user: never listed again until shown (ScsKiller.HideGame)

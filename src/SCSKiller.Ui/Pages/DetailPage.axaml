@@ -116,7 +116,10 @@
                         <TextBlock Text="{Binding StatusReason}" Classes="Secondary" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding GuessNote}" IsVisible="{Binding HasGuessNote}" Classes="Secondary" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding DeliveryLine}" IsVisible="{Binding HasDeliveryLine}" Classes="Secondary" TextWrapping="Wrap" />
-                        <TextBlock Text="{Binding CleanupLine}" IsVisible="{Binding HasCleanupLine}" Classes="Secondary" TextWrapping="Wrap" />
+                        <StackPanel Spacing="2" IsVisible="{Binding HasCleanupLine}">
+                            <TextBlock Text="{Binding CleanupLine}" Classes="Secondary" TextWrapping="Wrap" />
+                            <HyperlinkButton Content="Keep Windows from clearing compiled shaders" Padding="0" Click="OnKeepShaders" IsEnabled="{Binding CanKeepShaders}" />
+                        </StackPanel>
                         <TextBlock Text="{Binding VulkanRtNote}" IsVisible="{Binding HasVulkanRtNote}" Classes="Secondary" TextWrapping="Wrap" />
                         <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasKeptCache}">
                             <TextBlock Text="{Binding KeptCacheNote}" Classes="Secondary" TextWrapping="Wrap" VerticalAlignment="Center" />
@@ -308,7 +311,7 @@
                                     <TextBlock Text="{Binding StuttersValue}" Classes="StatValue" IsVisible="{Binding NoStutters}" />
                                     <TextBlock Text="{Binding StuttersValue}" Classes="StatValue" Foreground="{DynamicResource WarnBrush}" IsVisible="{Binding HasStutters}" />
                                 </StackPanel>
-                                <StackPanel Spacing="2" IsVisible="{Binding HasShaderCount}">
+                                <StackPanel Spacing="2" IsVisible="{Binding HasShaderCount}" ToolTip.Tip="{Binding ShaderCountTip}">
                                     <TextBlock Text="Shaders in the game" Classes="Secondary" TextWrapping="Wrap" />
                                     <TextBlock Text="{Binding ShaderCount}" Classes="StatValue" />
                                 </StackPanel>
@@ -321,6 +324,7 @@
                             </StackPanel>
                         </c:FlowPanel>
                     </Grid>
+                    <TextBlock Text="{Binding CoverageHeadline}" Classes="Secondary" TextWrapping="Wrap" IsVisible="{Binding HasRuleNote}" />
 
                     <Expander x:Name="DetailsExpander" Header="Details" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                         <ItemsControl ItemsSource="{Binding Details}" ItemTemplate="{StaticResource DetailRow}">
@@ -438,9 +442,13 @@
                                           IsCheckedChanged="OnRecordToggled" AutomationProperties.Name="Record while I play" AutomationProperties.HelpText="{Binding RecordNote}" />
                         </Grid>
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                            <TextBlock Text="Use shared shader hashes" Classes="BodyStrong" VerticalAlignment="Center" />
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Use shared shader hashes" Classes="BodyStrong" />
+                                <TextBlock Text="{Binding SharedNote}" Classes="Secondary" TextWrapping="Wrap" />
+                                <HyperlinkButton Content="Follow Settings" Click="OnSharedFollow" Padding="0" Margin="0,2,0,0" IsVisible="{Binding ShowSharedFollow}" />
+                            </StackPanel>
                             <ToggleSwitch x:Name="SharedSwitch" Grid.Column="1" IsChecked="{Binding SharedOn, Mode=OneWay}" IsCheckedChanged="OnSharedToggled"
-                                          AutomationProperties.Name="Use shared shader hashes" />
+                                          AutomationProperties.Name="Use shared shader hashes" AutomationProperties.HelpText="{Binding SharedNote}" />
                         </Grid>
                         <c:InfoBar Severity="Warning" IsClosable="False" IsVisible="{Binding HasRecorderFailure}" Message="{Binding RecorderFailure}" />
                         <StackPanel Spacing="14" IsVisible="{Binding ShowOfflineOn}">

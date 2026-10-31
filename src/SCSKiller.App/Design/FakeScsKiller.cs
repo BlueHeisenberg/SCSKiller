@@ -89,7 +89,7 @@ public sealed class FakeScsKiller : IScsKiller
             G("1817230", "Hi-Fi RUSH", "4.27", "Hi-Fi-RUSH.exe", 28_415, GameStatus.Ready, Core.Planning.Planner.NoRecording) with { RecorderMod = "ReShade", RecorderSkip = Core.App.ScsKiller.SkipForeignDll,
                 ReShade = true, ShaderMod = "RenoDX", ShaderModLayer = true, ShaderModAsD3D12 = true },   // ReShade as d3d12.dll
             G("1627720", "Lies of P", "4.27", "LOP-Win64-Shipping.exe", 52_880, GameStatus.Ready, Core.Planning.Planner.NoRecording) with { ReShade = true },
-            G("1139900", "Ghostrunner", "4.25", "Ghostrunner-Win64-Shipping.exe", 18_770, GameStatus.Ready, Core.Planning.Planner.Untested) with { Middleware = [new("DLSS", ["nvngx_dlss.dll"], 0)], NoSharedHashes = true },
+            G("1139900", "Ghostrunner", "4.25", "Ghostrunner-Win64-Shipping.exe", 18_770, GameStatus.Ready, Core.Planning.Planner.Untested) with { Middleware = [new("DLSS", ["nvngx_dlss.dll"], 0)], SharedHashes = false, SharedChoice = false },
             G("3489700", "Stellar Blade Demo", "4.26", "SB-Win64-Shipping.exe", 94_473, GameStatus.Ready, Core.Planning.Planner.Untested),
             // shaders delivered by Advanced Shader Delivery, compiled by this driver: the tag and the game page's line
             G("Microsoft.Halcyon_8wekyb3d8bbwe", "Gears of War: E-Day", "5.6", "GoWEDay.exe", 61_000, GameStatus.Ready, Core.Planning.Planner.Untested, at: "xbox")
@@ -125,6 +125,13 @@ public sealed class FakeScsKiller : IScsKiller
                 LastSession = new SessionStats(TimeSpan.FromMinutes(12), 4_388, 0, 3_902, 486, 141.0), RecordedEnough = true, RecordingBytes = 4_200_000,
                 MaximumSuggestion = "Removed the last stutters in players' tests.",
             },
+            // a recording whose root signatures the engine version's rule didn't rebuild: only what it showed is planned
+            G("4115450", "Phantom Blade Zero", "5.5", "PBZ.exe", 278_863, GameStatus.Warmed, "warmed for driver 610.88",
+                plan: new PlanStats(12_332, 82_856, 82_856, 263, false, StageSets: 624_194, LeftOut: 487_853)) with
+            {
+                WarmedDriverVersion = "610.88", WarmedAt = DateTimeOffset.Now.AddHours(-3), LastWarmTime = TimeSpan.FromSeconds(997), CacheOnDisk = 17_100_000_000,
+                LastWarmFailed = 0, LastWarmSkipped = 0,
+            },
             G("3200000", "Windrose Demo", "5.5", "Windrose-Win64-Shipping.exe", null, GameStatus.Unsupported, "shaders cannot be read yet", encrypted: true),
             G("554620", "Life is Strange Remastered", "4.23", "LiSRemastered.exe", null, GameStatus.Unsupported, materials, unsupported: materials),
             // stutters without a compile (the real list): two recommended, Elden Ring waiting for an offline session (not recommended)
@@ -153,7 +160,7 @@ public sealed class FakeScsKiller : IScsKiller
                 LastWarmFailed = 0, LastWarmSkipped = 0,
             },
             // switched to DirectX 11 in the game: its DirectX 12 compile is kept, its exe chosen by hand
-            G("3900280", "Tidal Echoes", "4.26", "Client-Win64-Shipping.exe", 296_278, GameStatus.Warmed, "warmed for driver 610.88",
+            G("3900280", "Tidal Echoes", "4.26", "Client-Win64-Shipping.exe", 785_086, GameStatus.Warmed, "warmed for driver 610.88",
                 plan: new PlanStats(0, 0, 0, 0, false, D3D11Shaders: 296_278), cache: 4_000_000_000, time: TimeSpan.FromMinutes(4)) with
             {
                 Engine = new EngineInfo("Unreal", "4.26", null, "D3D11 (last run)", false, null), ApiDetected = "D3D11 (last run)",
@@ -661,13 +668,13 @@ public sealed class FakeScsKiller : IScsKiller
         }
         GameChanged?.Invoke(g);
     }
-    public void SetGameUseShared(string gameId, bool on)
+    public void SetGameUseShared(string gameId, bool? on)
     {
         GameState g;
         lock (gate)
         {
             int i = games.FindIndex(x => x.Game.Id == gameId);
-            games[i] = g = games[i] with { NoSharedHashes = !on };
+            games[i] = g = games[i] with { SharedHashes = on ?? Settings.UseCommunityDb, SharedChoice = on };
         }
         GameChanged?.Invoke(g);
     }

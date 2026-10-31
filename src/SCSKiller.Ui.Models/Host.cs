@@ -82,5 +82,7 @@ public interface IDesignData
     string? ScanProgress { get; }
     string? AfterUpdateLine { get; }
     string? FoldLine(string gameId);
+    string? FoldingLine { get; }
+    IReadOnlyList<string> FoldingGames { get; }
     void RenameManualGame(string gameId, string name);
 }

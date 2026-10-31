@@ -175,7 +175,7 @@ jobs:
   # build job runs in WSL, on the build job's native files (artifact SCSKiller-native).
   linux:
     needs: build
-    if: ${{ !github.event.repository.private }}
+    if: ${{ !cancelled() && needs.build.result == 'success' && !github.event.repository.private }}   # changed is skipped here, and a skip carries down without !cancelled()
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
