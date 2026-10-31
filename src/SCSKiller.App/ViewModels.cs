@@ -1436,7 +1436,9 @@ public sealed class DetailVm(string id) : Bindable
     public string UseDefaultText => $"Use default ({(ScsKiller.RecordsByDefault(App.Core.Settings, s) ? "on" : "off")})";
     string RecorderDll => Fmt.RecorderDll(s);
     string Kept => ScsKiller.SessionKeptNote(s) is { } kept ? " " + kept : "";
-    public string RecordNote => ScsKiller.CrashNote(s.Game) is { } crash ? crash
+    // another copy's recorder in the folder is said on every line the switch shows: a skip's line has no room for the reconcile's note
+    public string RecordNote => RecordNoteText is var t && s.RecorderForeign && !t.Contains(Sentence(ScsKiller.ForeignNote)) ? $"{t} {ScsKiller.ForeignHereNote}" : t;
+    string RecordNoteText => ScsKiller.CrashNote(s.Game) is { } crash ? crash
         : Risk
         ? (s.AlwaysRecord ? "Every launch is recorded." : "Each session is confirmed before it starts.") + Kept
         : ShowOffline

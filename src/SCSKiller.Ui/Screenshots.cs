@@ -121,6 +121,19 @@ static partial class Screenshots
         fake.SetGameUseShared(ff7, null);
         if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") == "shared") return;
 
+        // Another SCSKiller copy's recorder in the folder, with and without a skip, dark only. SCSKILLER_SHOTS=foreign takes only these.
+        if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") is null or "foreign")
+        {
+            foreach (var (name, id) in new[] { ("foreign-record", "3900060"), ("foreign-record-skip", "3900061") })
+            {
+                main.Navigate(typeof(DetailPage), "steam:" + id);
+                await Task.Delay(1000);
+                Detail().ScrollToShared();
+                await Shot(name, 600);
+            }
+            if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") == "foreign") return;
+        }
+
         // The traversal stutter fix: its one-time question, Settings and the game page (FF7, then an anti-cheat game), with more
         // than 8 GB of VRAM and with 8 GB. SCSKILLER_SHOTS=traversal takes only these.
         var (gpuWas, settingsWas) = (fake.Vendor, fake.Settings);

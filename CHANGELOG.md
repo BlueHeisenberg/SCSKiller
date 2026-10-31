@@ -28,7 +28,8 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 **Fixed**
 
 - Turning Record while I play on takes over a recorder another SCSKiller copy or an older version put in the game's
-  folder, instead of switching back off.
+  folder, instead of switching back off, and the game's page says when another copy placed its recorder, also where
+  recording isn't available.
 - A compile stopped or quit while it goes into the game's cache no longer says it's compiled. The rest goes in at the
   next start or when the game closes, with its progress on the Queue page, in the Library and in the tray.
 - Start SCSKiller when Windows starts no longer switches itself back off after a click, and in the portable version it

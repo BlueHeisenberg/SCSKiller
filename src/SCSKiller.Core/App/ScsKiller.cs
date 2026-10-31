@@ -6939,6 +6939,7 @@ public sealed partial class ScsKiller : IScsKiller
     sealed class RemovedFromAllException() : InvalidOperationException(RemovedFromAllNote);
 
     public const string ForeignNote = "placed by another SCSKiller copy, so it may still record. Turn it on here to take it over";
+    public const string ForeignHereNote = "The recorder in its folder was placed by another SCSKiller copy, so it may still record.";
 
     /// <summary>True when the game was re-evaluated; a running game's change waits for it to exit.</summary>
     bool Reconcile(GameState s)

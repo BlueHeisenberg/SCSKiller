@@ -199,6 +199,9 @@ public sealed class FakeScsKiller : IScsKiller
             // its recorder placed by another SCSKiller copy (the installed one, its data copied here): off here
             G("3900060", "Foreign Field", "5.3", "ForeignField-Win64-Shipping.exe", 31_400, GameStatus.NeedsRecording, Core.Planning.Planner.Record) with
                 { RecorderOverride = RecorderOverride.On, RecorderForeign = true, RecorderNote = ScsKiller.ForeignNote },
+            // another copy's recorder where a mod also blocks this copy's
+            G("3900061", "Foreign Ridge", "5.3", "ForeignRidge-Win64-Shipping.exe", 30_900, GameStatus.NeedsRecording, Core.Planning.Planner.Record) with
+                { RecorderForeign = true, RecorderNote = ScsKiller.ForeignNote, RecorderMod = "ReShade", RecorderSkip = ScsKiller.SkipAgsMod, AgsMod = "ReShade" },
             // Windows Security removed the recorder's preloader: every install fails
             G("3900270", "Pale Harbor", "5.3", "PaleHarbor-Win64-Shipping.exe", 30_200, GameStatus.NeedsRecording, Core.Planning.Planner.Record) with
                 { RecorderOverride = RecorderOverride.On, RecorderEffective = true, RecorderFailure = AvFailure, RecorderNote = AvFailure },
