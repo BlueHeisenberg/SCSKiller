@@ -1,3 +1,4 @@
+using SCSKiller.Core.Localization;
 namespace SCSKiller.Core.App;
 
 /// <summary>Text the app and the CLI show.</summary>
@@ -5,20 +6,20 @@ public static class Format
 {
     /// <summary>The game page's line before a session with the recorder; null for a game whose recorder can't go in.</summary>
     public static string? SessionHint(GameState s) => s.RecorderSkip is ScsKiller.SkipUnsupported or ScsKiller.SkipVulkanSteamOnly ? null
-        : "Play with it on and your last session shows here: how much was ready and what still stuttered.";
+        : Loc.T("Format_SessionHint");
 
     public const string Dash = "—";
 
     /// <summary>The Library cache card's line while the NVIDIA shader cache is turned off (<see cref="ScsKiller.CacheOff"/>); null otherwise.</summary>
-    public static string? CacheOffLine(GpuVendor vendor, CacheLimit? limit) => ScsKiller.CacheOff(vendor, limit) ? "The NVIDIA shader cache is turned off" : null;
+    public static string? CacheOffLine(GpuVendor vendor, CacheLimit? limit) => ScsKiller.CacheOff(vendor, limit) ? Loc.T("Format_CacheOff") : null;
 
     /// <summary>The driver cache's warning (the Library tile's icon, the Cache page's line): <see cref="CacheOffLine"/>, the driver's
     /// default limit, or over 75% of the limit; null otherwise. <paramref name="used"/>: what the limit counts, the fullest game's
     /// when the limit is each game's own (<paramref name="perGame"/>).</summary>
     public static string? CacheWarning(GpuVendor vendor, CacheLimit? limit, long used, bool perGame) =>
         CacheOffLine(vendor, limit) ?? (limit?.Bytes is not { } max ? null
-        : limit.IsDriverDefault ? "Driver default limit may evict games"
-        : max > 0 && used * 4 > max * 3 ? perGame ? "A game's cache is nearly full" : "The cache is nearly full" : null);
+        : limit.IsDriverDefault ? Loc.T("Format_CacheDriverDefault")
+        : max > 0 && used * 4 > max * 3 ? perGame ? Loc.T("Format_CacheNearlyFullGame") : Loc.T("Format_CacheNearlyFull") : null);
 
     /// <summary>The cache's line on the Library and the Cache page, from sizes the app already measured: the driver cache against
     /// its limit, AMD's DirectX 11 cache apart (<paramref name="capped"/>: its DirectX 12 one, which the limit counts) and the Windows
@@ -27,16 +28,15 @@ public static class Format
     {
         var driver = capped ?? usage.BytesOnDisk;
         var dx11 = capped is { } c ? Math.Max(0, usage.BytesOnDisk - c) : 0;
-        List<string> parts = [$"driver cache {Bytes(driver)}" + (limit is null ? ", limit unknown" : limit.Bytes is { } l ? $" of its {Bytes(l)} limit" : ", no limit")];
+        List<string> parts = [Loc.F("Format_DriverCache", Bytes(driver)) + (limit is null ? Loc.T("Format_LimitUnknown") : limit.Bytes is { } l ? Loc.F("Format_OfItsLimit", Bytes(l)) : Loc.T("Format_NoLimit"))];
         if (dx11 > 0) parts.Add($"DirectX 11 {Bytes(dx11)}");
         if (windows > 0) parts.Add($"Windows {Bytes(windows)}");
-        if (parts.Count > 1) parts.Insert(0, $"{Bytes(driver + dx11 + windows)} on disk");
-        else parts[0] = "D" + parts[0][1..];
+        if (parts.Count > 1) parts.Insert(0, Loc.F("Format_OnDisk", Bytes(driver + dx11 + windows)));
         return string.Join(" · ", parts);
     }
 
     /// <summary>The tooltip of <see cref="CacheSplit"/>'s line when the driver's size is only an upper bound; null otherwise.</summary>
-    public static string? CacheUpperNote(CacheUsage usage) => usage.UpperBound ? "The driver sizes its files ahead, so they can hold less than this." : null;
+    public static string? CacheUpperNote(CacheUsage usage) => usage.UpperBound ? Loc.T("Format_CacheUpperNote") : null;
 
     /// <summary>Locales group digits with U+00A0 or U+202F, which UI fonts draw wide or as a fallback glyph: a plain space instead, on every thread.</summary>
     public static void PlainGroupSeparator()
@@ -102,10 +102,10 @@ public static class Format
     public static string Engine(EngineInfo e, string? family = null) =>
         e.Version is "" or "-" or "?" ? family ?? e.Family : $"{family ?? e.Family} {e.Version}";
 
-    public const string MergingStage = "Handing the compile to the game's cache";
-    public const string WritingStage = "Finishing: writing into the game's cache";
-    public const string SavingStage = "Saving the driver's cache";
-    public const string FinishingStage = "Finishing up";
+    public static string MergingStage => Loc.T("Format_Stage_Merging");
+    public static string WritingStage => Loc.T("Format_Stage_Writing");
+    public static string SavingStage => Loc.T("Format_Stage_Saving");
+    public static string FinishingStage => Loc.T("Format_Stage_Finishing");
 
     /// <summary>The item is being compiled: any stage before it finishes, paused included.</summary>
     public static bool Running(QueueItem q) => q.Stage is QueueStage.Indexing or QueueStage.Planning or QueueStage.Materializing
@@ -120,16 +120,16 @@ public static class Format
     public static (string Line, double? Done) TrayStatus(QueueItem? running, string? name, bool quitting)
     {
         double? done = running is { Progress: { Total: > 0 } p } ? Math.Clamp((double)p.Done / p.Total, 0, 1) : null;
-        return quitting ? ("Finishing: the driver is saving the shader cache", null)
-            : running == null ? ("Idle", null)
-            : running.PlanCheck ? ("Checking games for more to compile", null)
-            : running.Stage == QueueStage.Paused ? ($"Paused: {name}", done)
-            : running.Stage == QueueStage.Warming && done is { } d ? ($"Compiling {name}, {100 * d:0}%", d)
+        return quitting ? (Loc.T("Format_Tray_Saving"), null)
+            : running == null ? (Loc.T("Format_Tray_Idle"), null)
+            : running.PlanCheck ? (Loc.T("Format_Tray_Checking"), null)
+            : running.Stage == QueueStage.Paused ? (Loc.F("Format_Tray_Paused", name ?? ""), done)
+            : running.Stage == QueueStage.Warming && done is { } d ? (Loc.F("Format_Tray_Compiling", name ?? "", $"{100 * d:0}%"), d)
             : running is { Stage: QueueStage.Merging, Note: { } writing } ? ($"{writing}: {name}", null)
             : running.Stage == QueueStage.Merging ? ($"{MergingStage}: {name}" + (done is { } m ? $", {100 * m:0}%" : ""), done)
             : running.Stage == QueueStage.Saving ? ($"{SavingStage}: {name}", null)
             : running.Stage == QueueStage.Finishing ? ($"{FinishingStage}: {name}", null)
-            : ($"Preparing {name}", null);
+            : (Loc.F("Format_Tray_Preparing", name ?? ""), null);
     }
 
     /// <summary>"FSR4: 80 known pipelines, compiled with the game", "DLSS: compiled by the NVIDIA driver itself",
@@ -161,55 +161,55 @@ public static class Format
         var partly = ScsKiller.IsPartlyWarmed(s);
         return s.Status switch
         {
-            _ when s.CompileUnreached => "This game needs a custom loader",
-            GameStatus.Warmed when r is ScsKiller.OverCacheLimitReason or ScsKiller.OverGameCapReason or ScsKiller.OverCompileFolderReason => "Too big for the shader cache",
-            GameStatus.Warmed when r == ScsKiller.CacheFullReason => "Shader cache full",
-            _ when ScsKiller.NotReached(r) => "Not in the game's cache yet",
+            _ when s.CompileUnreached => Loc.T("Format_ShortNote_CustomLoader"),
+            GameStatus.Warmed when r is ScsKiller.OverCacheLimitReason or ScsKiller.OverGameCapReason or ScsKiller.OverCompileFolderReason => Loc.T("Format_ShortNote_TooBig"),
+            GameStatus.Warmed when r == ScsKiller.CacheFullReason => Loc.T("Format_ShortNote_CacheFull"),
+            _ when ScsKiller.NotReached(r) => Loc.T("Format_ShortNote_NotInGameCache"),
             _ when ScsKiller.LinkedAway(r) => Sentence(r),
             GameStatus.Warmed when ScsKiller.IsPartlyCompiled(s) => Sentence(ScsKiller.PartlyCompiledNote(s)),
             GameStatus.Warmed when partly => $"Driver {s.WarmedDriverVersion} · {s.Careful!.LaunchCompiled * 100:0}% still compiled",
-            GameStatus.Warmed when ScsKiller.RtAfterRecording(s) && s.NoStutter == null => (s.RecorderInstalled ? "Recorder on: play with ray tracing"
-                : ScsKiller.RecordedEnough(s) ? "Ray tracing needs a recording" : "Ray tracing needs a 5-min recording") + KeyNote(s),
-            GameStatus.Warmed when ScsKiller.BothApis(s.Plan) => "DirectX 11 and 12" + (ScsKiller.IsPartial(s.Plan) ? " · partly covered" : "") + KeyNote(s),
-            GameStatus.Warmed => $"Driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? " · partly covered" : "") + KeyNote(s),
+            GameStatus.Warmed when ScsKiller.RtAfterRecording(s) && s.NoStutter == null => (s.RecorderInstalled ? Loc.T("Format_ShortNote_RecorderRt")
+                : ScsKiller.RecordedEnough(s) ? Loc.T("Format_ShortNote_RtNeedsRecording") : Loc.T("Format_ShortNote_RtNeeds5Min")) + KeyNote(s),
+            GameStatus.Warmed when ScsKiller.BothApis(s.Plan) => Loc.T("Format_ShortNote_Dx11And12") + (ScsKiller.IsPartial(s.Plan) ? Loc.T("Format_ShortNote_PartlyCovered") : "") + KeyNote(s),
+            GameStatus.Warmed => $"Driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? Loc.T("Format_ShortNote_PartlyCovered") : "") + KeyNote(s),
             GameStatus.Stale => StaleNote(r),
             GameStatus.NeedsRecording when r == ScsKiller.OfflineSessionNote => r,
             GameStatus.NeedsRecording when r is Vulkan.VulkanPlan.StartOnce or ScsKiller.LauncherClearsReason => null,   // the title says it
-            GameStatus.NeedsRecording when s.NoStutter != null && !s.RecorderInstalled => "Compiling isn't needed",
-            GameStatus.NeedsRecording when s.RecordingPaused => "Recording paused: limit reached",
+            GameStatus.NeedsRecording when s.NoStutter != null && !s.RecorderInstalled => Loc.T("Format_ShortNote_CompilingNotNeeded"),
+            GameStatus.NeedsRecording when s.RecordingPaused => Loc.T("Format_ShortNote_RecordingPaused"),
             GameStatus.NeedsRecording when ScsKiller.NeverRecorded(s) => null,   // the title: ScsKiller.NothingRecordedTitle
-            GameStatus.NeedsRecording when s.RecorderInstalled && !ScsKiller.RecordedEnough(s) => Has(Planning.Planner.Dx12Only) ? "Recorder on: play on DirectX 12" : "Recorder on: play 5 minutes",
-            GameStatus.NeedsRecording when Starts(ScsKiller.RtNeedsRecording) => "For ray-traced effects" + (s.InCommunityDb == true ? " · " + InDb(r) : ""),
+            GameStatus.NeedsRecording when s.RecorderInstalled && !ScsKiller.RecordedEnough(s) => Has(Planning.Planner.Dx12Only) ? Loc.T("Format_ShortNote_RecorderDx12") : Loc.T("Format_ShortNote_Recorder5Min"),
+            GameStatus.NeedsRecording when Starts(ScsKiller.RtNeedsRecording) => Loc.T("Format_ShortNote_ForRt") + (s.InCommunityDb == true ? " · " + InDb(r) : ""),
             GameStatus.NeedsRecording when s.InCommunityDb == true => Sentence(InDb(r)),
-            GameStatus.NeedsRecording when Starts("the recording has no draws") => "Play into the game world",
+            GameStatus.NeedsRecording when Starts("the recording has no draws") => Loc.T("Format_ShortNote_PlayIntoWorld"),
             GameStatus.NeedsRecording when s.RecorderInstalled => Sentence(FirstClause(r)),
-            GameStatus.NeedsRecording when s.RecorderEffective && Games.Collections.RecordedBy(s.Game.Id) != null => "Recorder on: play 5 minutes",   // its collection's first game's
-            GameStatus.NeedsRecording when s.RiskEligible => "Record a session on its page",
-            GameStatus.NeedsRecording when s.RecorderSkip != null => "Recorder not available",
-            GameStatus.NeedsRecording => "Turn on Record and play",
-            GameStatus.Ready when Has("ray-traced effects aren't compiled") => !s.AnyAntiCheat || s.RiskEligible ? "Ray tracing not compiled" : $"Ray tracing blocked by {ScsKiller.AntiCheatName(s)}",
-            GameStatus.Ready when Has(ScsKiller.RtUnseenNote) => "No ray tracing seen while recording",
-            GameStatus.Ready when Has(ScsKiller.RtInlineNote) => "Path tracing needs a recording",
+            GameStatus.NeedsRecording when s.RecorderEffective && Games.Collections.RecordedBy(s.Game.Id) != null => Loc.T("Format_ShortNote_Recorder5Min"),   // its collection's first game's
+            GameStatus.NeedsRecording when s.RiskEligible => Loc.T("Format_ShortNote_RecordSession"),
+            GameStatus.NeedsRecording when s.RecorderSkip != null => Loc.T("Format_ShortNote_RecorderNotAvailable"),
+            GameStatus.NeedsRecording => Loc.T("Format_ShortNote_TurnOnRecord"),
+            GameStatus.Ready when Has("ray-traced effects aren't compiled") => !s.AnyAntiCheat || s.RiskEligible ? Loc.T("Format_ShortNote_RtNotCompiled") : Loc.F("Format_ShortNote_RtBlockedByAntiCheat", ScsKiller.AntiCheatName(s)),
+            GameStatus.Ready when Has(ScsKiller.RtUnseenNote) => Loc.T("Format_ShortNote_NoRtSeen"),
+            GameStatus.Ready when Has(ScsKiller.RtInlineNote) => Loc.T("Format_ShortNote_PathTracingNeedsRecording"),
             GameStatus.Ready when s.Engine?.KeyMissing == true => Sentence(ScsKiller.KeyForFullCoverage),
-            GameStatus.Ready when ScsKiller.IsPartial(s.Plan) => "Partly covered",
-            GameStatus.Ready when Has(Planning.Planner.UntestedNote) => "Not tested on this engine version",
-            GameStatus.Ready when Has("for DirectX 12, ") => !s.AnyAntiCheat || s.RiskEligible ? "DirectX 11, DirectX 12 needs a recording" : $"DirectX 11, DirectX 12 blocked by {ScsKiller.AntiCheatName(s)}",
-            GameStatus.Ready when Has("also compiles every DirectX 11 shader") => "DirectX 11 and 12",
+            GameStatus.Ready when ScsKiller.IsPartial(s.Plan) => Loc.T("Format_ShortNote_PartlyCoveredAlone"),
+            GameStatus.Ready when Has(Planning.Planner.UntestedNote) => Loc.T("Format_ShortNote_UntestedEngine"),
+            GameStatus.Ready when Has("for DirectX 12, ") => !s.AnyAntiCheat || s.RiskEligible ? Loc.T("Format_ShortNote_Dx11Dx12NeedsRecording") : Loc.F("Format_ShortNote_Dx11Dx12BlockedByAntiCheat", ScsKiller.AntiCheatName(s)),
+            GameStatus.Ready when Has("also compiles every DirectX 11 shader") => Loc.T("Format_ShortNote_Dx11And12"),
             GameStatus.Ready when Starts("compiles every DirectX 11 shader") => "DirectX 11",
             GameStatus.Ready => null,
-            _ when r == Games.BootPrecompiles.Reason => "Builds its shaders at the main menu",
-            _ when s.ShaderModBlocks => $"{s.ShaderMod} changes all its pipelines",
-            _ when s.AnyAntiCheat && Starts("needs a recording, which") => $"Blocked by {ScsKiller.AntiCheatName(s)}" + (s.InCommunityDb == true ? " · " + InDb(r) : ""),
-            _ when Has(ScsKiller.ManualNoRecording) => "Needs a recording: confirm its folder",
+            _ when r == Games.BootPrecompiles.Reason => Loc.T("Format_ShortNote_MainMenuShaders"),
+            _ when s.ShaderModBlocks => Loc.F("Format_ShaderModChangesPipelines", s.ShaderMod),
+            _ when s.AnyAntiCheat && Starts("needs a recording, which") => Loc.F("Format_BlockedByAntiCheat", ScsKiller.AntiCheatName(s)) + (s.InCommunityDb == true ? " · " + InDb(r) : ""),
+            _ when Has(ScsKiller.ManualNoRecording) => Loc.T("Format_ShortNote_NeedsFolderConfirm"),
             _ when s.Engine?.Encrypted == true => null,   // the title: "Encrypted game files"
             _ when r is Codecs.NoOodleDll or Codecs.NoNativeOodle => r,
-            _ when r.EndsWith(Planning.Planner.VulkanNotOnGpu, StringComparison.Ordinal) => "Vulkan not supported on this GPU yet",
-            _ when s.Engine?.Unsupported is { } u => u.StartsWith("no D3D shaders", StringComparison.Ordinal) ? "No DirectX shaders" : "Engine not supported yet",
+            _ when r.EndsWith(Planning.Planner.VulkanNotOnGpu, StringComparison.Ordinal) => Loc.T("Format_ShortNote_VulkanNotSupported"),
+            _ when s.Engine?.Unsupported is { } u => u.StartsWith("no D3D shaders", StringComparison.Ordinal) ? Loc.T("Format_ShortNote_NoDxShaders") : Loc.T("Format_ShortNote_EngineNotSupported"),
             _ when r == ScsKiller.CheckingReason => null,   // the title: "Checking…"
-            _ when r == ScsKiller.NotCheckedReason => "Open to check",
-            _ when s.Engine == null => r == "engine not supported yet" ? "Engine not supported yet" : "Couldn't read the game files",
-            _ when Starts("runs on ") => "Runs on " + FirstClause(r["runs on ".Length..]),
-            _ when Starts("not supported on this GPU") => "Not supported on this GPU yet",
+            _ when r == ScsKiller.NotCheckedReason => Loc.T("Format_ShortNote_OpenToCheck"),
+            _ when s.Engine == null => r == "engine not supported yet" ? Loc.T("Format_ShortNote_EngineNotSupported") : Loc.T("Format_ShortNote_CouldntReadFiles"),
+            _ when Starts("runs on ") => Loc.T("Format_ShortNote_RunsOn") + FirstClause(r["runs on ".Length..]),
+            _ when Starts("not supported on this GPU") => Loc.T("Format_ShortNote_GpuNotSupported"),
             _ => Sentence(FirstClause(r)),
         };
     }
@@ -228,15 +228,15 @@ public static class Format
 
     static string StaleNote(string r) =>
         r.StartsWith("driver changed:", StringComparison.Ordinal) ? $"Driver {r[(r.LastIndexOf(' ') + 1)..]} cleared its cache"
-        : r == ScsKiller.TrimmedPartReason ? "Part of its shader cache is gone"
-        : r == ScsKiller.TrimmedAllReason ? "Its shader cache was removed"
-        : r.StartsWith("the compile didn't reach", StringComparison.Ordinal) ? "The compile missed the game's cache"
-        : r.StartsWith("the game runs as", StringComparison.Ordinal) ? "The exe name's case changed"
-        : r.StartsWith("the last compile filled the cache of", StringComparison.Ordinal) ? "Compiled for another exe"
-        : r.StartsWith("game updated", StringComparison.Ordinal) ? "Game updated"
-        : r.StartsWith("game shaders changed", StringComparison.Ordinal) ? "Game shaders changed"
-        : r.StartsWith("SCSKiller can now compile", StringComparison.Ordinal) ? "SCSKiller can compile more"
-        : r.StartsWith("Maximum mode", StringComparison.Ordinal) ? "Maximum mode: more to compile"
+        : r == ScsKiller.TrimmedPartReason ? Loc.T("Format_Stale_TrimmedPart")
+        : r == ScsKiller.TrimmedAllReason ? Loc.T("Format_Stale_TrimmedAll")
+        : r.StartsWith("the compile didn't reach", StringComparison.Ordinal) ? Loc.T("Format_Stale_MissedCache")
+        : r.StartsWith("the game runs as", StringComparison.Ordinal) ? Loc.T("Format_Stale_ExeCaseChanged")
+        : r.StartsWith("the last compile filled the cache of", StringComparison.Ordinal) ? Loc.T("Format_Stale_AnotherExe")
+        : r.StartsWith("game updated", StringComparison.Ordinal) ? Loc.T("Format_Stale_GameUpdated")
+        : r.StartsWith("game shaders changed", StringComparison.Ordinal) ? Loc.T("Format_Stale_ShadersChanged")
+        : r.StartsWith("SCSKiller can now compile", StringComparison.Ordinal) ? Loc.T("Format_Stale_CanCompileMore")
+        : r.StartsWith("Maximum mode", StringComparison.Ordinal) ? Loc.T("Format_Stale_MaxModeMore")
         : r.Contains(". " + ScsKiller.RedoesNote, StringComparison.Ordinal) ? r
         : Sentence(FirstClause(r));   // "N new pipelines recorded"
 
@@ -250,4 +250,103 @@ public static class Format
 
     public static string Then(string first, string? next) => string.IsNullOrEmpty(next) ? first : first + (first.EndsWith('.') ? " " : ". ") + Sentence(next);
     static string InDb(string reason) => reason.Contains(ScsKiller.InDbSupportersNote, StringComparison.OrdinalIgnoreCase) ? ScsKiller.InDbSupportersNote : ScsKiller.InDbNote;
+
+    static readonly System.Text.RegularExpressions.Regex RawShadersRegex =
+        new(@"no raw DXBC/DXIL shaders in its files \(([\d,\.]+) GB sampled\): shaders are compressed or packed: needs an engine reader", System.Text.RegularExpressions.RegexOptions.Compiled);
+    static readonly System.Text.RegularExpressions.Regex ComputeShadersRegex =
+        new(@"only (\d+) raw compute shaders: graphics shaders are compressed or packed: needs an engine reader", System.Text.RegularExpressions.RegexOptions.Compiled);
+    static readonly System.Text.RegularExpressions.Regex GraphicsShadersRegex =
+        new(@"only (\d+) raw graphics shaders: the rest are compressed or packed: needs an engine reader", System.Text.RegularExpressions.RegexOptions.Compiled);
+    static readonly System.Text.RegularExpressions.Regex NeedsRecordingRegex =
+        new(@"needs a recording,\s*which\s+(.+?)\s+blocks(?:\.\s*(.+))?$", System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>Translates an engine/core reason string into the user's localized language for UI presentation.</summary>
+    public static string TranslateReason(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return "";
+        var r = reason.Trim();
+        if (RawShadersRegex.Match(r) is { Success: true } mRaw)
+            return Loc.F("Reason_NoRawShadersPacked", mRaw.Groups[1].Value);
+        if (ComputeShadersRegex.Match(r) is { Success: true } mComp)
+            return Loc.F("Reason_OnlyComputeShaders", mComp.Groups[1].Value);
+        if (GraphicsShadersRegex.Match(r) is { Success: true } mGfx)
+            return Loc.F("Reason_OnlyGraphicsShaders", mGfx.Groups[1].Value);
+        if (NeedsRecordingRegex.Match(r) is { Success: true } mRec)
+        {
+            var antiCheat = mRec.Groups[1].Value.Trim();
+            var dbPart = mRec.Groups[2].Success ? mRec.Groups[2].Value.Trim() : null;
+            var baseText = Loc.F("Reason_NeedsRecordingAntiCheat", antiCheat);
+            if (string.IsNullOrEmpty(dbPart)) return baseText;
+            var translatedDb = dbPart switch
+            {
+                _ when dbPart.Equals("not in the community database yet", StringComparison.OrdinalIgnoreCase) => Loc.T("Reason_NotInCommunityDbYet"),
+                _ when dbPart.Equals("in the community database for patreon supporters", StringComparison.OrdinalIgnoreCase) => Loc.T("Reason_InCommunityDbSupporters"),
+                _ when dbPart.Equals("in the community database", StringComparison.OrdinalIgnoreCase) => Loc.T("Reason_InCommunityDb"),
+                _ => dbPart
+            };
+            return baseText + ". " + Sentence(translatedDb);
+        }
+
+        return r switch
+        {
+            _ when r == Carved.CarvedReader.GodotReason => Loc.T("Reason_Godot"),
+            _ when r == Carved.CarvedReader.Dx9Reason => Loc.T("Reason_DirectX9"),
+            _ when r == Carved.CarvedReader.RuntimeShadersReason => Loc.T("Reason_RuntimeShaders"),
+            _ when r == ScsKiller.CantReachReason => Loc.T("Reason_CantReach"),
+            _ when r == ScsKiller.ThirtyTwoBitReason => Loc.T("Reason_ThirtyTwoBit"),
+            _ when r == ScsKiller.UnreachedReason => Loc.T("Reason_Unreached"),
+            _ when r == ScsKiller.NoShadersReason || r == ScsKiller.NothingToCompileReason => Loc.T("Reason_NoShaders"),
+            _ when r == ScsKiller.CacheOffReason => Loc.T("Reason_CacheOff"),
+            _ when r == ScsKiller.OverCacheLimitReason => Loc.T("Reason_OverCacheLimit"),
+            _ when r == ScsKiller.OverGameCapReason => Loc.T("Reason_OverGameCap"),
+            _ when r == ScsKiller.OverCompileFolderReason => Loc.T("Reason_OverCompileFolder"),
+            _ when r == ScsKiller.CacheFullReason => Loc.T("Reason_CacheFull"),
+            _ when r == ScsKiller.TimedOutReason => Loc.T("Reason_TimedOut"),
+            _ when r == ScsKiller.CheckingReason => Loc.T("Reason_Checking"),
+            _ when r == ScsKiller.NotCheckedReason => Loc.T("Reason_NotChecked"),
+            _ when r == ScsKiller.RtToCompileReason => Loc.T("Reason_RtToCompile"),
+            _ when r == ScsKiller.LauncherClearsReason => Loc.T("Reason_LauncherClears"),
+            _ when r == ScsKiller.PlanReplacedReason => Loc.T("Reason_PlanReplaced"),
+            _ when r == ScsKiller.PlanCheckFailedReason => Loc.T("Reason_PlanCheckFailed"),
+            _ when r == ScsKiller.MissesGameReason => Loc.T("Reason_MissesGame"),
+            _ when r == ScsKiller.TrimmedPartReason => Loc.T("Reason_TrimmedPart"),
+            _ when r == ScsKiller.PlanGrewReason => Loc.T("Reason_PlanGrew"),
+            _ when r == ScsKiller.AftermathRetryReason => Loc.T("Reason_AftermathRetry"),
+            _ when r == ScsKiller.AftermathLostReason => Loc.T("Reason_AftermathLost"),
+            _ when r == ScsKiller.D3DSCachePendingReason => Loc.T("Reason_D3DSCachePending"),
+            _ when r == ScsKiller.D3DSCacheDamagedReason => Loc.T("Reason_D3DSCacheDamaged"),
+            _ when r == Carved.CarvedReader.GodotOpenGl => Loc.T("Reason_GodotOpenGl"),
+            _ when r == Games.BootPrecompiles.Reason => Loc.T("Reason_BootPrecompiles"),
+            _ when r == Games.SteamShortcutSource.NotReadyReason => Loc.T("Reason_ProtonNotReady"),
+            _ when r == Games.SteamShortcutSource.NoProton => Loc.T("Reason_NoProton"),
+            _ when r == Planning.Planner.Dx9AmdReason => Loc.T("Reason_Dx9Amd"),
+            "engine not supported yet" => Loc.T("Format_ShortNote_EngineNotSupported"),
+            "runs on OpenGL" => Loc.T("Reason_RunsOnOpenGL"),
+            "runs on Vulkan" => Loc.T("Reason_RunsOnVulkan"),
+            "runs on DirectX 9" => Loc.T("Reason_RunsOnDirectX9"),
+            "runs on DirectX 10" => Loc.T("Reason_RunsOnDirectX10"),
+            _ when r.StartsWith("not supported on this GPU", StringComparison.Ordinal) => Loc.T("Reason_NotSupportedGpu"),
+            _ => r
+        };
+    }
+
+    /// <summary>Translates Before and after blocked note into the user's localized language.</summary>
+    public static string TranslateBaBlocked(string? note)
+    {
+        if (string.IsNullOrWhiteSpace(note)) return "";
+        var n = note.Trim();
+        return n switch
+        {
+            "Not for games with anti-cheat" => Loc.T("Ba_Blocked_AntiCheat"),
+            "Before and after recording is off in Settings" => Loc.T("Ba_Blocked_SettingsOff"),
+            "Only for DirectX 12 and DirectX 11 games" => Loc.T("Ba_Blocked_ApiOnly"),
+            "Not for games without shader compilation stutter" => Loc.T("Ba_Blocked_NoStutter"),
+            "Turn the recorder on for this game first" => Loc.T("Ba_Blocked_TurnRecorderOnFirst"),
+            "A before and after recording is already in progress" => Loc.T("Ba_Blocked_AlreadyInProgress"),
+            "Wait for the compile to finish" => Loc.T("Ba_Blocked_WaitForCompile"),
+            _ when n.EndsWith("is running", StringComparison.OrdinalIgnoreCase) => Loc.F("Ba_Blocked_GameIsRunning", n[..^10].Trim()),
+            _ when n.StartsWith("The recorder can't run in this game:", StringComparison.OrdinalIgnoreCase) => Loc.F("Ba_Blocked_RecorderCantRun", n[36..].Trim()),
+            _ => TranslateReason(n)
+        };
+    }
 }

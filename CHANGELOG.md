@@ -4,6 +4,9 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+- Added multilingual support with a zero-dependency JSON localization system, Brazilian Portuguese (`pt-BR`) and Simplified Chinese (`zh-Hans`) translations.
+
+
 ## [1.4.3] - 2026-10-31
 
 **New**

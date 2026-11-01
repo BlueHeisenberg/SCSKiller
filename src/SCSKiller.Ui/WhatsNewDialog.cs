@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Documents;
 using Avalonia.Media;
 using SCSKiller.Core.App;
+using SCSKiller.Core.Localization;
 using SCSKiller.Ui.Controls;
 using SCSKiller.Ui.Models;
 
@@ -41,6 +42,6 @@ public static class WhatsNewDialog
             panel.Children.Add(text);
         }
         // as tall as the window leaves room for: the release notes run long
-        return new ContentDialog { Title = $"What's new in {section.Version}", Content = panel, CloseButtonText = "Close", MaxWidth = 880, ContentMaxHeight = double.PositiveInfinity, Margin = new(0, 32) };
+        return new ContentDialog { Title = Loc.F("WhatsNew_Title", section.Version), Content = panel, CloseButtonText = Loc.T("Common_Close"), MaxWidth = 880, ContentMaxHeight = double.PositiveInfinity, Margin = new(0, 32) };
     }
 }

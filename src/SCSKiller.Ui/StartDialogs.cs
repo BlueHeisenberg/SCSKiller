@@ -1,3 +1,4 @@
+using SCSKiller.Core.Localization;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Media;
@@ -78,7 +79,7 @@ static class StartDialogs
 
     public static ContentDialog ActiveCheckDialog() => new()
     {
-        Title = "Anonymous daily check",
+        Title = Loc.T("Dialog_ActiveCheck_Title"),
         Content = new StackPanel
         {
             Spacing = 8,
@@ -86,14 +87,13 @@ static class StartDialogs
             {
                 new TextBlock
                 {
-                    Text = "Once a day SCSKiller can tell our server that an install is active, with its version and GPU vendor and no identifier. "
-                        + "This helps us count active installs so we can size our servers. It's off until you turn it on.",
+                    Text = Loc.T("Dialog_ActiveCheck_Body"),
                     TextWrapping = TextWrapping.Wrap,
                 },
-                new TextBlock { Text = "Change it any time in Settings.", TextWrapping = TextWrapping.Wrap, Classes = { "Caption" } },
+                new TextBlock { Text = Loc.T("Dialog_ActiveCheck_ChangeAnytime"), TextWrapping = TextWrapping.Wrap, Classes = { "Caption" } },
             },
         },
-        PrimaryButtonText = "Turn it on", CloseButtonText = "Keep it off", DefaultButton = ContentDialogButton.None,   // no nudge either way
+        PrimaryButtonText = Loc.T("Dialog_ActiveCheck_TurnOn"), CloseButtonText = Loc.T("Dialog_ActiveCheck_KeepOff"), DefaultButton = ContentDialogButton.None,   // no nudge either way
     };
 
     static async Task<TraversalMode?> AskTraversalAsync() => await TryShowAsync(TraversalDialog(TraversalFix.LowVram(Host.Core.Vendor.Gpu))) is { } r
@@ -116,8 +116,8 @@ static class StartDialogs
 
     static async Task<bool?> AskDiagnosticsAsync() => await TryShowAsync(new ContentDialog
     {
-        Title = "Share diagnostics to help fix problems?",
-        Content = "When a compile fails, send its error codes, once per compile. You can change this in Settings.",
-        PrimaryButtonText = "Share diagnostics", CloseButtonText = "No thanks", DefaultButton = ContentDialogButton.Close,
+        Title = Loc.T("Dialog_Diagnostics_Title"),
+        Content = Loc.T("Dialog_Diagnostics_Body"),
+        PrimaryButtonText = Loc.T("Dialog_Diagnostics_Share"), CloseButtonText = Loc.T("Dialog_Diagnostics_NoThanks"), DefaultButton = ContentDialogButton.Close,
     }) is { } r ? r == ContentDialogResult.Primary : null;
 }

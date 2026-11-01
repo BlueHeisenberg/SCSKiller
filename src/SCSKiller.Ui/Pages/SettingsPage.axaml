@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ui="using:SCSKiller.Ui"
+             xmlns:loc="using:SCSKiller.Ui"
              xmlns:c="using:SCSKiller.Ui.Controls"
              xmlns:m="using:SCSKiller.Ui.Models"
              x:Class="SCSKiller.Ui.Pages.SettingsPage"
@@ -33,7 +34,7 @@
 
     <ScrollViewer x:Name="Scroller">
         <StackPanel Margin="36,28,36,28" Spacing="16">
-            <TextBlock Text="Settings" Classes="Title" />
+            <TextBlock Text="{loc:Loc Settings_Title}" Classes="Title" />
 
             <Border Classes="Card" Padding="20">
                 <StackPanel Spacing="14">
@@ -43,11 +44,11 @@
                     </StackPanel>
                     <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
                         <StackPanel Spacing="2">
-                            <TextBlock Text="Current limit" Classes="Caption" />
+                            <TextBlock Text="{loc:Loc Settings_CurrentLimit}" Classes="Caption" />
                             <TextBlock Text="{Binding CurrentLimit}" Classes="Section" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Spacing="2">
-                            <TextBlock Text="Used now" Classes="Caption" />
+                            <TextBlock Text="{loc:Loc Settings_UsedNow}" Classes="Caption" />
                             <TextBlock Text="{Binding Used}" Classes="Section" />
                         </StackPanel>
                         <StackPanel Grid.Column="2" Spacing="2">
@@ -57,18 +58,18 @@
                     </Grid>
                     <StackPanel Spacing="14" IsVisible="{Binding Configurable, Mode=OneTime}">
                         <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="12">
-                            <TextBlock x:Name="NewLimitLabel" Text="New limit" VerticalAlignment="Center" />
-                            <ComboBox Grid.Column="1" ItemsSource="{x:Static m:SettingsVm.SizeLabels}" MinWidth="220"
+                            <TextBlock x:Name="NewLimitLabel" Text="{loc:Loc Settings_NewLimit}" VerticalAlignment="Center" />
+                            <ComboBox Grid.Column="1" ItemsSource="{Binding SizeLabels}" MinWidth="220"
                                       SelectedIndex="{Binding SizeIndex, Mode=TwoWay}" AutomationProperties.LabeledBy="{Binding #NewLimitLabel}" />
-                            <Button Grid.Column="3" Classes="accent" Click="OnApply" AutomationProperties.Name="Apply (needs administrator)" IsEnabled="{Binding CanApplyLimit}">
+                            <Button Grid.Column="3" Classes="accent" Click="OnApply" AutomationProperties.Name="{loc:Loc Settings_ApplyAdmin}" IsEnabled="{Binding CanApplyLimit}">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Shield}" FontSize="14" VerticalAlignment="Center" />
-                                    <TextBlock Text="Apply (needs administrator)" />
+                                    <TextBlock Text="{loc:Loc Settings_ApplyAdmin}" />
                                 </StackPanel>
                             </Button>
                         </Grid>
                         <c:InfoBar IsVisible="{Binding HasApplyMessage}" Message="{Binding ApplyMessage}" Severity="{Binding ApplySeverity}" IsClosable="False" />
-                        <TextBlock Text="You can switch back to the driver default here at any time." Classes="Caption" />
+                        <TextBlock Text="{loc:Loc Settings_DriverDefaultHint}" Classes="Caption" />
                     </StackPanel>
                     <StackPanel Spacing="6" IsVisible="{Binding HasAmdUse}">
                         <TextBlock Text="{Binding AmdUse}" TextWrapping="Wrap" />
@@ -78,20 +79,20 @@
                     <c:InfoBar IsVisible="{Binding HasAmdAlwaysOn}" Severity="Warning" IsClosable="False" Message="{Binding AmdAlwaysOn}" />
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" IsVisible="{Binding IsAmd, Mode=OneTime}">
                         <StackPanel Spacing="2">
-                            <TextBlock Text="Keep compiled caches aside" Classes="BodyStrong" />
-                            <TextBlock Text="Puts a game's compiled cache back after the driver removes it." Classes="Secondary" TextWrapping="Wrap" />
+                            <TextBlock Text="{loc:Loc Settings_KeepCachesAside}" Classes="BodyStrong" />
+                            <TextBlock Text="{loc:Loc Settings_KeepCachesAsideTip}" Classes="Secondary" TextWrapping="Wrap" />
                             <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0" IsVisible="{Binding HasKept}">
                                 <TextBlock Text="{Binding KeptSummary}" VerticalAlignment="Center" TextWrapping="Wrap" />
-                                <Button Content="Manage…" Click="OnManageKept" />
+                                <Button Content="{loc:Loc Common_Manage}" Click="OnManageKept" />
                             </StackPanel>
                         </StackPanel>
-                        <ToggleSwitch Grid.Column="1" IsChecked="{Binding KeepCachesAside, Mode=TwoWay}" AutomationProperties.Name="Keep compiled caches aside" />
+                        <ToggleSwitch Grid.Column="1" IsChecked="{Binding KeepCachesAside, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_KeepCachesAside}" />
                     </Grid>
                     <StackPanel Spacing="8" IsVisible="{Binding ShowsShaderCleanup, Mode=OneTime}">
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                             <StackPanel Spacing="2" VerticalAlignment="Center">
-                                <TextBlock Text="Windows' automatic disk cleanup" Classes="BodyStrong" />
-                                <TextBlock Text="Storage Sense can delete the DirectX shader cache." Classes="Secondary" TextWrapping="Wrap" />
+                                <TextBlock Text="{loc:Loc Settings_StorageSenseTitle}" Classes="BodyStrong" />
+                                <TextBlock Text="{loc:Loc Settings_StorageSenseTip}" Classes="Secondary" TextWrapping="Wrap" />
                             </StackPanel>
                             <Button Grid.Column="1" Click="OnShaderCleanup" VerticalAlignment="Center" AutomationProperties.Name="{Binding ShaderCleanupAction}" IsEnabled="{Binding CanApplyShaderCleanup}">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
@@ -109,118 +110,118 @@
 
                 <Border Classes="Card" Padding="20">
                     <StackPanel Spacing="12">
-                        <TextBlock Text="After a driver update" Classes="Section" />
-                        <TextBlock Text="A new driver throws away every compiled shader, so compiled games stutter again until they are rebuilt."
+                        <TextBlock Text="{loc:Loc Settings_AfterDriverUpdate}" Classes="Section" />
+                        <TextBlock Text="{loc:Loc Settings_AfterDriverUpdateTip}"
                                    Classes="Secondary" TextWrapping="Wrap" />
                         <StackPanel Classes="Radios" AutomationProperties.Name="When to rebuild" IsVisible="{Binding ShowsDriverModes, Mode=OneTime}">
-                            <RadioButton GroupName="DriverMode" AutomationProperties.Name="Ask me"
+                            <RadioButton GroupName="DriverMode" AutomationProperties.Name="{loc:Loc Settings_DriverMode_Ask}"
                                          IsChecked="{Binding DriverMode, Converter={x:Static ui:Converters.Index}, ConverterParameter=0}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Ask me" />
-                                    <TextBlock Text="{x:Static m:SettingsVm.AskNote}" Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_DriverMode_Ask}" />
+                                    <TextBlock Text="{Binding AskNote}" Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </RadioButton>
-                            <RadioButton GroupName="DriverMode" AutomationProperties.Name="Automatically, only while the PC is idle"
+                            <RadioButton GroupName="DriverMode" AutomationProperties.Name="{loc:Loc Settings_DriverMode_Idle}"
                                          IsChecked="{Binding DriverMode, Converter={x:Static ui:Converters.Index}, ConverterParameter=1}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Automatically, only while the PC is idle" />
-                                    <TextBlock Text="{x:Static m:SettingsVm.WhenIdleNote}" Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_DriverMode_Idle}" />
+                                    <TextBlock Text="{Binding WhenIdleNote}" Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </RadioButton>
-                            <RadioButton GroupName="DriverMode" AutomationProperties.Name="Automatically, right away"
+                            <RadioButton GroupName="DriverMode" AutomationProperties.Name="{loc:Loc Settings_DriverMode_RightAway}"
                                          IsChecked="{Binding DriverMode, Converter={x:Static ui:Converters.Index}, ConverterParameter=2}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Automatically, right away" />
-                                    <TextBlock Text="Starts at once and pauses while a game runs." Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_DriverMode_RightAway}" />
+                                    <TextBlock Text="{loc:Loc Settings_DriverMode_RightAwayTip}" Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </RadioButton>
-                            <RadioButton GroupName="DriverMode" AutomationProperties.Name="Off"
+                            <RadioButton GroupName="DriverMode" AutomationProperties.Name="{loc:Loc Settings_DriverMode_Off}"
                                          IsChecked="{Binding DriverMode, Converter={x:Static ui:Converters.Index}, ConverterParameter=3}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Off" />
-                                    <TextBlock Text="Rebuild games yourself from the Library." Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Common_Off}" />
+                                    <TextBlock Text="{loc:Loc Settings_DriverMode_OffTip}" Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </RadioButton>
                         </StackPanel>
-                        <TextBlock Text="{Binding DriverModesNote, Mode=OneTime}" IsVisible="{Binding HasDriverModesNote, Mode=OneTime}" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding DriverModesNote}" IsVisible="{Binding HasDriverModesNote, Mode=OneTime}" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding LastRebuilt}" Classes="Caption" IsVisible="{Binding HasLastRebuilt}" />
                         <Rectangle Classes="Divider" />
-                        <TextBlock x:Name="NewShadersHeader" Text="When games have new shaders" Classes="Section" />
-                        <TextBlock Text="A compiled game gains pipelines from its recording, the shared shader hashes or an SCSKiller update. Never while you play."
+                        <TextBlock x:Name="NewShadersHeader" Text="{loc:Loc Settings_WhenNewShaders}" Classes="Section" />
+                        <TextBlock Text="{loc:Loc Settings_WhenNewShadersTip}"
                                    Classes="Secondary" TextWrapping="Wrap" />
-                        <StackPanel Classes="Radios" AutomationProperties.Name="When games have new shaders">
-                            <RadioButton GroupName="NewShaders" AutomationProperties.Name="Off"
+                        <StackPanel Classes="Radios" AutomationProperties.Name="{loc:Loc Settings_WhenNewShaders}">
+                            <RadioButton GroupName="NewShaders" AutomationProperties.Name="{loc:Loc Settings_DriverMode_Off}"
                                          IsChecked="{Binding NewShadersChoice, Converter={x:Static ui:Converters.Index}, ConverterParameter=0}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Off" />
-                                    <TextBlock Text="Compile games yourself from the Library." Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Common_Off}" />
+                                    <TextBlock Text="{loc:Loc Settings_DriverMode_OffTip}" Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </RadioButton>
-                            <RadioButton GroupName="NewShaders" AutomationProperties.Name="Notify me"
+                            <RadioButton GroupName="NewShaders" AutomationProperties.Name="{loc:Loc Settings_NewShaders_Notify}"
                                          IsChecked="{Binding NewShadersChoice, Converter={x:Static ui:Converters.Index}, ConverterParameter=1}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Notify me" />
-                                    <TextBlock Text="A notification offers Compile now. Nothing starts on its own." Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_NewShaders_Notify}" />
+                                    <TextBlock Text="{loc:Loc Settings_NewShaders_NotifyTip}" Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </RadioButton>
-                            <RadioButton GroupName="NewShaders" AutomationProperties.Name="Compile automatically and notify me"
+                            <RadioButton GroupName="NewShaders" AutomationProperties.Name="{loc:Loc Settings_NewShaders_AutoNotify}"
                                          IsChecked="{Binding NewShadersChoice, Converter={x:Static ui:Converters.Index}, ConverterParameter=2}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Compile automatically and notify me" />
-                                    <TextBlock Text="Compiles while the PC is idle and tells you it's queued." Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_NewShaders_AutoNotify}" />
+                                    <TextBlock Text="{loc:Loc Settings_NewShaders_AutoNotifyTip}" Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </RadioButton>
-                            <RadioButton GroupName="NewShaders" AutomationProperties.Name="Compile automatically, silently"
+                            <RadioButton GroupName="NewShaders" AutomationProperties.Name="{loc:Loc Settings_NewShaders_AutoSilent}"
                                          IsChecked="{Binding NewShadersChoice, Converter={x:Static ui:Converters.Index}, ConverterParameter=3}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Compile automatically, silently" />
-                                    <TextBlock Text="Compiles while the PC is idle with no notification." Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_NewShaders_AutoSilent}" />
+                                    <TextBlock Text="{loc:Loc Settings_NewShaders_AutoSilentTip}" Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </RadioButton>
                         </StackPanel>
-                        <CheckBox IsChecked="{Binding NewShadersRightAway, Mode=TwoWay}" AutomationProperties.Name="Compile new shaders right away">
+                        <CheckBox IsChecked="{Binding NewShadersRightAway, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_NewShadersRightAway}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Compile new shaders right away" TextWrapping="Wrap" />
-                                <TextBlock Text="Automatic compiles start when the game exits, not when the PC is idle."
+                                <TextBlock Text="{loc:Loc Settings_NewShadersRightAway}" TextWrapping="Wrap" />
+                                <TextBlock Text="{loc:Loc Settings_NewShadersRightAwayTip}"
                                            Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
-                        <CheckBox IsChecked="{Binding CompileNewGames, Mode=TwoWay}" AutomationProperties.Name="Compile new games automatically">
+                        <CheckBox IsChecked="{Binding CompileNewGames, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_CompileNewGames}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Compile new games automatically" TextWrapping="Wrap" />
-                                <TextBlock Text="Games you never compiled compile while the PC is idle, as Add all ready would."
+                                <TextBlock Text="{loc:Loc Settings_CompileNewGames}" TextWrapping="Wrap" />
+                                <TextBlock Text="{loc:Loc Settings_CompileNewGamesTip}"
                                            Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
                         <Rectangle Classes="Divider" />
-                        <CheckBox Content="Pause background compiling while another game is running" IsChecked="{Binding PauseWhileGaming, Mode=TwoWay}" />
+                        <CheckBox Content="{loc:Loc Settings_PauseWhileGaming}" IsChecked="{Binding PauseWhileGaming, Mode=TwoWay}" />
                         <Grid>
-                            <TextBlock Text="Threads for background rebuilds" />
+                            <TextBlock Text="{loc:Loc Settings_BgThreads}" />
                             <TextBlock Text="{Binding BackgroundThreadsText}" HorizontalAlignment="Right" />
                         </Grid>
                         <Slider Minimum="1" Maximum="{Binding MaxThreads, Mode=OneTime}" TickFrequency="1" IsSnapToTickEnabled="True"
-                                Value="{Binding BackgroundThreads, Mode=TwoWay}" AutomationProperties.Name="Threads for background rebuilds" />
+                                Value="{Binding BackgroundThreads, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_BgThreads}" />
                         <StackPanel Spacing="12" IsVisible="{Binding ShowsAutoShader, Mode=OneTime}">
                             <StackPanel Spacing="8">
-                                <CheckBox x:Name="AutoBox" Content="Auto Shader Compilation (NVIDIA beta)" IsChecked="{Binding AutoOn, Mode=TwoWay}" />
+                                <CheckBox x:Name="AutoBox" Content="{loc:Loc Settings_AutoShaderTitle}" IsChecked="{Binding AutoOn, Mode=TwoWay}" />
                                 <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
                                     <StackPanel>
-                                        <TextBlock Text="System utilization" Classes="Header" />
-                                        <ComboBox ItemsSource="{x:Static m:SettingsVm.AutoLevels}" SelectedIndex="{Binding AutoLevelIndex, Mode=TwoWay}"
-                                                  IsEnabled="{Binding #AutoBox.IsChecked}" MinWidth="140" AutomationProperties.Name="System utilization" />
+                                        <TextBlock Text="{loc:Loc Settings_SystemUtilization}" Classes="Header" />
+                                        <ComboBox ItemsSource="{Binding AutoLevels}" SelectedIndex="{Binding AutoLevelIndex, Mode=TwoWay}"
+                                                  IsEnabled="{Binding #AutoBox.IsChecked}" MinWidth="140" AutomationProperties.Name="{loc:Loc Settings_SystemUtilization}" />
                                     </StackPanel>
-                                    <Button Grid.Column="2" Click="OnApplyAuto" VerticalAlignment="Bottom" AutomationProperties.Name="Apply (needs administrator)" IsEnabled="{Binding CanApplyAuto}">
+                                    <Button Grid.Column="2" Click="OnApplyAuto" VerticalAlignment="Bottom" AutomationProperties.Name="{loc:Loc Settings_ApplyAdmin}" IsEnabled="{Binding CanApplyAuto}">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Shield}" FontSize="14" VerticalAlignment="Center" />
-                                            <TextBlock Text="Apply (needs administrator)" />
+                                            <TextBlock Text="{loc:Loc Settings_ApplyAdmin}" />
                                         </StackPanel>
                                     </Button>
                                 </Grid>
                                 <TextBlock Text="{Binding AutoShaderText}" Classes="Caption" TextWrapping="Wrap" />
                                 <c:InfoBar IsVisible="{Binding HasAutoMessage}" Message="{Binding AutoMessage}" Severity="{Binding AutoSeverity}" IsClosable="False" />
                             </StackPanel>
-                            <c:InfoBar Severity="Informational" IsClosable="False" Title="We recommend enabling it"
-                                       Message="A beta feature of the NVIDIA App: after a driver update it re-compiles the games you have already played. SCSKiller adds everything else, so both together are best. The overlap costs little: shaders NVIDIA already rebuilt take about 1 ms each here." />
+                            <c:InfoBar Severity="Informational" IsClosable="False" Title="{loc:Loc Settings_AutoShaderRecommend}"
+                                       Message="{loc:Loc Settings_AutoShaderRecommendMsg}" />
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -229,36 +230,36 @@
 
                     <Border x:Name="PatreonCard" Classes="Card" Padding="20">
                         <StackPanel Spacing="12">
-                            <TextBlock Text="Patreon and community database" Classes="Section" />
+                            <TextBlock Text="{loc:Loc Settings_PatreonCard}" Classes="Section" />
                             <!-- the account's part: its DataContext is the page's AccountVm -->
                             <StackPanel x:Name="AccountPart" x:DataType="m:AccountVm" Spacing="12">
                                 <StackPanel Spacing="12" IsVisible="{Binding SignedOut}">
-                                    <TextBlock Text="Patreon supporters get the community shader hash database and beta and alpha builds. Sign in with the Patreon account you support SCSKiller with."
+                                    <TextBlock Text="{loc:Loc Settings_PatreonIntro}"
                                                Classes="Secondary" TextWrapping="Wrap" />
                                     <StackPanel Orientation="Horizontal" Spacing="12">
-                                        <Button Classes="accent" Content="Sign in with Patreon" Click="OnSignIn" IsEnabled="{Binding Idle}" />
-                                        <Button Content="Cancel" Click="OnCancelSignIn" IsVisible="{Binding SigningIn}" />
+                                        <Button Classes="accent" Content="{loc:Loc Settings_SignInPatreon}" Click="OnSignIn" IsEnabled="{Binding Idle}" />
+                                        <Button Content="{loc:Loc Settings_Cancel}" Click="OnCancelSignIn" IsVisible="{Binding SigningIn}" />
                                     </StackPanel>
-                                    <TextBlock Text="Finish signing in in your browser. Nothing else is needed here." Classes="Caption" TextWrapping="Wrap"
+                                    <TextBlock Text="{loc:Loc Settings_SignInBrowserHint}" Classes="Caption" TextWrapping="Wrap"
                                                IsVisible="{Binding SigningIn}" />
                                 </StackPanel>
                                 <StackPanel Spacing="12" IsVisible="{Binding SignedIn}">
                                     <StackPanel Spacing="2">
-                                        <TextBlock Text="Signed in with Patreon" />
+                                        <TextBlock Text="{loc:Loc Settings_SignedInPatreon}" />
                                         <TextBlock Text="{Binding Benefits}" Classes="Caption" TextWrapping="Wrap" />
                                     </StackPanel>
                                     <StackPanel Orientation="Horizontal" Spacing="12">
-                                        <Button Content="Refresh status" Click="OnRefreshAccount" IsEnabled="{Binding Idle}" />
-                                        <Button Content="Sign out" Click="OnSignOut" IsEnabled="{Binding CanSignOut}" />
+                                        <Button Content="{loc:Loc Settings_RefreshStatus}" Click="OnRefreshAccount" IsEnabled="{Binding Idle}" />
+                                        <Button Content="{loc:Loc Settings_SignOut}" Click="OnSignOut" IsEnabled="{Binding CanSignOut}" />
                                         <c:ProgressRing IsActive="{Binding Busy}" IsVisible="{Binding Busy}" Width="16" Height="16" />
                                     </StackPanel>
                                     <c:InfoBar IsVisible="{Binding OffersSharing}" Severity="Success" IsClosable="False"
-                                               Title="You're in. Want to help improve the community shader hash database?"
-                                               Message="Your game shader hashes are shared anonymously, never linked to your Patreon account.">
+                                               Title="{loc:Loc Settings_SharingOfferTitle}"
+                                               Message="{loc:Loc Settings_SharingOfferMessage}">
                                         <c:InfoBar.ActionButton>
                                             <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
-                                                <Button Classes="accent" Content="Share anonymously" Click="OnShare" />
-                                                <Button Content="Not now" Click="OnNotNow" />
+                                                <Button Classes="accent" Content="{loc:Loc Settings_ShareAnonymously}" Click="OnShare" />
+                                                <Button Content="{loc:Loc Settings_NotNow}" Click="OnNotNow" />
                                             </StackPanel>
                                         </c:InfoBar.ActionButton>
                                     </c:InfoBar>
@@ -267,84 +268,84 @@
                                 <StackPanel Spacing="8" IsVisible="{Binding ShowsUpdates}">
                                     <Rectangle Classes="Divider" />
                                     <StackPanel IsVisible="{Binding ShowsChannels}">
-                                        <TextBlock Text="Update channel" Classes="Header" />
+                                        <TextBlock Text="{loc:Loc Settings_UpdateChannel}" Classes="Header" />
                                         <ComboBox x:Name="ChannelBox" ItemsSource="{Binding ChannelLabels}" SelectedIndex="{Binding ChannelIndex, Mode=OneWay}" SelectionChanged="OnChannelPicked"
-                                                  IsEnabled="{Binding CanPickChannel}" MinWidth="260" AutomationProperties.Name="Update channel" />
+                                                  IsEnabled="{Binding CanPickChannel}" MinWidth="260" AutomationProperties.Name="{loc:Loc Settings_UpdateChannel}" />
                                     </StackPanel>
                                     <TextBlock Text="{Binding ChannelNote}" Classes="Caption" TextWrapping="Wrap" />
-                                    <Button Content="Go back to stable now" Click="OnBackToStable" IsEnabled="{Binding CanPickChannel}" IsVisible="{Binding OffersBackToStable}" />
+                                    <Button Content="{loc:Loc Settings_BackToStable}" Click="OnBackToStable" IsEnabled="{Binding CanPickChannel}" IsVisible="{Binding OffersBackToStable}" />
                                     <c:InfoBar IsVisible="{Binding HasUpdateProblem}" Message="{Binding UpdateProblem}" Severity="Warning" IsClosable="False" />
                                 </StackPanel>
                                 <Rectangle Classes="Divider" />
                                 <StackPanel Spacing="4">
-                                    <CheckBox IsChecked="{Binding UseCommunityDb, Mode=TwoWay}" IsEnabled="{Binding HasDb}" AutomationProperties.Name="Download shared shader hashes">
+                                    <CheckBox IsChecked="{Binding UseCommunityDb, Mode=TwoWay}" IsEnabled="{Binding HasDb}" AutomationProperties.Name="{loc:Loc Settings_CommunityDb}">
                                         <StackPanel Spacing="2">
-                                            <TextBlock Text="Download shared shader hashes" TextWrapping="Wrap" />
-                                            <TextBlock Text="Compile your games with hashes other players recorded." Classes="Caption" TextWrapping="Wrap" />
+                                            <TextBlock Text="{loc:Loc Settings_CommunityDb}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{loc:Loc Settings_CommunityDbTip}" Classes="Caption" TextWrapping="Wrap" />
                                         </StackPanel>
                                     </CheckBox>
                                     <TextBlock Text="{Binding DbNote}" IsVisible="{Binding HasDbNote}" Classes="Caption" TextWrapping="Wrap" Margin="28,0,0,0" />
                                 </StackPanel>
                             </StackPanel>
-                            <CheckBox IsChecked="{Binding ShareDiagnostics, Mode=TwoWay}" AutomationProperties.Name="Share diagnostics to help fix problems">
+                            <CheckBox IsChecked="{Binding ShareDiagnostics, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_ShareDiagnostics}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Share diagnostics to help fix problems" TextWrapping="Wrap" />
-                                    <TextBlock Text="When a compile fails, send its error codes, once per compile." Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_ShareDiagnostics}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_ShareDiagnosticsTip}" Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
-                            <CheckBox IsChecked="{Binding ShareRecordings, Mode=TwoWay}" AutomationProperties.Name="Share anonymous shader hashes">
+                            <CheckBox IsChecked="{Binding ShareRecordings, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_ShareRecordings}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Share anonymous shader hashes" TextWrapping="Wrap" />
-                                    <TextBlock Text="Share your recorded hashes, GPU model and driver version. Never linked to your account." Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_ShareRecordings}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_ShareRecordingsTip}" Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
-                            <HyperlinkButton Content="What's shared" NavigateUri="https://scskiller.com/privacy" Padding="0" />
+                            <HyperlinkButton Content="{loc:Loc Settings_WhatsShared}" NavigateUri="https://scskiller.com/privacy" Padding="0" />
                         </StackPanel>
                     </Border>
 
                     <Border Grid.Row="1" Classes="Card" Padding="20">
                         <StackPanel Spacing="12">
-                            <TextBlock Text="Compile speed when you run the queue" Classes="Section" />
+                            <TextBlock Text="{loc:Loc Settings_CompileSpeed}" Classes="Section" />
                             <StackPanel Spacing="4" IsVisible="{Binding HasGpuChoices, Mode=OneTime}">
-                                <TextBlock Text="GPU to compile for" Classes="Header" />
-                                <ComboBox ItemsSource="{Binding GpuLabels, Mode=OneTime}" SelectedIndex="{Binding GpuIndex, Mode=TwoWay}"
-                                          MinWidth="220" AutomationProperties.Name="GPU to compile for" />
-                                <TextBlock Text="Pick the GPU your games run on. SCSKiller switches to it after a restart."
+                                <TextBlock Text="{loc:Loc Settings_GpuTitle}" Classes="Header" />
+                                <ComboBox ItemsSource="{Binding GpuLabels}" SelectedIndex="{Binding GpuIndex, Mode=TwoWay}"
+                                          MinWidth="220" AutomationProperties.Name="{loc:Loc Settings_GpuTitle}" />
+                                <TextBlock Text="{loc:Loc Settings_GpuTip}"
                                            Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                             <CheckBox IsChecked="{Binding ExperimentalIntel, Mode=TwoWay}" IsVisible="{Binding HasIntelGpu, Mode=OneTime}"
-                                      AutomationProperties.Name="Experimental: compile on Intel GPUs">
+                                      AutomationProperties.Name="{loc:Loc Settings_IntelTitle}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Experimental: compile on Intel GPUs" TextWrapping="Wrap" />
-                                    <TextBlock Text="Only measured on Intel Arc. Applies after a restart." Classes="Caption" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_IntelTitle}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_IntelTip}" Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
                             <Grid>
-                                <TextBlock Text="Compile threads" />
+                                <TextBlock Text="{loc:Loc Settings_CompileThreads}" />
                                 <TextBlock Text="{Binding ThreadsText}" HorizontalAlignment="Right" />
                             </Grid>
                             <Slider Minimum="1" Maximum="{Binding MaxThreads, Mode=OneTime}" TickFrequency="1" IsSnapToTickEnabled="True"
-                                    Value="{Binding Threads, Mode=TwoWay}" AutomationProperties.Name="Compile threads" />
+                                    Value="{Binding Threads, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_CompileThreads}" />
                             <TextBlock Text="{Binding PriorityNote}" Classes="Caption" />
                             <Grid>
-                                <TextBlock Text="Maximum memory for compiling" />
+                                <TextBlock Text="{loc:Loc Settings_MaxMemory}" />
                                 <TextBlock Text="{Binding MaxCompileMemoryText}" HorizontalAlignment="Right" />
                             </Grid>
                             <Slider Minimum="0" Maximum="{Binding MaxCompileMemoryMax, Mode=OneTime}" TickFrequency="1" IsSnapToTickEnabled="True"
-                                    Value="{Binding MaxCompileMemory, Mode=TwoWay}" AutomationProperties.Name="Maximum memory for compiling (0 = Auto)" />
-                            <TextBlock Text="{Binding MaxCompileMemoryNote, Mode=OneTime}" TextWrapping="Wrap" Classes="Caption" />
+                                    Value="{Binding MaxCompileMemory, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_MaxMemoryTip}" />
+                            <TextBlock Text="{Binding MaxCompileMemoryNote}" TextWrapping="Wrap" Classes="Caption" />
                             <Rectangle Classes="Divider" />
-                            <CheckBox IsChecked="{Binding MaximumPlans, Mode=TwoWay}" AutomationProperties.Name="Maximum mode: also compile every shader pairing">
+                            <CheckBox IsChecked="{Binding MaximumPlans, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_MaxMode}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Maximum mode: also compile every shader pairing" TextWrapping="Wrap" />
-                                    <TextBlock Text="Seems to help most on AMD. Compiles take longer and use more disk space."
+                                    <TextBlock Text="{loc:Loc Settings_MaxMode}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_MaxModeTip}"
                                                Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
-                            <CheckBox IsChecked="{Binding CompileRayTracing, Mode=TwoWay}" AutomationProperties.Name="Compile ray tracing shaders">
+                            <CheckBox IsChecked="{Binding CompileRayTracing, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_RayTracing}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Compile ray tracing shaders" TextWrapping="Wrap" />
-                                    <TextBlock Text="Off: skipped, the game builds them when you turn ray tracing on in it."
+                                    <TextBlock Text="{loc:Loc Settings_RayTracing}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_RayTracingTip}"
                                                Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
@@ -354,43 +355,43 @@
 
                 <Border Grid.Row="1" Classes="Card" Padding="20">
                     <StackPanel Spacing="12">
-                        <TextBlock Text="General" Classes="Section" />
+                        <TextBlock Text="{loc:Loc Settings_General}" Classes="Section" />
                         <CheckBox IsChecked="{Binding StartWithWindows, Mode=TwoWay}" IsVisible="{Binding ShowsStartAtSignIn, Mode=OneTime}"
-                                  AutomationProperties.Name="{x:Static m:SettingsVm.StartText}">
+                                  AutomationProperties.Name="{Binding StartText}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="{x:Static m:SettingsVm.StartText}" TextWrapping="Wrap" />
-                                <TextBlock Text="{x:Static m:SettingsVm.StartNote}" Classes="Caption" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding StartText}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding StartNote}" Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
                         <CheckBox IsChecked="{Binding CloseQuits, Mode=TwoWay}" IsVisible="{Binding ShowsCloseQuits, Mode=OneTime}"
-                                  AutomationProperties.Name="Closing the window quits SCSKiller">
+                                  AutomationProperties.Name="{loc:Loc Settings_CloseQuits}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Closing the window quits SCSKiller" TextWrapping="Wrap" />
+                                <TextBlock Text="{loc:Loc Settings_CloseQuits}" TextWrapping="Wrap" />
                                 <TextBlock Text="{Binding CloseQuitsNote}" Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
-                        <CheckBox IsChecked="{Binding BeforeAfter, Mode=TwoWay}" AutomationProperties.Name="Before and after recording">
+                        <CheckBox IsChecked="{Binding BeforeAfter, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_BeforeAfter}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Before and after recording" TextWrapping="Wrap" />
-                                <TextBlock Text="Measure a game cold, compile it, measure it again, and get a report you can share."
+                                <TextBlock Text="{loc:Loc Settings_BeforeAfter}" TextWrapping="Wrap" />
+                                <TextBlock Text="{loc:Loc Settings_BeforeAfterTip}"
                                            Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
-                        <CheckBox IsChecked="{Binding ScanAtStart, Mode=TwoWay}" AutomationProperties.Name="Scan games when SCSKiller starts">
+                        <CheckBox IsChecked="{Binding ScanAtStart, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_ScanAtStart}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Scan games when SCSKiller starts" TextWrapping="Wrap" />
-                                <TextBlock Text="{Binding ScanAtStartNote, Mode=OneTime}" Classes="Caption" TextWrapping="Wrap" />
+                                <TextBlock Text="{loc:Loc Settings_ScanAtStart}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding ScanAtStartNote}" Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
-                        <CheckBox IsChecked="{Binding HddMode, Mode=TwoWay}" AutomationProperties.Name="HDD mode">
+                        <CheckBox IsChecked="{Binding HddMode, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_HddMode}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="HDD mode" TextWrapping="Wrap" />
-                                <TextBlock Text="Reads a game's files only when you open or compile it."
+                                <TextBlock Text="{loc:Loc Settings_HddMode}" TextWrapping="Wrap" />
+                                <TextBlock Text="{loc:Loc Settings_HddModeTip}"
                                            Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
                         <StackPanel Spacing="2" Margin="28,0,0,0" IsVisible="{Binding ShowsHddDrives}">
-                            <TextBlock Text="Or only for games on these drives:" Classes="Caption" TextWrapping="Wrap" />
+                            <TextBlock Text="{loc:Loc Settings_HddDrives}" Classes="Caption" TextWrapping="Wrap" />
                             <ItemsControl ItemsSource="{Binding HddDrives}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="m:HddDriveRow">
@@ -399,17 +400,22 @@
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                         </StackPanel>
-                        <CheckBox IsChecked="{Binding ActiveCheck, Mode=TwoWay}" AutomationProperties.Name="Send an anonymous daily check">
+                        <CheckBox IsChecked="{Binding ActiveCheck, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_DailyCheck}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Send an anonymous daily check" TextWrapping="Wrap" />
-                                <TextBlock Text="Helps us count active installs so we can size our servers. Once a day, the app's version and GPU vendor, no identifier."
+                                <TextBlock Text="{loc:Loc Settings_DailyCheck}" TextWrapping="Wrap" />
+                                <TextBlock Text="{loc:Loc Settings_DailyCheckTip}"
                                            Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
                         <StackPanel>
-                            <TextBlock Text="Theme" Classes="Header" />
-                            <ComboBox ItemsSource="{Binding Themes, Mode=OneTime}" SelectedIndex="{Binding ThemeIndex, Mode=TwoWay}" MinWidth="220"
-                                      AutomationProperties.Name="Theme" />
+                            <TextBlock Text="{loc:Loc Settings_Language}" Classes="Header" />
+                            <ComboBox x:Name="LanguageBox" ItemsSource="{Binding Languages}" SelectedIndex="{Binding LanguageIndex, Mode=OneWay}" SelectionChanged="OnLanguagePicked" MinWidth="220"
+                                      AutomationProperties.Name="{loc:Loc Settings_Language}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="{loc:Loc Settings_Theme}" Classes="Header" />
+                            <ComboBox x:Name="ThemeBox" ItemsSource="{Binding Themes}" SelectedIndex="{Binding ThemeIndex, Mode=TwoWay}" MinWidth="220"
+                                      AutomationProperties.Name="{loc:Loc Settings_Theme}" />
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -418,27 +424,27 @@
                     <StackPanel Spacing="8">
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Record in all compatible games" Classes="Section" />
-                                <TextBlock Text="{Binding RecordAllGamesNote, Mode=OneTime}" Classes="Caption" TextWrapping="Wrap" />
+                                <TextBlock Text="{loc:Loc Settings_RecordAll}" Classes="Section" />
+                                <TextBlock Text="{Binding RecordAllGamesNote}" Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
-                            <ToggleSwitch Grid.Column="1" IsChecked="{Binding RecordAllGames, Mode=TwoWay}" AutomationProperties.Name="Record in all compatible games" />
+                            <ToggleSwitch Grid.Column="1" IsChecked="{Binding RecordAllGames, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_RecordAll}" />
                         </Grid>
                         <TextBlock Text="{Binding RecordingCount}" Classes="Caption" TextWrapping="Wrap" />
                         <StackPanel Spacing="4" IsVisible="{Binding ShowsRecordAntiCheatGames, Mode=OneTime}">
-                            <CheckBox IsChecked="{Binding RecordAntiCheatGames, Mode=TwoWay}" AutomationProperties.Name="Allow the recorder in games with anti-cheat (at your own risk)">
+                            <CheckBox IsChecked="{Binding RecordAntiCheatGames, Mode=TwoWay}" AutomationProperties.Name="{loc:Loc Settings_RecordAntiCheat}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Allow the recorder in games with anti-cheat (at your own risk)" TextWrapping="Wrap" />
-                                    <TextBlock Text="Some games contain anti-cheat that can ban accounts using the recorder. Turn this on to enable it per game, at your own risk. SCSKiller isn't responsible for bans."
+                                    <TextBlock Text="{loc:Loc Settings_RecordAntiCheat}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:Loc Settings_RecordAntiCheatTip}"
                                                Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
-                            <HyperlinkButton Content="Details" Click="OnAntiCheatDetails" Padding="0" Margin="28,0,0,0" AutomationProperties.Name="Details on recording in games with anti-cheat" />
+                            <HyperlinkButton Content="{loc:Loc Settings_AntiCheatDetails}" Click="OnAntiCheatDetails" Padding="0" Margin="28,0,0,0" AutomationProperties.Name="Details on recording in games with anti-cheat" />
                         </StackPanel>
                         <StackPanel Spacing="4" IsVisible="{Binding ShowsTraversal, Mode=OneTime}">
                             <Rectangle Classes="Divider" Margin="0,6" />
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                                <TextBlock x:Name="TraversalLabel" Text="Traversal stutter fix (experimental)" VerticalAlignment="Center" TextWrapping="Wrap" />
-                                <ComboBox Grid.Column="1" ItemsSource="{x:Static m:SettingsVm.TraversalChoices}" MinWidth="140"
+                                <TextBlock x:Name="TraversalLabel" Text="{loc:Loc Settings_TraversalTitle}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding TraversalChoices}" MinWidth="140"
                                           SelectedIndex="{Binding TraversalIndex, Mode=TwoWay}" AutomationProperties.LabeledBy="{Binding #TraversalLabel}" />
                             </Grid>
                             <TextBlock Text="{Binding TraversalNote}" Classes="Caption" TextWrapping="Wrap" />
@@ -446,14 +452,14 @@
                         </StackPanel>
                         <Rectangle Classes="Divider" Margin="0,6" />
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                            <TextBlock x:Name="RecordingLimitLabel" Text="Recording limit per game" VerticalAlignment="Center" />
-                            <ComboBox Grid.Column="1" ItemsSource="{x:Static m:SettingsVm.RecordingLimitLabels}" MinWidth="140"
+                            <TextBlock x:Name="RecordingLimitLabel" Text="{loc:Loc Settings_RecordingLimit}" VerticalAlignment="Center" />
+                            <ComboBox Grid.Column="1" ItemsSource="{Binding RecordingLimitLabels}" MinWidth="140"
                                       SelectedIndex="{Binding RecordingLimitIndex, Mode=TwoWay}" AutomationProperties.LabeledBy="{Binding #RecordingLimitLabel}" />
                         </Grid>
-                        <TextBlock Text="Counts the recording in the game's folder and SCSKiller's copy of it. At the limit the game plays as usual: new pipelines just aren't recorded."
+                        <TextBlock Text="{loc:Loc Settings_RecordingLimitTip}"
                                    Classes="Caption" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding RecordingSpace}" TextWrapping="Wrap" />
-                        <Expander Header="Space by game" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsVisible="{Binding HasRecordings}">
+                        <Expander Header="{loc:Loc Settings_SpaceByGame}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsVisible="{Binding HasRecordings}">
                             <ItemsControl ItemsSource="{Binding Recordings}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
@@ -476,9 +482,9 @@
                         <StackPanel x:Name="RemoveRecordersPart" Spacing="8">
                             <Rectangle Classes="Divider" Margin="0,6" />
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                                <TextBlock Text="Removes the recorder from every game and quits. Use it before deleting the AppImage."
+                                <TextBlock Text="{loc:Loc Settings_RemoveRecordersNotice}"
                                            Classes="Caption" TextWrapping="Wrap" VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Content="Remove recorders" Click="OnRemoveRecorders" />
+                                <Button Grid.Column="1" Content="{loc:Loc Settings_RemoveRecorders}" Click="OnRemoveRecorders" />
                             </Grid>
                         </StackPanel>
                     </StackPanel>

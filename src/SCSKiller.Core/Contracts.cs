@@ -1,4 +1,4 @@
-﻿// Shared contracts. ARCHITECTURE.md maps the components behind them.
+// Shared contracts. ARCHITECTURE.md maps the components behind them.
 namespace SCSKiller.Core;
 
 public enum Store { Steam, Epic, Xbox, Other, EA, Manual }   // Manual: added by the user (ManualSource)
@@ -637,6 +637,7 @@ public sealed record Settings(int Threads, WarmPriority Priority, DriverUpdateMo
     bool TrayNoticeShown = false,   // the "still running" notification was shown (App.HideToTray): never again
     bool MaxCompileConfirmed = false,   // the game page's Max compile was confirmed once (DetailPage.OnMaxCompile): never asked again
     AppTheme? Theme = null,        // the app's colours; null = Windows' setting
+    string? Language = null,       // the app's language code ("pt-BR", "en"); null = system OS default
     NewShadersMode? OnNewShaders = null,   // null = from NotifyNewShaders: false -> Off, true -> Notify
     GpuChoice? Gpu = null,         // the adapter SCSKiller compiles for (GpuBackends.Pick); null = the one with the most video memory
     bool RecordAntiCheatGames = false,   // sessions confirmed per launch may record anti-cheat games beside their anti-cheat (IScsKiller.StartRiskSession); off clears every game's switch

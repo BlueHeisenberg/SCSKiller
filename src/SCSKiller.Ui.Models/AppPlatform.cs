@@ -1,18 +1,18 @@
+using SCSKiller.Core.Localization;
+
 namespace SCSKiller.Ui.Models;
 
-/// <summary>What the app offers where the OSes differ, as the view models show it: the UI sets <see cref="Host.Platform"/>
-/// from its Platform/Features.*.cs, a test sets its own. The stores and GPUs are ScsKiller.CreateDefault's and
-/// GpuBackends.For's on that OS.</summary>
-public sealed record AppPlatform
+/// <summary>Differences between Windows, Linux and macOS the UI code handles: which stores are offered, how games are added
+/// by hand, where the launch options line is needed.</summary>
+public sealed class AppPlatform
 {
-    /// <summary>The OS, as the texts name it.</summary>
     public required string Name { get; init; }
     /// <summary>The stores the scan reads, in the first scan's order.</summary>
     public required IReadOnlyList<string> Stores { get; init; }
     /// <summary>The stores whose game updates have the game read again.</summary>
     public required string UpdatingStores { get; init; }
     /// <summary>The theme choice that follows the system's.</summary>
-    public required string SystemTheme { get; init; }
+    public string SystemTheme => OperatingSystem.IsWindows() ? Loc.T("Settings_Theme_Windows") : Loc.T("Settings_Theme_System");
     /// <summary>What builds a game's pipelines besides the driver.</summary>
     public required string Runtime { get; init; }
     /// <summary>Games added by hand and game folders (ManualSource).</summary>
@@ -39,7 +39,7 @@ public sealed record AppPlatform
     public static readonly AppPlatform Windows = new()
     {
         Name = "Windows", Stores = ["Steam", "Epic", "Xbox", "EA", "GOG", "Ubisoft Connect", "Battle.net", "PURPLE", "HoYoPlay", "Gaijin", "Riot Client"],
-        UpdatingStores = "Steam or the Xbox app", SystemTheme = "Use Windows setting", Runtime = "Windows",
+        UpdatingStores = "Steam or the Xbox app", Runtime = "Windows",
         AddGames = true, StartAtSignIn = true, Tray = true, DriverUpdateModes = true, AutoShaderCompilation = true, SystemShaderCache = true,
         RecordAntiCheatGames = true,
     };
@@ -48,18 +48,17 @@ public sealed record AppPlatform
     public static AppPlatform Linux(Func<bool> steam) => new()
     {
         // the flags left off are features Linux doesn't have yet, each turned on once it does
-        Name = "Linux", Stores = ["Steam", "Heroic", "Lutris"], UpdatingStores = "Steam", SystemTheme = "Use system setting", Runtime = "Proton", Tray = true, StartAtSignIn = true, DriverUpdateModes = true,
-        NoGamesNote = () => steam() ? "SCSKiller lists the Windows games you installed with Steam, Heroic or Lutris, and the ones you added to Steam with Proton."
-            : "SCSKiller lists the Windows games of Steam, Heroic and Lutris.",
+        Name = "Linux", Stores = ["Steam", "Heroic", "Lutris"], UpdatingStores = "Steam", Runtime = "Proton", Tray = true, StartAtSignIn = true, DriverUpdateModes = true,
+        NoGamesNote = () => steam() ? Loc.T("Library_NoGames_Linux_Steam") : Loc.T("Library_NoGames_Linux_NoSteam"),
         SteamLaunchLine = true, RecordAntiCheatGames = true,
         // Steam's shortcut gives the game a Proton prefix, which a game added by hand wouldn't have
-        AddGamesNote = "To add another Windows game, use Add a Non-Steam Game in Steam. SCSKiller lists it at the next scan.",
+        AddGamesNote = Loc.T("Library_AddGames_Note_Linux"),
     };
 
     /// <summary>The UI on the Linux build's core, with no game scan, compile, recorder or Vulkan layer yet.</summary>
     public static readonly AppPlatform MacOS = new()
     {
-        Name = "macOS", Stores = ["Steam"], UpdatingStores = "Steam", SystemTheme = "Use system setting", Runtime = "the game's runtime",
-        NoGamesNote = () => "Finding and compiling games isn't available on macOS yet.",
+        Name = "macOS", Stores = ["Steam"], UpdatingStores = "Steam", Runtime = "the game's runtime",
+        NoGamesNote = () => Loc.T("Library_NoGames_MacOS"),
     };
 }

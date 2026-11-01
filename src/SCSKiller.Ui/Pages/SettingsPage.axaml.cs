@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using SCSKiller.Core;
 using SCSKiller.Core.App;
+using SCSKiller.Core.Localization;
 using SCSKiller.Ui.Controls;
 using SCSKiller.Ui.Models;
 
@@ -37,6 +38,18 @@ public sealed partial class SettingsPage : UserControl
         Vm.PropertyChanged += (_, _) => Patreon.Refresh();   // e.g. the share checkbox ticked: the prompt goes
         // a new channel list (sign-in) resets the selection after the index was read: show the chosen channel again
         Patreon.PropertyChanged += (_, _) => Dispatcher.UIThread.Post(() => ChannelBox.SetCurrentValue(SelectingItemsControl.SelectedIndexProperty, Patreon.ChannelIndex),
+            DispatcherPriority.Background);
+
+        Vm.PropertyChanged += (_, _) =>
+        {
+            if (refreshingLang || ReferenceEquals(Vm.Languages, shownLanguages)) return;
+            shownLanguages = Vm.Languages;
+            refreshingLang = true;
+            Dispatcher.UIThread.Post(() => refreshingLang = false, DispatcherPriority.Background);
+        };
+        Vm.PropertyChanged += (_, _) => Dispatcher.UIThread.Post(() => LanguageBox.SetCurrentValue(SelectingItemsControl.SelectedIndexProperty, Vm.LanguageIndex),
+            DispatcherPriority.Background);
+        Vm.PropertyChanged += (_, _) => Dispatcher.UIThread.Post(() => ThemeBox.SetCurrentValue(SelectingItemsControl.SelectedIndexProperty, Vm.ThemeIndex),
             DispatcherPriority.Background);
     }
 
@@ -71,6 +84,16 @@ public sealed partial class SettingsPage : UserControl
         if (!refreshing) Patreon.ChannelIndex = ChannelBox.SelectedIndex;
     }
 
+    bool refreshingLang;
+    object? shownLanguages;
+    void OnLanguagePicked(object? _, SelectionChangedEventArgs __)
+    {
+        if (!refreshingLang && LanguageBox.SelectedIndex is >= 0 and var i && i != Vm.LanguageIndex)
+        {
+            Vm.LanguageIndex = i;
+        }
+    }
+
     /// <summary>--screenshots: a pick as UI Automation makes it, without focus or the drop-down.</summary>
     public void PickChannel(int index) => ChannelBox.SelectedIndex = index;
 
@@ -90,22 +113,19 @@ public sealed partial class SettingsPage : UserControl
     // Stands in for the website's recorder-anti-cheat page until it exists.
     public static ContentDialog AntiCheatDetailsDialog() => new()
     {
-        Title = "Recording in games with anti-cheat", CloseButtonText = "Close",
-        Content = "For one session, SCSKiller puts its recorder (a d3d12.dll) next to the game's exe.\n\n"
-            + "Games with anti-cheat can treat the recorder as cheating and ban your account, during the session or later. No game is known to be safe.\n\n"
-            + "SCSKiller removes every file it places when the game exits, or after a crash at your next logon.\n\n"
-            + "Enabling the recorder in these games is at your own risk. SCSKiller isn't responsible for bans.",
+        Title = Loc.T("Settings_AntiCheatDialog_Title"), CloseButtonText = Loc.T("Common_Close"),
+        Content = Loc.T("Settings_AntiCheatDialog_Content"),
     };
 
     async void OnAntiCheatDetails(object? _, RoutedEventArgs __) => await App.ShowAsync(AntiCheatDetailsDialog());
 
     async void OnRemoveRecorders(object? _, RoutedEventArgs __)
     {
-        if (Host.Core is not ScsKiller real || !await App.ConfirmAsync("Remove recorders?",
-                "SCSKiller removes its recorder from every game, then quits. Close your games first: a game that's running keeps its recorder. Recording resumes when SCSKiller starts again.", "Remove and quit")) return;
+        if (Host.Core is not ScsKiller real || !await App.ConfirmAsync(Loc.T("Settings_RemoveRecorders_Title"),
+                Loc.T("Settings_RemoveRecorders_Body"), Loc.T("Settings_RemoveRecorders_Btn"))) return;
         var removed = await Task.Run(real.RemoveRecorders);
         string[] left = [.. removed.Games.Where(r => r.Left != null).Select(r => $"{real.Games.FirstOrDefault(s => s.Game.Id == r.GameId)?.Game.Name ?? r.Folder}: {r.Left}"),
-            .. removed.VulkanLeft is { } vulkan ? [$"Vulkan recorders' registrations: {vulkan}"] : Array.Empty<string>()];
+            .. removed.VulkanLeft is { } vulkan ? [$"{Loc.T("Settings_RemoveRecorders_VulkanLeft")}: {vulkan}"] : Array.Empty<string>()];
         if (left.Length == 0)
         {
             App.Quit();
@@ -114,9 +134,9 @@ public sealed partial class SettingsPage : UserControl
         // SCSKiller stays open, so the user can remove them again once a game is closed
         await App.ShowAsync(new ContentDialog
         {
-            Title = "Some recorders are still in place",
-            Content = new TextBlock { Text = string.Join("\n", left) + "\n\nClose any game named here, then select Remove recorders again.", TextWrapping = TextWrapping.Wrap },
-            CloseButtonText = "OK",
+            Title = Loc.T("Settings_RemoveRecorders_StillInPlaceTitle"),
+            Content = new TextBlock { Text = string.Join("\n", left) + "\n\n" + Loc.T("Settings_RemoveRecorders_StillInPlaceBody"), TextWrapping = TextWrapping.Wrap },
+            CloseButtonText = Loc.T("Common_OK"),
         });
     }
 
@@ -136,7 +156,7 @@ public sealed partial class SettingsPage : UserControl
                     new TextBlock { Text = Fmt.KeptSize(g.Kept!), Classes = { "Secondary" } },
                 },
             });
-            var remove = new Button { Content = "Remove", VerticalAlignment = VerticalAlignment.Center };
+            var remove = new Button { Content = Loc.T("Common_Remove"), VerticalAlignment = VerticalAlignment.Center };
             remove.Click += (_, _) => { Host.Core.DropKeptCache(g.Game.Id); rows.Children.Remove(row); Vm.Refresh(); };
             Grid.SetColumn(remove, 1);
             row.Children.Add(remove);
@@ -144,13 +164,13 @@ public sealed partial class SettingsPage : UserControl
         }
         return new()
         {
-            Title = "Kept aside", CloseButtonText = "Close",
+            Title = Loc.T("Settings_KeptDialog_Title"), CloseButtonText = Loc.T("Common_Close"),
             Content = new StackPanel
             {
                 Spacing = 14, MinWidth = 420,
                 Children =
                 {
-                    new TextBlock { Text = "Removing frees the space. The game is kept again after its next compile.", TextWrapping = TextWrapping.Wrap },
+                    new TextBlock { Text = Loc.T("Settings_KeptDialog_Desc"), TextWrapping = TextWrapping.Wrap },
                     new ScrollViewer { MaxHeight = 360, Content = rows },
                 },
             },

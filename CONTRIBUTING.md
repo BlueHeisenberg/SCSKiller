@@ -45,4 +45,5 @@ device.
 - Comment only what the code can't say: a non-obvious reason, an invariant, a driver or engine workaround, a file-format
   detail, a measured fact. No commented-out code.
 - Add a line under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) for anything a user would notice.
+- For community translations, see [LOCALIZATION.md](LOCALIZATION.md).
 - Don't commit game files, shader dumps, recordings (`*.db`) or third-party binaries.

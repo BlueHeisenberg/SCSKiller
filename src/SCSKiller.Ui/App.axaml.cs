@@ -8,6 +8,7 @@ using Avalonia.Media.Fonts;
 using SCSKiller.App.Design;
 using SCSKiller.Core;
 using SCSKiller.Core.App;
+using SCSKiller.Core.Localization;
 using SCSKiller.Core.Vendors;
 using SCSKiller.Ui.Controls;
 using SCSKiller.Ui.Models;
@@ -114,6 +115,7 @@ public partial class App : Application
         (Host.Core, Host.Design, Host.Ui, Host.Icons) = (fake, new FakeDesign(fake), new UiThread(), new Icons());
         (Host.Store, Host.Log) = (new AppStore(fakeDir), new AppLog(fakeDir));
         Host.Account = Account = screenshots ? FakeAccount.Create(fakeDir) : new Account(fakeDir);
+        Loc.Instance.SetLanguage(Host.Core.Settings.Language);
         Main = new MainWindow();
         Main.ApplyTheme(Host.Core.Settings.Theme);
         Host.ApplyTheme = Main.ApplyTheme;
@@ -223,6 +225,7 @@ public partial class App : Application
         real.QueueChanged += q => { if (real.EndedNotice(q) is { } n) Host.Ui.TryEnqueue(() => Notifications.Show(Toasts.Ended(q.GameId, n))); };
         real.Notice += (id, n) => Host.Ui.TryEnqueue(() => Notifications.Show(Toasts.Ended(id, n)));
 
+        Loc.Instance.SetLanguage(Host.Core.Settings.Language);
         Main = new MainWindow();
         Main.ApplyTheme(real.Settings.Theme);
         Host.ApplyTheme = Main.ApplyTheme;
@@ -337,7 +340,7 @@ public partial class App : Application
 
     public static ContentDialog Confirm(string title, object? content, string primaryText, ContentDialogButton defaultButton = ContentDialogButton.Close) => new()
     {
-        Title = title, Content = content, PrimaryButtonText = primaryText, CloseButtonText = "Cancel", DefaultButton = defaultButton,
+        Title = title, Content = content, PrimaryButtonText = primaryText, CloseButtonText = Loc.T("Common_Cancel"), DefaultButton = defaultButton,
     };
 
     /// <summary>Over the main window, or over <paramref name="on"/>'s window.</summary>

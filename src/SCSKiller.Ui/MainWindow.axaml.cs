@@ -1,3 +1,4 @@
+using SCSKiller.Core.Localization;
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
@@ -207,7 +208,7 @@ public sealed partial class MainWindow : Window
         var unread = Notifications().Unread.Count;
         BellCount.Text = unread.ToString();
         BellBadge.IsVisible = unread > 0;
-        AutomationProperties.SetName(BellButton, unread > 0 ? $"Notifications, {unread} unread" : "Notifications");
+        AutomationProperties.SetName(BellButton, unread > 0 ? Loc.F("Title_NotificationsUnread", unread) : Loc.T("Title_Notifications"));
     }
 
     public void OpenBell() => BellFlyout.ShowAt(BellButton);

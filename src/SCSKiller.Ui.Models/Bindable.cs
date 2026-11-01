@@ -6,7 +6,11 @@ namespace SCSKiller.Ui.Models;
 public abstract class Bindable : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;
-    protected void Changed() => PropertyChanged?.Invoke(this, new(string.Empty));
+    protected void Changed()
+    {
+        PropertyChanged?.Invoke(this, new(string.Empty));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(null));
+    }
     protected void Changed(params string[] names) { foreach (var n in names) PropertyChanged?.Invoke(this, new(n)); }
 }
 

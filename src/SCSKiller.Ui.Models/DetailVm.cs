@@ -2,6 +2,7 @@ using System.Globalization;
 using SCSKiller.Core;
 using SCSKiller.Core.App;
 using SCSKiller.Core.Games;
+using SCSKiller.Core.Localization;
 using SCSKiller.Core.Vendors;
 
 namespace SCSKiller.Ui.Models;
@@ -72,29 +73,29 @@ public sealed class DetailVm(string id) : Bindable
     public double Percent => Fmt.Percent(Running);
     public bool Indeterminate => Fmt.Indeterminate(Running);
 
-    public string StatusTitle => Running is { } r ? Fmt.Stage(r) : place.Item != null ? $"In queue (position {place.Number})" : Row.StatusText;
+    public string StatusTitle => Running is { } r ? Fmt.Stage(r) : place.Item != null ? Loc.F("Detail_InQueuePosition", place.Number) : Row.StatusText;
     public string StatusReason => Running is { } r && (Fmt.ProgressText(r) is { } p
             ? p + (r.Progress is { PerSecond: > 0 } && Fmt.Left(r, s) is { } t ? $" · {Format.Duration(t)} left" : "") + (Fmt.Started(r) is { } at ? " · " + at : "")
             : Fmt.Started(r)) is { } line
         ? Sentence(line)
         : place.Item is { Stage: QueueStage.Waiting, Note: { } n } ? Sentence(n)
         : Fmt.FoldLine(id) ?? GameReason;
-    string GameReason => Sentence(s.Status switch
+    string GameReason => Sentence(Format.TranslateReason(s.Status switch
     {
         _ when ScsKiller.CacheOffRefused(Host.Core.Queue, id) => ScsKiller.CacheOffReason,
         _ when s.CompileUnreached => s.StatusReason + (s.WarmedAt != null ? ". " + Sentence(ScsKiller.ClearForGameNote) : ""),
         _ when ScsKiller.IsPartlyCompiled(s) => ScsKiller.RefusedNote(s) + ". An SCSKiller update could fix it",
         GameStatus.Warmed when ScsKiller.IsPartlyWarmed(s) => s.StatusReason,
-        GameStatus.Warmed => (Partial || RtAfter || KeyMissing ? "" : "cache complete, ") + $"compiled for {(ScsKiller.BothApis(s.Plan) ? "DirectX 11 and DirectX 12, for " : "")}driver {s.WarmedDriverVersion}" + (s.WarmedAt is { } t ? $" on {t.LocalDateTime:g}" : "")
+        GameStatus.Warmed => (Partial || RtAfter || KeyMissing ? "" : Loc.T("Detail_Status_CacheComplete") + ", ") + $"compiled for {(ScsKiller.BothApis(s.Plan) ? Loc.T("Detail_Status_BothApis") + ", " : "")}driver {s.WarmedDriverVersion}" + (s.WarmedAt is { } t ? $" on {t.LocalDateTime:g}" : "")
             + (RtAfter ? ". " + Sentence(ScsKiller.RtAfterRecordingNote) : "") + (KeyMissing ? ". " + Sentence(ScsKiller.KeyForFullCoverage) : ""),
         // a cache here: played since a clear or a stopped compile; then the planner's note when the row has one to say
-        GameStatus.Ready => (s.CacheOnDisk > 0 ? $"not fully compiled yet: {Format.Bytes(s.CacheOnDisk)} of it is in the driver cache"
-            : s.LastWarmTime == null ? "not compiled yet" : "its shader cache is empty: compile it again")
+        GameStatus.Ready => (s.CacheOnDisk > 0 ? Loc.F("Detail_Status_NotFullyCompiled", Format.Bytes(s.CacheOnDisk))
+            : s.LastWarmTime == null ? Loc.T("Detail_Status_NotCompiledYet") : Loc.T("Detail_Status_CacheEmpty"))
             + (Row.Note != null ? ". " + Sentence(s.StatusReason) : ""),
         GameStatus.NeedsRecording => HasDbTeaser ? NoDbNote(Row.FullNote) : Row.FullNote,   // the teaser says it
-        _ when s.Engine?.Encrypted == true => "needs the game's AES key",   // the title: "Encrypted game files"
+        _ when s.Engine?.Encrypted == true => Loc.T("Detail_Status_NeedsAesKey"),   // the title: "Encrypted game files"
         _ => HasDbTeaser ? NoDbNote(s.StatusReason) : s.StatusReason,
-    })
+    }))
         + (IsPartlyCompiled || s.CompileUnreached ? "." : "") + Format.ModNote(s);
     static string NoDbNote(string r) => r.Replace(". " + Sentence(ScsKiller.InDbSupportersNote), "").Replace(". " + Sentence(ScsKiller.InDbNote), "");
     public bool IsPartlyCompiled => ScsKiller.IsPartlyCompiled(s);
@@ -102,23 +103,23 @@ public sealed class DetailVm(string id) : Bindable
     public bool HasAesKey => Host.Core.HasEncryptionKey(id);
     public bool CanChangeAesKey => HasAesKey && !NeedsAesKey;
     public bool NeedsGameKey => ScsKiller.NeedsGameKey(s);
-    public const string RemoveAesKeyNote = "The key is deleted from this PC. The compiled cache stays. The next compile plans without the shaders the key unlocked, and if the game's exe holds the key, SCSKiller finds it again.";
+    public static string RemoveAesKeyNote => Loc.T("Detail_RemoveAesKeyNote");
     public string PartlyCompiledWhy => s.LastWarmFailedBy switch
     {
-        0 or 1 => $"SCSKiller compiled this game, but the graphics driver refused a large part of it. This happens when the driver or {Host.Platform.Runtime} can't build pipelines the way the game does. The refused ones are built by the game the first time it needs them, which is when they can stutter. SCSKiller compiles them again after a driver update.",
-        2 => "SCSKiller compiled this game, but it couldn't build a large part of it from the game's files. The game builds those itself the first time it needs them, which is when they can stutter.",
-        _ => "SCSKiller compiled this game, but a large part of it couldn't be compiled. The game builds those itself the first time it needs them, which is when they can stutter. SCSKiller compiles them again after a driver update.",
+        0 or 1 => Loc.F("Detail_PartlyWhy_DriverRefused", Host.Platform.Runtime),
+        2 => Loc.T("Detail_PartlyWhy_FilesCantBuild"),
+        _ => Loc.T("Detail_PartlyWhy_Generic"),
     };
 
     // The manifest is public: a PC without "db" sees that the community database covers the game, and where to get it.
     // Shown, it is the page's only mention of the database.
     public bool HasDbTeaser => s is { InCommunityDb: true, Community: null } && Host.Account?.HasDb != true
         && (s.Status == GameStatus.NeedsRecording || RtAfter || s.Status == GameStatus.Unsupported && !NoAntiCheat && s.StatusReason.StartsWith("needs a recording, which", StringComparison.Ordinal));
-    public string DbTeaser => $"In the community database: {s.CommunityDbPsos:N0} pipeline{(s.CommunityDbPsos == 1 ? "" : "s")} recorded by other players. Patreon supporters compile them without recording.";
-    public string DbTeaserLink => Host.Account?.SignedIn == true ? "Patreon membership" : "Sign in with Patreon";
+    public string DbTeaser => Loc.F(s.CommunityDbPsos == 1 ? "Detail_DbTeaser_One" : "Detail_DbTeaser", s.CommunityDbPsos);
+    public string DbTeaserLink => Host.Account?.SignedIn == true ? Loc.T("Detail_DbTeaser_Membership") : Loc.T("Detail_DbTeaser_SignIn");
     public bool CanCompile => s.Status is GameStatus.Ready or GameStatus.Warmed or GameStatus.Stale || RtPartial;
     public bool ShowMaxCompile => CanCompile && ScsKiller.MaxCompileAdds(Host.Core.Vendor.Caps, s.Engine);
-    public const string MaxCompileWhy = "Compiles every combination of this game's shaders, not just each one once. It takes longer and uses more disk space, but potentially fewer shaders compile while you play. Seems to help most on AMD.";
+    public static string MaxCompileWhy => Loc.T("Detail_MaxCompileWhy");
     public string? GuessNote => s.Engine is { } e && s.Status is GameStatus.Ready or GameStatus.Warmed or GameStatus.Stale ? ScsKiller.GuessNote(e) : null;
     public bool HasGuessNote => GuessNote != null;
     public string? DeliveryLine => ScsKiller.DeliveryLine(s);
@@ -150,13 +151,12 @@ public sealed class DetailVm(string id) : Bindable
     bool CompilingSoon => Fmt.CompilingSoon(Host.Core.Queue, id);
     public bool ShowPlay => Row.CanLaunch;
     public bool CanPlay => !s.Playing && !CompilingSoon;
-    public string PlayText => s.Playing ? "Running" : "Play";
+    public string PlayText => Loc.T(s.Playing ? "Detail_RunningAction" : "Detail_PlayAction");
     public string PlayTip => s.Playing ? $"{s.Game.Name} is running" : CompilingSoon ? Fmt.CompilingTip : Fmt.PlayVia(s.Game);
     public bool IsManual => s.Game.Store == Store.Manual;
     public bool CanChooseExe => !IsManual && Collections.Member(s.Game.Id) == null;
     public bool ExeChosen => CanChooseExe && s.ExeChosen;
-    public string RemoveTip => IsManual ? "Forget this game. Its recorder leaves the game folder, and the game's own files stay."
-        : "Hide this game. Its files, saves and compiled cache stay.";
+    public string RemoveTip => Loc.T(IsManual ? "Detail_RemoveTipManual" : "Detail_RemoveTipStore");
     /// <summary>The confirmation's text for a store's game, which is hidden.</summary>
     public string HideNote => "It stays out of the list and out of automatic compiles. Its files, saves and compiled cache stay. Show hidden on the Library page brings it back."
         + (BaInProgressAny ? " The before and after recording in progress is cancelled." : "")
@@ -197,14 +197,14 @@ public sealed class DetailVm(string id) : Bindable
     bool BaLaunchable => BeforeAfterUi.Launchable(s);
     public string BaText => Ba switch
     {
-        null => "Before and after",
-        _ when BaVoided => "Start over",
-        { Stage: BeforeAfterStage.BeforeArmed, ClearPending: true } => "Clear the cache and try again",
-        { Stage: BeforeAfterStage.BeforeArmed or BeforeAfterStage.AfterArmed } => BaLaunchable ? $"Start {Name}" : $"Start {Name} as usual",
+        null => Loc.T("Ba_BeforeAndAfter"),
+        _ when BaVoided => Loc.T("Ba_StartOver"),
+        { Stage: BeforeAfterStage.BeforeArmed, ClearPending: true } => Loc.T("Ba_ClearCacheAndRetry"),
+        { Stage: BeforeAfterStage.BeforeArmed or BeforeAfterStage.AfterArmed } => BaLaunchable ? Loc.F("Ba_StartGame", Name) : Loc.F("Ba_StartGameAsUsual", Name),
         { Stage: BeforeAfterStage.BeforePlaying or BeforeAfterStage.AfterPlaying } p => p.Minutes * 60 - p.PlayedSeconds is var left and > 0
-            ? $"Before and after: playing, {(int)left / 60}:{(int)left % 60:00} left" : "Before and after: time's up, close the game",
-        { Stage: BeforeAfterStage.Compiling or BeforeAfterStage.AfterReady } => "Continue with the after recording",
-        _ => "View before and after",
+            ? Loc.F("Ba_PlayingTimeLeft", (int)left / 60, (int)left % 60) : Loc.T("Ba_TimesUpCloseGame"),
+        { Stage: BeforeAfterStage.Compiling or BeforeAfterStage.AfterReady } => Loc.T("Ba_ContinueAfterRecording"),
+        _ => Loc.T("Ba_ViewBeforeAndAfter"),
     };
     public bool BaEnabled => Ba?.Stage switch
     {
@@ -216,24 +216,24 @@ public sealed class DetailVm(string id) : Bindable
         _ => false,
     };
     public bool BaAccent => BaVoided || Ba?.Stage is BeforeAfterStage.BeforeArmed or BeforeAfterStage.AfterArmed or BeforeAfterStage.AfterReady;
-    public string? BaTip => Ba == null ? blocked ?? "Measure this game cold, compile it, measure it again, and get a report you can share"
-        : Ba.Stage is BeforeAfterStage.BeforeArmed or BeforeAfterStage.AfterArmed && !BaLaunchable ? $"Start {Name} as usual: SCSKiller sees it start" : null;
+    public string? BaTip => Ba == null ? (blocked != null ? Format.TranslateBaBlocked(blocked) : Loc.T("Detail_BaTip"))
+        : Ba.Stage is BeforeAfterStage.BeforeArmed or BeforeAfterStage.AfterArmed && !BaLaunchable ? Loc.F("Detail_BaTip_StartAsUsual", Name) : null;
     public string BaNote => Ba switch
     {
-        null => BaStart.Note,
+        null => Format.TranslateBaBlocked(BaStart.Note),
         { Problem: { } problem } => problem,
-        { Stage: BeforeAfterStage.BeforeArmed } b => $"Play {b.Minutes} minutes from a save you can load again, then close the game",
-        { Stage: BeforeAfterStage.AfterArmed } a => $"Load the same save and play the same {a.Minutes} minutes",
-        { Stage: BeforeAfterStage.BeforePlaying or BeforeAfterStage.AfterPlaying } => "Close the game when the time is up",
-        { Stage: BeforeAfterStage.Compiling } => "Waiting for the compile",
-        { Stage: BeforeAfterStage.AfterReady } => "Compiled: next, the after run",
+        { Stage: BeforeAfterStage.BeforeArmed } b => Loc.F("Ba_Note_BeforeArmed", b.Minutes),
+        { Stage: BeforeAfterStage.AfterArmed } a => Loc.F("Ba_Note_AfterArmed", a.Minutes),
+        { Stage: BeforeAfterStage.BeforePlaying or BeforeAfterStage.AfterPlaying } => Loc.T("Ba_Note_CloseGameWhenUp"),
+        { Stage: BeforeAfterStage.Compiling } => Loc.T("Ba_Note_WaitingForCompile"),
+        { Stage: BeforeAfterStage.AfterReady } => Loc.T("Ba_Note_CompiledNextAfter"),
         _ => "",
     };
     public bool HasBaNote => ShowBa && BaNote.Length > 0;
     /// <summary>The compile failed or was stopped: the note says why.</summary>
     public bool BaCompileAgain => Ba is { Stage: BeforeAfterStage.Compiling, Problem: not null } && !BaVoided && !Queued;
 
-    public string AddText => Queued ? "In queue" : OffersCareful ? "Compile carefully" : RtPartial ? "Compile without ray tracing (partial)" : "Compile";
+    public string AddText => Queued ? Loc.T("Detail_InQueue") : OffersCareful ? Loc.T("Detail_CompileCarefully") : RtPartial ? Loc.T("Detail_CompileWithoutRt") : Loc.T("Detail_Compile");
     /// <summary>Partly warmed by a fast compile: the compile button turns the careful compile on first.</summary>
     public bool OffersCareful => ScsKiller.IsPartlyWarmed(s) && s.Careful is { On: false };
 
@@ -244,7 +244,7 @@ public sealed class DetailVm(string id) : Bindable
     public bool? LeftOutPending { get; set; }
     public bool SharedOn => SharedPending ?? s.SharedHashes;
     public bool? SharedPending { get; set; }
-    public string SharedNote => s.SharedChoice == null ? "Follows Settings" : "Set for this game";
+    public string SharedNote => s.SharedChoice == null ? Loc.T("Detail_Shared_FollowsSettings") : Loc.T("Detail_Shared_SetForGame");
     public bool ShowSharedFollow => SharedPending == null && s.SharedChoice != null;
     public bool CarefulOn => CarefulPending ?? s.Careful?.On == true;
     public bool CanToggleCareful => CarefulPending == null && !Queued;
@@ -267,14 +267,14 @@ public sealed class DetailVm(string id) : Bindable
     };
 
     // 0 = the global setting, then NewShadersMode's values in order
-    public static readonly string[] NewShadersLabels = ["Off", "Notify me", "Compile automatically and notify me", "Compile automatically, silently"];
-    public List<string> NewShadersChoices => Same(ref newShadersChoices, [$"Use the global setting ({NewShadersLabels[(int)NewShaders.Global(Host.Core.Settings)]})", .. NewShadersLabels]);
+    public static string[] NewShadersLabels => [Loc.T("Detail_NewShaders_Off"), Loc.T("Detail_NewShaders_Notify"), Loc.T("Detail_NewShaders_AutoNotify"), Loc.T("Detail_NewShaders_AutoSilent")];
+    public List<string> NewShadersChoices => Same(ref newShadersChoices, [Loc.F("Detail_NewShaders_GlobalSetting", NewShadersLabels[(int)NewShaders.Global(Host.Core.Settings)]), .. NewShadersLabels]);
     // the same list while its labels hold: a new one resets the selection
     List<string>? newShadersChoices, rayTracingChoices, cacheCapChoices, traversalChoices;
     static List<string> Same(ref List<string>? kept, List<string> now) => kept != null && kept.SequenceEqual(now) ? kept : kept = now;
     public int NewShadersIndex => s.NewShadersOverride is { } m ? (int)m + 1 : 0;
     // 0 = the global setting, 1 = on, 2 = off
-    public List<string> RayTracingChoices => Same(ref rayTracingChoices, [$"Default ({(Host.Core.Settings.CompileRayTracing ? "on" : "off")})", "On", "Off"]);
+    public List<string> RayTracingChoices => Same(ref rayTracingChoices, [Loc.F("Detail_RayTracing_Default", Host.Core.Settings.CompileRayTracing ? Loc.T("Common_On") : Loc.T("Common_Off")), Loc.T("Common_On"), Loc.T("Common_Off")]);
     public int RayTracingIndex => s.RayTracingOverride switch { null => 0, true => 1, false => 2 };
     public bool ShowTraversal => TraversalFix.Applies(s, Host.Core.Vendor.Caps);
     public List<string> TraversalChoices => Same(ref traversalChoices, TraversalFix.GameChoices(Host.Core.Settings, s));
@@ -284,7 +284,7 @@ public sealed class DetailVm(string id) : Bindable
     public string TraversalWarning => TraversalFix.LowVramWarning;
     // no plan, or one from before inline ray tracing was counted: unknown, so the choice shows
     public bool ShowRayTracing => P?.RtInline == null || s.RayTracingOverride != null || ScsKiller.HasRayTracing(P);
-    public List<string> CacheCapChoices => Same(ref cacheCapChoices, ["No limit", .. ScsKiller.CacheCapsGB.Select(gb => $"{gb} GB")]);
+    public List<string> CacheCapChoices => Same(ref cacheCapChoices, [Loc.T("Detail_CacheCap_NoLimit"), .. ScsKiller.CacheCapsGB.Select(gb => $"{gb} GB")]);
     public int CacheCapIndex => s.CacheCapGB is { } gb ? Array.IndexOf(ScsKiller.CacheCapsGB, gb) + 1 : 0;
     public bool ShowCacheCap => ScsKiller.HasCacheCap(s);
     // Windows' shader cache of the game, read off the UI thread: Clear cache clears it too, so it can be the only cache to clear.
@@ -322,7 +322,7 @@ public sealed class DetailVm(string id) : Bindable
     public string? LaunchLineRefused => launchLine?.Refused is { } why ? $"No launch options to paste: {why}." : null;
     public bool HasLaunchLineRefused => LaunchLineRefused != null;
     bool launchCopied;
-    public string CopyLaunchText => launchCopied ? "Copied" : "Copy";
+    public string CopyLaunchText => launchCopied ? Loc.T("Common_Copied") : Loc.T("Common_Copy");
     public async Task CopyLaunchLine()
     {
         if (launchLine is not { Refused: null } l) return;
@@ -373,11 +373,11 @@ public sealed class DetailVm(string id) : Bindable
     public string? MaximumNote => string.Join(" ", new[] { s.MaximumSuggestion is { Length: > 0 } note ? note : null,
         MaximumSuggested && s.MaximumAddsBytes is { } adds ? $"On AMD it adds up to {Format.Bytes(adds)} to the driver's shared {Format.Bytes(AmdAppCache.DxcCacheCap)} cache." : null }.OfType<string>()) is { Length: > 0 } t ? t : null;
     public bool HasMaximumNote => MaximumNote != null;
-    public string MaximumAction => MaximumSuggested ? "Turn on for this game" : "Turn off for this game";
+    public string MaximumAction => Loc.T(MaximumSuggested ? "Detail_MaximumAction_On" : "Detail_MaximumAction_Off");
     public bool CanSetMaximum => MaximumPending == null && !Queued;
     public bool ShowClearCache => HasCache || CanCompile;
     // as Disk space shows it
-    public string ClearCacheText => s.DiskBytes != null ? $"Clear cache ({DiskValue})" : "Clear cache";
+    public string ClearCacheText => s.DiskBytes != null ? Loc.F("Detail_ClearCacheSize", DiskValue) : Loc.T("Detail_ClearCache");
     public string ClearCacheTip => BaInProgressAny ? BaBusyTip : HasCache ? $"Deletes this game's shader caches (the driver's{(Host.Platform.SystemShaderCache ? " and Windows'" : "")}, and the game's own if you choose) so its next run starts cold"
         : "SCSKiller learns this game's driver cache files the first time it compiles it or sees it running";
 
@@ -405,7 +405,7 @@ public sealed class DetailVm(string id) : Bindable
     public Uri? StutterUri => Uri.TryCreate(s.KnownStutter?.Source, UriKind.Absolute, out var u) && u.Scheme is "http" or "https" ? u : null;
     public string StutterLinkText => StutterUri != null ? $"Source ({s.KnownStutter!.Date})" : "";
     public string StutterCitation => s.KnownStutter is { } k && StutterUri == null ? $"Source: {k.Source} ({k.Date})" : "";
-    public string EngineChip => s.Engine is { } e ? Format.Engine(e, e.Family == "Unreal" ? "Unreal Engine" : null) + Fmt.Guessed(e) + (e.Fork != null ? " · custom fork" : "") : "Unknown engine";
+    public string EngineChip => s.Engine is { } e ? Format.Engine(e, e.Family == "Unreal" ? "Unreal Engine" : e.Family == "Carved" ? Loc.T("Engine_Carved") : null) + Fmt.Guessed(e) + (e.Fork != null ? " · " + Loc.T("Detail_CustomFork") : "") : Loc.T("Fmt_UnknownEngine");
     public string ApiChip => s.Engine?.GraphicsApi.Replace("D3D", "DirectX ") ?? "";
     public bool HasApi => ApiChip.Length > 0 && !ShowApiPicker;
 
@@ -437,8 +437,8 @@ public sealed class DetailVm(string id) : Bindable
     public bool HasApiOverruled => ApiOverruled != null;
     public string? ApiKept => ScsKiller.KeptApisNote(s);
     public bool HasApiKept => ApiKept != null;
-    public string AntiCheatChip => NoAntiCheat ? "No anti-cheat" : ScsKiller.AntiCheatName(s);
-    public string AntiCheatTip => NoAntiCheat ? "No anti-cheat found: this game can be recorded"
+    public string AntiCheatChip => NoAntiCheat ? Loc.T("Detail_NoAntiCheat") : ScsKiller.AntiCheatName(s);
+    public string AntiCheatTip => NoAntiCheat ? Loc.T("Detail_NoAntiCheatTip")
         : s.RiskEligible ? $"This game contains {ScsKiller.AntiCheatName(s)}. The recorder runs only in a session you confirm, at your own risk."
         : !Host.Platform.RecordAntiCheatGames ? NoAntiCheatSessions
         : ScsKiller.RiskNotHere(s) ?? $"{ScsKiller.AntiCheatName(s)} treats an extra {RecorderDll} as tampering: this game is never recorded";
@@ -605,14 +605,14 @@ public sealed class DetailVm(string id) : Bindable
         return string.Create(CultureInfo.InvariantCulture, $"M {c},{c - r} A {r},{r} 0 {(a > Math.PI ? 1 : 0)} 1 {c + r * Math.Sin(a):0.###},{c - r * Math.Cos(a):0.###}");
     }
     public bool HasTimeValue => Fmt.CompileTime(s) != null;
-    public string TimeLabel => s.LastWarmTime != null ? "Compile time" : "Compile time (estimate)";
+    public string TimeLabel => s.LastWarmTime != null ? Loc.T("Detail_CompileTime") : Loc.T("Detail_CompileTimeEstimate");
     public string TimeValue => s.LastWarmTime is { TotalMinutes: >= 1, TotalHours: < 1 } t ? $"{t.Minutes} min {t.Seconds} s"   // measured: to the second
         : Format.Duration(Fmt.CompileTime(s));
     public bool HasDiskValue => s.DiskBytes != null || s.EstimatedCacheBytes != null;
-    public string DiskLabel => s.DiskBytes != null ? "Disk space" : "Disk space (estimate)";
+    public string DiskLabel => s.DiskBytes != null ? Loc.T("Detail_DiskSpace") : Loc.T("Detail_DiskSpaceEstimate");
     public string DiskValue => Format.Bytes(OnDisk ?? s.EstimatedCacheBytes);
     public bool HasDiskInUse => s.CacheOnDisk != null && Format.InUseShown(OnDisk, InUse);
-    public string DiskInUse => $"{Format.Bytes(InUse)} in use";
+    public string DiskInUse => Loc.F("Detail_DiskInUse", Format.Bytes(InUse));
     // Windows' dbs counted whole: what they hold isn't read
     long? InUse => s.CacheInUse + (s.WindowsCache ?? 0);
     // the kept-aside copy of what the driver removed takes disk space too
@@ -623,11 +623,11 @@ public sealed class DetailVm(string id) : Bindable
     // measured frames when the recorder timed them, else the compile count
     long? StutterCount => F is { } f ? Format.NoPlay(f.Low1PctFps) ? null : ShaderHitches.Count : L is { } l ? PlayCompiles(l) : null;
     public bool HasStutterTile => HasSession && StutterCount != null;
-    public string StuttersValue => StutterCount is not { } n ? "" : n == 0 ? "None" : Fmt.N(n);
+    public string StuttersValue => StutterCount is not { } n ? "" : n == 0 ? Loc.T("Common_None") : Fmt.N(n);
     public bool HasStutters => StutterCount > 0;
     public bool NoStutters => StutterCount == 0;
     // without frame times the count is of compiles, which may or may not have stuttered
-    public string StuttersLabel => F != null ? "Stutters last time you played" : "Compiles while you played";
+    public string StuttersLabel => F != null ? Loc.T("Detail_StuttersPlayed") : Loc.T("Detail_CompilesPlayed");
 
     /// <summary>Every count, for power users.</summary>
     public IReadOnlyList<DetailRow> Details => new DetailRow?[]
@@ -667,7 +667,7 @@ public sealed class DetailVm(string id) : Bindable
 
     // Last compile: when, how long, what failed or was skipped and what to do; never compiled: what the first one costs.
     public bool HasCompileCard => CanCompile || s.LastWarmTime != null;
-    public string CompileTitle => s.LastWarmTime == null ? "First compile" : "Last compile";
+    public string CompileTitle => s.LastWarmTime == null ? Loc.T("Detail_FirstCompile") : Loc.T("Detail_LastCompile");
     long Failed => s.LastWarmFailed ?? 0;
     long Skipped => s.LastWarmSkipped ?? 0;
     long Crashed => s.LastWarmCrashed ?? 0;
@@ -801,7 +801,7 @@ public sealed class DetailVm(string id) : Bindable
     public bool CanToggleRecord => ShowOffline ? OfflinePending == null && !s.OfflineRunning
         : RecordPending == null && AlongsidePending == null && NoAntiCheat && s.RecorderSkip == null && !PairFramesOnly;
     public bool ShowUseDefault => RecordPending == null && s.RecorderOverride != RecorderOverride.Default && s.RecorderSkip == null && !PairFramesOnly && !s.RecorderForeign;
-    public string UseDefaultText => $"Use default ({(ScsKiller.RecordsByDefault(Host.Core.Settings, s) ? "on" : "off")})";
+    public string UseDefaultText => Loc.F("Detail_UseDefault", ScsKiller.RecordsByDefault(Host.Core.Settings, s) ? Loc.T("Common_On") : Loc.T("Common_Off"));
     string RecorderDll => Fmt.RecorderDll(s);
     string Kept => ScsKiller.SessionKeptNote(s) is { } kept ? " " + kept : "";
     // another copy's recorder in the folder is said on every line the switch shows: a skip's line has no room for the reconcile's note

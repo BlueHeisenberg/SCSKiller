@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ui="using:SCSKiller.Ui"
+             xmlns:loc="using:SCSKiller.Ui"
              xmlns:c="using:SCSKiller.Ui.Controls"
              xmlns:m="using:SCSKiller.Ui.Models"
              xmlns:app="using:SCSKiller.Core.App"
@@ -32,51 +33,51 @@
 
     <ScrollViewer x:Name="Scroller">
         <StackPanel Margin="36,28,36,28" Spacing="16">
-            <TextBlock Text="About" Classes="Title" />
+            <TextBlock Text="{loc:Loc About_Title}" Classes="Title" />
 
             <Border Classes="Card" Padding="20">
                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
                     <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Bolt}" FontSize="36" VerticalAlignment="Top" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
                     <StackPanel Grid.Column="1" Spacing="4">
                         <TextBlock Text="SCSKiller" Classes="Section" FontSize="20" />
-                        <TextBlock Text="Shader Compilation Stutter Killer" Classes="Secondary" />
+                        <TextBlock Text="{loc:Loc Title_Subtitle}" Classes="Secondary" />
                         <SelectableTextBlock Text="{Binding Version}" Classes="Caption" />
                         <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0" IsVisible="{Binding ShowsCheck}">
-                            <Button Content="Check for updates" Click="OnCheckForUpdates" IsEnabled="{Binding CanCheck}" />
+                            <Button Content="{loc:Loc About_CheckForUpdates}" Click="OnCheckForUpdates" IsEnabled="{Binding CanCheck}" />
                             <TextBlock Text="{Binding UpdateNote}" Classes="Caption" VerticalAlignment="Center" TextWrapping="Wrap" />
                         </StackPanel>
                         <TextBlock Text="{Binding UpdatesFrom}" Classes="Caption" Margin="0,4,0,0" TextWrapping="Wrap" IsVisible="{Binding UpdatedElsewhere}" />
                         <CheckBox IsChecked="{Binding InstallUpdatesAutomatically, Mode=TwoWay}" IsVisible="{Binding ShowsAutoInstall}"
-                                  AutomationProperties.Name="Install updates automatically">
+                                  AutomationProperties.Name="{loc:Loc About_InstallUpdatesAutomatically}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Install updates automatically" TextWrapping="Wrap" />
-                                <TextBlock Text="A downloaded update installs the next time SCSKiller starts or quits, never during a compile, an offline session or a game. Off: only Restart to update installs it."
+                                <TextBlock Text="{loc:Loc About_InstallUpdatesAutomatically}" TextWrapping="Wrap" />
+                                <TextBlock Text="{loc:Loc About_UpdateNote}"
                                            Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
                         <c:InfoBar IsVisible="{Binding HasUpdateProblem}" Message="{Binding UpdateProblem}" Severity="Warning" IsClosable="False" />
                         <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0" IsVisible="{Binding ShowsSource}">
-                            <Button Content="Download source code" Click="OnSource" IsEnabled="{Binding SourceIdle}" />
+                            <Button Content="{loc:Loc About_DownloadSource}" Click="OnSource" IsEnabled="{Binding SourceIdle}" />
                             <SelectableTextBlock Text="{Binding SourceStatus}" Classes="Caption" VerticalAlignment="Center" TextWrapping="Wrap" />
                         </StackPanel>
                         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap"
-                                   Text="Compiles your games' shaders into the graphics driver's cache ahead of time, so they don't stutter the first time you play them." />
+                                   Text="{loc:Loc About_Description}" />
                         <TextBlock Margin="0,8,0,0" Classes="Secondary" TextWrapping="Wrap">
-                            <Run Text="SCSKiller licence:" FontWeight="SemiBold" /><Run Text=" GPL-3.0-or-later, with an additional permission for Oodle, the Windows App SDK and graphics driver libraries (LICENSE-EXCEPTION.txt)" />
+                            <Run Text="{loc:Loc About_License}" FontWeight="SemiBold" /><Run Text=" GPL-3.0-or-later, with an additional permission for Oodle, the Windows App SDK and graphics driver libraries (LICENSE-EXCEPTION.txt)" />
                         </TextBlock>
                         <StackPanel Orientation="Horizontal" Spacing="16" Margin="0,4,0,0">
-                            <HyperlinkButton Content="What's new" Classes="Link" Click="OnWhatsNew" />
-                            <HyperlinkButton Content="Website" Classes="Link" NavigateUri="https://scskiller.com" />
-                            <HyperlinkButton Content="Source code" Classes="Link" NavigateUri="https://github.com/BlueHeisenberg/SCSKiller" />
-                            <HyperlinkButton Content="Support on Patreon" Classes="Link" NavigateUri="https://www.patreon.com/SCSKiller" />
+                            <HyperlinkButton Content="{loc:Loc About_WhatsNew}" Classes="Link" Click="OnWhatsNew" />
+                            <HyperlinkButton Content="{loc:Loc About_Website}" Classes="Link" NavigateUri="https://scskiller.com" />
+                            <HyperlinkButton Content="{loc:Loc About_SourceCode}" Classes="Link" NavigateUri="https://github.com/BlueHeisenberg/SCSKiller" />
+                            <HyperlinkButton Content="{loc:Loc About_SupportPatreon}" Classes="Link" NavigateUri="https://www.patreon.com/SCSKiller" />
                         </StackPanel>
                     </StackPanel>
                 </Grid>
             </Border>
 
             <StackPanel Spacing="8">
-                <TextBlock Text="Problem reports you sent" Classes="Section" />
-                <TextBlock Text="Reports sent from earlier versions aren't listed." Classes="Secondary" TextWrapping="Wrap" IsVisible="{Binding NoProblems}" />
+                <TextBlock Text="{loc:Loc About_ReportsSent}" Classes="Section" />
+                <TextBlock Text="{loc:Loc About_ReportsNote}" Classes="Secondary" TextWrapping="Wrap" IsVisible="{Binding NoProblems}" />
                 <ItemsControl ItemsSource="{Binding Problems}" Focusable="False">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -95,19 +96,19 @@
             </StackPanel>
 
             <StackPanel Spacing="8">
-                <TextBlock Text="Use at your own risk" Classes="Section" />
-                <TextBlock Text="SCSKiller is provided as is, without warranty. It checks each game for anti-cheat before adding its recorder, but that check can miss one. You use it at your own risk, and its authors are not responsible for bans, crashes or lost data."
+                <TextBlock Text="{loc:Loc About_DisclaimerTitle}" Classes="Section" />
+                <TextBlock Text="{loc:Loc About_DisclaimerText}"
                            Classes="Secondary" TextWrapping="Wrap" />
             </StackPanel>
 
-            <Expander x:Name="TrademarksBox" Header="Trademarks" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+            <Expander x:Name="TrademarksBox" Header="{loc:Loc About_Trademarks}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                 <!-- FontSize first: the app sets every TextBlock's line height when its font size changes -->
                 <SelectableTextBlock Text="{Binding Trademarks}" Classes="Secondary" TextWrapping="Wrap" FontSize="14" LineHeight="22" />
             </Expander>
 
             <StackPanel Spacing="8">
-                <TextBlock Text="Third-party components" Classes="Section" />
-                <TextBlock Text="Open one to read its licence. The same list, with notes, is in THIRD-PARTY-NOTICES.md next to the app."
+                <TextBlock Text="{loc:Loc About_ThirdParty}" Classes="Section" />
+                <TextBlock Text="{loc:Loc About_ThirdPartyNote}"
                            Classes="Secondary" TextWrapping="Wrap" />
                 <ItemsControl x:Name="Components" ItemsSource="{Binding Components}" Focusable="False">
                     <ItemsControl.ItemsPanel>

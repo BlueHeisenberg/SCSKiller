@@ -25,6 +25,7 @@ static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        SCSKiller.Core.Localization.Loc.Initialize();
         Core.App.Format.PlainGroupSeparator();
         if (App.RunCli(args) is { } cli) return cli;
         Host.Platform = Features.Current;

@@ -1,3 +1,4 @@
+using SCSKiller.Core.Localization;
 using SCSKiller.Core.Vulkan;
 
 namespace SCSKiller.Core.App;
@@ -28,27 +29,28 @@ public static class TraversalFix
     /// <summary>8 GB of VRAM or less; null when the adapter doesn't say (0).</summary>
     public static bool? LowVram(GpuInfo gpu) => gpu.DedicatedVideoMemory == 0 ? null : gpu.DedicatedVideoMemory < 9UL << 30;   // an 8 GB card reports a little under 8 GiB
 
-    public const string Title = "Traversal stutter fix (experimental)";
-    public const string AskIntro = "I've been investigating for a while and working on a potential fix for big traversal stutters and I found a way that seems to reduce the big spikes a lot.";
-    public const string AskBody = "SCSKiller can try to reduce the stutter when a game streams in a new area. Experimental, and only in games with the recorder.";
-    public const string VramLine = "Recommended for GPUs with more than 8 GB of VRAM.";
-    public const string LowVramWarning = "Your GPU reports 8 GB of VRAM or less. Games may crash with the fix enabled.";
-    public const string AskFooter = "Change it any time in Settings, or turn it off for one game on its page.";
-    public const string AskAll = "Enable for all games", AskNotNow = "Keep it off";
-    public static readonly string[] SettingsChoices = ["Off", "On"];
+    public static string Title => Loc.T("Traversal_Title");
+    public static string AskIntro => Loc.T("Traversal_AskIntro");
+    public static string AskBody => Loc.T("Traversal_AskBody");
+    public static string VramLine => Loc.T("Traversal_VramLine");
+    public static string LowVramWarning => Loc.T("Traversal_LowVramWarning");
+    public static string AskFooter => Loc.T("Traversal_AskFooter");
+    public static string AskAll => Loc.T("Traversal_AskAll");
+    public static string AskNotNow => Loc.T("Traversal_AskNotNow");
+    public static string[] SettingsChoices => [Loc.T("Traversal_Off"), Loc.T("Traversal_On")];
     public static int SettingsIndex(Settings s) => s.Traversal == TraversalMode.All ? 1 : 0;
     public static TraversalMode SettingsAt(int index) => index == 1 ? TraversalMode.All : TraversalMode.Off;
-    public const string SettingsLine = "May reduce stutter when a game loads a new area. Works in games that have the recorder.";
-    public const string PerGameLine = "You can turn it off for one game on its page.";
-    public const string GameLine = "May reduce stutter when the game loads a new area.";
-    public const string RecorderOffLine = "Works while Record while I play is on.";
+    public static string SettingsLine => Loc.T("Traversal_SettingsLine");
+    public static string PerGameLine => Loc.T("Traversal_PerGameLine");
+    public static string GameLine => Loc.T("Traversal_GameLine");
+    public static string RecorderOffLine => Loc.T("Traversal_RecorderOffLine");
 
     /// <summary>The game page's choices: 0 = the setting, 1 = on, 2 = off.</summary>
-    public static List<string> GameChoices(Settings st, GameState s) => [$"Default ({(ByDefault(st, s) ? "on" : "off")})", "On", "Off"];
+    public static List<string> GameChoices(Settings st, GameState s) => [ByDefault(st, s) ? Loc.T("Traversal_DefaultOn") : Loc.T("Traversal_DefaultOff"), Loc.T("Traversal_On"), Loc.T("Traversal_Off")];
     public static int GameIndex(GameState s) => s.TraversalOverride switch { null => 0, true => 1, false => 2 };
     public static bool? OverrideAt(int index) => index switch { 1 => true, 2 => false, _ => null };
 
-    public static string AntiCheatLine(GameState s) => $"This game contains {ScsKiller.AntiCheatName(s)}. Enabling the fix is at your own risk. SCSKiller isn't responsible for bans.";
+    public static string AntiCheatLine(GameState s) => Loc.F("Traversal_AntiCheatLine", ScsKiller.AntiCheatName(s));
 
     /// <summary>The game page's description: the line, the anti-cheat line, and the VRAM line unless <see cref="LowVramWarning"/> shows instead.</summary>
     public static string GameNote(GameState s, GpuInfo gpu) =>

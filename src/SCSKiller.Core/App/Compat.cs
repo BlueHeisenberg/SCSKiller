@@ -1,3 +1,4 @@
+using SCSKiller.Core.Localization;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
@@ -40,8 +41,8 @@ public sealed record CompatReport(string GameId, string StoreBuildKey, CompatCho
 
     /// <summary>What the rating popup says a report sends.</summary>
     public static string WhatIsSent => OperatingSystem.IsWindows()
-        ? "Sent with the rating: your CPU model, GPU model, driver version, Windows version, and what SCSKiller compiled for this game. Nothing else."
-        : "Sent with the rating: your CPU model, GPU model, driver version, Linux kernel version, the game's Proton version, and what SCSKiller compiled for this game. Nothing else.";
+        ? Loc.T("Compat_WhatIsSent_Windows")
+        : Loc.T("Compat_WhatIsSent_Linux");
 
     /// <summary>Why the game page's Rate this compile is off for <paramref name="s"/> on the GPU vendor <paramref name="vendor"/>
     /// (<see cref="ScsKiller.PackGpu"/>; the server takes "nvidia" and "amd" only); null when it is on: a store build compiled and played at least once since, or whose
@@ -51,13 +52,13 @@ public sealed record CompatReport(string GameId, string StoreBuildKey, CompatCho
         linuxRefused ? Sharing.LinuxRefused
         // a game the user added has an id made from a path on this PC: never sent
         : s.Game.Store == Store.Manual || s.Game.Version == null ? NoBuild
-        : vendor is not ("nvidia" or "amd") ? "Ratings are for NVIDIA and AMD GPUs."
+        : vendor is not ("nvidia" or "amd") ? Loc.T("Compat_WhyNot_Vendor")
         : s.CompileFailed ? null   // "could not be compiled" needs no launch
-        : s.WarmedAt == null ? "Compile the game and play it once to rate how it ran."
-        : !(s.PlayedAt > s.WarmedAt) ? "Play the game once since it compiled to rate how it ran."
+        : s.WarmedAt == null ? Loc.T("Compat_WhyNot_NotWarmed")
+        : !(s.PlayedAt > s.WarmedAt) ? Loc.T("Compat_WhyNot_PlayOnce")
         : null;
 
-    public const string NoBuild = "SCSKiller can't tell which version of this game is installed.";
+    public static string NoBuild => Loc.T("Compat_WhyNot_NoBuild");
 
     /// <summary>The store build key uploads use too (game id, "@", the store's build id).</summary>
     public static string BuildKey(Game g) => $"{g.Id}@{g.Version}";

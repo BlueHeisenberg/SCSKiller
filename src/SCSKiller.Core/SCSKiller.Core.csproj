@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>net10.0-windows;net10.0</TargetFrameworks>
@@ -46,6 +46,7 @@
     <EmbeddedResource Include="Planning\confirmed-engines.json" LogicalName="SCSKiller.Core.Planning.confirmed-engines.json" />
     <EmbeddedResource Include="Planning\plan-rules.json" LogicalName="SCSKiller.Core.Planning.plan-rules.json" />
     <EmbeddedResource Include="App\welcome.json" LogicalName="SCSKiller.Core.App.welcome.json" />
+    <EmbeddedResource Include="Localization\*.json" LogicalName="SCSKiller.Core.Localization.%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\..\CHANGELOG.md" LogicalName="SCSKiller.Core.CHANGELOG.md" />
   </ItemGroup>
 

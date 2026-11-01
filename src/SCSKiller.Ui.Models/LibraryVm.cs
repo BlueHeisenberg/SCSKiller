@@ -3,6 +3,7 @@ using System.ComponentModel;
 using SCSKiller.Core;
 using SCSKiller.Core.App;
 using SCSKiller.Core.Games;
+using SCSKiller.Core.Localization;
 using SCSKiller.Core.Vendors;
 
 namespace SCSKiller.Ui.Models;
@@ -41,9 +42,9 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     /// <summary>A before and after recording in progress; the tile has no button for it, the game page has.</summary>
     public string BaChip => BeforeAfterUi.Voided(s.BeforeAfter) ? "" : s.BeforeAfter?.Stage switch
     {
-        BeforeAfterStage.AfterReady => "After run ready",
-        BeforeAfterStage.Compiling => "Before and after: compiling",
-        BeforeAfterStage.BeforePlaying or BeforeAfterStage.AfterPlaying => "Before and after: playing",
+        BeforeAfterStage.AfterReady => Loc.T("Status_BaAfterReady"),
+        BeforeAfterStage.Compiling => Loc.T("Status_BaCompiling"),
+        BeforeAfterStage.BeforePlaying or BeforeAfterStage.AfterPlaying => Loc.T("Status_BaPlaying"),
         _ => "",
     };
     public bool HasBaChip => BaChip.Length > 0;
@@ -82,48 +83,48 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     bool PartlyCompiled => ScsKiller.IsPartlyCompiled(s);
     public string StatusText => s.Status switch
     {
-        _ when s.CompileUnreached => "The compile didn't help",
-        _ when PartlyCompiled => "Partly compiled",
-        _ when ScsKiller.NotReached(s.StatusReason) => "Not reached yet",
-        GameStatus.Warmed when Partly => "Partly warmed",
-        GameStatus.Warmed when s.Plan?.RecordedOnly == true => "Warmed (recorded pipelines only)",
-        GameStatus.Warmed => "Warmed",
-        GameStatus.Ready => "Ready to compile",
-        _ when ScsKiller.NeedsOfflineSession(s) => "Needs an offline session",
-        _ when ScsKiller.NeedsSteamStart(s) => "Start it once from Steam",
+        _ when s.CompileUnreached => Loc.T("Status_CompileDidntHelp"),
+        _ when PartlyCompiled => Loc.T("Status_PartlyCompiled"),
+        _ when ScsKiller.NotReached(s.StatusReason) => Loc.T("Status_NotReachedYet"),
+        GameStatus.Warmed when Partly => Loc.T("Status_PartlyWarmed"),
+        GameStatus.Warmed when s.Plan?.RecordedOnly == true => Loc.T("Status_WarmedRecordedOnly"),
+        GameStatus.Warmed => Loc.T("Status_Warmed"),
+        GameStatus.Ready => Loc.T("Status_ReadyToCompile"),
+        _ when ScsKiller.NeedsOfflineSession(s) => Loc.T("Status_NeedsOfflineSession"),
+        _ when ScsKiller.NeedsSteamStart(s) => Loc.T("Status_StartOnceFromSteam"),
         GameStatus.NeedsRecording when ScsKiller.NeverRecorded(s) => ScsKiller.NothingRecordedTitle,
-        GameStatus.NeedsRecording => ScsKiller.RecordedEnough(s) ? "Needs a recording" : "Needs a 5-min recording",
-        GameStatus.Stale => "Needs rebuilding",
-        _ when s.StatusReason == ScsKiller.CheckingReason => "Checking…",
-        _ when s.StatusReason == ScsKiller.NotCheckedReason => "Not checked",
-        _ when s.StatusReason == ScsKiller.CantReachReason => "Not compatible",
-        _ when s.StatusReason == SteamShortcutSource.NotReadyReason => "Needs Proton",
-        _ => s.ShaderModBlocks ? "Not compiled" : s.Engine?.Encrypted == true ? "Encrypted game files" : s.NotPlanned ? "Not supported" : "Not supported yet",
+        GameStatus.NeedsRecording => ScsKiller.RecordedEnough(s) ? Loc.T("Status_NeedsRecording") : Loc.T("Status_Needs5MinRecording"),
+        GameStatus.Stale => Loc.T("Status_NeedsRebuilding"),
+        _ when s.StatusReason == ScsKiller.CheckingReason => Loc.T("Status_Checking"),
+        _ when s.StatusReason == ScsKiller.NotCheckedReason => Loc.T("Status_NotChecked"),
+        _ when s.StatusReason == ScsKiller.CantReachReason => Loc.T("Status_NotCompatible"),
+        _ when s.StatusReason == SteamShortcutSource.NotReadyReason => Loc.T("Status_NeedsProton"),
+        _ => s.ShaderModBlocks ? Loc.T("Status_NotCompiled") : s.Engine?.Encrypted == true ? Loc.T("Status_EncryptedGameFiles") : s.NotPlanned ? Loc.T("Status_NotSupported") : Loc.T("Status_NotSupportedYet"),
     };
     /// <summary>The whole reason: the row's tooltip and the game page's status text.</summary>
     public string FullNote => s.Status switch
     {
-        _ when s.CompileUnreached || PartlyCompiled || ScsKiller.NotReached(s.StatusReason) || ScsKiller.LinkedAway(s.StatusReason) => s.StatusReason,
-        GameStatus.Warmed when Partly => $"driver {s.WarmedDriverVersion} · {s.Careful!.LaunchCompiled * 100:0}% still compiled at its first launch",
-        GameStatus.Warmed => $"driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? " · a recording compiles the rest"
+        _ when s.CompileUnreached || PartlyCompiled || ScsKiller.NotReached(s.StatusReason) || ScsKiller.LinkedAway(s.StatusReason) => Format.TranslateReason(s.StatusReason),
+        GameStatus.Warmed when Partly => $"driver {s.WarmedDriverVersion} · {s.Careful!.LaunchCompiled * 100:0}% " + Loc.T("Library_StillCompiledFirstLaunch"),
+        GameStatus.Warmed => $"driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? " · " + Loc.T("Library_RecordingCompilesRest")
             : ScsKiller.RtAfterRecording(s) ? " · " + ScsKiller.RtAfterRecordingNote : "") + Format.KeyNote(s),
-        _ when ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsSteamStart(s) => s.StatusReason,
-        GameStatus.NeedsRecording when s.AnyAntiCheat && !s.RiskEligible => $"{ScsKiller.AntiCheatName(s)} blocks recording",
+        _ when ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsSteamStart(s) => Format.TranslateReason(s.StatusReason),
+        GameStatus.NeedsRecording when s.AnyAntiCheat && !s.RiskEligible => Loc.F("Library_AntiCheatBlocksRecording", ScsKiller.AntiCheatName(s)),
         GameStatus.NeedsRecording when s.RecordingPaused => ScsKiller.PausedNote(Host.Core.Settings),
-        GameStatus.NeedsRecording when ScsKiller.NeverRecorded(s) => s.RecorderRefused!,
+        GameStatus.NeedsRecording when ScsKiller.NeverRecorded(s) => Format.TranslateReason(s.RecorderRefused!),
         GameStatus.NeedsRecording when s.RecorderInstalled && !ScsKiller.RecordedEnough(s) => Format.RecorderOnNote(s),
-        _ => s.StatusReason,
+        _ => Format.TranslateReason(s.StatusReason),
     };
     /// <summary>The row's note under the status: a few words (<see cref="Format.ShortNote"/>); null when the status says it all.</summary>
     public string? Note => Format.ShortNote(s);
     // a mod the compile runs through takes the note's place; the tooltip keeps the full reason
     string? ListNote => s.ShaderModLayer ? $"{(s.Status == GameStatus.Warmed ? "Compiled" : "Compiles")} through {s.ShaderMod}" : Note;
-    public string RowNote => Playing ? "Playing now" + (ListNote is { } n ? " · " + n : "") : fold ?? ListNote ?? "";
+    public string RowNote => Playing ? Loc.T("Status_PlayingNow") + (ListNote is { } n ? " · " + n : "") : fold ?? ListNote ?? "";
     string? fold;
     /// <summary>A fold's share moved: only a row whose line changed updates.</summary>
     public void ShowFold() { if (Fmt.FoldLine(Id) is var f && f != fold) { fold = f; Changed(); } }
     public bool HasRowNote => RowNote.Length > 0;
-    public string RowTip => (Playing ? "Playing now · " : "") + FullNote;
+    public string RowTip => (Playing ? Loc.T("Status_PlayingNow") + " · " : "") + FullNote;
     /// <summary>The status text's style: StatusAccent, StatusPrimary, StatusWarn or StatusMuted.</summary>
     public string StatusStyle => s.Status switch
     {
@@ -139,20 +140,20 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     public bool Queued => queued;
     public bool InAddAllReady => ScsKiller.InAddAllReady(s);
     public bool IsAdd => s.Status is GameStatus.Ready or GameStatus.Stale && !s.CompileUnreached;
-    public string AddText => queued ? "In queue" : "Add to queue";
+    public string AddText => queued ? Loc.T("Library_InQueue") : Loc.T("Library_AddToQueue");
     public bool CanAdd => !queued;
     public bool IsRecord => s.Status == GameStatus.NeedsRecording && !s.RecorderInstalled && s.NoStutter == null && !ScsKiller.NeedsOfflineSession(s) && !ScsKiller.NeedsSteamStart(s) && !s.RiskEligible && !Shared;
     bool Shared => Collections.RecordedBy(s.Game.Id) != null;   // recorded by its collection's first game's recorder, switched on that game's page
     public bool CanRecord => !s.AnyAntiCheat;
     public bool IsDetails => s.Status == GameStatus.Warmed || ScsKiller.IsUnchecked(s) || s.CompileUnreached || ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsSteamStart(s) || (s.Status == GameStatus.NeedsRecording && (s.RecorderInstalled || s.NoStutter != null || s.RiskEligible || Shared));
     public bool IsWhy => s.Status == GameStatus.Unsupported && !ScsKiller.IsUnchecked(s);
-    public string Reason => s.StatusReason;
+    public string Reason => Format.TranslateReason(s.StatusReason);
 
     // Play goes through the store (a game the user added: its exe); never for an anti-cheat game (SCSKiller never launches them)
     public bool CanLaunch { get; private set; } = BeforeAfterUi.Launchable(s);
     public bool Compiling => compiling;
     public bool CanPlay => !Playing && !compiling;
-    public string PlayText => Playing ? "Running" : "Play";
+    public string PlayText => Playing ? Loc.T("Library_Running") : Loc.T("Library_Play");
     public string PlayTip => Playing ? $"{Name} is running" : compiling ? Fmt.CompilingTip : Fmt.PlayVia(s.Game);
 
     public override string ToString() => $"{Name}, {StatusText}, {RowTip}";   // list item name for screen readers
@@ -174,13 +175,13 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
 /// <summary>One store's section of the library list (the rows shown after the search filter).</summary>
 public sealed class StoreGroup(string store) : ObservableCollection<GameRow>
 {
-    public const string Recommended = "Recommended to compile";
+    public static string Recommended => Loc.T("Library_StoreRecommended");
     public string Store => store;
-    public string CountText => $"{Count} game{(Count == 1 ? "" : "s")}" + (store == Recommended ? RecommendedNote() : "");
+    public string CountText => (Count == 1 ? Loc.F("Library_GamesCount_One", Count) : Loc.F("Library_GamesCount_Many", Count)) + (store == Recommended ? RecommendedNote() : "");
     // a row updated in place (compiled, cleared) changes the count of compiled ones without a collection change
     public void Recount() => OnPropertyChanged(new PropertyChangedEventArgs(nameof(CountText)));
     string RecommendedNote() => this.Count(r => r.State.Status == GameStatus.Warmed) is var done and > 0
-        ? $" · stutters without a compile · {done} compiled" : " · stutters without a compile";
+        ? $" · {Loc.T("Library_StuttersWithoutCompile")} · {Loc.F("Library_CompiledCount", done)}" : $" · {Loc.T("Library_StuttersWithoutCompile")}";
 }
 
 public sealed record HiddenRow(string Id, string Name, string Store)
@@ -209,15 +210,15 @@ public sealed class LibraryVm : Bindable
     string filter = "";
     public string Filter { get => filter; set { if (value.Trim() != filter) { filter = value.Trim(); ApplyFilter(); Changed(); } } }
     LibraryShow show;
-    public static readonly string[] ShowLabels = ["All games", "Not supported", "Ready to compile", "Compiled", "Compiled by SCSKiller"];
+    public static string[] ShowLabels => [Loc.T("Library_FilterAll"), Loc.T("Library_FilterUnsupported"), Loc.T("Library_FilterReady"), Loc.T("Library_FilterCompiled"), Loc.T("Library_FilterCompiledBySCSKiller")];
     public int ShowIndex { get => (int)show; set { if (value >= 0 && (LibraryShow)value != show) { show = (LibraryShow)value; ApplyFilter(); Changed(); } } }
     int shown;
     public bool Filtering => filter.Length > 0 || show != LibraryShow.All;
     public bool Searching => filter.Length > 0;
-    public string ShownText => $"{shown} of {Games.Count} shown";
+    public string ShownText => Loc.F("Library_ShownOf", shown, Games.Count);
     public bool NoMatch => Filtering && Games.Count > 0 && shown == 0;
-    public string NoMatchText => Searching ? $"No games match “{filter}”" : "No games with this status";
-    public string SearchHint => Host.Platform.Stores.Count > 1 ? "Try part of the name, a store (Steam, GOG…) or an engine (UE 5)." : "Try part of the name or an engine (UE 5).";
+    public string NoMatchText => Searching ? Loc.F("Library_NoMatchSearch", filter) : Loc.T("Library_NoMatchStatus");
+    public string SearchHint => Host.Platform.Stores.Count > 1 ? Loc.T("Library_SearchHintMulti") : Loc.T("Library_SearchHintSingle");
     /// <summary>A scan found no games at all, on an OS whose library says why.</summary>
     public bool NoGames => scanned && !Scanning && Games.Count == 0 && Host.Platform.NoGamesNote != null;
     public string NoGamesNote => NoGames ? Host.Platform.NoGamesNote!() : "";
@@ -247,9 +248,9 @@ public sealed class LibraryVm : Bindable
         Refresh();
     }
     string Arrow(LibrarySort up, LibrarySort down) => sort == up ? " ↑" : sort == down ? " ↓" : "";
-    public string GameHeader => "Game" + Arrow(LibrarySort.NameAscending, LibrarySort.NameDescending);
-    public string PipelinesHeader => "Pipelines" + Arrow(LibrarySort.PipelinesAscending, LibrarySort.PipelinesDescending);
-    public string CacheHeader => "Cache" + Arrow(LibrarySort.CacheAscending, LibrarySort.CacheDescending);
+    public string GameHeader => Loc.T("Library_HeaderGame") + Arrow(LibrarySort.NameAscending, LibrarySort.NameDescending);
+    public string PipelinesHeader => Loc.T("Library_HeaderPipelines") + Arrow(LibrarySort.PipelinesAscending, LibrarySort.PipelinesDescending);
+    public string CacheHeader => Loc.T("Library_HeaderCache") + Arrow(LibrarySort.CacheAscending, LibrarySort.CacheDescending);
     public bool Scanning { get; private set; }
     int refreshing;   // Rescan calls not finished: the scan, then a user refresh's server fetches
     public bool Refreshing => refreshing > 0;
@@ -270,13 +271,13 @@ public sealed class LibraryVm : Bindable
     public string Summary { get; private set; } = "";
     public int ReadyCount { get; private set; }     // ready, not queued yet and not a no-stutter game
     public int WaitingCount { get; private set; }
-    public string AddAllText => $"Add all ready ({ReadyCount})";
+    public string AddAllText => Loc.F("Library_AddAllReadyCount", ReadyCount);
     public bool CanAddAll => ReadyCount > 0 && !Scanning;
     public int RecommendedCount { get; private set; }   // stutters without a compile, ready and not queued yet
-    public string AddRecommendedText => $"Add all recommended ({RecommendedCount})";
+    public string AddRecommendedText => Loc.F("Library_AddRecommendedCount", RecommendedCount);
     public bool CanAddRecommended => RecommendedCount > 0 && !Scanning;
     public bool CannotAddRecommended => !CanAddRecommended;   // the plain, disabled twin of the accent button (theme brushes stay in XAML)
-    public string CompileQueueText => $"Compile queue ({WaitingCount})";
+    public string CompileQueueText => Loc.F("Library_CompileQueueCount", WaitingCount);
     public bool CanCompileQueue => WaitingCount > 0;
 
     public string CacheLine { get; private set; } = "";
@@ -290,7 +291,7 @@ public sealed class LibraryVm : Bindable
     public bool HasOldDriver => OldDriverNote != null;
 
     public string Threads => ScsKiller.UsedThreads(Host.Core.Settings.Threads).ToString();
-    public string ThreadsOf => $"of {Environment.ProcessorCount} threads";
+    public string ThreadsOf => Loc.F("Library_ThreadsOf", Environment.ProcessorCount);
 
     public void Load()
     {
@@ -362,8 +363,12 @@ public sealed class LibraryVm : Bindable
         WaitingCount = queue.Count(q => q.Stage == QueueStage.Waiting);
         var storeText = Fmt.FoundIn(Games.Select(r => r.StoreName));
         bool allUnreal = list.Count > 0 && list.All(g => g.Engine?.Family == "Unreal");
-        Summary = Scanning && list.Count == 0 ? "Looking for games…"
-            : $"{list.Count} {(allUnreal ? "Unreal Engine " : "")}game{(list.Count == 1 ? "" : "s")} found{(storeText.Length > 0 ? " in " + storeText : "")} · {ready} ready to compile";
+        Summary = Scanning && list.Count == 0 ? Loc.T("Library_LookingForGames")
+            : storeText.Length > 0
+                ? (ready == 1
+                    ? (list.Count == 1 ? Loc.F("Library_Summary_OneGame_OneReady", storeText) : Loc.F("Library_Summary_OneReady", list.Count, storeText))
+                    : (list.Count == 1 ? Loc.F("Library_Summary_OneGame", storeText, ready) : Loc.F("Library_Summary", list.Count, storeText, ready)))
+                : (ready == 1 ? Loc.F("Library_Summary_NoStores_OneReady", list.Count) : Loc.F("Library_Summary_NoStores", list.Count, ready));
 
         cache.Request();
         Changed();

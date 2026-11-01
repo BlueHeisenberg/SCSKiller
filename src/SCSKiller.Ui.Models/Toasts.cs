@@ -1,5 +1,6 @@
 using SCSKiller.Core;
 using SCSKiller.Core.App;
+using SCSKiller.Core.Localization;
 
 namespace SCSKiller.Ui.Models;
 
@@ -19,12 +20,11 @@ public static class Toasts
     public static Toast Driver(IScsKiller core, IReadOnlyList<GameState> stale)
     {
         var time = TimeSpan.FromTicks(stale.Sum(g => (g.EstimatedWarmTime ?? TimeSpan.Zero).Ticks));
-        string games = stale.Count == 1 ? "1 game needs" : $"{stale.Count} games need";
-        return new($"{Fmt.Vendor(core.Vendor.Vendor)} driver updated",
-            $"Driver {core.Vendor.Gpu.DriverVersion} cleared the shader cache. {games} rebuilding: " +
-            $"{string.Join(", ", stale.Select(g => g.Game.Name))}" + (time > TimeSpan.Zero ? $", about {Format.Duration(time)}." : "."),
+        string games = stale.Count == 1 ? Loc.T("Toast_1GameNeeds") : Loc.F("Toast_NGamesNeed", stale.Count);
+        return new(Loc.F("Toast_DriverUpdatedTitle", Fmt.Vendor(core.Vendor.Vendor)),
+            Loc.F("Toast_DriverUpdatedBody", core.Vendor.Gpu.DriverVersion, games, string.Join(", ", stale.Select(g => g.Game.Name))) + (time > TimeSpan.Zero ? Loc.F("Toast_AboutDuration", Format.Duration(time)) : "."),
             [Arg("action", "open")],
-            [new("Compile now", [Arg("action", "now")]), new("When idle", [Arg("action", "idle")]), new("Skip", [Arg("action", "skip")])]);
+            [new(Loc.T("Toast_CompileNow"), [Arg("action", "now")]), new(Loc.T("Toast_WhenIdle"), [Arg("action", "idle")]), new(Loc.T("Toast_Skip"), [Arg("action", "skip")])]);
     }
 
     public static Toast NewShaders(IReadOnlyList<GameState> games, bool compiling = false)
@@ -36,7 +36,7 @@ public static class Toasts
             ? ("Compiling new shaders", $"{(games.Count == 1 ? one : $"{games.Count} games have new shaders.")} {SCSKiller.Core.App.NewShaders.When(Host.Core.Settings)}")
             : ("New shaders to compile", games.Count == 1 ? $"{one} Compile now so they don't stutter." : $"{games.Count} games have new shaders to compile");
         return new(title, text, [Arg("action", "shaders-show"), Arg("games", ids)],
-            [new("Compile now", [Arg("action", "shaders-compile"), Arg("games", ids)]), new("Show", [Arg("action", "shaders-show"), Arg("games", ids)])]);
+            [new(Loc.T("Toast_CompileNow"), [Arg("action", "shaders-compile"), Arg("games", ids)]), new(Loc.T("Toast_Show"), [Arg("action", "shaders-show"), Arg("games", ids)])]);
     }
 
     /// <summary>An unread news item: its title and the first line of its body. A click opens the bell.</summary>
@@ -45,7 +45,7 @@ public static class Toasts
     public static Toast NewsMore(int n) => new("SCSKiller news", NewsState.MoreLine(n), [Arg("action", "news")], []);
 
     /// <summary>The close button hid the window to the notification area, the first time ever.</summary>
-    public static Toast TrayNotice { get; } = new("SCSKiller is still running", "It's in the notification area, right-click the icon to quit.",
+    public static Toast TrayNotice => new(Loc.T("Toast_StillRunningTitle"), Loc.T("Toast_StillRunningText"),
         [Arg("action", "open")], []);
 
     /// <summary>A compile the user started finished or failed (<see cref="ScsKiller.EndedNotice"/>): a click opens its page.</summary>

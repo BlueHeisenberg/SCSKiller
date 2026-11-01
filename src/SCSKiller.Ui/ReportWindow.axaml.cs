@@ -1,3 +1,4 @@
+using SCSKiller.Core.Localization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
@@ -30,7 +31,7 @@ public sealed partial class ReportWindow : Window
     ReportWindow(string id, string game, BeforeAfterResult r) : this()
     {
         (this.id, this.game, this.r) = (id, game, r);
-        Title = $"Before and after · {game}";
+        Title = Loc.T("Ba_BeforeAndAfter") + $" · {game}";
         RequestedThemeVariant = App.Main.RequestedThemeVariant;
         App.Main.PropertyChanged += FollowTheme;
         Host.Icons.Changed += ShowIcon;
@@ -100,7 +101,7 @@ public sealed partial class ReportWindow : Window
 
     void Fill()
     {
-        Heading.Text = $"Before and after · {game}";
+        Heading.Text = Loc.T("Ba_BeforeAndAfter") + $" · {game}";
         CardGame.Text = game.ToUpperInvariant();
         ShowIcon();
         var text = BeforeAfter.Report(game, r, Host.Core.Vendor.Vendor);
@@ -216,16 +217,16 @@ public sealed partial class ReportWindow : Window
                 target.SetLength(0);
                 image.Save(target, PngBitmapEncoderOptions.Default);
             }
-            Tell($"Saved {file.Name}");
+            Tell(Loc.F("Report_SavedFile", file.Name));
         }
-        catch (Exception e) { Tell("Couldn't save the image: " + BeforeAfterUi.Describe(e), InfoBarSeverity.Error); }
+        catch (Exception e) { Tell(Loc.T("Report_Error_SaveImage") + " " + BeforeAfterUi.Describe(e), InfoBarSeverity.Error); }
     }
 
     /// <summary>Text from Core (BeforeAfter.ShareText); null with the error shown.</summary>
     string? Text()
     {
         try { return BeforeAfter.ShareText(game, C); }
-        catch (Exception e) { Tell("Couldn't make the share text: " + BeforeAfterUi.Describe(e), InfoBarSeverity.Error); return null; }
+        catch (Exception e) { Tell(Loc.T("Report_Error_ShareText") + " " + BeforeAfterUi.Describe(e), InfoBarSeverity.Error); return null; }
     }
 
     /// <summary>Kept on the clipboard after the app quits (on Windows: X11 drops it unless a clipboard manager takes it).</summary>
@@ -257,22 +258,22 @@ public sealed partial class ReportWindow : Window
             await clipboard.FlushAsync();
             return true;
         }
-        catch (Exception e) { Tell("Couldn't copy: " + BeforeAfterUi.Describe(e), InfoBarSeverity.Error); return false; }
+        catch (Exception e) { Tell(Loc.T("Report_Error_Copy") + " " + BeforeAfterUi.Describe(e), InfoBarSeverity.Error); return false; }
     }
 
     async void OnCopy(object? _, RoutedEventArgs __)
     {
-        if (await CopyAsync(image: true, Text())) Tell("Image copied");
+        if (await CopyAsync(image: true, Text())) Tell(Loc.T("Report_ImageCopied"));
     }
 
     async void OnDiscord(object? _, RoutedEventArgs __)
     {
-        if (await CopyAsync(image: true, Text())) Tell("Image and text copied: paste them in Discord");
+        if (await CopyAsync(image: true, Text())) Tell(Loc.T("Report_CopiedDiscord"));
     }
 
     async void OnCopyText(object? _, RoutedEventArgs __)
     {
-        if (Text() is { } text && await CopyAsync(image: false, text)) Tell("Text copied");
+        if (Text() is { } text && await CopyAsync(image: false, text)) Tell(Loc.T("Report_TextCopied"));
     }
 
     // neither composer takes an image from a link: it goes to the clipboard, and a toast over the browser says to paste it
@@ -286,9 +287,9 @@ public sealed partial class ReportWindow : Window
         {
             if (!await Launcher.LaunchUriAsync(new Uri(url(text)))) throw new InvalidOperationException("No browser");
         }
-        catch (Exception e) { Tell("Couldn't open the browser: " + BeforeAfterUi.Describe(e), InfoBarSeverity.Error); return; }
-        Tell("Paste (Ctrl+V) to add the image", InfoBarSeverity.Informational);
-        App.Hint?.Invoke("The image is copied", "Press Ctrl+V in the post to add it.");
+        catch (Exception e) { Tell(Loc.T("Report_Error_OpenBrowser") + " " + BeforeAfterUi.Describe(e), InfoBarSeverity.Error); return; }
+        Tell(Loc.T("Report_PasteToAddImage"), InfoBarSeverity.Informational);
+        App.Hint?.Invoke(Loc.T("Report_ImageCopied"), Loc.T("Report_PressCtrlV"));
     }
 
     async void OnRecordAgain(object? _, RoutedEventArgs __)

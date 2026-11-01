@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using SCSKiller.Core;
 using SCSKiller.Core.App;
+using SCSKiller.Core.Localization;
 using SCSKiller.Core.Vendors;
 
 namespace SCSKiller.Ui.Models;
@@ -16,11 +17,11 @@ public sealed record QueueRow(string Id, int Number, string Name, string Exe, st
     public string Initials => Name.Length > 0 ? GameRow.InitialsOf(Name) : "";
     public bool CanUp => !First;
     public bool CanDown => !Last;
-    public string TopLabel => $"Move {Name} to the top";
-    public string BottomLabel => $"Move {Name} to the bottom";
-    public string UpLabel => $"Move {Name} up";
-    public string DownLabel => $"Move {Name} down";
-    public string RemoveLabel => $"Remove {Name} from the queue";
+    public string TopLabel => Loc.F("Queue_MoveTop", Name);
+    public string BottomLabel => Loc.F("Queue_MoveBottom", Name);
+    public string UpLabel => Loc.F("Queue_MoveUp", Name);
+    public string DownLabel => Loc.F("Queue_MoveDown", Name);
+    public string RemoveLabel => Loc.F("Queue_RemoveGame", Name);
     public override string ToString() => Number > 0 ? $"{Number}. {Name}, {Note}, {Time}, {Cache}" : $"{Name}, {Note}";   // screen readers
 }
 
@@ -60,7 +61,7 @@ public sealed class QueueVm : Bindable
     public string CurrentDetail => cur is null ? "" : Fmt.Stage(cur) + (Fmt.ProgressText(cur) is { } p ? " · " + p : "") + (Fmt.Started(cur) is { } at ? " · " + at : "");
     public bool Indeterminate => Fmt.Indeterminate(cur);
     public double Percent => Fmt.Percent(cur);
-    public string PauseText => cur?.Stage == QueueStage.Paused ? "Resume" : "Pause";
+    public string PauseText => cur?.Stage == QueueStage.Paused ? Loc.T("Queue_Resume") : Loc.T("Queue_Pause");
     public bool CacheWarn { get; private set; }
     public string CacheWarnText { get; private set; } = "";
     public string RuntimeWarnText { get; private set; } = "";
@@ -68,10 +69,10 @@ public sealed class QueueVm : Bindable
 
     public double Threads { get => Used; set { if ((int)value != Used) { S = S with { Threads = (int)value }; Changed(); } } }
     static int Used => ScsKiller.UsedThreads(S.Threads);
-    public string ThreadsText => $"{Used} of {Environment.ProcessorCount}";
+    public string ThreadsText => Loc.F("Queue_ThreadsText", Used, Environment.ProcessorCount);
     public double MaxThreads => Environment.ProcessorCount;
     public int Priority { get => (int)S.Priority; set { if (value >= 0 && value != (int)S.Priority) { S = S with { Priority = (WarmPriority)value }; Changed(); } } }
-    public string CpuSummary => $"CPU use: {Used} of {Environment.ProcessorCount} threads, {(S.Priority == WarmPriority.BelowNormal ? "below-normal" : "idle")} priority";
+    public string CpuSummary => Loc.F("Queue_CpuSummary", Used, Environment.ProcessorCount, Loc.T(S.Priority == WarmPriority.BelowNormal ? "Queue_PriorityBelowNormal" : "Queue_PriorityIdle"));
 
     public void Refresh()
     {
@@ -100,10 +101,11 @@ public sealed class QueueVm : Bindable
         var pending = queue.Where(Fmt.Active).ToList();
         var total = TimeSpan.FromTicks(pending.Sum(q => Left(q)?.Ticks ?? 0));
         bool unknown = pending.Any(q => Left(q) is null && !ScsKiller.Stalled(q));
-        Summary = pending.Count == 0 ? "Nothing queued"
-            : $"{pending.Count} game{(pending.Count == 1 ? "" : "s")} · "
-              + (total > TimeSpan.Zero ? $"about {Format.Duration(total)} in total{(unknown ? ", plus plans to build" : "")}" : "time known once the plans are built")
-              + (cur == null && !core.QueueRunning ? " · not started" : "");
+        Summary = pending.Count == 0 ? Loc.T("Queue_NothingQueued")
+            : (pending.Count == 1 ? Loc.F("Queue_Summary_Total_One", Format.Duration(total)) : Loc.F("Queue_Summary_Total", pending.Count, Format.Duration(total)))
+              + (unknown ? Loc.T("Queue_Summary_PlusPlans") : "")
+              + (total == TimeSpan.Zero && !unknown ? " · " + Loc.T("Queue_Summary_TimeKnownPlans") : "")
+              + (cur == null && !core.QueueRunning ? Loc.T("Queue_Summary_NotStarted") : "");
 
         planned = pending.Sum(q => games.GetValueOrDefault(q.GameId)?.EstimatedCacheBytes ?? 0);
         var queued = pending.Select(q => games.GetValueOrDefault(q.GameId)).OfType<GameState>().ToList();

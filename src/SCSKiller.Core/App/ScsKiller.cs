@@ -1820,7 +1820,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// <summary>A recorded launch was <see cref="EnoughRecording"/> or longer since the recording was last cleared: asking for "5 minutes" again says nothing.</summary>
     public static bool RecordedEnough(GameState s) => s.RecordedEnough;
 
-    public const string NothingRecordedTitle = "Played, nothing recorded";
+    public static string NothingRecordedTitle => Localization.Loc.T("Status_NothingRecordedTitle");
     public const string NeverSawNote = "The recorder never loaded in the last launch. Please report it with the game's name.";
     public const string NeverSawDx11Note = "The recorder didn't load in the last launch. The game may have run on DirectX 11.";
     public const string NeverSawDx12Note = "The recorder didn't load in the last launch. The game may have run on DirectX 12.";

@@ -20,3 +20,9 @@ obj/
 
 # packaging output (build/publish.ps1)
 dist/
+
+.portable
+.agents/
+.github/context-mode/
+graphify-out/
+scratch/

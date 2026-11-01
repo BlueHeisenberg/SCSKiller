@@ -1,6 +1,7 @@
 using SCSKiller.Core;
 using SCSKiller.Core.App;
 using SCSKiller.Core.Games;
+using SCSKiller.Core.Localization;
 using SCSKiller.Core.Vendors;
 
 namespace SCSKiller.Ui.Models;
@@ -17,27 +18,28 @@ public static class Fmt
     public static string When(DateTimeOffset at)
     {
         var t = at.LocalDateTime;
-        return t.Date == DateTime.Today ? $"today at {Time(t, "t")}" : t.Date == DateTime.Today.AddDays(-1) ? $"yesterday at {Time(t, "t")}" : $"on {t:d}";
+        return t.Date == DateTime.Today ? Loc.F("Fmt_TodayAt", Time(t, "t")) : t.Date == DateTime.Today.AddDays(-1) ? Loc.F("Fmt_YesterdayAt", Time(t, "t")) : Loc.F("Fmt_OnDate", t.ToString("d"));
     }
     /// <summary>A time in the culture's pattern; ICU's narrow no-break space before AM or PM, which Selawik lacks, as a space.</summary>
     public static string Time(DateTime t, string format) => t.ToString(format).Replace('\u202F', ' ');
-    public static string KeptSize(KeptCache k) => $"{Format.Bytes(k.Bytes)} · " + (k.Frees > 0 ? $"frees {Format.Bytes(k.Frees)}" : "takes no extra space");
+    public static string KeptSize(KeptCache k) => $"{Format.Bytes(k.Bytes)} · " + (k.Frees > 0 ? Loc.F("Fmt_FreesSpace", Format.Bytes(k.Frees)) : Loc.T("Fmt_TakesNoSpace"));
     public static string Vendor(GpuVendor v) => v switch
     {
         GpuVendor.Nvidia => "NVIDIA", GpuVendor.Amd => "AMD", GpuVendor.Intel => "Intel", _ => "GPU",
     };
-    public static string Engine(EngineInfo? e) => e is null ? "Unknown engine" : Format.Engine(e, e.Family == "Unreal" ? "UE" : null) + Guessed(e);
-    public static string Guessed(EngineInfo e) => e.VersionGuessed ? " (guessed)" : "";
+    public static string Engine(EngineInfo? e) => e is null ? Loc.T("Fmt_UnknownEngine") : Format.Engine(e, e.Family == "Unreal" ? "UE" : e.Family == "Carved" ? Loc.T("Engine_Carved") : null) + Guessed(e);
+    public static string Guessed(EngineInfo e) => e.VersionGuessed ? Loc.T("Fmt_Guessed") : "";
     /// <summary>"Severe shader-compilation stutter: reason", then the source and when it was checked; null when not listed.</summary>
     public static string? StutterTip(GameState s) => s.KnownStutter is { } k
-        ? $"{(k.Severity == StutterSeverity.Severe ? "Severe" : "Moderate")} shader-compilation stutter: {k.Reason}.\nSource: {k.Source} (checked {k.Date})" : null;
+        ? Loc.F("Fmt_StutterTip", k.Severity == StutterSeverity.Severe ? Loc.T("Fmt_SevereStutter") : Loc.T("Fmt_ModerateStutter"), k.Reason, k.Source, k.Date) : null;
     /// <summary>Library sections, in list order. Steam's non-Steam games, GOG, Ubisoft, Battle.net, PURPLE, HoYoPlay, Gaijin and Riot Client games are Store.Other: told apart by their id prefix.</summary>
-    public static readonly string[] Stores = ["Steam", SteamShortcut, "Epic Games", "Xbox / Game Pass", "EA app", "GOG", "Ubisoft Connect", "Battle.net", "PURPLE", "HoYoPlay", "Gaijin", "Riot Client", "Other", AddedByYou];
-    public const string AddedByYou = "Added by you", SteamShortcut = "Steam (non-Steam game)";
+    public static string[] Stores => ["Steam", SteamShortcut, "Epic Games", "Xbox / Game Pass", "EA app", "GOG", "Ubisoft Connect", "Battle.net", "PURPLE", "HoYoPlay", "Gaijin", "Riot Client", Loc.T("Fmt_Other"), AddedByYou];
+    public static string AddedByYou => Loc.T("Fmt_AddedByYou");
+    public static string SteamShortcut => Loc.T("Fmt_SteamShortcut");
     public static string StoreName(Game g) => g.Store switch
     {
         Store.Steam => "Steam", Store.Epic => "Epic Games", Store.Xbox => "Xbox / Game Pass", Store.EA => "EA app", Store.Manual => AddedByYou,
-        _ => g.Id[..Math.Max(0, g.Id.IndexOf(':'))] switch { "steam-shortcut" => SteamShortcut, "gog" => "GOG", "ubisoft" => "Ubisoft Connect", "battlenet" => "Battle.net", "purple" => "PURPLE", "hoyoplay" => "HoYoPlay", "gryphline" => "GRYPHLINK", "gaijin" => "Gaijin", "riot" => "Riot Client", _ => "Other" },
+        _ => g.Id[..Math.Max(0, g.Id.IndexOf(':'))] switch { "steam-shortcut" => SteamShortcut, "gog" => "GOG", "ubisoft" => "Ubisoft Connect", "battlenet" => "Battle.net", "purple" => "PURPLE", "hoyoplay" => "HoYoPlay", "gryphline" => "GRYPHLINK", "gaijin" => "Gaijin", "riot" => "Riot Client", _ => Loc.T("Fmt_Other") },
     };
     /// <summary>The stores the Library's summary says games of these <see cref="StoreName"/>s were found in: a non-Steam game's
     /// is Steam, a game added by hand's none.</summary>
@@ -45,7 +47,7 @@ public static class Fmt
     {
         var found = storeNames.Select(n => n == SteamShortcut ? "Steam" : n).ToHashSet();
         var stores = Stores.Where(n => n != AddedByYou && found.Contains(n)).ToList();
-        return stores.Count > 2 ? $"{stores.Count} stores" : string.Join(" and ", stores);
+        return stores.Count > 2 ? Loc.F("Fmt_StoresCount", stores.Count) : string.Join($" {Loc.T("Fmt_And")} ", stores);
     }
     /// <summary>Measured driver cache when known, else the estimate.</summary>
     public static string Cache(GameState s) => s.DiskBytes is { } c ? Format.Bytes(c) : s.EstimatedCacheBytes is { } b ? "≈ " + Format.Bytes(b) : Format.Dash;
@@ -75,14 +77,14 @@ public static class Fmt
     }
     public static string Stage(QueueItem q) => q.Stage switch
     {
-        QueueStage.Indexing => "Reading shaders", QueueStage.Planning => "Building plan", QueueStage.Materializing => "Preparing files",
-        QueueStage.Paused => q.Note is { } n ? n.StartsWith("paused ", StringComparison.Ordinal) ? "P" + n[1..] : "Paused: " + n : "Paused",   // "paused until the PC is idle" reads alone in the queue row
+        QueueStage.Indexing => Loc.T("Fmt_Stage_ReadingShaders"), QueueStage.Planning => Loc.T("Fmt_Stage_BuildingPlan"), QueueStage.Materializing => Loc.T("Fmt_Stage_PreparingFiles"),
+        QueueStage.Paused => q.Note is { } n ? n.StartsWith("paused ", StringComparison.Ordinal) ? "P" + n[1..] : "Paused: " + n : Loc.T("Fmt_Stage_Paused"),   // "paused until the PC is idle" reads alone in the queue row
         QueueStage.Merging => q.Note ?? Format.MergingStage,
         QueueStage.Saving => Format.SavingStage,
         QueueStage.Finishing => Format.FinishingStage,
         QueueStage.Warming when q.Note is { } n => "Compiling: " + n,   // stalled (ScsKiller.StalledNote)
-        QueueStage.Warming when Tail(q) => "Compiling the last pipelines",
-        _ => "Compiling",
+        QueueStage.Warming when Tail(q) => Loc.T("Fmt_Stage_CompilingLast"),
+        _ => Loc.T("Fmt_Stage_Compiling"),
     };
     /// <summary>"54.8% · 1,234 of 5,000 pipelines · 480/s" (reading shaders: packages, a plan or file preparation step: its own count,
     /// "12,340 recording entries read" while its total is unknown); null before the warm knows its total.</summary>
@@ -90,7 +92,7 @@ public static class Fmt
         : q is { Stage: QueueStage.Planning or QueueStage.Materializing, Progress: { Note: { } step } s } ? s.Total > 0 ? $"{Percent(q):0.0}% · {s.Done:N0} of {s.Total:N0} {step}" : $"{s.Done:N0} {step}"
         : q.Progress is { Total: > 0 } p
         ? q.Stage == QueueStage.Merging ? $"{Percent(q):0.0}% · {Format.Bytes(p.Done)} of {Format.Bytes(p.Total)}"
-        : $"{Percent(q):0.0}% · {p.Done:N0} of {p.Total:N0} {(q.Stage == QueueStage.Indexing ? "packages" : "pipelines")}" + (p.PerSecond > 0 && !ScsKiller.Stalled(q) ? $" · {p.PerSecond:N0}/s" : "") + (p.Failed > 0 ? $" · {p.Failed:N0} failed" : "") + (p.Skipped > 0 ? $" · {p.Skipped:N0} skipped" : "")   // short (the Done note explains them); a count wraps whole
+        : $"{Percent(q):0.0}% · {p.Done:N0} of {p.Total:N0} {(q.Stage == QueueStage.Indexing ? Loc.T("Fmt_Packages") : Loc.T("Fmt_Pipelines"))}" + (p.PerSecond > 0 && !ScsKiller.Stalled(q) ? $" · {p.PerSecond:N0}/s" : "") + (p.Failed > 0 ? Loc.F("Fmt_FailedCount", p.Failed) : "") + (p.Skipped > 0 ? Loc.F("Fmt_SkippedCount", p.Skipped) : "")   // short (the Done note explains them); a count wraps whole
             + (ScsKiller.MemoryLimitNote(p) is { } m ? " · " + m : "")
         : null;
     /// <summary>The warm's last pipelines in flight: the rate says under 2 s, but the slowest ones are still compiling.</summary>
@@ -113,7 +115,7 @@ public static class Fmt
             || Host.Core.QueueRunning && compiles.FirstOrDefault(q => q.Stage == QueueStage.Waiting && !ScsKiller.WaitsOnItsOwn(q))?.GameId == gameId;
     }
 
-    public const string CompilingTip = "Compiling: play when it finishes";
+    public static string CompilingTip => Loc.T("Fmt_CompilingTip");
 
     /// <summary>What IScsKiller doesn't carry, from the real core or the design data.</summary>
     public static ManualSource? Added => Host.Core is ScsKiller k ? k.Manual : Host.Design?.Manual;
