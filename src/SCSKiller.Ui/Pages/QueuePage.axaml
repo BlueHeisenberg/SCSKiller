@@ -1,5 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:loc="using:SCSKiller.Ui"
+             
              xmlns:ui="using:SCSKiller.Ui"
              xmlns:c="using:SCSKiller.Ui.Controls"
              xmlns:m="using:SCSKiller.Ui.Models"
@@ -103,30 +105,30 @@
         <StackPanel Margin="36,28,36,28" Spacing="20">
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                 <StackPanel Spacing="4">
-                    <TextBlock Text="Compile queue" Classes="Title" />
+                    <TextBlock Text="{loc:T Nav_Queue}" Classes="Title" />
                     <TextBlock Text="{Binding Summary}" Classes="Secondary" />
                     <TextBlock Text="{Binding PlanChecks}" IsVisible="{Binding HasPlanChecks}" Classes="Caption"
-                               ToolTip.Tip="After an update SCSKiller rebuilds the plans of compiled games in the background, without compiling. A game with more to compile shows it in the Library." />
-                    <TextBlock Text="Compiles run outside the game, under the game's name. Keep the game closed while it runs."
+                               ToolTip.Tip="{loc:T Tip_PlanRebuild}" />
+                    <TextBlock Text="{loc:T Queue_Intro}"
                                Classes="Caption" TextWrapping="Wrap" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Bottom">
-                    <Button Classes="accent" Click="OnStart" AutomationProperties.Name="Compile queue" IsVisible="{Binding Idle}" IsEnabled="{Binding CanStart}">
+                    <Button Classes="accent" Click="OnStart" AutomationProperties.Name="{loc:T Nav_Queue}" IsVisible="{Binding Idle}" IsEnabled="{Binding CanStart}">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Bolt}" FontSize="14" VerticalAlignment="Center" />
-                            <TextBlock Text="Compile queue" />
+                            <TextBlock Text="{loc:T Nav_Queue}" />
                         </StackPanel>
                     </Button>
                     <Button Content="{Binding PauseText}" Click="OnPause" IsVisible="{Binding HasCurrent}" />
-                    <Button Content="Stop" Click="OnStop" IsVisible="{Binding CanStop}"
-                            ToolTip.Tip="Finishes the compiles in flight, then stops. Add the game again to continue where it stopped." />
+                    <Button Content="{loc:T Common_Stop}" Click="OnStop" IsVisible="{Binding CanStop}"
+                            ToolTip.Tip="{loc:T Tip_StopKeepsPlace}" />
                 </StackPanel>
             </Grid>
 
             <c:InfoBar Severity="Warning" IsClosable="False" IsVisible="{Binding RuntimeWarn}" Message="{Binding RuntimeWarnText}" />
             <c:InfoBar Severity="Warning" IsClosable="False" IsVisible="{Binding CacheWarn}" Message="{Binding CacheWarnText}">
                 <c:InfoBar.ActionButton>
-                    <HyperlinkButton Content="Raise the limit" Click="OnSettings" IsVisible="{Binding CanRaiseLimit}" />
+                    <HyperlinkButton Content="{loc:T Cache_RaiseLimit}" Click="OnSettings" IsVisible="{Binding CanRaiseLimit}" />
                 </c:InfoBar.ActionButton>
             </c:InfoBar>
 
@@ -142,23 +144,23 @@
                             <ColumnDefinition Width="80" />
                             <ColumnDefinition Width="320" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="1" Grid.ColumnSpan="3" Text="Game (in run order)" Classes="Caption" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="4" Text="Time" Classes="Caption" TextAlignment="Right" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="5" Text="Cache" Classes="Caption" TextAlignment="Right" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Grid.ColumnSpan="3" Text="{loc:T Report_GameColumn}" Classes="Caption" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="4" Text="{loc:T Common_Time}" Classes="Caption" TextAlignment="Right" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="5" Text="{loc:T Nav_Cache}" Classes="Caption" TextAlignment="Right" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="6" Orientation="Horizontal" HorizontalAlignment="Right" IsVisible="{Binding CanClear}">
                             <!-- tooltip on a hit-testable wrapper: a disabled button shows none -->
-                            <Panel Background="Transparent" ToolTip.Tip="Ctrl+click or Shift+click to select several games">
-                                <HyperlinkButton x:Name="RemoveSelected" Content="Remove selected" FontSize="12" IsEnabled="False" Click="OnRemoveSelected" />
+                            <Panel Background="Transparent" ToolTip.Tip="{loc:T Tip_MultiSelect}">
+                                <HyperlinkButton x:Name="RemoveSelected" Content="{loc:T Library_RemoveSelected}" FontSize="12" IsEnabled="False" Click="OnRemoveSelected" />
                             </Panel>
-                            <HyperlinkButton Content="Clear queue" FontSize="12" Click="OnClearQueue" ToolTip.Tip="Removes every game but the one compiling" />
+                            <HyperlinkButton Content="{loc:T Queue_ClearQueue}" FontSize="12" Click="OnClearQueue" ToolTip.Tip="{loc:T Tip_RemoveOthers}" />
                         </StackPanel>
                     </Grid>
                     <Rectangle Height="1" Fill="{DynamicResource CardStrokeColorDefaultBrush}" />
 
                     <StackPanel Margin="20,32" Spacing="6" HorizontalAlignment="Center" IsVisible="{Binding Empty}">
-                        <TextBlock Text="Add games from the Library" Classes="Section" HorizontalAlignment="Center" />
-                        <TextBlock Text="Press Add to queue on a game, then Compile queue." Classes="Secondary" HorizontalAlignment="Center" />
-                        <HyperlinkButton Content="Open the Library" Click="OnLibrary" HorizontalAlignment="Center" />
+                        <TextBlock Text="{loc:T Queue_AddFromLibrary}" Classes="Section" HorizontalAlignment="Center" />
+                        <TextBlock Text="{loc:T Queue_EmptyIntro}" Classes="Secondary" HorizontalAlignment="Center" />
+                        <HyperlinkButton Content="{loc:T Common_OpenLibrary}" Click="OnLibrary" HorizontalAlignment="Center" />
                     </StackPanel>
 
                     <!-- The running item: not draggable, always first. -->
@@ -190,14 +192,14 @@
                         <TextBlock Grid.Column="4" Text="{Binding Current.Time}" TextAlignment="Right" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="5" Text="{Binding Current.Cache}" TextAlignment="Right" VerticalAlignment="Center" />
                         <Button Grid.Column="6" HorizontalAlignment="Right" Classes="RowButton" Padding="0" Click="OnRemoveCurrent"
-                                AutomationProperties.Name="{Binding Current.RemoveLabel}" ToolTip.Tip="Stop and remove">
+                                AutomationProperties.Name="{Binding Current.RemoveLabel}" ToolTip.Tip="{loc:T Tip_StopAndRemove}">
                             <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Dismiss}" />
                         </Button>
                         <ProgressBar Grid.Row="1" Grid.Column="3" Grid.ColumnSpan="3" Value="{Binding Percent}" IsIndeterminate="{Binding Indeterminate}"
-                                     AutomationProperties.Name="Compile progress" />
+                                     AutomationProperties.Name="{loc:T Detail_CompileProgress}" />
                     </Grid>
 
-                    <ItemsControl ItemsSource="{Binding Folds}" IsVisible="{Binding HasFolds}" AutomationProperties.Name="Handing compiles to the games' caches">
+                    <ItemsControl ItemsSource="{Binding Folds}" IsVisible="{Binding HasFolds}" AutomationProperties.Name="{loc:T Queue_MergingNote}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="m:QueueRow">
                                 <Button Classes="Row" Click="OnGameClick" AutomationProperties.Name="{Binding StringFormat='{}{0}'}">
@@ -231,7 +233,7 @@
 
                     <Panel>
                         <ListBox x:Name="WaitingList" ItemsSource="{Binding Waiting}" SelectionMode="Multiple" SelectionChanged="OnSelection"
-                                 AutomationProperties.Name="Waiting games">
+                                 AutomationProperties.Name="{loc:T Queue_WaitingGames}">
                             <!-- every row realized: a drag measures them all -->
                             <ListBox.ItemsPanel>
                                 <ItemsPanelTemplate>
@@ -251,7 +253,7 @@
                                             <ColumnDefinition Width="320" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Reorder}" FontSize="20" VerticalAlignment="Center" HorizontalAlignment="Center"
-                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" ToolTip.Tip="Drag to reorder" />
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" ToolTip.Tip="{loc:T Tip_DragReorder}" />
                                         <Border Grid.Column="1" Classes="Number" Background="{DynamicResource ControlFillColorSecondaryBrush}">
                                             <TextBlock Text="{Binding Number}" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                         </Border>
@@ -268,20 +270,20 @@
                                         <TextBlock Grid.Column="4" Text="{Binding Time}" TextAlignment="Right" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="5" Text="{Binding Cache}" TextAlignment="Right" VerticalAlignment="Center" />
                                         <StackPanel Grid.Column="6" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="2">
-                                            <Button Content="Move to top" Classes="RowButton" FontSize="13" IsEnabled="{Binding CanUp}" Click="OnTop"
+                                            <Button Content="{loc:T Queue_MoveTop}" Classes="RowButton" FontSize="13" IsEnabled="{Binding CanUp}" Click="OnTop"
                                                     AutomationProperties.Name="{Binding TopLabel}" />
-                                            <Button Content="Move to bottom" Classes="RowButton" FontSize="13" IsEnabled="{Binding CanDown}" Click="OnBottom"
+                                            <Button Content="{loc:T Queue_MoveBottom}" Classes="RowButton" FontSize="13" IsEnabled="{Binding CanDown}" Click="OnBottom"
                                                     AutomationProperties.Name="{Binding BottomLabel}" />
                                             <Button Classes="RowButton" Padding="0" IsEnabled="{Binding CanUp}" Click="OnUp"
-                                                    AutomationProperties.Name="{Binding UpLabel}" ToolTip.Tip="Move up">
+                                                    AutomationProperties.Name="{Binding UpLabel}" ToolTip.Tip="{loc:T Tip_MoveUp}">
                                                 <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.ChevronUp}" />
                                             </Button>
                                             <Button Classes="RowButton" Padding="0" IsEnabled="{Binding CanDown}" Click="OnDown"
-                                                    AutomationProperties.Name="{Binding DownLabel}" ToolTip.Tip="Move down">
+                                                    AutomationProperties.Name="{Binding DownLabel}" ToolTip.Tip="{loc:T Tip_MoveDown}">
                                                 <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.ChevronDown}" />
                                             </Button>
                                             <Button Classes="RowButton" Padding="0" Click="OnRemove"
-                                                    AutomationProperties.Name="{Binding RemoveLabel}" ToolTip.Tip="Remove">
+                                                    AutomationProperties.Name="{Binding RemoveLabel}" ToolTip.Tip="{loc:T Tip_Remove}">
                                                 <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Dismiss}" />
                                             </Button>
                                         </StackPanel>
@@ -297,10 +299,10 @@
                     <StackPanel IsVisible="{Binding HasFinished}" Margin="0,0,0,8">
                         <Rectangle Height="1" Fill="{DynamicResource CardStrokeColorDefaultBrush}" />
                         <Grid Margin="16,6,16,0">
-                            <TextBlock Text="Finished" Classes="Caption" VerticalAlignment="Center" />
-                            <HyperlinkButton Content="Clear finished" HorizontalAlignment="Right" FontSize="12" Click="OnClearFinished" />
+                            <TextBlock Text="{loc:T Queue_Finished}" Classes="Caption" VerticalAlignment="Center" />
+                            <HyperlinkButton Content="{loc:T Queue_ClearFinished}" HorizontalAlignment="Right" FontSize="12" Click="OnClearFinished" />
                         </Grid>
-                        <ItemsControl ItemsSource="{Binding Finished}" AutomationProperties.Name="Finished games">
+                        <ItemsControl ItemsSource="{Binding Finished}" AutomationProperties.Name="{loc:T Queue_FinishedGames}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="m:QueueRow">
                                     <Button Classes="Row" Click="OnGameClick" AutomationProperties.Name="{Binding StringFormat='{}{0}'}">
@@ -329,7 +331,7 @@
                                             <TextBlock Grid.Column="4" Text="{Binding Time}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextAlignment="Right" VerticalAlignment="Center" />
                                             <TextBlock Grid.Column="5" Text="{Binding Cache}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextAlignment="Right" VerticalAlignment="Center" />
                                             <Button Grid.Column="6" HorizontalAlignment="Right" Classes="RowButton" Padding="0" Click="OnRemove"
-                                                    AutomationProperties.Name="{Binding RemoveLabel}" ToolTip.Tip="Remove">
+                                                    AutomationProperties.Name="{Binding RemoveLabel}" ToolTip.Tip="{loc:T Tip_Remove}">
                                                 <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Dismiss}" />
                                             </Button>
                                         </Grid>
@@ -344,16 +346,16 @@
             <Expander Header="{Binding CpuSummary}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                 <StackPanel Spacing="14">
                     <Grid>
-                        <TextBlock Text="Compile threads" />
+                        <TextBlock Text="{loc:T Settings_CompileThreads}" />
                         <TextBlock Text="{Binding ThreadsText}" HorizontalAlignment="Right" />
                     </Grid>
                     <Slider Minimum="1" Maximum="{Binding MaxThreads, Mode=OneTime}" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Threads}"
-                            AutomationProperties.Name="Compile threads" />
+                            AutomationProperties.Name="{loc:T Settings_CompileThreads}" />
                     <StackPanel>
-                        <TextBlock Text="Priority" Margin="0,0,0,8" />
-                        <RadioButton GroupName="Priority" Content="Below normal: fastest, the PC stays usable"
+                        <TextBlock Text="{loc:T Settings_Priority}" Margin="0,0,0,8" />
+                        <RadioButton GroupName="Priority" Content="{loc:T Settings_PriorityBelowNormal}"
                                      IsChecked="{Binding Priority, Converter={x:Static ui:Converters.Index}, ConverterParameter=0}" />
-                        <RadioButton GroupName="Priority" Content="Idle only: runs when nothing else needs the CPU"
+                        <RadioButton GroupName="Priority" Content="{loc:T Settings_PriorityIdle}"
                                      IsChecked="{Binding Priority, Converter={x:Static ui:Converters.Index}, ConverterParameter=1}" />
                     </StackPanel>
                 </StackPanel>

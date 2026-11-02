@@ -16,11 +16,11 @@ public sealed record QueueRow(string Id, int Number, string Name, string Exe, st
     public string Initials => Name.Length > 0 ? GameRow.InitialsOf(Name) : "";
     public bool CanUp => !First;
     public bool CanDown => !Last;
-    public string TopLabel => $"Move {Name} to the top";
-    public string BottomLabel => $"Move {Name} to the bottom";
-    public string UpLabel => $"Move {Name} up";
-    public string DownLabel => $"Move {Name} down";
-    public string RemoveLabel => $"Remove {Name} from the queue";
+    public string TopLabel => Loc.T("Queue_MoveTopName", Name);
+    public string BottomLabel => Loc.T("Queue_MoveBottomName", Name);
+    public string UpLabel => Loc.T("Queue_MoveUpName", Name);
+    public string DownLabel => Loc.T("Queue_MoveDownName", Name);
+    public string RemoveLabel => Loc.T("Queue_RemoveName", Name);
     public override string ToString() => Number > 0 ? $"{Number}. {Name}, {Note}, {Time}, {Cache}" : $"{Name}, {Note}";   // screen readers
 }
 
@@ -60,7 +60,7 @@ public sealed class QueueVm : Bindable
     public string CurrentDetail => cur is null ? "" : Fmt.Stage(cur) + (Fmt.ProgressText(cur) is { } p ? " · " + p : "") + (Fmt.Started(cur) is { } at ? " · " + at : "");
     public bool Indeterminate => Fmt.Indeterminate(cur);
     public double Percent => Fmt.Percent(cur);
-    public string PauseText => cur?.Stage == QueueStage.Paused ? "Resume" : "Pause";
+    public string PauseText => cur?.Stage == QueueStage.Paused ? Loc.T("Common_Resume") : Loc.T("Common_Pause");
     public bool CacheWarn { get; private set; }
     public string CacheWarnText { get; private set; } = "";
     public string RuntimeWarnText { get; private set; } = "";
@@ -68,10 +68,10 @@ public sealed class QueueVm : Bindable
 
     public double Threads { get => Used; set { if ((int)value != Used) { S = S with { Threads = (int)value }; Changed(); } } }
     static int Used => ScsKiller.UsedThreads(S.Threads);
-    public string ThreadsText => $"{Used} of {Environment.ProcessorCount}";
+    public string ThreadsText => Loc.T("Queue_ThreadsOf", Used, Environment.ProcessorCount);
     public double MaxThreads => Environment.ProcessorCount;
     public int Priority { get => (int)S.Priority; set { if (value >= 0 && value != (int)S.Priority) { S = S with { Priority = (WarmPriority)value }; Changed(); } } }
-    public string CpuSummary => $"CPU use: {Used} of {Environment.ProcessorCount} threads, {(S.Priority == WarmPriority.BelowNormal ? "below-normal" : "idle")} priority";
+    public string CpuSummary => Loc.T("Queue_CpuSummary", Used, Environment.ProcessorCount, Loc.T(S.Priority == WarmPriority.BelowNormal ? "Common_BelowNormalLower" : "Common_IdleLower"));
 
     public void Refresh()
     {
@@ -85,7 +85,7 @@ public sealed class QueueVm : Bindable
         QueueRow Row(QueueItem q, int number, bool first = false, bool last = false)
         {
             var g = games.GetValueOrDefault(q.GameId);
-            var time = q.Stage == QueueStage.Done ? Format.Duration(g?.LastWarmTime) : Left(q) is { } t ? Format.Duration(t) + (q.Progress?.PerSecond > 0 ? " left" : "") : Format.Dash;
+            var time = q.Stage == QueueStage.Done ? Format.Duration(g?.LastWarmTime) : Left(q) is { } t ? Format.Duration(t) + (q.Progress?.PerSecond > 0 ? Loc.T("Queue_LeftSuffix") : "") : Format.Dash;
             return new(q.GameId, number, g?.Game.Name ?? q.GameId, g?.Game.ExePath ?? "", NoteOf(q, g), time, g is null ? Format.Dash : Fmt.Cache(g), q.Stage, first, last);
         }
 
@@ -100,10 +100,10 @@ public sealed class QueueVm : Bindable
         var pending = queue.Where(Fmt.Active).ToList();
         var total = TimeSpan.FromTicks(pending.Sum(q => Left(q)?.Ticks ?? 0));
         bool unknown = pending.Any(q => Left(q) is null && !ScsKiller.Stalled(q));
-        Summary = pending.Count == 0 ? "Nothing queued"
-            : $"{pending.Count} game{(pending.Count == 1 ? "" : "s")} · "
-              + (total > TimeSpan.Zero ? $"about {Format.Duration(total)} in total{(unknown ? ", plus plans to build" : "")}" : "time known once the plans are built")
-              + (cur == null && !core.QueueRunning ? " · not started" : "");
+        Summary = pending.Count == 0 ? Loc.T("Queue_NothingQueued")
+            : Loc.T(pending.Count == 1 ? "Queue_SummaryOne" : "Queue_SummaryMany", pending.Count,
+              total > TimeSpan.Zero ? Loc.T("Queue_AboutTotal", Format.Duration(total)) + (unknown ? Loc.T("Queue_PlusPlans") : "") : Loc.T("Queue_TimeKnownOncePlans"))
+              + (cur == null && !core.QueueRunning ? Loc.T("Queue_NotStarted") : "");
 
         planned = pending.Sum(q => games.GetValueOrDefault(q.GameId)?.EstimatedCacheBytes ?? 0);
         var queued = pending.Select(q => games.GetValueOrDefault(q.GameId)).OfType<GameState>().ToList();
@@ -135,13 +135,13 @@ public sealed class QueueVm : Bindable
 
     static string NoteOf(QueueItem q, GameState? g) => q.Stage switch
     {
-        QueueStage.Failed => "Failed: " + q.Error,
+        QueueStage.Failed => Loc.T("Queue_FailedWith", q.Error),
         QueueStage.Stopped when (Fmt.FoldLine(q.GameId) ?? (ScsKiller.NotReached(g?.StatusReason) ? Format.Sentence(g!.StatusReason) : null)) is { } fold => fold,
-        QueueStage.Stopped when q.Progress is { } p => $"Stopped at {p.Done:N0} of {p.Total:N0}: add it again to continue" + (q.Note is { } n ? " · " + n : ""),
-        QueueStage.Stopped => "Stopped",
-        QueueStage.Done => q.Note is { } n ? "Done · " + n : "Done",
+        QueueStage.Stopped when q.Progress is { } p => Loc.T("Queue_StoppedAt", $"{p.Done:N0}", $"{p.Total:N0}") + (q.Note is { } n ? " · " + n : ""),
+        QueueStage.Stopped => Loc.T("Queue_Stopped"),
+        QueueStage.Done => q.Note is { } n ? Loc.T("Queue_DoneWith", n) : Loc.T("Queue_Done"),
         _ when q.Note != null => q.Note,
-        _ => g?.Plan is { } plan ? $"{plan.Recorded + plan.Generated + plan.MiddlewareItems:N0} pipelines{(plan.D3D11Shaders > 0 ? $" + {plan.D3D11Shaders:N0} DirectX 11 shaders" : "")}" : "plan is built first",
+        _ => g?.Plan is { } plan ? Loc.T("Queue_NPipelines", $"{plan.Recorded + plan.Generated + plan.MiddlewareItems:N0}") + (plan.D3D11Shaders > 0 ? Loc.T("Queue_PlusDx11", $"{plan.D3D11Shaders:N0}") : "") : Loc.T("Queue_PlanFirst"),
     };
 
     public void PauseOrResume() => Fmt.PauseOrResume(cur);

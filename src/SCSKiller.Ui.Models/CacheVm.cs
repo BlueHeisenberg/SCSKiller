@@ -61,7 +61,7 @@ public sealed class CacheVm : Bindable
     }
 
     public CacheInventory? Inventory => read;
-    public string Total => read == null ? "Reading the caches…" : split;
+    public string Total => read == null ? Loc.T("Cache_Reading") : split;
     public string? UpperNote { get; private set; }
     public string? Warning { get; private set; }
     public bool HasWarning => Warning != null;
@@ -82,13 +82,13 @@ public sealed class CacheVm : Bindable
         try
         {
             var r = await Task.Run(() => Host.Core.DeleteCaches(items));
-            Result = $"Deleted {Format.Bytes(r.Bytes)} in {r.Files} file{(r.Files == 1 ? "" : "s")}."
-                + (r.Skipped.Count > 0 ? $" Skipped {r.Skipped.Count}:\n" + string.Join("\n", r.Skipped) : "");
+            Result = Loc.T(r.Files == 1 ? "Cache_DeletedOne" : "Cache_DeletedMany", Format.Bytes(r.Bytes), r.Files)
+                + (r.Skipped.Count > 0 ? Loc.T("Cache_SkippedFiles", r.Skipped.Count) + ":\n" + string.Join("\n", r.Skipped) : "");
             ResultSeverity = r.Skipped.Count > 0 ? InfoBarSeverity.Warning : InfoBarSeverity.Success;
         }
         catch (Exception e)
         {
-            (Result, ResultSeverity) = ($"Nothing was deleted: {e.Message}", InfoBarSeverity.Error);
+            (Result, ResultSeverity) = (Loc.T("Cache_NothingDeleted", e.Message), InfoBarSeverity.Error);
         }
         Deleting = false;
         Refresh();
@@ -97,16 +97,16 @@ public sealed class CacheVm : Bindable
 
     long OldDriver => read?.Bytes(CacheGroupKind.OldDriver) ?? 0;
     public bool HasOldDriver => OldDriver > 0;
-    public string OldDriverText => $"{Format.Bytes(OldDriver)} of cache files are from before the current driver was installed on {read?.DriverInstalled?.ToLocalTime():d}. It hasn't used them since.";
-    public string FreeText => $"Free {Format.Bytes(OldDriver)}";
+    public string OldDriverText => Loc.T("Cache_OldDriverText", Format.Bytes(OldDriver), read?.DriverInstalled?.ToLocalTime().ToString("d") ?? "");
+    public string FreeText => Loc.T("Cache_FreeText", Format.Bytes(OldDriver));
     public IReadOnlyList<CacheItem> OldDriverItems => read?.Groups.Where(g => g.Kind == CacheGroupKind.OldDriver).SelectMany(g => g.Items).ToList() ?? [];
 
     public IReadOnlyList<CacheFolderRow> Folders => read?.Folders.Select(f => new CacheFolderRow(f.Label, f.Path,
         f.Cap is { } cap ? $"{Format.Bytes(f.Bytes)} of {Format.Bytes(cap)}" : Format.Bytes(f.Bytes),
-        f.TargetMissing ? "This folder is a link whose target is missing"
-        : f.Cap is { } full && f.Bytes >= full * 9 / 10 ? "Nearly full: the driver removes the least recently used games' caches when a game starts"
-        : f.Final != null ? $"Stored in {f.Final} through a link"
-        : !f.Exists ? "Not created yet" : null)).ToList() ?? [];
+        f.TargetMissing ? Loc.T("Cache_FolderTargetMissing")
+        : f.Cap is { } full && f.Bytes >= full * 9 / 10 ? Loc.T("Cache_FolderNearlyFull")
+        : f.Final != null ? Loc.T("Cache_FolderStoredVia", f.Final)
+        : !f.Exists ? Loc.T("Cache_FolderNotCreated") : null)).ToList() ?? [];
 
     public IReadOnlyList<CacheGroupRow> Groups => read?.Groups.Select(g =>
     {
@@ -122,26 +122,26 @@ public sealed class CacheVm : Bindable
     /// <summary>An icon finished loading: the rows read it again.</summary>
     public void IconsChanged() => Changed();
 
-    static string ItemName(CacheGroupKind kind, CacheItem i) => kind == CacheGroupKind.Unattributed && i.Name.Length == 8 && i.Name.All(char.IsAsciiHexDigit) ? $"Unknown app {i.Name}" : i.Name;
+    static string ItemName(CacheGroupKind kind, CacheItem i) => kind == CacheGroupKind.Unattributed && i.Name.Length == 8 && i.Name.All(char.IsAsciiHexDigit) ? Loc.T("Cache_UnknownApp", i.Name) : i.Name;
 
     public static (string Title, string Caption) Texts(CacheGroupKind kind, DateTime? installed) => kind switch
     {
-        CacheGroupKind.Installed => ("Installed games", "Games in your library, by the cache keys SCSKiller learned for them."),
-        CacheGroupKind.Uninstalled => ("Uninstalled games", "Games SCSKiller compiled or saw running that aren't in your library now. Named by their exe."),
-        CacheGroupKind.OldDriver => ("Old driver", $"Written before the current driver was installed on {installed?.ToLocalTime():d}. It hasn't used them since."),
-        CacheGroupKind.OldBuild => ("Earlier SCSKiller compiles", "Left by earlier compiles. The games don't read them."),
-        CacheGroupKind.OtherVendor => ("Other GPU vendor", "Caches for another brand of GPU than the one SCSKiller compiles for."),
-        _ => ("Other apps and games", "Desktop apps, and games SCSKiller hasn't compiled or seen running. A game moves to its group once SCSKiller sees it running."),
+        CacheGroupKind.Installed => (Loc.T("Cache_GInstalledTitle"), Loc.T("Cache_GInstalledCaption")),
+        CacheGroupKind.Uninstalled => (Loc.T("Cache_GUninstalledTitle"), Loc.T("Cache_GUninstalledCaption")),
+        CacheGroupKind.OldDriver => (Loc.T("Cache_GOldDriverTitle"), Loc.T("Cache_GOldDriverCaption", installed?.ToLocalTime().ToString("d") ?? "")),
+        CacheGroupKind.OldBuild => (Loc.T("Cache_GOldBuildTitle"), Loc.T("Cache_GOldBuildCaption")),
+        CacheGroupKind.OtherVendor => (Loc.T("Cache_GOtherVendorTitle"), Loc.T("Cache_GOtherVendorCaption")),
+        _ => (Loc.T("Cache_GOtherTitle"), Loc.T("Cache_GOtherCaption")),
     };
 
     /// <summary>The confirm's text for deleting <paramref name="items"/> of one group: what happens after.</summary>
     public static string Consequence(CacheGroupKind kind, IReadOnlyList<CacheItem> items) => kind switch
     {
         CacheGroupKind.Installed or CacheGroupKind.Uninstalled =>
-            $"These games compile their shaders again on their next compile, and stutter until then: {string.Join(", ", items.Select(i => i.Name))}.",
-        CacheGroupKind.OldDriver => "The current driver hasn't used these files since it was installed. Nothing needs to compile again.",
-        CacheGroupKind.OldBuild => "The games don't read these files.",
-        CacheGroupKind.OtherVendor => "Apps that run on that GPU build their cache again as they run.",
-        _ => "These apps and games build their cache again as they run, and may stutter until they have.",
-    } + string.Concat(items.Select(i => i.Note).OfType<string>().Select(n => " " + n)) + " Files in use are skipped.";
+            Loc.T("Cache_DeleteGames", string.Join(", ", items.Select(i => i.Name))),
+        CacheGroupKind.OldDriver => Loc.T("Cache_DeleteOldDriver"),
+        CacheGroupKind.OldBuild => Loc.T("Cache_DeleteOldBuild"),
+        CacheGroupKind.OtherVendor => Loc.T("Cache_DeleteOtherVendor"),
+        _ => Loc.T("Cache_DeleteOther"),
+    } + string.Concat(items.Select(i => i.Note).OfType<string>().Select(n => " " + n)) + Loc.T("Cache_FilesInUseSkipped");
 }

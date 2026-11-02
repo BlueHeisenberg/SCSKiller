@@ -658,7 +658,8 @@ public sealed record Settings(int Threads, WarmPriority Priority, DriverUpdateMo
     IReadOnlyList<string>? LeftOutFolders = null,   // a store's game installed in one of these folders or under it is never listed or read (ScsKiller.LeftOut)
     IReadOnlyList<string>? HddDrives = null,   // HddMode for the games on these drives only (GameFiles.DriveOf); HddMode on = every drive
     TraversalMode Traversal = TraversalMode.Off,   // the traversal stutter fix's games, unless a game's TraversalOverride says otherwise (TraversalFix)
-    bool TraversalAsked = false);   // its one-time question was answered (TraversalFix.Asks): never asked again
+    bool TraversalAsked = false,   // its one-time question was answered (TraversalFix.Asks): never asked again
+    string? Language = null);   // Loc's code (Loc.Languages); null = the system UI culture's language. Applied at the next start
 
 /// <summary>Merging: a finished warm's dbs go into the game's D3DSCache folder (NVIDIA from 621), its progress in the bytes its checks and inserts read.</summary>
 public enum QueueStage { Waiting, Indexing, Planning, Materializing, Warming, Merging, Paused, Done, Failed, Stopped, Saving, Finishing }

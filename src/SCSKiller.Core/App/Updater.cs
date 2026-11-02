@@ -186,16 +186,16 @@ public static class Updater
         try
         {
             if (Usable(ready) is not { M: var m, R: var r } d)
-                return Fail("The update changed meanwhile. Restart to update again once it is ready.");
+                return Fail(Loc.T("Update_ChangedMeanwhile"));
             if (!await m.OnDisk(r))
             {
                 m.Delete(r);
                 Stage(null);
-                return Fail("The downloaded update is no longer whole on disk. It downloads again at the next check.");
+                return Fail(Loc.T("Update_NotWhole"));
             }
-            if (!m.OnlyThis(r)) return Fail("An older downloaded update couldn't be removed. The update installs at a later quit.");
+            if (!m.OnlyThis(r)) return Fail(Loc.T("Update_CouldntRemoveOld"));
             if (Busy.Handover(DataDir, DateTimeOffset.UtcNow) is { } busy) return Undo(busy);   // writes the marker, kept only on null
-            if (Usable(ready) is null) return Undo("The update channel changed meanwhile. Restart to update again once it is ready.");
+            if (Usable(ready) is null) return Undo(Loc.T("Update_ChannelChanged"));
             if (still?.Invoke(d) == false) return Undo(null);
             if (OfflineBlocks()) return Undo(OfflineRunning);
             Log($"Handing the update to {r.Version} to Update.exe");
@@ -204,7 +204,7 @@ public static class Updater
         }
         catch (Exception e)
         {
-            var undone = Undo("Couldn't hand the update to the installer: " + e.Message);   // the marker first, whatever the log does
+            var undone = Undo(Loc.T("Update_CouldntHand", e.Message));   // the marker first, whatever the log does
             Log($"Handing the update to Update.exe failed: {e}");
             return undone;
         }
@@ -231,7 +231,7 @@ public static class Updater
         }
     }
 
-    const string OfflineRunning = "A recording session's game or cleanup is running. The update installs once it has ended.";
+    static string OfflineRunning => Loc.T("Update_OfflineRunning");
 
     /// <summary>Who updates this copy. Read on first use, after UpdateHooks.Run unless it is a Flatpak or a package; a
     /// failure isn't kept, the next use tries again.</summary>
@@ -362,7 +362,7 @@ public static class Updater
                     if (UpdateFeeds.PackageHold(Tries(), DateTimeOffset.Now, asked, AppVersion.Parse(info.TargetFullRelease.Version.ToString())?.Channel != UpdateChannels.Stable) is { } until)
                     {
                         Log($"The download of {info.TargetFullRelease.Version} waits until {until:g}");
-                        Problem = asked ? $"The update was downloaded too many times today. SCSKiller tries again at {until:g}." : null;   // a click skips only the backoff
+                        Problem = asked ? Loc.T("Update_TooManyToday", $"{until:g}") : null;   // a click skips only the backoff
                         return;
                     }
                     Downloading = info.TargetFullRelease.Version.ToString();
@@ -384,7 +384,7 @@ public static class Updater
         catch (FeedRejectedException e)
         {
             Log($"The update feed failed its signature check: {e.Message}");
-            Problem = "The update feed failed its signature check: " + e.Message;
+            Problem = Loc.T("Update_SignatureFailed", e.Message);
         }
         catch (HttpRequestException e) when (e.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
@@ -398,19 +398,19 @@ public static class Updater
         catch (HttpRequestException e) when (e.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
         {
             Log("The update server asked SCSKiller to wait (429)");
-            Problem = asked ? "The update server asked SCSKiller to wait. It checks again by itself later." : null;
+            Problem = asked ? Loc.T("Update_ServerWait") : null;
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException)
         {
             Log($"Couldn't check for updates: {e.GetType().Name}: {e.Message}");
             // offline or a hiccup: the next check retries; say so only once it has kept failing for a day
-            Problem = ++failures >= 24 ? "Couldn't reach the update server for a while. SCSKiller keeps trying."
-                : asked ? "Couldn't reach the update server. SCSKiller tries again within the hour." : null;
+            Problem = ++failures >= 24 ? Loc.T("Update_UnreachableAWhile")
+                : asked ? Loc.T("Update_Unreachable") : null;
         }
         catch (Exception e)
         {
             Log($"Couldn't check for updates: {e}");
-            Problem = KeyringCause(e)?.Message ?? "Couldn't check for updates right now.";
+            Problem = KeyringCause(e)?.Message ?? Loc.T("Update_CouldntCheck");
         }
         finally
         {
@@ -479,7 +479,7 @@ public static class Updater
             for (var i = 0; i < 20 && Busy.IsHeld(); i++) await Task.Delay(100);   // our worker lets go just after the item ends
             if (Busy.IsHeld())
             {
-                Problem = "The background rebuild after a driver update is compiling. The update installs when SCSKiller quits after it has finished.";
+                Problem = Loc.T("Update_BackgroundCompiling");
                 Log($"Restart to update: {Problem}");
                 return false;
             }

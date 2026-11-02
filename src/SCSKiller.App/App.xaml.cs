@@ -150,7 +150,7 @@ public partial class App : Application
                 File.WriteAllText(Path.Combine(dir, "toast-new-shaders-compiling.xml"), NewShadersToast([Core.Games[0] with { RecordedSinceWarm = 42 }], compiling: true).Payload);
                 var sample = NewsState.Sample;
                 File.WriteAllText(Path.Combine(dir, "toast-news.xml"), NewsToast(sample.Title, NewsState.FirstLine(sample.Body)).Payload);
-                File.WriteAllText(Path.Combine(dir, "toast-news-more.xml"), NewsToast("SCSKiller news", NewsState.MoreLine(4)).Payload);
+                File.WriteAllText(Path.Combine(dir, "toast-news-more.xml"), NewsToast(Loc.T("App_NewsTitle"), NewsState.MoreLine(4)).Payload);
             }
             _ = Main.TakeScreenshotsAsync(dir, (FakeScsKiller)Core);
             return;   // no tray icon, no notification, no single-instance registration
@@ -287,7 +287,7 @@ public partial class App : Application
         var (shown, _) = MainWindow.Notifications();
         var (show, more) = NewsState.ToastDue(Store, shown, MainWindow.Feed(), DateOnly.FromDateTime(DateTime.Now));
         foreach (var item in show) AppNotificationManager.Default.Show(NewsToast(item.Title, NewsState.FirstLine(item.Body)));
-        if (more > 0) AppNotificationManager.Default.Show(NewsToast("SCSKiller news", NewsState.MoreLine(more)));
+        if (more > 0) AppNotificationManager.Default.Show(NewsToast(Loc.T("App_NewsTitle"), NewsState.MoreLine(more)));
     }
 
     static AppNotification NewsToast(string title, string text) =>
@@ -339,8 +339,8 @@ public partial class App : Application
         Core.Settings = Core.Settings with { TrayNoticeShown = true };
         AppNotificationManager.Default.Show(new AppNotificationBuilder()
             .AddArgument("action", "open")
-            .AddText("SCSKiller is still running")
-            .AddText("It's in the notification area, right-click the icon to quit.")
+            .AddText(Loc.T("App_StillRunningTitle"))
+            .AddText(Loc.T("App_StillRunningText"))
             .BuildNotification());
     }
 
@@ -382,12 +382,13 @@ public partial class App : Application
         if (c.Link != null) panel.Children.Add(new HyperlinkButton { Content = c.Link.Text, NavigateUri = new Uri(c.Link.Url), Padding = new Thickness(0) });
         var share = new CheckBox { Content = c.Share, IsChecked = false };   // never pre-ticked: that isn't consent
         panel.Children.Add(share);
-        var diagnostics = new CheckBox { Content = "Share diagnostics to help fix problems", IsChecked = false };
+        var diagnostics = new CheckBox { Content = Loc.T("Settings_ShareDiagnostics"), IsChecked = false };
         panel.Children.Add(diagnostics);
-        var activeCaption = new TextBlock { Text = "Helps us count active installs so we can size our servers. Once a day, the app's version and GPU vendor, no identifier.", TextWrapping = TextWrapping.Wrap,
+        var activeCaption = new TextBlock { Text = Loc.T("Settings_ActiveCheckDesc"), TextWrapping = TextWrapping.Wrap,
             Style = (Style)Current.Resources["Caption"] };
-        var active = new CheckBox { IsChecked = false, Content = new StackPanel { Spacing = 2, Children = { new TextBlock { Text = "Send an anonymous daily check", TextWrapping = TextWrapping.Wrap }, activeCaption } } };
-        AutomationProperties.SetName(active, "Send an anonymous daily check");
+        var activeText = Loc.T("Settings_ActiveCheck");
+        var active = new CheckBox { IsChecked = false, Content = new StackPanel { Spacing = 2, Children = { new TextBlock { Text = activeText, TextWrapping = TextWrapping.Wrap }, activeCaption } } };
+        AutomationProperties.SetName(active, activeText);
         panel.Children.Add(active);
         var dialog = new ContentDialog
         {
@@ -412,7 +413,7 @@ public partial class App : Application
 
     public static ContentDialog ActiveCheckDialog(XamlRoot root) => new()
     {
-        XamlRoot = root, Title = "Anonymous daily check",
+        XamlRoot = root, Title = Loc.T("Dialog_ActiveCheckTitle"),
         Content = new StackPanel
         {
             Spacing = 8,
@@ -420,14 +421,13 @@ public partial class App : Application
             {
                 new TextBlock
                 {
-                    Text = "Once a day SCSKiller can tell our server that an install is active, with its version and GPU vendor and no identifier. "
-                        + "This helps us count active installs so we can size our servers. It's off until you turn it on.",
+                    Text = Loc.T("Dialog_ActiveCheckBody"),
                     TextWrapping = TextWrapping.Wrap,
                 },
-                new TextBlock { Text = "Change it any time in Settings.", TextWrapping = TextWrapping.Wrap, Style = (Style)Current.Resources["Caption"] },
+                new TextBlock { Text = Loc.T("Dialog_ChangeInSettings"), TextWrapping = TextWrapping.Wrap, Style = (Style)Current.Resources["Caption"] },
             },
         },
-        PrimaryButtonText = "Turn it on", CloseButtonText = "Keep it off", DefaultButton = ContentDialogButton.None,   // no nudge either way
+        PrimaryButtonText = Loc.T("Common_TurnItOn"), CloseButtonText = Loc.T("Common_KeepItOff"), DefaultButton = ContentDialogButton.None,   // no nudge either way
     };
 
     /// <summary>The traversal stutter fix's one-time question (<see cref="TraversalFix.Asks"/>): Keep it off or Esc answers it, off.</summary>
@@ -461,13 +461,13 @@ public partial class App : Application
     {
         var dialog = new ContentDialog
         {
-            XamlRoot = root, Title = "Share diagnostics to help fix problems?",
+            XamlRoot = root, Title = Loc.T("Dialog_DiagnosticsTitle"),
             Content = new TextBlock
             {
-                Text = "When a compile fails, send its error codes, once per compile. You can change this in Settings.",
+                Text = Loc.T("Dialog_DiagnosticsBody"),
                 TextWrapping = TextWrapping.Wrap,
             },
-            PrimaryButtonText = "Share diagnostics", CloseButtonText = "No thanks", DefaultButton = ContentDialogButton.Close,
+            PrimaryButtonText = Loc.T("Settings_ShareDiagnostics"), CloseButtonText = Loc.T("Common_NoThanks"), DefaultButton = ContentDialogButton.Close,
         };
         ContentDialogResult result;
         try { result = await Themed(dialog).ShowAsync(); }
@@ -509,7 +509,7 @@ public partial class App : Application
             }
             panel.Children.Add(text);
         }
-        return new ContentDialog { XamlRoot = root, Title = $"What's new in {section.Version}", Content = new ScrollViewer { Content = panel }, CloseButtonText = "Close" };
+        return new ContentDialog { XamlRoot = root, Title = Loc.T("Dialog_WhatsNewIn", section.Version), Content = new ScrollViewer { Content = panel }, CloseButtonText = Loc.T("Common_Close") };
     }
 
     /// <summary>A question with Cancel and one action; true = the action was chosen.</summary>
@@ -518,7 +518,7 @@ public partial class App : Application
 
     public static ContentDialog Confirm(Page page, string title, object content, string primaryText, ContentDialogButton defaultButton = ContentDialogButton.Close) => new()
     {
-        XamlRoot = page.XamlRoot, Title = title, Content = content, PrimaryButtonText = primaryText, CloseButtonText = "Cancel", DefaultButton = defaultButton,
+        XamlRoot = page.XamlRoot, Title = title, Content = content, PrimaryButtonText = primaryText, CloseButtonText = Loc.T("Common_Cancel"), DefaultButton = defaultButton,
     };
 
     /// <summary>None when another dialog is open: WinUI shows one at a time and throws, which an async void
@@ -567,15 +567,15 @@ public partial class App : Application
         var t = new Tray(Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico"))
         {
             Open = ShowWindow,
-            PauseLabel = () => Running() is not { } q ? null : q.Stage == QueueStage.Paused ? "Resume" : "Pause compiling",
+            PauseLabel = () => Running() is not { } q ? null : q.Stage == QueueStage.Paused ? Loc.T("Tray_Resume") : Loc.T("Tray_PauseCompiling"),
             PauseOrResume = () => Fmt.PauseOrResume(Running()),
             Quit = () => _ = QuitAsync(),
-            QuitLabel = () => quitNow != null ? "Quit now (loses unsaved cache)" : "Quit",
+            QuitLabel = () => quitNow != null ? Loc.T("Tray_QuitNow") : Loc.T("Tray_Quit"),
             SessionEnding = hwnd =>
             {
                 SetExitReason("session end (shutdown or log-off)");
                 if (Running() == null) return;
-                ShutdownBlockReasonCreate(hwnd, "Stopping the compile so the graphics driver can save its shader cache");
+                ShutdownBlockReasonCreate(hwnd, Loc.T("App_ShutdownBlockReason"));
                 StopAll();
             },
             SessionEnd = hwnd =>
@@ -665,15 +665,15 @@ public partial class App : Application
     static AppNotification DriverToast(IReadOnlyList<GameState> stale)
     {
         var time = TimeSpan.FromTicks(stale.Sum(g => (g.EstimatedWarmTime ?? TimeSpan.Zero).Ticks));
-        string games = stale.Count == 1 ? "1 game needs" : $"{stale.Count} games need";
+        string games = stale.Count == 1 ? Loc.T("Toast_GameNeedsOne") : Loc.T("Toast_GamesNeedMany", stale.Count);
         return new AppNotificationBuilder()
             .AddArgument("action", "open")
-            .AddText($"{Fmt.Vendor(Core.Vendor.Vendor)} driver updated")
-            .AddText($"Driver {Core.Vendor.Gpu.DriverVersion} cleared the shader cache. {games} rebuilding: " +
-                     $"{string.Join(", ", stale.Select(g => g.Game.Name))}" + (time > TimeSpan.Zero ? $", about {Format.Duration(time)}." : "."))
-            .AddButton(new AppNotificationButton("Compile now").AddArgument("action", "now"))
-            .AddButton(new AppNotificationButton("When idle").AddArgument("action", "idle"))
-            .AddButton(new AppNotificationButton("Skip").AddArgument("action", "skip"))
+            .AddText(Loc.T("Toast_DriverUpdated", Fmt.Vendor(Core.Vendor.Vendor)))
+            .AddText(Loc.T("Toast_DriverCleared", Core.Vendor.Gpu.DriverVersion, games, string.Join(", ", stale.Select(g => g.Game.Name)),
+                time > TimeSpan.Zero ? Loc.T("Toast_AboutTime", Format.Duration(time)) : "."))
+            .AddButton(new AppNotificationButton(Loc.T("Toast_CompileNow")).AddArgument("action", "now"))
+            .AddButton(new AppNotificationButton(Loc.T("Toast_WhenIdle")).AddArgument("action", "idle"))
+            .AddButton(new AppNotificationButton(Loc.T("Toast_Skip")).AddArgument("action", "skip"))
             .BuildNotification();
     }
 
@@ -719,15 +719,15 @@ public partial class App : Application
         var b = new AppNotificationBuilder()
             .AddArgument("action", "shaders-show").AddArgument("games", ids);
         if (compiling)
-            b.AddText("Compiling new shaders")
-                .AddText(games.Count == 1 ? $"{games[0].Game.Name} has {n:N0} new pipeline{(n == 1 ? "" : "s")}. {NewShaders.When(Core.Settings)}"
-                    : $"{games.Count} games have new shaders. {NewShaders.When(Core.Settings)}");
+            b.AddText(Loc.T("Toast_CompilingNew"))
+                .AddText(games.Count == 1 ? Loc.T("Toast_GameNewPipelines", games[0].Game.Name, n == 1 ? Loc.T("Toast_PipelineOne", $"{n:N0}") : Loc.T("Toast_PipelinesMany", $"{n:N0}")) + " " + NewShaders.When(Core.Settings)
+                    : Loc.T("Toast_ManyGamesNew", games.Count) + " " + NewShaders.When(Core.Settings));
         else
-            b.AddText("New shaders to compile")
-                .AddText(games.Count == 1 ? $"{games[0].Game.Name} has {n:N0} new pipeline{(n == 1 ? "" : "s")}. Compile now so they don't stutter."
-                    : $"{games.Count} games have new shaders to compile");
-        return b.AddButton(new AppNotificationButton("Compile now").AddArgument("action", "shaders-compile").AddArgument("games", ids))
-            .AddButton(new AppNotificationButton("Show").AddArgument("action", "shaders-show").AddArgument("games", ids))
+            b.AddText(Loc.T("Toast_NewToCompile"))
+                .AddText(games.Count == 1 ? Loc.T("Toast_GameNewPipelines", games[0].Game.Name, n == 1 ? Loc.T("Toast_PipelineOne", $"{n:N0}") : Loc.T("Toast_PipelinesMany", $"{n:N0}")) + " " + Loc.T("Toast_CompileNowHint")
+                    : Loc.T("Toast_ManyGamesToCompile", games.Count));
+        return b.AddButton(new AppNotificationButton(Loc.T("Toast_CompileNow")).AddArgument("action", "shaders-compile").AddArgument("games", ids))
+            .AddButton(new AppNotificationButton(Loc.T("Toast_Show")).AddArgument("action", "shaders-show").AddArgument("games", ids))
             .BuildNotification();
     }
 

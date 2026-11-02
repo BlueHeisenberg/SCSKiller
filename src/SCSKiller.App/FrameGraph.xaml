@@ -1,13 +1,14 @@
 <UserControl
     x:Class="SCSKiller.App.FrameGraph"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:core="using:SCSKiller.Core.App">
     <!-- drawn in code (Draw); the brushes here follow the theme -->
     <Grid x:Name="Area" SizeChanged="OnSize" Background="Transparent">
         <Path x:Name="GraphLoading" Fill="{ThemeResource ControlStrongFillColorDisabledBrush}" Opacity="0.45" />
         <Path x:Name="GraphCompiling" Fill="{ThemeResource WarnBrush}" Opacity="0.3" />
         <Line x:Name="GraphLine50" Stroke="{ThemeResource TextFillColorTertiaryBrush}" StrokeThickness="1" StrokeDashArray="4,3" />
-        <TextBlock x:Name="GraphLabel50" Text="50 ms" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+        <TextBlock x:Name="GraphLabel50" Text="{x:Bind core:Loc.T('Graph_50ms')}" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                    HorizontalAlignment="Right" VerticalAlignment="Top" />
         <Polyline x:Name="GraphTimes" Stroke="{ThemeResource AccentFillColorDefaultBrush}" StrokeThickness="1" />
         <Path x:Name="GraphOther" Fill="{ThemeResource TextFillColorSecondaryBrush}" />

@@ -107,15 +107,15 @@ public static partial class UpdateChannels
     /// <summary>About's channel: the running build's, or the one checked and why.</summary>
     public static string Shown(string? chosen, string buildChannel, IReadOnlyCollection<string>? ent, bool signedIn) =>
         SteppedDown(chosen, buildChannel, ent, signedIn) is { } c
-            ? $"{Shown(c)} ({(signedIn ? "your Patreon membership doesn't include" : "sign in with Patreon for")} {chosen ?? buildChannel} builds)"
+            ? Loc.T("UpChan_SteppedDown", Shown(c), Loc.T(signedIn ? "UpChan_MembershipLacks" : "UpChan_SignInFor"), chosen ?? buildChannel)
             : Shown(buildChannel);
 
-    public static string Shown(string channel) => char.ToUpperInvariant(channel[0]) + channel[1..] + " channel";
+    public static string Shown(string channel) => Loc.T("UpChan_ChannelSuffix", char.ToUpperInvariant(channel[0]) + channel[1..]);
 
     /// <summary>The note after a check of <paramref name="checkedChannel"/> found nothing newer: it names that channel when it
     /// isn't the wanted one.</summary>
     public static string UpToDate(string checkedChannel, string? chosen, string buildChannel) =>
-        checkedChannel == (chosen ?? buildChannel) ? "SCSKiller is up to date." : $"SCSKiller is up to date on the {checkedChannel} channel.";
+        checkedChannel == (chosen ?? buildChannel) ? Loc.T("Update_UpToDate") : Loc.T("Update_UpToDateOn", checkedChannel);
 
     /// <summary>A download from the <paramref name="staged"/> channel's feed still installs: it is the feed <see cref="Effective"/>
     /// picks. With the entitlements unknown (null: signed in, but no token read since the start, as at a logon without
@@ -156,8 +156,8 @@ public sealed record Installation(InstallKind Kind, string? Manager = null)
     /// <summary>The line the app shows in place of its update check; null where the updater runs, or nothing updates.</summary>
     public string? UpdatesFrom => Kind switch
     {
-        InstallKind.Flatpak => "Updates come from your software store.",
-        InstallKind.Package => "Updates come from your package manager.",
+        InstallKind.Flatpak => Loc.T("Update_FromStore"),
+        InstallKind.Package => Loc.T("Update_FromPackageManager"),
         _ => null,
     };
 
@@ -282,11 +282,11 @@ public enum StartStep { Apply, Installed, Failed, Older }
 /// A download from the internal channel's feed never installs by itself.</summary>
 public static class AutoInstall
 {
-    public const string Off = "Automatic install is off.";
-    public const string Internal = "Updates on the internal channel install only through Restart to update.";
-    public const string Compiling = "A compile is running.";
-    public const string Offline = "A recording session's game or cleanup is running. The update installs once it has ended.";
-    public const string Playing = "A game is running, or the games aren't known yet.";
+    public static string Off => Loc.T("Update_AutoOff");
+    public static string Internal => Loc.T("Update_InternalChannel");
+    public static string Compiling => Loc.T("Update_HeldCompiling");
+    public static string Offline => Loc.T("Update_OfflineRunning");
+    public static string Playing => Loc.T("Update_HeldPlaying");
 
     /// <summary>Whether a download from <paramref name="channel"/>'s feed installs by itself at a start or quit.</summary>
     public static bool On(Settings s, string channel) => s.InstallUpdatesAutomatically && channel != UpdateChannels.Internal;
@@ -302,9 +302,7 @@ public static class AutoInstall
         staged != null && UpdateChannels.Installs(staged.Channel, chosen, current.Channel, ent)
         && (AppVersion.Parse(staged.Version) is { } v && v.CompareTo(current) > 0 || backToStable && staged.Channel == UpdateChannels.Stable);
 
-    public static string ReadyNote(string version, bool auto) => auto
-        ? $"SCSKiller {version} is ready: it installs the next time SCSKiller starts or quits, or use Restart to update at the top."
-        : $"SCSKiller {version} is ready: use Restart to update at the top.";
+    public static string ReadyNote(string version, bool auto) => auto ? Loc.T("Update_ReadyAuto", version) : Loc.T("Update_ReadyManual", version);
 }
 
 /// <summary>Where updates and their source come from. <see cref="GhRepo"/> is compiled in: renaming the public repo
@@ -740,7 +738,7 @@ public static class Busy
     /// trusted (<see cref="NamedMutex.Held"/>): nothing waiting on it goes ahead.</summary>
     public static bool IsHeld(string? name = null) => NamedMutex.Held(name ?? Name);
 
-    public const string CompileStarted = "A compile started meanwhile. The update installs when SCSKiller quits after it has finished.";
+    public static string CompileStarted => Loc.T("Update_CompileStarted");
 
     /// <summary>The updater's side of the handshake, the last step before it hands an update over: the marker, then
     /// <see cref="IsHeld"/>. A compile worker holds Busy first, then reads the marker (<see cref="TryHold"/>), so one of the
@@ -750,7 +748,7 @@ public static class Busy
     public static string? Handover(string dataDir, DateTimeOffset now, string? name = null, string? lockRoot = null)
     {
         MarkApplying(dataDir, now);
-        var why = NamedMutex.Unsafe(lockRoot) is { } locks ? $"{locks}. No update installs until that is fixed."
+        var why = NamedMutex.Unsafe(lockRoot) is { } locks ? Loc.T("Update_LocksBroken", locks)
             : IsHeld(name) ? CompileStarted
             : null;
         if (why != null) ClearApplying(dataDir);

@@ -52,7 +52,7 @@ public sealed partial class DetailPage : Page
 
     public ContentDialog PartlyWhyDialog() => new()
     {
-        XamlRoot = XamlRoot, Title = $"Why is {Vm.Name} partly compiled?", CloseButtonText = "Close",
+        XamlRoot = XamlRoot, Title = Loc.T("Detail_WhyPartlyCompiled", Vm.Name), CloseButtonText = Loc.T("Common_Close"),
         Content = new TextBlock { Text = Vm.PartlyCompiledWhy, TextWrapping = TextWrapping.Wrap },
     };
 
@@ -61,13 +61,13 @@ public sealed partial class DetailPage : Page
     async void OnSetAesKey(object _, RoutedEventArgs __)
     {
         var vm = Vm;
-        if (await AesKeyDialog.ShowAsync(XamlRoot, vm.Row.Id, $"Set the AES key for {vm.Name}")) vm.RefreshGame();
+        if (await AesKeyDialog.ShowAsync(XamlRoot, vm.Row.Id, Loc.T("Detail_SetAesKeyFor", vm.Name))) vm.RefreshGame();
     }
 
     async void OnChangeAesKey(object _, RoutedEventArgs __)
     {
         var vm = Vm;
-        if (await AesKeyDialog.ShowAsync(XamlRoot, vm.Row.Id, $"Change the AES key for {vm.Name}")) vm.RefreshGame();
+        if (await AesKeyDialog.ShowAsync(XamlRoot, vm.Row.Id, Loc.T("Detail_ChangeAesKeyFor", vm.Name))) vm.RefreshGame();
     }
 
     async void OnRemoveAesKey(object _, RoutedEventArgs __)
@@ -75,7 +75,7 @@ public sealed partial class DetailPage : Page
         var vm = Vm;
         var dialog = new ContentDialog
         {
-            XamlRoot = XamlRoot, Title = $"Remove the AES key for {vm.Name}?", PrimaryButtonText = "Remove", CloseButtonText = "Cancel",
+            XamlRoot = XamlRoot, Title = Loc.T("Detail_RemoveAesKeyFor", vm.Name), PrimaryButtonText = Loc.T("Common_Remove"), CloseButtonText = Loc.T("Common_Cancel"),
             Content = new TextBlock { Text = DetailVm.RemoveAesKeyNote, TextWrapping = TextWrapping.Wrap },
         };
         if (await App.ShowAsync(dialog) != ContentDialogResult.Primary) return;
@@ -86,17 +86,17 @@ public sealed partial class DetailPage : Page
     async void OnSetGameKey(object _, RoutedEventArgs __)
     {
         var vm = Vm;
-        if (await AesKeyDialog.ShowAsync(XamlRoot, vm.Row.Id, $"Set the game key for {vm.Name}", aes: false)) vm.RefreshGame();
+        if (await AesKeyDialog.ShowAsync(XamlRoot, vm.Row.Id, Loc.T("Detail_SetGameKeyFor", vm.Name), aes: false)) vm.RefreshGame();
     }
 
     static readonly (CompatChoice Choice, string Text)[] ReportChoices =
     [
-        (CompatChoice.Gone, "Shader compilation stutter is gone."),
-        (CompatChoice.Better, "Shader compilation stutter is better, but some stutter remains."),
-        (CompatChoice.NoHelp, "The game compiled, but it did not help with the stutter."),
-        (CompatChoice.Worse, "The game runs worse than before compiling."),
-        (CompatChoice.NotCompiled, "The game could not be compiled."),
-        (CompatChoice.NoStutterBefore, "The game had no shader compilation stutter before compiling either."),
+        (CompatChoice.Gone, Loc.T("Compat_Gone")),
+        (CompatChoice.Better, Loc.T("Compat_Better")),
+        (CompatChoice.NoHelp, Loc.T("Compat_NoHelp")),
+        (CompatChoice.Worse, Loc.T("Compat_Worse")),
+        (CompatChoice.NotCompiled, Loc.T("Compat_NotCompiled")),
+        (CompatChoice.NoStutterBefore, Loc.T("Compat_NoStutterBefore")),
     ];
 
     /// <summary>Rate this compile's popup for this PC's earlier report of the build (<paramref name="sent"/>), or its thanks
@@ -105,17 +105,17 @@ public sealed partial class DetailPage : Page
     public ContentDialog ReportDialog(CompatSent? sent, bool thanks = false)
     {
         var (vm, id) = (Vm, Vm.Row.Id);
-        var dialog = App.Confirm(this, $"Rate this compile for {vm.Name}", null!, "Send rating");
+        var dialog = App.Confirm(this, Loc.T("Detail_RateFor", vm.Name), null!, Loc.T("Detail_SendRating"));
         if (thanks) return Thanked(dialog);
         static TextBlock Text(string t) => new() { Text = t, TextWrapping = TextWrapping.Wrap };
         var choices = new RadioButtons();
         foreach (var (_, t) in ReportChoices) choices.Items.Add(new RadioButton { Content = Text(t) });
         CheckBox Box(string t) => new() { Content = Text(t) };
-        var (frameGen, upscaler, mods) = (Box("Frame generation was on"), Box("An upscaler was on (DLSS, FSR or XeSS)"),
-            Box("Mods were installed (for example ReShade, OptiScaler or RenoDX)"));
+        var (frameGen, upscaler, mods) = (Box(Loc.T("Detail_RateFrameGen")), Box(Loc.T("Detail_RateUpscaler")),
+            Box(Loc.T("Detail_RateMods")));
         var problem = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["WarnBrush"], Visibility = Visibility.Collapsed };
-        var panel = new StackPanel { Spacing = 12, Children = { Text($"Tell other players how {vm.Name} ran after SCSKiller compiled it. The rating is anonymous.") } };
-        if (sent != null) panel.Children.Add(new TextBlock { Text = "You already rated this version of the game. Rating again replaces it.", TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        var panel = new StackPanel { Spacing = 12, Children = { Text(Loc.T("Detail_RateIntro", vm.Name)) } };
+        if (sent != null) panel.Children.Add(new TextBlock { Text = Loc.T("Detail_AlreadyRated"), TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         panel.Children.Add(choices);
         panel.Children.Add(new StackPanel { Children = { frameGen, upscaler, mods } });
         if (!App.Core.Settings.CompatReportSent)
@@ -124,9 +124,9 @@ public sealed partial class DetailPage : Page
                 Spacing = 2,
                 Children =
                 {
-                    new TextBlock { Text = "Sent with the rating: your CPU model, GPU model, driver version, Windows version, and what SCSKiller compiled for this game. Nothing else.",
+                    new TextBlock { Text = CompatReport.WhatIsSent,
                         TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["Secondary"] },
-                    new HyperlinkButton { Content = "What's shared", NavigateUri = new Uri(PrivacyReports), Padding = new(0) },
+                    new HyperlinkButton { Content = Loc.T("Settings_WhatsShared"), NavigateUri = new Uri(PrivacyReports), Padding = new(0) },
                 },
             });
         panel.Children.Add(problem);
@@ -160,7 +160,7 @@ public sealed partial class DetailPage : Page
 
         static ContentDialog Thanked(ContentDialog d)
         {
-            (d.Content, d.PrimaryButtonText, d.CloseButtonText) = (Text("Thanks, your rating was sent."), "", "Close");
+            (d.Content, d.PrimaryButtonText, d.CloseButtonText) = (Text(Loc.T("Detail_RatingThanks")), "", Loc.T("Common_Close"));
             return d;
         }
     }
@@ -179,19 +179,19 @@ public sealed partial class DetailPage : Page
         var store = Fmt.StoreName(vm.Row.State.Game);
         var page = new (string, string)[]
         {
-            ("Status", $"{vm.StatusTitle}. {vm.StatusReason}"),
-            ("Coverage", vm.CoverageHeadline),
+            (Loc.T("Detail_RbStatus"), $"{vm.StatusTitle}. {vm.StatusReason}"),
+            (Loc.T("Detail_RbCoverage"), vm.CoverageHeadline),
             (vm.TimeLabel, vm.HasTimeValue ? vm.TimeValue : ""),
             (vm.DiskLabel, vm.HasDiskValue ? vm.DiskValue : ""),
             (vm.StuttersLabel, vm.HasStutterTile ? vm.StuttersValue : ""),
             (vm.CompileTitle, vm.HasCompileCard ? vm.CompileText : ""),
-            ("Last session", vm.FramesVerdict),
+            (Loc.T("Detail_RbLastSession"), vm.FramesVerdict),
         }.Concat(vm.Details.Select(d => (d.Label, d.Value))).ToList();
-        var dialog = App.Confirm(this, $"Report a problem with {vm.Name}", null!, "Send");
+        var dialog = App.Confirm(this, Loc.T("Detail_ReportProblemFor", vm.Name), null!, Loc.T("Common_Send"));
         if (sentId != null) return Thanked(dialog, sentId);
         static TextBlock Text(string t) => new() { Text = t, TextWrapping = TextWrapping.Wrap };
-        var words = new TextBox { Header = "What happened?", Text = message ?? "", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 90, MaxLength = ProblemReport.MaxMessageChars };
-        var withLog = new CheckBox { Content = Text("Include the app's log lines about this game"), IsChecked = true };
+        var words = new TextBox { Header = Loc.T("Detail_WhatHappened"), Text = message ?? "", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 90, MaxLength = ProblemReport.MaxMessageChars };
+        var withLog = new CheckBox { Content = Text(Loc.T("Detail_IncludeLog")), IsChecked = true };
         var report = new TextBox
         {
             IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 240,
@@ -214,14 +214,14 @@ public sealed partial class DetailPage : Page
                 Spacing = 12,
                 Children =
                 {
-                    words, new StackPanel { Spacing = 8, Children = { Text("Sent with your message"), report } }, withLog,
+                    words, new StackPanel { Spacing = 8, Children = { Text(Loc.T("Detail_SentWith")), report } }, withLog,
                     new StackPanel
                     {
                         Spacing = 2,
                         Children =
                         {
-                            new TextBlock { Text = "Sent to the SCSKiller server, kept 90 days and only read to fix the problem.", TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["Secondary"] },
-                            new HyperlinkButton { Content = "What's sent", NavigateUri = new Uri(PrivacyProblems), Padding = new(0) },
+                            new TextBlock { Text = Loc.T("Detail_ReportSentNote"), TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["Secondary"] },
+                            new HyperlinkButton { Content = Loc.T("Detail_WhatsSent"), NavigateUri = new Uri(PrivacyProblems), Padding = new(0) },
                         },
                     },
                     problemText,
@@ -243,7 +243,7 @@ public sealed partial class DetailPage : Page
             if (sent != null) Thanked(d, sent);
             else
             {
-                (problemText.Text, problemText.Visibility) = (why ?? "Not sent. Try again later.", Visibility.Visible);
+                (problemText.Text, problemText.Visibility) = (why ?? Loc.T("Detail_NotSentRetry"), Visibility.Visible);
                 d.IsPrimaryButtonEnabled = true;
             }
             deferral.Complete();
@@ -252,15 +252,15 @@ public sealed partial class DetailPage : Page
 
         static ContentDialog Thanked(ContentDialog d, string reportId)
         {
-            (d.PrimaryButtonText, d.CloseButtonText) = ("", "Close");
+            (d.PrimaryButtonText, d.CloseButtonText) = ("", Loc.T("Common_Close"));
             d.Content = new StackPanel
             {
                 Spacing = 8,
                 Children =
                 {
-                    new TextBlock { Text = "Thanks, your report was sent.", TextWrapping = TextWrapping.Wrap },
-                    new TextBlock { Text = $"Report ID {reportId}", IsTextSelectionEnabled = true, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
-                    new TextBlock { Text = "Mention it on Discord or GitHub so we can find your report. It's listed on the About page.", TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["Secondary"] },
+                    new TextBlock { Text = Loc.T("Detail_ReportThanks"), TextWrapping = TextWrapping.Wrap },
+                    new TextBlock { Text = Loc.T("Detail_ReportId", reportId), IsTextSelectionEnabled = true, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
+                    new TextBlock { Text = Loc.T("Detail_ReportMention"), TextWrapping = TextWrapping.Wrap, Style = (Style)Application.Current.Resources["Secondary"] },
                 },
             };
             return d;
@@ -288,7 +288,7 @@ public sealed partial class DetailPage : Page
     {
         Vm = new DetailVm((string)e.Parameter);
         Vm.ReadCaches();
-        Crumbs.ItemsSource = new[] { "Library", Vm.Name };
+        Crumbs.ItemsSource = new[] { Loc.T("Nav_Library"), Vm.Name };
         Vm.PropertyChanged += (_, _) => DrawFrames();
         Bindings.Update();
         DrawFrames();
@@ -298,17 +298,17 @@ public sealed partial class DetailPage : Page
     {
         try { if (ShowExe.Open(Vm.Row.State.Game.ExePath)) return; }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException) { }
-        await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't open the folder", Content = "The game's folder isn't there.", CloseButtonText = "OK" });
+        await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = Loc.T("Common_CouldntOpenFolder"), Content = Loc.T("Common_FolderNotThere"), CloseButtonText = Loc.T("Common_Ok") });
     }
 
     async void OnGameFolder(object _, RoutedEventArgs __)
     {
         var game = Vm.Row.State.Game;
-        if (await GameFolderDialog.ShowAsync(XamlRoot, game, $"{game.Name}'s folder", "Save") is not { } folder) return;
+        if (await GameFolderDialog.ShowAsync(XamlRoot, game, Loc.T("Detail_FolderOf", game.Name), Loc.T("Common_Save")) is not { } folder) return;
         try { await Task.Run(() => App.Core.AddManualGame(game.ExePath, folder)); }   // checks the folder again, then the game
         catch (Exception ex)
         {
-            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't set the game folder", Content = ex.Message, CloseButtonText = "OK" });
+            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = Loc.T("Common_CouldntSetFolder"), Content = ex.Message, CloseButtonText = Loc.T("Common_Ok") });
             return;
         }
         Vm.Refresh();
@@ -321,14 +321,14 @@ public sealed partial class DetailPage : Page
         {
             var picker = new Microsoft.Windows.Storage.Pickers.FileOpenPicker(App.Main.AppWindow.Id)
             {
-                SuggestedStartLocation = Microsoft.Windows.Storage.Pickers.PickerLocationId.ComputerFolder, CommitButtonText = "Use this exe",
+                SuggestedStartLocation = Microsoft.Windows.Storage.Pickers.PickerLocationId.ComputerFolder, CommitButtonText = Loc.T("Detail_UseThisExe"),
             };
             picker.FileTypeFilter.Add(".exe");
             path = (await picker.PickSingleFileAsync())?.Path;
         }
         catch (Exception ex)
         {
-            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't open the file picker", Content = ex.Message, CloseButtonText = "OK" });
+            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = Loc.T("Common_CouldntOpenPicker"), Content = ex.Message, CloseButtonText = Loc.T("Common_Ok") });
             return;
         }
         if (path != null) await SetExe(path);
@@ -342,7 +342,7 @@ public sealed partial class DetailPage : Page
         try { await Task.Run(() => App.Core.SetGameExe(id, path)); }   // reads the game again
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException)
         {
-            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't change the game's exe", Content = ex.Message, CloseButtonText = "OK" });
+            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = Loc.T("Common_CouldntChangeExe"), Content = ex.Message, CloseButtonText = Loc.T("Common_Ok") });
             return;
         }
         Vm.Refresh();
@@ -351,10 +351,10 @@ public sealed partial class DetailPage : Page
     // Only the name shown: the game's id, which everything SCSKiller keeps of it is stored under, stays.
     async void OnRename(object _, RoutedEventArgs __)
     {
-        var box = new TextBox { Text = Vm.Name, Header = "Name", Description = "Only the name SCSKiller shows changes.", MaxLength = 200 };
+        var box = new TextBox { Text = Vm.Name, Header = Loc.T("Detail_NameLabel"), Description = Loc.T("Detail_NameDesc"), MaxLength = 200 };
         var dialog = new ContentDialog
         {
-            XamlRoot = XamlRoot, Title = $"Rename {Vm.Name}", Content = box, PrimaryButtonText = "Rename", CloseButtonText = "Cancel",
+            XamlRoot = XamlRoot, Title = Loc.T("Detail_RenameFor", Vm.Name), Content = box, PrimaryButtonText = Loc.T("Detail_RenameBtn"), CloseButtonText = Loc.T("Common_Cancel"),
             DefaultButton = ContentDialogButton.Primary,
         };
         box.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = box.Text.Trim().Length > 0;
@@ -363,24 +363,24 @@ public sealed partial class DetailPage : Page
         try { Fmt.Rename(Vm.Row.Id, box.Text); }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException)
         {
-            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't rename the game", Content = ex.Message, CloseButtonText = "OK" });
+            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = Loc.T("Common_CouldntRename"), Content = ex.Message, CloseButtonText = Loc.T("Common_Ok") });
             return;
         }
         Vm.Refresh();
-        Crumbs.ItemsSource = new[] { "Library", Vm.Name };
+        Crumbs.ItemsSource = new[] { Loc.T("Nav_Library"), Vm.Name };
     }
 
     async void OnRemoveGame(object _, RoutedEventArgs __)
     {
         var (id, manual) = (Vm.Row.Id, Vm.IsManual);
-        if (!await App.ConfirmAsync(this, $"Remove {Vm.Name} from the library?",
-                manual ? "SCSKiller forgets the game and takes its recorder out of the game's folder. The game's own files stay, and you can add it again any time." : Vm.HideNote,
-                "Remove")) return;
+        if (!await App.ConfirmAsync(this, Loc.T("Detail_RemoveFromLibraryFor", Vm.Name),
+                manual ? Loc.T("Detail_ForgetConfirm") : Vm.HideNote,
+                Loc.T("Common_Remove"))) return;
         // refused while a compile of it runs, and a store game while it runs or its recorder stays in
         try { await Task.Run(() => { if (manual) App.Core.RemoveManualGame(id); else App.Core.HideGame(id); }); }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
         {
-            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't remove the game", Content = ex.Message, CloseButtonText = "OK" });
+            await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = Loc.T("Common_CouldntRemoveGame"), Content = ex.Message, CloseButtonText = Loc.T("Common_Ok") });
             return;
         }
         App.Main.Navigate(typeof(LibraryPage));
@@ -423,7 +423,7 @@ public sealed partial class DetailPage : Page
         var (vm, id) = (Vm, Vm.Row.Id);
         if (!App.Core.Settings.MaxCompileConfirmed)
         {
-            if (!await App.ConfirmAsync(this, $"Max compile {vm.Name}?", DetailVm.MaxCompileWhy, "Max compile")) return;
+            if (!await App.ConfirmAsync(this, Loc.T("Detail_MaxCompileFor", vm.Name), DetailVm.MaxCompileWhy, Loc.T("Detail_MaxCompile"))) return;
             App.Core.Settings = App.Core.Settings with { MaxCompileConfirmed = true };
         }
         App.Core.CompileMax(id);
@@ -539,16 +539,16 @@ public sealed partial class DetailPage : Page
     async void OnClearCache(object _, RoutedEventArgs __)
     {
         var (vm, id) = (Vm, Vm.Row.Id);
-        var note = "The game will compile shaders during play again until you re-warm it."
-            + (vm.Row.State.AntiCheat != AntiCheat.None ? " Anti-cheat game: only the driver cache is cleared." : "");   // VAC: as any game (ScsKiller.GameCaches)
-        var text = new TextBlock { TextWrapping = TextWrapping.Wrap, Text = "Measuring the cache files…\n\n" + note };
+        var note = Loc.T("Detail_ClearCacheNote")
+            + (vm.Row.State.AntiCheat != AntiCheat.None ? Loc.T("Detail_ClearCacheAntiCheat") : "");   // VAC: as any game (ScsKiller.GameCaches)
+        var text = new TextBlock { TextWrapping = TextWrapping.Wrap, Text = Loc.T("Detail_MeasuringCaches") + "\n\n" + note };
         var ownText = new TextBlock { TextWrapping = TextWrapping.Wrap };
         var alsoOwn = new CheckBox { Content = ownText, Visibility = Visibility.Collapsed };
         _ = Measure();
-        if (await App.ShowAsync(App.Confirm(this, $"Clear the shader cache of {vm.Name}?", new StackPanel { Spacing = 12, Children = { text, alsoOwn } }, "Clear cache"))
+        if (await App.ShowAsync(App.Confirm(this, Loc.T("Detail_ClearCacheFor", vm.Name), new StackPanel { Spacing = 12, Children = { text, alsoOwn } }, Loc.T("Detail_ClearCacheBtn")))
             != ContentDialogResult.Primary) return;
         var withOwn = alsoOwn.IsChecked == true;
-        try { vm.Error = await Task.Run(() => App.Core.ClearGameCache(id, withOwn)) ? null : "Nothing was cleared: no shader-cache files of this game were found."; }
+        try { vm.Error = await Task.Run(() => App.Core.ClearGameCache(id, withOwn)) ? null : Loc.T("Detail_NothingClearedCache"); }
         catch (Exception ex) { vm.Error = ex.Message; }
         vm.ReadCaches();
         vm.Refresh();
@@ -561,8 +561,8 @@ public sealed partial class DetailPage : Page
                 var all = await Task.Run(() => App.Core.GameCaches(id, gamePrecache: true));
                 static bool Own(CachePart p) => p.Name is Core.App.ScsKiller.PipelinePart or Core.App.ScsKiller.PrecachePart;
                 var (parts, own) = (all.Where(p => !Own(p)).ToList(), all.Where(Own).ToList());
-                text.Text = (parts.Count > 0 ? string.Join(" · ", parts.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}")) : "No cache files on disk now") + ".\n\n" + note;
-                ownText.Text = $"Also delete the game's own shader cache ({Format.Bytes(own.Sum(p => p.Bytes))}). It rebuilds it at its next start, which then takes longer.";
+                text.Text = (parts.Count > 0 ? string.Join(" · ", parts.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}")) : Loc.T("Detail_NoCacheFiles")) + ".\n\n" + note;
+                ownText.Text = Loc.T("Detail_AlsoOwnCache", Format.Bytes(own.Sum(p => p.Bytes)));
                 alsoOwn.Visibility = own.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             }
             catch (Exception ex) { text.Text = Describe(ex) + "\n\n" + note; }
@@ -580,7 +580,7 @@ public sealed partial class DetailPage : Page
             BeforeAfterStage.BeforeArmed when ba!.ClearPending => await BeforeAfterUi.ContinueAsync(id),
             BeforeAfterStage.BeforeArmed or BeforeAfterStage.AfterArmed => await BeforeAfterUi.LaunchAsync(id),
             BeforeAfterStage.AfterReady => await BeforeAfterUi.ContinueAsync(id),
-            BeforeAfterStage.Done => await ReportWindow.OpenAsync(id) is null ? "The report isn't there anymore: start over." : null,
+            BeforeAfterStage.Done => await ReportWindow.OpenAsync(id) is null ? Loc.T("Ba_ReportGone") : null,
             _ => null,
         };
         Shown(vm, error);
@@ -602,13 +602,12 @@ public sealed partial class DetailPage : Page
     async void OnClearRecording(object _, RoutedEventArgs __)
     {
         var (vm, id) = (Vm, Vm.Row.Id);
-        if (!await App.ConfirmAsync(this, $"Clear the recording of {vm.Name}?",
-                "The recorded pipelines are removed. They're compiled again only if the game creates them again while recording, "
-                + "and the compile plan goes back to what the game's files give.\n\nThe recorder itself stays in, and the game's files aren't touched.",
-                "Clear recording")) return;
+        if (!await App.ConfirmAsync(this, Loc.T("Detail_ClearRecordingFor", vm.Name),
+                Loc.T("Detail_ClearRecordingBody"),
+                Loc.T("Detail_ClearRecording"))) return;
         vm.ClearingRecording = true;
         vm.Refresh();
-        try { vm.Error = await Task.Run(() => App.Core.ClearRecording(id)) ? null : "Nothing was cleared: no recording of this game was found."; }
+        try { vm.Error = await Task.Run(() => App.Core.ClearRecording(id)) ? null : Loc.T("Detail_NothingClearedRecording"); }
         catch (Exception ex) { vm.Error = ex.Message; }
         vm.ClearingRecording = false;
         vm.Refresh();
@@ -645,8 +644,8 @@ public sealed partial class DetailPage : Page
             return;
         }
         var fresh = vm.Row.State with { AntiCheat = shown };   // VAC stays the state's: the check only names a client anti-cheat
-        var ok = await App.ConfirmAsync(this, $"Always record {vm.Name} at your own risk?",
-            new TextBlock { TextWrapping = TextWrapping.Wrap, Text = DetailVm.RiskText(fresh) + (ScsKiller.VulkanPickWarning(fresh) is { } pick ? "\n\n" + pick : "") }, "Always record");
+        var ok = await App.ConfirmAsync(this, Loc.T("Detail_AlwaysRecordFor", vm.Name),
+            new TextBlock { TextWrapping = TextWrapping.Wrap, Text = DetailVm.RiskText(fresh) + (ScsKiller.VulkanPickWarning(fresh) is { } pick ? "\n\n" + pick : "") }, Loc.T("Detail_AlwaysRecord"));
         vm.AlwaysPending = null;
         if (!ok)
         {
@@ -672,9 +671,9 @@ public sealed partial class DetailPage : Page
     {
         var (vm, id) = (Vm, Vm.Row.Id);
         if (vm.Risk) { await RecordRisk(vm, id); return; }
-        if (!await App.ConfirmAsync(this, $"Start {vm.Name} offline without EasyAntiCheat?",
-                new TextBlock { TextWrapping = TextWrapping.Wrap, Text = DetailVm.OfflineRisk + " Online play isn't possible in that session." },
-                "Record offline session")) return;
+        if (!await App.ConfirmAsync(this, Loc.T("Detail_StartOfflineFor", vm.Name),
+                new TextBlock { TextWrapping = TextWrapping.Wrap, Text = DetailVm.OfflineRisk + " " + Loc.T("Detail_OfflineNoOnline") },
+                Loc.T("Detail_RecordOfflineBtn"))) return;
         await StartSession(vm, () => App.Core.StartOfflineSession(id, confirmed: true));
     }
 
@@ -692,9 +691,9 @@ public sealed partial class DetailPage : Page
             return;
         }
         var fresh = vm.Row.State with { AntiCheat = shown };   // VAC stays the state's: the check only names a client anti-cheat
-        var ok = await App.ConfirmAsync(this, $"Record {vm.Name} at your own risk?",
+        var ok = await App.ConfirmAsync(this, Loc.T("Detail_RecordRiskFor", vm.Name),
             new TextBlock { TextWrapping = TextWrapping.Wrap, Text = RiskConfirmText(fresh) },
-            "Record session");
+            Loc.T("Detail_RecordSessionBtn"));
         if (!ok)
         {
             vm.OfflineStarting = false;
@@ -704,7 +703,7 @@ public sealed partial class DetailPage : Page
         await StartSession(vm, () => App.Core.StartRiskSession(id, confirmed: true, shown));
     }
 
-    static string RiskConfirmText(GameState fresh) => DetailVm.RiskText(fresh) + " SCSKiller removes its files when the game exits, or after a crash at your next logon."
+    static string RiskConfirmText(GameState fresh) => DetailVm.RiskText(fresh) + Loc.T("Detail_RiskConfirmTail")
         + (ScsKiller.VulkanPickWarning(fresh) is { } pick ? "\n\n" + pick : "");
 
     // The start runs off the UI thread; the task it returns ends when the game exited and its files are out.

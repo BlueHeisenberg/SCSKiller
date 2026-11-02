@@ -1,5 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:SCSKiller.Ui"
+        
         xmlns:ui="using:SCSKiller.Ui"
         xmlns:c="using:SCSKiller.Ui.Controls"
         x:Class="SCSKiller.Ui.ReportWindow"
@@ -12,30 +14,30 @@
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                     <TextBlock x:Name="Heading" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                        <Button Click="OnSave" AutomationProperties.Name="Save image">
+                        <Button Click="OnSave" AutomationProperties.Name="{loc:T Report_SaveImage}">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Save}" FontSize="14" VerticalAlignment="Center" />
-                                <TextBlock Text="Save image" />
+                                <TextBlock Text="{loc:T Report_SaveImage}" />
                             </StackPanel>
                         </Button>
-                        <Button Click="OnCopy" AutomationProperties.Name="Copy image">
+                        <Button Click="OnCopy" AutomationProperties.Name="{loc:T Report_CopyImage}">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Copy}" FontSize="14" VerticalAlignment="Center" />
-                                <TextBlock Text="Copy image" />
+                                <TextBlock Text="{loc:T Report_CopyImage}" />
                             </StackPanel>
                         </Button>
-                        <Button Classes="accent" AutomationProperties.Name="Share">
+                        <Button Classes="accent" AutomationProperties.Name="{loc:T Report_Share}">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Share}" FontSize="14" VerticalAlignment="Center" />
-                                <TextBlock Text="Share" />
+                                <TextBlock Text="{loc:T Report_Share}" />
                                 <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.ChevronDown}" FontSize="8" VerticalAlignment="Center" Margin="0,0,-3,0" />
                             </StackPanel>
                             <Button.Flyout>
                                 <MenuFlyout Placement="BottomEdgeAlignedRight">
-                                    <MenuItem Header="Post on X" Click="OnX" />
-                                    <MenuItem Header="Post on Reddit" Click="OnReddit" />
-                                    <MenuItem Header="Copy for Discord" Click="OnDiscord" />
-                                    <MenuItem Header="Copy text" Click="OnCopyText" />
+                                    <MenuItem Header="{loc:T Report_PostX}" Click="OnX" />
+                                    <MenuItem Header="{loc:T Report_PostReddit}" Click="OnReddit" />
+                                    <MenuItem Header="{loc:T Report_CopyDiscord}" Click="OnDiscord" />
+                                    <MenuItem Header="{loc:T Report_CopyText}" Click="OnCopyText" />
                                 </MenuFlyout>
                             </Button.Flyout>
                         </Button>
@@ -67,7 +69,7 @@
                                     <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Spacing="2">
                                         <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
                                             <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Bolt}" FontSize="22" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
-                                            <TextBlock Text="SCSKiller" FontSize="22" FontWeight="SemiBold" />
+                                            <TextBlock Text="{loc:T Common_AppName}" FontSize="22" FontWeight="SemiBold" />
                                         </StackPanel>
                                         <TextBlock x:Name="CardVersions" Classes="Caption" FontSize="14" HorizontalAlignment="Right" />
                                     </StackPanel>
@@ -97,7 +99,7 @@
 
                                 <!-- small multiples: each run its own play range, one seconds-per-pixel and one y scale -->
                                 <StackPanel Grid.Row="2" Spacing="6" VerticalAlignment="Center">
-                                    <TextBlock Text="Before" FontWeight="SemiBold" />
+                                    <TextBlock Text="{loc:T Common_Before}" FontWeight="SemiBold" />
                                     <StackPanel HorizontalAlignment="Left" Spacing="2">
                                         <c:FrameGraph x:Name="BeforeGraph" Height="104" />
                                         <Grid x:Name="BeforeAxis">
@@ -105,7 +107,7 @@
                                             <TextBlock x:Name="BeforeEnd" Classes="Caption" HorizontalAlignment="Right" />
                                         </Grid>
                                     </StackPanel>
-                                    <TextBlock Text="After" FontWeight="SemiBold" Margin="0,4,0,0" />
+                                    <TextBlock Text="{loc:T Common_After}" FontWeight="SemiBold" Margin="0,4,0,0" />
                                     <StackPanel HorizontalAlignment="Left" Spacing="2">
                                         <c:FrameGraph x:Name="AfterGraph" Height="104" />
                                         <Grid x:Name="AfterAxis">
@@ -120,21 +122,21 @@
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
                                         <StackPanel x:Name="LegendShader" Orientation="Horizontal" Spacing="5">
                                             <Ellipse Width="8" Height="8" Fill="{DynamicResource WarnBrush}" VerticalAlignment="Center" />
-                                            <TextBlock Text="shader compilation stutter" Classes="Caption" FontSize="14" />
+                                            <TextBlock Text="{loc:T Graph_ShaderStutter}" Classes="Caption" FontSize="14" />
                                         </StackPanel>
                                         <StackPanel Orientation="Horizontal" Spacing="5">
                                             <Ellipse Width="8" Height="8" Fill="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
-                                            <TextBlock x:Name="LegendOther" Text="other hitch" Classes="Caption" FontSize="14" />
+                                            <TextBlock x:Name="LegendOther" Text="{loc:T Graph_OtherHitch}" Classes="Caption" FontSize="14" />
                                         </StackPanel>
                                     </StackPanel>
-                                    <TextBlock Grid.Column="2" Text="scskiller.com" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="2" Text="{loc:T About_WebsiteValue}" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
                                 </Grid>
                             </Grid>
                         </Border>
                     </ThemeVariantScope>
                 </Viewbox>
 
-                <CheckBox x:Name="ShowGpu" Content="Show my GPU on the image" Click="OnShowGpu" />
+                <CheckBox x:Name="ShowGpu" Content="{loc:T Report_ShowGpu}" Click="OnShowGpu" />
 
                 <Border Classes="Card" Padding="20,16">
                     <StackPanel Spacing="12">
@@ -152,8 +154,8 @@
                 </Border>
 
                 <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-                    <Button x:Name="RecordAgain" Content="Record the after run again" Click="OnRecordAgain" />
-                    <Button Content="Start over" Click="OnStartOver" />
+                    <Button x:Name="RecordAgain" Content="{loc:T Detail_RecordAfterAgain}" Click="OnRecordAgain" />
+                    <Button Content="{loc:T Detail_StartOver}" Click="OnStartOver" />
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>

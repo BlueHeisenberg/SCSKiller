@@ -74,7 +74,7 @@ public sealed partial class MainWindow : Window
     public void ShowGpu()
     {
         GpuName.Text = App.Core.Vendor.Gpu.Name;
-        GpuDriver.Text = (App.Core as ScsKiller)?.GpuRestartNote ?? "Driver " + App.Core.Vendor.Gpu.DriverVersion;
+        GpuDriver.Text = (App.Core as ScsKiller)?.GpuRestartNote ?? Loc.T("Main_DriverPrefix", App.Core.Vendor.Gpu.DriverVersion);
     }
 
     public void Navigate(Type page, object? arg = null) => ContentFrame.Navigate(page, arg);
@@ -91,9 +91,8 @@ public sealed partial class MainWindow : Window
     {
         var ready = Updater.Ready;   // once: a check may replace it meanwhile
         UpdateButton.Visibility = ready != null ? Visibility.Visible : Visibility.Collapsed;
-        ToolTipService.SetToolTip(UpdateButton, Updater.Problem ?? $"SCSKiller {ready} is ready. Restarting stops a running compile safely " +
-            "(the driver saves its cache first) and continues it afterwards." +
-            (Updater.InstallsAutomatically ? " Otherwise it installs the next time SCSKiller starts or quits." : ""));
+        ToolTipService.SetToolTip(UpdateButton, Updater.Problem ?? Loc.T("Main_UpdateReady", ready!,
+            Updater.InstallsAutomatically ? Loc.T("Main_UpdateInstallsLater") : ""));
     }
 
     internal static (IReadOnlyList<NewsItem> Shown, IReadOnlySet<string> Unread) Notifications() =>
@@ -107,7 +106,7 @@ public sealed partial class MainWindow : Window
         var unread = Notifications().Unread.Count;
         BellBadge.Value = unread;
         BellBadge.Visibility = unread > 0 ? Visibility.Visible : Visibility.Collapsed;
-        AutomationProperties.SetName(BellButton, unread > 0 ? $"Notifications, {unread} unread" : "Notifications");
+        AutomationProperties.SetName(BellButton, unread > 0 ? Loc.T("Main_NotificationsUnread", unread) : Loc.T("Main_Notifications"));
     }
 
     public void OpenBell() => BellFlyout.ShowAt(BellButton);
@@ -129,8 +128,8 @@ public sealed partial class MainWindow : Window
             Width = 360, Spacing = 12,
             Children =
             {
-                new TextBlock { Text = "Notifications", Style = Res<Style>("Section") },
-                shown.Count == 0 ? new TextBlock { Text = "Nothing new.", Style = Res<Style>("Secondary") } : new ScrollViewer { MaxHeight = 480, Content = list },
+                new TextBlock { Text = Loc.T("Main_Notifications"), Style = Res<Style>("Section") },
+                shown.Count == 0 ? new TextBlock { Text = Loc.T("Main_NothingNew"), Style = Res<Style>("Secondary") } : new ScrollViewer { MaxHeight = 480, Content = list },
             },
         };
     }
@@ -144,10 +143,10 @@ public sealed partial class MainWindow : Window
         text.Children.Add(new TextBlock { Text = item.Title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
         text.Children.Add(new TextBlock { Text = item.Body, Style = Res<Style>("Secondary"), TextWrapping = TextWrapping.Wrap });
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
-        if (item.Link != null) actions.Children.Add(new HyperlinkButton { Content = "Open", NavigateUri = new Uri(item.Link) });
+        if (item.Link != null) actions.Children.Add(new HyperlinkButton { Content = Loc.T("Common_Open"), NavigateUri = new Uri(item.Link) });
         if (item.Game != null)
         {
-            var go = new Button { Content = "Go to game" };
+            var go = new Button { Content = Loc.T("Main_GoToGame") };
             go.Click += (_, _) => { BellFlyout.Hide(); Navigate(typeof(DetailPage), item.Game); };
             actions.Children.Add(go);
         }
@@ -158,8 +157,8 @@ public sealed partial class MainWindow : Window
             Content = new FontIcon { Glyph = "\uE711", FontSize = 10 }, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0),
             Padding = new Thickness(6), VerticalAlignment = VerticalAlignment.Top,
         };
-        ToolTipService.SetToolTip(dismiss, "Dismiss");
-        AutomationProperties.SetName(dismiss, "Dismiss");
+        ToolTipService.SetToolTip(dismiss, Loc.T("Main_Dismiss"));
+        AutomationProperties.SetName(dismiss, Loc.T("Main_Dismiss"));
         dismiss.Click += (_, _) =>
         {
             NewsState.Dismiss(App.Store, item.Id, Feed());
@@ -177,10 +176,10 @@ public sealed partial class MainWindow : Window
     async void OnRestartToUpdate(object _, RoutedEventArgs __)
     {
         UpdateButton.IsEnabled = false;
-        UpdateText.Text = "Finishing the compile…";
+        UpdateText.Text = Loc.T("Main_FinishingCompile");
         SavePlacement();   // the restart exits without closing the window
         if (await Updater.RestartAsync()) return;   // exits
-        (UpdateButton.IsEnabled, UpdateText.Text) = (true, "Restart to update");
+        (UpdateButton.IsEnabled, UpdateText.Text) = (true, Loc.T("Main_RestartToUpdate"));
         ShowUpdate();
     }
 

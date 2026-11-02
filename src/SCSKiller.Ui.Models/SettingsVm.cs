@@ -10,9 +10,9 @@ public sealed class SettingsVm : Bindable
     public static readonly (string Label, CacheLimit Limit)[] Sizes =
     [
         ("512 MB", new(512L << 20, false)), ("1 GB", new(1L << 30, false)), ("4 GB", new(4L << 30, false)), ("5 GB", new(5L << 30, false)),
-        ("10 GB", new(10L << 30, false)), ("12 GB", new(12L << 30, false)), ("16 GB (driver default)", new(16L << 30, true)), ("24 GB", new(24L << 30, false)),
+        ("10 GB", new(10L << 30, false)), ("12 GB", new(12L << 30, false)), (Loc.T("Cache_SizeDriverDefault", "16 GB"), new(16L << 30, true)), ("24 GB", new(24L << 30, false)),
         ("32 GB", new(32L << 30, false)), ("48 GB", new(48L << 30, false)), ("64 GB", new(64L << 30, false)), ("100 GB", new(100L << 30, false)),
-        ("Unlimited", new(null, false)),
+        (Loc.T("Common_Unlimited"), new(null, false)),
     ];
     static readonly int DefaultSize = Array.FindIndex(Sizes, s => s.Limit.Bytes == 100L << 30);
     public static readonly string[] SizeLabels = Sizes.Select(s => s.Label).ToArray();
@@ -51,7 +51,7 @@ public sealed class SettingsVm : Bindable
     /// <summary>A read of the driver cache has applied (the limit, usage and Auto Shader Compilation show).</summary>
     public bool Read => read != null;
 
-    public string CacheTitle => $"{(Mesa ? "Mesa" : Fmt.Vendor(V.Vendor))} shader cache size";
+    public string CacheTitle => Loc.T("Cache_VendorSizeTitle", Mesa ? "Mesa" : Fmt.Vendor(V.Vendor));
     public bool IsNvidia => V.Vendor == GpuVendor.Nvidia && !Mesa;
     public bool ShowsAutoShader => IsNvidia && Host.Platform.AutoShaderCompilation;
     // NVIDIA's Linux driver: a cache folder per game, its size SCSKiller's (NvidiaLinux.PlacedCacheSize)
@@ -59,63 +59,63 @@ public sealed class SettingsVm : Bindable
     // Mesa's RADV, ANV and NVK: each Steam game's folder, one file with no size limit
     bool Mesa => MesaLinux.Is(V.Caps);
 
-    public static readonly string[] AutoLevels = ["Low", "Medium", "High"];   // AutoShaderCompilation.Low..High, as the NVIDIA App names them
+    public static readonly string[] AutoLevels = [Loc.T("Common_Low"), Loc.T("Common_Medium"), Loc.T("Common_High")];   // AutoShaderCompilation.Low..High, as the NVIDIA App names them
     public bool? AutoOn { get; set; }
     public int AutoLevelIndex { get; set; } = 1;
     public AutoShaderCompilation AutoChoice => AutoOn == true ? (AutoShaderCompilation)(Math.Clamp(AutoLevelIndex, 0, 2) + 1) : AutoShaderCompilation.Off;
     public string AutoShaderText => read == null ? Format.Dash : read.Value.Auto switch
     {
-        null => "Couldn't read the setting",
-        { Level: AutoShaderCompilation.Off } => "Now: Off",
-        { TaskReady: true, Level: var l } => $"Now: On, {l}",
-        _ => "Setting on but the NVIDIA task isn't set up: click Apply to repair",
+        null => Loc.T("Cache_AutoCantRead"),
+        { Level: AutoShaderCompilation.Off } => Loc.T("Cache_AutoNowOff"),
+        { TaskReady: true, Level: var l } => Loc.T("Cache_AutoNowOn", l.ToString()),
+        _ => Loc.T("Cache_AutoTaskBroken"),
     };
     public string? AutoMessage { get; set; }
     public InfoBarSeverity AutoSeverity { get; set; }
     public bool HasAutoMessage => AutoMessage != null;
-    public string CacheIntro => Mesa ? "Each game has a cache of its own, in Steam's shader cache folder."
-        : V.Caps.PerGameCacheCap != null ? "Each game has a cache of its own. When it's full the driver deletes that game's older files, and it stutters again."
-        : (IsNvidia ? "Global driver setting, the same one as NVIDIA App › Graphics › Shader Cache Size. " : "Global driver setting. ")
-        + (KeptOn ? "When the cache is full the driver deletes older entries. Kept games are put back." : "When the cache is full the driver deletes older entries, and those games stutter again.");
+    public string CacheIntro => Mesa ? Loc.T("Cache_IntroMesa")
+        : V.Caps.PerGameCacheCap != null ? Loc.T("Cache_IntroPerGame")
+        : (IsNvidia ? Loc.T("Cache_IntroNvidia") : Loc.T("Cache_IntroGlobal"))
+        + (KeptOn ? Loc.T("Cache_IntroKept") : Loc.T("Cache_IntroFull"));
     public bool Configurable => V.Caps.CacheSizeConfigurable;
     public bool NotConfigurable => !Configurable;
     public string? AmdAlwaysOn => ScsKiller.AmdAlwaysOnLine(V);
     public bool HasAmdAlwaysOn => AmdAlwaysOn != null;
-    public string NotConfigurableText => Mesa ? "Mesa keeps each game's shaders in one file with no size limit, so there is no size setting."
+    public string NotConfigurableText => Mesa ? Loc.T("Cache_MesaNoLimit")
         : V.Vendor == GpuVendor.Amd
-        ? $"The AMD driver's DirectX 12 shader cache is fixed at {Format.Bytes(AmdAppCache.DxcCacheCap)}, with no size setting. "
-          + "Past it, the driver removes the least recently used games' caches when a game starts" + (KeptOn ? ". Kept games are put back." : ", and SCSKiller shows those games as needing a compile again.")
+        ? Loc.T("Cache_AmdFixedA", Format.Bytes(AmdAppCache.DxcCacheCap))
+          + Loc.T("Cache_AmdFixedB") + (KeptOn ? Loc.T("Cache_KeptBack") : Loc.T("Cache_AmdShowStale"))
         : V.Vendor == GpuVendor.Intel
-        ? $"The Intel driver keeps up to {Format.Bytes(IntelBackend.PerGameCap)} of shaders per game, with no size setting. "
-          + "Past it, the driver drops that game's older shaders, so SCSKiller compiles the most likely ones first."
-        : PerGameNvidia ? $"SCSKiller gives each game {Format.Bytes(NvidiaLinux.PlacedCacheSize)} of NVIDIA shader cache, with no size setting."
-        : $"SCSKiller can't change the cache size of {Fmt.Vendor(V.Vendor)} drivers yet, so it only shows what is used. "
-          + "If games get evicted, raise the limit in your GPU vendor's control panel.";
+        ? Loc.T("Cache_IntelFixedA", Format.Bytes(IntelBackend.PerGameCap))
+          + Loc.T("Cache_IntelFixedB")
+        : PerGameNvidia ? Loc.T("Cache_NvidiaPlaced", Format.Bytes(NvidiaLinux.PlacedCacheSize))
+        : Loc.T("Cache_CantChangeA", Fmt.Vendor(V.Vendor))
+          + Loc.T("Cache_CantChangeB");
 
     public string CurrentLimit => read == null ? Format.Dash : read.Value.Limit switch
     {
-        null => "Unknown",
-        { Bytes: null } => "Unlimited",
-        { Bytes: 0 } => "Disabled",
-        { Bytes: { } b, IsDriverDefault: var d } => Format.Bytes(b) + (V.Caps.PerGameCacheCap != null ? " per game" : "") + (d ? " (driver default)" : ""),
+        null => Loc.T("Cache_Unknown"),
+        { Bytes: null } => Loc.T("Common_Unlimited"),
+        { Bytes: 0 } => Loc.T("Cache_Disabled"),
+        { Bytes: { } b, IsDriverDefault: var d } => Format.Bytes(b) + (V.Caps.PerGameCacheCap != null ? Loc.T("Cache_PerGameSuffix") : "") + (d ? Loc.T("Cache_DriverDefaultSuffix") : ""),
     };
     public string Used => read is { Usage: var u } ? (u.UpperBound ? "≤ " : "") + Format.Bytes(u.BytesOnDisk) : Format.Dash;
     public bool HasAmdUse => amdUsed != null;
     public double AmdPercent => amdUsed is { } b ? Math.Min(100, 100.0 * b / AmdAppCache.DxcCacheCap) : 0;
-    public string AmdUse => amdUsed is { } b ? $"DirectX 12 cache: {Format.Bytes(b)} of {Format.Bytes(AmdAppCache.DxcCacheCap)}"
-        + (b >= AmdAppCache.DxcCacheCap * 9 / 10 ? ". Nearly full: the driver removes the least recently used games' caches when a game starts." : "") : "";
+    public string AmdUse => amdUsed is { } b ? Loc.T("Cache_AmdDx12Use", Format.Bytes(b), Format.Bytes(AmdAppCache.DxcCacheCap))
+        + (b >= AmdAppCache.DxcCacheCap * 9 / 10 ? Loc.T("Cache_AmdNearlyFull") : "") : "";
     public bool IsAmd => V.Vendor == GpuVendor.Amd && !Mesa;
     bool KeptOn => IsAmd && S.KeepCachesAside;
     public bool KeepCachesAside { get => S.KeepCachesAside; set { if (value != S.KeepCachesAside) Save(S with { KeepCachesAside = value }); } }
     public static IReadOnlyList<GameState> KeptGames => Host.Core.Games.Where(g => g.Kept != null).OrderByDescending(g => g.Kept!.Frees).ThenBy(g => g.Game.Name).ToList();
     public bool HasKept => S.KeepCachesAside && KeptGames.Count > 0;
     public string KeptSummary => KeptGames is var k && k.Count > 0
-        ? $"{k.Count} game{(k.Count == 1 ? "" : "s")}, {Format.Bytes(k.Sum(g => g.Kept!.Bytes))} kept aside · frees {Format.Bytes(k.Sum(g => g.Kept!.Frees))}" : "";
+        ? Loc.T(k.Count == 1 ? "Cache_KeptSummaryOne" : "Cache_KeptSummaryMany", k.Count, Format.Bytes(k.Sum(g => g.Kept!.Bytes)), Format.Bytes(k.Sum(g => g.Kept!.Frees))) : "";
     // through a link (the cache moved to another drive with a junction): the drive its files are on
     static string DriveOf(CacheUsage? u) => (u?.Path is { Length: > 0 } p ? GameFiles.VolumeOf(GameFiles.FinalPath(p) ?? p) : null)
         ?? GameFiles.VolumeOf(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)) ?? Path.GetPathRoot(Environment.CurrentDirectory)!;
     string? drive;   // read with the usage: resolving a link opens the folder
-    public string FreeLabel => $"Free on {(drive ?? DriveOf(null)).TrimEnd('\\')}";
+    public string FreeLabel => Loc.T("Cache_FreeOn", (drive ?? DriveOf(null)).TrimEnd('\\'));
     public string Free => read?.Free ?? Format.Dash;
 
     int sizeIndex = DefaultSize;
@@ -130,7 +130,7 @@ public sealed class SettingsVm : Bindable
     }
 
     public bool ShowsDriverModes => Host.Platform.DriverUpdateModes;
-    public string? DriverModesNote => ShowsDriverModes ? null : $"On {Host.Platform.Name}, rebuild them from the Library, where they show as Needs rebuilding.";
+    public string? DriverModesNote => ShowsDriverModes ? null : Loc.T("Settings_DriverModesNote", Host.Platform.Name, Loc.T("GameStatus_NeedsRebuilding"));
     public bool HasDriverModesNote => DriverModesNote != null;
     public int DriverMode
     {
@@ -140,16 +140,16 @@ public sealed class SettingsVm : Bindable
             if (value < 0 || value == DriverMode) return;
             Save(DriverUpdateChoice.With(S, value));
             try { Host.Core.ApplyDriverUpdateMode(); }  // user action: registers or removes the sign-in check
-            catch (Exception e) { ApplyMessage = "Couldn't update the sign-in check: " + e.Message; ApplySeverity = InfoBarSeverity.Error; Changed(); }
+            catch (Exception e) { ApplyMessage = Loc.T("Settings_CantUpdateCheck", e.Message); ApplySeverity = InfoBarSeverity.Error; Changed(); }
         }
     }
     public bool? PauseWhileGaming { get => S.PauseWhileGaming; set { if (value is { } v && v != S.PauseWhileGaming) Save(S with { PauseWhileGaming = v }); } }
     public double BackgroundThreads { get => UsedBackground; set { if ((int)value != UsedBackground) Save(S with { BackgroundThreads = (int)value }); } }
     static int UsedBackground => ScsKiller.UsedThreads(S.BackgroundThreads);
-    public string BackgroundThreadsText => $"{UsedBackground} of {Environment.ProcessorCount}";
+    public string BackgroundThreadsText => Loc.T("Queue_ThreadsOf", UsedBackground, Environment.ProcessorCount);
     public double MaxThreads => Environment.ProcessorCount;
     public bool HasLastRebuilt => LastRebuilt != "";
-    public string LastRebuilt => Host.Core.Games.Where(g => g.WarmedAt != null && g.WarmedDriverVersion != null).MaxBy(g => g.WarmedAt)?.WarmedDriverVersion is { } v ? $"Last rebuilt for driver {v}" : "";
+    public string LastRebuilt => Host.Core.Games.Where(g => g.WarmedAt != null && g.WarmedDriverVersion != null).MaxBy(g => g.WarmedAt)?.WarmedDriverVersion is { } v ? Loc.T("Settings_LastRebuilt", v) : "";
 
     public bool? MaximumPlans { get => S.MaximumPlans; set { if (value is { } v && v != S.MaximumPlans) Save(S with { MaximumPlans = v }); } }
     public bool? CompileRayTracing { get => S.CompileRayTracing; set { if (value is { } v && v != S.CompileRayTracing) Save(S with { CompileRayTracing = v }); } }
@@ -162,9 +162,7 @@ public sealed class SettingsVm : Bindable
     }
     public void GamesChanged() => Changed();   // no driver-cache re-read (Refresh)
     public bool RecordAllGames { get => S.RecordAllGames; set { if (value != S.RecordAllGames) Save(S with { RecordAllGames = value }); } }   // the core reconciles off this thread
-    public string RecordAllGamesNote => "Adds a small d3d12.dll or d3d11.dll to games without anti-cheat to catch shaders the plan missed and time each frame, so the game page "
-        + $"shows what stuttered. Frame times stay on this PC. Never used in games with anti-cheat{(ShowsRecordAntiCheatGames ? " unless you allow it below" : "")}. "
-        + "Switch off to remove it from every game you haven't turned it on for yourself.";
+    public string RecordAllGamesNote => Loc.T(ShowsRecordAntiCheatGames ? "Settings_RecorderDesc" : "Settings_RecorderDescNoAllow");
     public bool ShowsRecordAntiCheatGames => Host.Platform.RecordAntiCheatGames;
     // where the OS has no risk sessions it reads as off and is never saved: settings.json keeps the user's value
     public bool? RecordAntiCheatGames
@@ -180,9 +178,9 @@ public sealed class SettingsVm : Bindable
             var games = Host.Core.Games;
             var skipped = games.Where(g => g.RecorderSkip is ScsKiller.SkipAntiCheat or ScsKiller.SkipShaderMod or ScsKiller.SkipForeignDll or ScsKiller.SkipModNotChainable
                     or ScsKiller.SkipVulkanMod or ScsKiller.SkipNeedsAdmin or ScsKiller.SkipPackageD3D12 or ScsKiller.SkipStreamline or ScsKiller.SkipShaderInjector or ScsKiller.SkipAgsMod)
-                .GroupBy(g => g.RecorderSkip).OrderByDescending(x => x.Count()).Select(x => $" · {x.Count()} skipped: {x.Key}");
+                .GroupBy(g => g.RecorderSkip).OrderByDescending(x => x.Count()).Select(x => Loc.T("Settings_SkippedReason", x.Count(), x.Key));
             int n = games.Count(g => g.RecorderInstalled);
-            return $"Recording in {n} game{(n == 1 ? "" : "s")}" + string.Concat(skipped);
+            return Loc.T(n == 1 ? "Settings_RecordingInOne" : "Settings_RecordingInMany", n) + string.Concat(skipped);
         }
     }
 
@@ -209,7 +207,7 @@ public sealed class SettingsVm : Bindable
         .Select(g => new DetailRow(g.Game.Name, Format.Bytes(g.RecordingBytes), g.RecordingPaused ? ScsKiller.PausedNote(S) : null)).ToList();
     public bool HasRecordings => Host.Core.Games.Any(g => g.RecordingBytes > 0);
     public string RecordingSpace => Host.Core.Games.Where(g => g.RecordingBytes > 0).ToList() is { Count: > 0 } r
-        ? $"Recordings use {Format.Bytes(r.Sum(g => g.RecordingBytes))} in {r.Count} game{(r.Count == 1 ? "" : "s")}" : "No recordings on disk";
+        ? Loc.T(r.Count == 1 ? "Settings_RecordingSpaceOne" : "Settings_RecordingSpaceMany", Format.Bytes(r.Sum(g => g.RecordingBytes)), r.Count) : Loc.T("Settings_NoRecordings");
     public bool ShowsStartAtSignIn => Host.Platform.StartAtSignIn;
     /// <summary>The entry as read back where it can be (<see cref="Host.StartsAtSignIn"/>), else the setting.</summary>
     public bool? StartWithWindows
@@ -227,15 +225,12 @@ public sealed class SettingsVm : Bindable
         try { await Host.StartWithWindowsChanged(); }
         finally { Changed(nameof(StartWithWindows)); }
     }
-    public static string StartText { get; } = OperatingSystem.IsWindows() ? "Start SCSKiller when Windows starts" : "Start when you sign in";
-    public static string StartNote { get; } = OperatingSystem.IsWindows() ? "It waits in the notification area, next to the clock, to offer a rebuild after a driver update."
-        : "It waits in the background to offer a rebuild after a driver update.";
+    public static string StartText { get; } = OperatingSystem.IsWindows() ? Loc.T("Settings_StartWithWindows") : Loc.T("Settings_StartAtSignIn");
+    public static string StartNote { get; } = OperatingSystem.IsWindows() ? Loc.T("Settings_TrayDesc") : Loc.T("Settings_StartAtSignInNote");
     // no sign-in task on Linux: the running app notifies
-    public static string AskNote { get; } = OperatingSystem.IsWindows() ? "A notification offers Compile now, When idle, or Skip. Nothing starts on its own."
-        : "While SCSKiller runs, a notification offers Compile now, When idle, or Skip.";
+    public static string AskNote { get; } = OperatingSystem.IsWindows() ? Loc.T("Settings_NewShadersNotifyDesc") : Loc.T("Settings_AskRunningNote");
     // Linux has no input idle time: the background compile starts at once and pauses only for a game
-    public static string WhenIdleNote { get; } = OperatingSystem.IsWindows() ? "Stops the moment you touch the mouse or keyboard and picks up where it left off."
-        : "Rebuilds in the background and pauses while a game runs.";
+    public static string WhenIdleNote { get; } = OperatingSystem.IsWindows() ? Loc.T("Settings_IdlePausesDesc") : Loc.T("Settings_WhenIdleBackground");
     public bool? BeforeAfter { get => S.BeforeAfter; set { if (value is { } v && v != S.BeforeAfter) Save(S with { BeforeAfter = v }); } }
     public int NewShadersChoice
     {
@@ -248,8 +243,7 @@ public sealed class SettingsVm : Bindable
         }
     }
     public bool? NewShadersRightAway { get => S.NewShadersRightAway; set { if (value is { } v && v != S.NewShadersRightAway) Save(S with { NewShadersRightAway = v }); } }
-    public string ScanAtStartNote => "Reads again what changed in each game's folders. Off: the last list shows, and a game is read again when you refresh, "
-        + $"when it exits, or when {Host.Platform.UpdatingStores} updates it.";
+    public string ScanAtStartNote => Loc.T("Settings_ScanAtStartNote", Host.Platform.UpdatingStores);
     public bool? ScanAtStart { get => S.ScanAtStart; set { if (value is { } v && v != S.ScanAtStart) Save(S with { ScanAtStart = v }); } }
     public bool? HddMode { get => S.HddMode; set { if (value is { } v && v != S.HddMode) Save(S with { HddMode = v }); } }
     public IReadOnlyList<HddDriveRow> HddDrives => [.. ScsKiller.HddDriveChoices(Host.Core.Games, S)
@@ -268,8 +262,7 @@ public sealed class SettingsVm : Bindable
     public bool ShowsCloseQuits => Host.Platform.Tray;
     public bool? CloseQuits { get => S.CloseQuits; set { if (value is { } v && v != S.CloseQuits) Save(S with { CloseQuits = v }); } }
     public string CloseQuitsNote => Host.Tray.Shown
-        ? "A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps SCSKiller in the tray. Right-click its icon to quit."
-        : "No tray icon on this desktop, so closing the window quits.";
+        ? Loc.T("Settings_CloseQuitsDesc") : Loc.T("Settings_CloseQuitsNoTray");
 
     /// <summary>While the page is shown: the close note follows the tray host as it comes and goes.</summary>
     public void Watch(bool on)
@@ -287,7 +280,7 @@ public sealed class SettingsVm : Bindable
     // The GPU picker, shown only with more than one GPU SCSKiller compiles for; the first entry is the default rule.
     public IReadOnlyList<GpuChoice> GpuChoices { get; } = Host.Core.GpuChoices;
     public bool HasGpuChoices => GpuChoices.Count > 1;
-    public IReadOnlyList<string> GpuLabels => ["Automatic: the GPU with the most video memory", .. GpuChoices.Select(c => c.Name)];
+    public IReadOnlyList<string> GpuLabels => [Loc.T("Settings_GpuAutomatic"), .. GpuChoices.Select(c => c.Name)];
     public int GpuIndex
     {
         get => S.Gpu is not { } c ? 0 : GpuChoices.ToList() is var all && all.IndexOf(c) is >= 0 and var at ? at + 1
@@ -299,7 +292,7 @@ public sealed class SettingsVm : Bindable
         }
     }
 
-    public IReadOnlyList<string> Themes { get; } = [Host.Platform.SystemTheme, "Light", "Dark"];   // AppTheme.System..Dark
+    public IReadOnlyList<string> Themes { get; } = [Loc.T(Host.Platform.SystemLanguageKey), Loc.T("Common_Light"), Loc.T("Common_Dark")];   // AppTheme.System..Dark; SystemTheme's label = the system-setting one
     public int ThemeIndex
     {
         get => (int)(S.Theme ?? AppTheme.System);
@@ -311,16 +304,28 @@ public sealed class SettingsVm : Bindable
         }
     }
 
+    // 0: the system's language; then Loc.Languages in their order. The texts load once at start (Loc.Load): a change here runs then.
+    public IReadOnlyList<string> Languages { get; } = [Loc.T(Host.Platform.SystemLanguageKey), .. Loc.Languages.Select(l => l.NativeName)];
+    public int LanguageIndex
+    {
+        get { for (var i = 0; i < Loc.Languages.Count; i++) if (Loc.Languages[i].Code == S.Language) return i + 1; return 0; }
+        set { if (value >= 0 && value != LanguageIndex) Save(S with { Language = value == 0 ? null : Loc.Languages[value - 1].Code }); }
+    }
+    public string LanguageLabel => Loc.T("Settings_Language");
+    /// <summary>True while the picked language isn't the running one: it applies at the next start.</summary>
+    public bool LanguageRestarts => (S.Language ?? Loc.Resolve(null)) != Loc.Current;
+    public string RestartNote => Loc.T("Settings_RestartToApply");
+
     public double Threads { get => UsedThreads; set { if ((int)value != UsedThreads) Save(S with { Threads = (int)value }); } }
     static int UsedThreads => ScsKiller.UsedThreads(S.Threads);
-    public string ThreadsText => $"{UsedThreads} of {Environment.ProcessorCount}";
+    public string ThreadsText => Loc.T("Queue_ThreadsOf", UsedThreads, Environment.ProcessorCount);
     /// <summary>0 = Auto; 1 means 2 (the smallest budget offered).</summary>
     public double MaxCompileMemory { get => ShownMemory; set { var v = (int)value == 1 ? 2 : (int)value; if ((int)value != ShownMemory && v != S.MaxCompileMemoryGB) Save(S with { MaxCompileMemoryGB = v }); } }
     int ShownMemory => Math.Min(S.MaxCompileMemoryGB, (int)MaxCompileMemoryMax);
-    public string MaxCompileMemoryNote => $"Auto picks the best limit for this PC's memory ({ScsKiller.AutoCompileMemoryGB()} GB here, with {ScsKiller.RamGB()} GB of RAM). Set it lower to keep more memory free while compiling, higher to compile faster.";
+    public string MaxCompileMemoryNote => Loc.T("Settings_MaxCompileMemoryNote", ScsKiller.AutoCompileMemoryGB(), ScsKiller.RamGB());
     public double MaxCompileMemoryMax => ScsKiller.MaxCompileMemoryGB(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes);
-    public string MaxCompileMemoryText => S.MaxCompileMemoryGB > 0 ? $"{S.MaxCompileMemoryGB} GB" : $"Auto ({ScsKiller.AutoCompileMemoryGB()} GB)";
-    public string PriorityNote => (S.Priority == WarmPriority.BelowNormal ? "Below-normal priority." : "Idle priority.") + " Fewer threads = slower compile, quieter PC.";
+    public string MaxCompileMemoryText => S.MaxCompileMemoryGB > 0 ? $"{S.MaxCompileMemoryGB} GB" : Loc.T("Settings_AutoGb", ScsKiller.AutoCompileMemoryGB());
+    public string PriorityNote => Loc.T(S.Priority == WarmPriority.BelowNormal ? "Settings_BelowNormalNote" : "Settings_IdleNote") + Loc.T("Settings_FewerThreads");
 
     /// <summary>A Yes/No question before an admin-only change: title, text, the Yes button's text.</summary>
     public delegate Task<bool> Confirm(string title, string text, string yes);
@@ -344,10 +349,10 @@ public sealed class SettingsVm : Bindable
     /// <summary>Keeps Windows' automatic disk cleanup from clearing compiled shaders, or allows it again, behind one UAC
     /// prompt. A design window writes nothing. Null = the user cancelled the prompt.</summary>
     public static Task<Elevated.Result?> KeepShadersAsync(bool keep) =>
-        AsAdminAsync(() => Host.Design != null ? "Design data: nothing changed." : D3DSCache.KeepFromCleanup(keep), () => ["shader-cleanup", keep ? "keep" : "allow"]);
+        AsAdminAsync(() => Host.Design != null ? Loc.T("Settings_DesignNothing") : D3DSCache.KeepFromCleanup(keep), () => ["shader-cleanup", keep ? "keep" : "allow"]);
 
     public bool ShowsShaderCleanup => D3DSCache.CleanupKept() != null;
-    public string ShaderCleanupAction => D3DSCache.CleanupKept() == true ? "Let Windows clear them again" : "Keep Windows from clearing compiled shaders";
+    public string ShaderCleanupAction => D3DSCache.CleanupKept() == true ? Loc.T("Settings_ShaderCleanupAllow") : Loc.T("Settings_ShaderCleanupKeep");
     public bool CanApplyShaderCleanup { get; private set; } = true;
     public string? ShaderCleanupMessage { get; set; }
     public InfoBarSeverity ShaderCleanupSeverity { get; set; }
@@ -359,9 +364,9 @@ public sealed class SettingsVm : Bindable
         Changed();
         (ShaderCleanupMessage, ShaderCleanupSeverity) = await KeepShadersAsync(D3DSCache.CleanupKept() != true) switch
         {
-            null => ("Cancelled.", InfoBarSeverity.Informational),
+            null => (Loc.T("Settings_Cancelled"), InfoBarSeverity.Informational),
             { Ok: true } r => (r.Message, InfoBarSeverity.Success),
-            var r => ("Not changed: " + r.Message, InfoBarSeverity.Error),
+            var r => (Loc.T("Settings_NotChanged", r.Message), InfoBarSeverity.Error),
         };
         CanApplyShaderCleanup = true;
         Changed();
@@ -374,21 +379,18 @@ public sealed class SettingsVm : Bindable
     public async Task ApplyLimitAsync(Confirm confirm)
     {
         var (label, limit) = Sizes[SizeIndex];
-        if (!await confirm($"Set the shader cache limit to {label}?",
-                $"This is a global {Fmt.Vendor(V.Vendor)} driver setting: it applies to every game on this PC, not only the ones SCSKiller compiles, " +
-                "and stays until you change it. Windows will ask for administrator permission.\n\n" +
-                "Raising it deletes nothing. Lowering it below what is used now makes the driver delete older entries, and those games stutter again. " +
-                "You can switch back to the driver default here at any time.",
-                "Change limit")) return;
+        if (!await confirm(Loc.T("Settings_SetLimitTitle", label),
+                Loc.T("Settings_SetLimitBody", Fmt.Vendor(V.Vendor)),
+                Loc.T("Settings_ChangeLimit"))) return;
 
         CanApplyLimit = false;
         Changed();
         var size = limit.IsDriverDefault ? "default" : limit.Bytes is { } b ? (b / (double)(1L << 30)).ToString(System.Globalization.CultureInfo.InvariantCulture) : "unlimited";
         (ApplyMessage, ApplySeverity) = await AsAdminAsync(() => { V.SetCacheLimit(limit); return ""; }, () => ["cache", "set", size, .. RunningGpu]) switch
         {
-            null => ("Cancelled.", InfoBarSeverity.Informational),
-            { Ok: true } => ($"Shader cache limit set to {label}.", InfoBarSeverity.Success),
-            var r => ("The limit was not changed: " + r.Message, InfoBarSeverity.Error),
+            null => (Loc.T("Settings_Cancelled"), InfoBarSeverity.Informational),
+            { Ok: true } => (Loc.T("Settings_LimitSet", label), InfoBarSeverity.Success),
+            var r => (Loc.T("Settings_LimitNotChanged", r.Message), InfoBarSeverity.Error),
         };
         CanApplyLimit = true;
         Refresh();
@@ -411,8 +413,8 @@ public sealed class SettingsVm : Bindable
                 (AutoMessage, AutoSeverity) = (NvidiaBackend.AutoShaderOutcome(level, changed: false), InfoBarSeverity.Success);
                 return;
             }
-            if (!await confirm(level == AutoShaderCompilation.Off ? "Turn off NVIDIA Auto Shader Compilation?" : $"Turn on NVIDIA Auto Shader Compilation ({level})?",
-                    "Auto Shader Compilation is a beta feature by NVIDIA®.", level == AutoShaderCompilation.Off ? "Turn off" : "Turn on")) return;
+            if (!await confirm(level == AutoShaderCompilation.Off ? Loc.T("Settings_AscOffTitle") : Loc.T("Settings_AscOnTitle", level),
+                    Loc.T("Settings_AscBetaNote"), level == AutoShaderCompilation.Off ? Loc.T("Settings_AscTurnOff") : Loc.T("Settings_AscTurnOn"))) return;
 
             // --for-user: the elevated CLI refuses when UAC elevated another administrator (NvOSC would register the task for them).
             var result = await AsAdminAsync(() => V.SetAutoShaderCompilation(level),
@@ -420,9 +422,9 @@ public sealed class SettingsVm : Bindable
             if (result is { Ok: false } && Host.Core is ScsKiller k) k.Log?.Report($"Auto Shader Compilation {level}: {result.Message}");
             (AutoMessage, AutoSeverity) = result switch
             {
-                null => ("Cancelled.", InfoBarSeverity.Informational),
+                null => (Loc.T("Settings_Cancelled"), InfoBarSeverity.Informational),
                 { Ok: true } r => (r.Message is { Length: > 0 } m ? m : NvidiaBackend.AutoShaderOutcome(level, changed: true), InfoBarSeverity.Success),
-                var r => ("Couldn't apply: " + r.Message.Split('\n')[0], InfoBarSeverity.Error),   // NvOSC's full output goes to the log only
+                var r => (Loc.T("Settings_CouldntApply", r.Message.Split('\n')[0]), InfoBarSeverity.Error),   // NvOSC's full output goes to the log only
             };
         }
         finally

@@ -145,7 +145,7 @@ public static class NewsState
     /// <summary>A notification's second line: the body up to its first newline.</summary>
     public static string FirstLine(string body) => body.Split('\n', 2)[0].Trim();
 
-    public static string MoreLine(int n) => $"{n} more news item{(n == 1 ? "" : "s")} in SCSKiller";
+    public static string MoreLine(int n) => n == 1 ? Loc.T("News_MoreOne", n) : Loc.T("News_MoreMany", n);
 
     static readonly object Lock = new();
 

@@ -48,14 +48,11 @@ public sealed partial class SettingsPage : Page
     // Stands in for the website's recorder-anti-cheat page until it exists.
     public ContentDialog AntiCheatDetailsDialog() => new()
     {
-        XamlRoot = XamlRoot, Title = "Recording in games with anti-cheat", CloseButtonText = "Close",
+        XamlRoot = XamlRoot, Title = Loc.T("Settings_AntiCheatTitle"), CloseButtonText = Loc.T("Common_Close"),
         Content = new TextBlock
         {
             TextWrapping = TextWrapping.Wrap,
-            Text = "For one session, SCSKiller puts its recorder (a d3d12.dll) next to the game's exe.\n\n"
-                + "Games with anti-cheat can treat the recorder as cheating and ban your account, during the session or later. No game is known to be safe.\n\n"
-                + "SCSKiller removes every file it places when the game exits, or after a crash at your next logon.\n\n"
-                + "Enabling the recorder in these games is at your own risk. SCSKiller isn't responsible for bans.",
+            Text = Loc.T("Settings_AntiCheatBody"),
         },
     };
 
@@ -70,7 +67,7 @@ public sealed partial class SettingsPage : Page
             var row = new Grid { ColumnSpacing = 12, ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition { Width = GridLength.Auto } } };
             row.Children.Add(new StackPanel { Spacing = 2, Children = { new TextBlock { Text = g.Game.Name, TextWrapping = TextWrapping.Wrap },
                 new TextBlock { Text = Fmt.KeptSize(g.Kept!), Style = (Style)Application.Current.Resources["Secondary"] } } });
-            var remove = new Button { Content = "Remove", VerticalAlignment = VerticalAlignment.Center };
+            var remove = new Button { Content = Loc.T("Common_Remove"), VerticalAlignment = VerticalAlignment.Center };
             remove.Click += (_, _) => { App.Core.DropKeptCache(g.Game.Id); rows.Children.Remove(row); Vm.Refresh(); };
             Grid.SetColumn(remove, 1);
             row.Children.Add(remove);
@@ -78,10 +75,10 @@ public sealed partial class SettingsPage : Page
         }
         return new()
         {
-            XamlRoot = XamlRoot, Title = "Kept aside", CloseButtonText = "Close",
+            XamlRoot = XamlRoot, Title = Loc.T("Settings_KeptAsideTitle"), CloseButtonText = Loc.T("Common_Close"),
             Content = new StackPanel { Spacing = 14, MinWidth = 420, Children =
             {
-                new TextBlock { Text = "Removing frees the space. The game is kept again after its next compile.", TextWrapping = TextWrapping.Wrap },
+                new TextBlock { Text = Loc.T("Settings_KeptAsideNote"), TextWrapping = TextWrapping.Wrap },
                 new ScrollViewer { MaxHeight = 360, Content = rows },
             } },
         };
@@ -99,20 +96,17 @@ public sealed partial class SettingsPage : Page
     async void OnApply(object _, RoutedEventArgs __)
     {
         var (label, limit) = SettingsVm.Sizes[SizeBox.SelectedIndex];
-        if (!await App.ConfirmAsync(this, $"Set the shader cache limit to {label}?",
-                $"This is a global {Fmt.Vendor(App.Core.Vendor.Vendor)} driver setting: it applies to every game on this PC, not only the ones SCSKiller compiles, " +
-                "and stays until you change it. Windows will ask for administrator permission.\n\n" +
-                "Raising it deletes nothing. Lowering it below what is used now makes the driver delete older entries, and those games stutter again. " +
-                "You can switch back to the driver default here at any time.",
-                "Change limit")) return;
+        if (!await App.ConfirmAsync(this, Loc.T("Settings_SetLimitTitle", label),
+                Loc.T("Settings_SetLimitBody", Fmt.Vendor(App.Core.Vendor.Vendor)),
+                Loc.T("Settings_ChangeLimit"))) return;
 
         ApplyButton.IsEnabled = false;
         var size = limit.IsDriverDefault ? "default" : limit.Bytes is { } b ? (b / (double)(1L << 30)).ToString(CultureInfo.InvariantCulture) : "unlimited";
         (Vm.ApplyMessage, Vm.ApplySeverity) = await AsAdminAsync(() => { App.Core.Vendor.SetCacheLimit(limit); return ""; }, ["cache", "set", size, .. RunningGpu]) switch
         {
-            null => ("Cancelled.", InfoBarSeverity.Informational),
-            { Ok: true } => ($"Shader cache limit set to {label}.", InfoBarSeverity.Success),
-            var r => ("The limit was not changed: " + r.Message, InfoBarSeverity.Error),
+            null => (Loc.T("Settings_Cancelled"), InfoBarSeverity.Informational),
+            { Ok: true } => (Loc.T("Settings_LimitSet", label), InfoBarSeverity.Success),
+            var r => (Loc.T("Settings_LimitNotChanged", r.Message), InfoBarSeverity.Error),
         };
         ApplyButton.IsEnabled = true;
         Vm.Refresh();
@@ -149,8 +143,8 @@ public sealed partial class SettingsPage : Page
                 (Vm.AutoMessage, Vm.AutoSeverity) = (NvidiaBackend.AutoShaderOutcome(level, changed: false), InfoBarSeverity.Success);
                 return;
             }
-            if (!await App.ConfirmAsync(this, level == AutoShaderCompilation.Off ? "Turn off NVIDIA Auto Shader Compilation?" : $"Turn on NVIDIA Auto Shader Compilation ({level})?",
-                    "Auto Shader Compilation is a beta feature by NVIDIA®.", level == AutoShaderCompilation.Off ? "Turn off" : "Turn on")) return;
+            if (!await App.ConfirmAsync(this, level == AutoShaderCompilation.Off ? Loc.T("Settings_AscOffTitle") : Loc.T("Settings_AscOnTitle", level),
+                    Loc.T("Settings_AscBetaNote"), level == AutoShaderCompilation.Off ? Loc.T("Settings_AscTurnOff") : Loc.T("Settings_AscTurnOn"))) return;
 
             // --for-user: the elevated CLI refuses when UAC elevated another administrator (NvOSC would register the task for them).
             string[] cli = ["nvidia-auto-shader", level.ToString().ToLowerInvariant(), Elevated.ForUserArg, Elevated.CurrentUserSid, .. RunningGpu];
@@ -158,9 +152,9 @@ public sealed partial class SettingsPage : Page
             if (result is { Ok: false } && App.Core is ScsKiller k) k.Log?.Report($"Auto Shader Compilation {level}: {result.Message}");
             (Vm.AutoMessage, Vm.AutoSeverity) = result switch
             {
-                null => ("Cancelled.", InfoBarSeverity.Informational),
+                null => (Loc.T("Settings_Cancelled"), InfoBarSeverity.Informational),
                 { Ok: true } r => (r.Message is { Length: > 0 } m ? m : NvidiaBackend.AutoShaderOutcome(level, changed: true), InfoBarSeverity.Success),
-                var r => ("Couldn't apply: " + r.Message.Split('\n')[0], InfoBarSeverity.Error),   // NvOSC's full output goes to the log only
+                var r => (Loc.T("Settings_CouldntApply", r.Message.Split('\n')[0]), InfoBarSeverity.Error),   // NvOSC's full output goes to the log only
             };
         }
         finally

@@ -72,6 +72,8 @@ stutter only, not traversal or streaming stutter, and a shader it couldn't find 
 
 ## Features
 
+- **Nine languages beside English**: Simplified Chinese, Japanese, Korean, German, French, Spanish, Russian and
+  Brazilian Portuguese, picked in Settings or following the system's, in both the Windows and the Linux app.
 - **NVIDIA and AMD**, DirectX 12 games, and DirectX 11 games on NVIDIA.
 - **Finds your games** in Steam, Epic Games, EA app, GOG, Ubisoft Connect, Xbox (PC), Battle.net, PURPLE, HoYoPlay,
   Gaijin and the Riot Client, plus games you add yourself.

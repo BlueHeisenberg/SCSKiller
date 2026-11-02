@@ -18,6 +18,9 @@ public static class Program
     {
         if (IsDesignRun(args)) Core.App.UpdateHooks.DesignDir = Path.Combine(Path.GetTempPath(), $"SCSKiller-fake-{Environment.ProcessId}");
         Core.App.Format.PlainGroupSeparator();
+        // the texts of every later Loc.T: the setting's language, or the system's, before any window reads one
+        try { Core.App.Loc.Load(new Core.App.AppStore(Core.App.AppStore.DefaultDir).LoadSettings().Language); }
+        catch (Exception e) { LogCrash(e); }   // a broken strings file never keeps the app from starting: it runs in English
         // logged, not handled: the app still ends as it would have
         AppDomain.CurrentDomain.UnhandledException += (_, e) => LogCrash(e.ExceptionObject as Exception ?? new Exception($"{e.ExceptionObject}"));
         TaskScheduler.UnobservedTaskException += (_, e) => LogCrash(e.Exception);
@@ -55,7 +58,7 @@ public static class Program
     public static void StartFailed(Exception e, string[] args)
     {
         LogCrash(e);
-        if (!IsDesignRun(args)) MessageBoxW(0, $"SCSKiller couldn't start. Details are in {Path.Combine(Core.App.AppStore.DefaultDir, Core.App.CrashLog.FileName)}", "SCSKiller", 0x10 /* MB_ICONERROR */);
+        if (!IsDesignRun(args)) MessageBoxW(0, Core.App.Loc.T("App_CouldntStart", Path.Combine(Core.App.AppStore.DefaultDir, Core.App.CrashLog.FileName)), "SCSKiller", 0x10 /* MB_ICONERROR */);
     }
 
     public static bool IsDesignRun(string[] args) => args.Any(a => a is "--fake" or "--screenshots");

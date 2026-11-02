@@ -109,7 +109,7 @@ public sealed partial class MainWindow : Window
     public void ShowGpu()
     {
         GpuName.Text = Host.Core.Vendor.Gpu.Name;
-        GpuDriver.Text = (Host.Core as ScsKiller)?.GpuRestartNote ?? "Driver " + Host.Core.Vendor.Gpu.DriverVersion;
+        GpuDriver.Text = (Host.Core as ScsKiller)?.GpuRestartNote ?? Loc.T("Main_DriverPrefix", Host.Core.Vendor.Gpu.DriverVersion);
     }
 
     /// <summary>The page shown in the content area. The Library is built once and kept, with its scroll position.</summary>
@@ -207,7 +207,7 @@ public sealed partial class MainWindow : Window
         var unread = Notifications().Unread.Count;
         BellCount.Text = unread.ToString();
         BellBadge.IsVisible = unread > 0;
-        AutomationProperties.SetName(BellButton, unread > 0 ? $"Notifications, {unread} unread" : "Notifications");
+        AutomationProperties.SetName(BellButton, unread > 0 ? Loc.T("Main_NotificationsUnread", unread) : Loc.T("Main_Notifications"));
     }
 
     public void OpenBell() => BellFlyout.ShowAt(BellButton);
@@ -234,8 +234,8 @@ public sealed partial class MainWindow : Window
             Width = 360, Spacing = 12,
             Children =
             {
-                new TextBlock { Text = "Notifications", Classes = { "Section" } },
-                shownNews.Count == 0 ? new TextBlock { Text = "Nothing new.", Classes = { "Secondary" } } : new ScrollViewer { MaxHeight = 480, Content = list },
+                new TextBlock { Text = Loc.T("Main_Notifications"), Classes = { "Section" } },
+                shownNews.Count == 0 ? new TextBlock { Text = Loc.T("Main_NothingNew"), Classes = { "Secondary" } } : new ScrollViewer { MaxHeight = 480, Content = list },
             },
         };
     }
@@ -254,10 +254,10 @@ public sealed partial class MainWindow : Window
         text.Children.Add(new TextBlock { Text = item.Title, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap });
         text.Children.Add(new TextBlock { Text = item.Body, Classes = { "Secondary" }, TextWrapping = TextWrapping.Wrap });
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new(0, 4, 0, 0) };
-        if (item.Link != null) actions.Children.Add(new HyperlinkButton { Content = "Open", NavigateUri = new Uri(item.Link) });
+        if (item.Link != null) actions.Children.Add(new HyperlinkButton { Content = Loc.T("Common_Open"), NavigateUri = new Uri(item.Link) });
         if (item.Game != null)
         {
-            var go = new Button { Content = "Go to game" };
+            var go = new Button { Content = Loc.T("Main_GoToGame") };
             go.Click += (_, _) => { BellFlyout.Hide(); Navigate(typeof(DetailPage), item.Game); };
             actions.Children.Add(go);
         }
@@ -268,8 +268,8 @@ public sealed partial class MainWindow : Window
             Classes = { "Subtle" }, Content = new TextBlock { Classes = { "Icon" }, Text = Glyphs.Dismiss, FontSize = 10 },
             Padding = new(6), VerticalAlignment = VerticalAlignment.Top,
         };
-        ToolTip.SetTip(dismiss, "Dismiss");
-        AutomationProperties.SetName(dismiss, "Dismiss");
+        ToolTip.SetTip(dismiss, Loc.T("Main_Dismiss"));
+        AutomationProperties.SetName(dismiss, Loc.T("Main_Dismiss"));
         dismiss.Click += (_, _) =>
         {
             NewsState.Dismiss(Host.Store, item.Id, Feed());

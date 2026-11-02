@@ -3,11 +3,12 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:SCSKiller.App.Pages"
-    xmlns:app="using:SCSKiller.Core.App">
+    xmlns:app="using:SCSKiller.Core.App"
+    xmlns:core="using:SCSKiller.Core.App">
 
     <ScrollViewer>
         <StackPanel Padding="36,28,36,28" Spacing="16">
-            <TextBlock Text="About" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock Text="{x:Bind core:Loc.T('Nav_About')}" Style="{StaticResource TitleTextBlockStyle}" />
 
             <Border Style="{StaticResource Card}" Padding="20">
                 <Grid ColumnSpacing="16">
@@ -17,45 +18,45 @@
                     </Grid.ColumnDefinitions>
                     <FontIcon Glyph="&#xE945;" FontSize="36" VerticalAlignment="Top" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
                     <StackPanel Grid.Column="1" Spacing="4">
-                        <TextBlock Text="SCSKiller" Style="{StaticResource Section}" FontSize="20" />
-                        <TextBlock Text="Shader Compilation Stutter Killer" Style="{StaticResource Secondary}" />
+                        <TextBlock Text="{x:Bind core:Loc.T('Common_AppName')}" Style="{StaticResource Section}" FontSize="20" />
+                        <TextBlock Text="{x:Bind core:Loc.T('About_FullName')}" Style="{StaticResource Secondary}" />
                         <TextBlock Text="{x:Bind Vm.Version, Mode=OneWay}" Style="{StaticResource Caption}" IsTextSelectionEnabled="True" />
                         <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0" Visibility="{x:Bind Vm.ShowsCheck}">
-                            <Button Content="Check for updates" Click="OnCheckForUpdates" IsEnabled="{x:Bind Vm.CanCheck, Mode=OneWay}" />
+                            <Button Content="{x:Bind core:Loc.T('About_CheckUpdates')}" Click="OnCheckForUpdates" IsEnabled="{x:Bind Vm.CanCheck, Mode=OneWay}" />
                             <TextBlock Text="{x:Bind Vm.UpdateNote, Mode=OneWay}" Style="{StaticResource Caption}" VerticalAlignment="Center" TextWrapping="Wrap" />
                         </StackPanel>
                         <CheckBox IsChecked="{x:Bind Vm.InstallUpdatesAutomatically, Mode=TwoWay}" Visibility="{x:Bind Vm.ShowsAutoInstall, Mode=OneWay}"
-                                  AutomationProperties.Name="Install updates automatically">
+                                  AutomationProperties.Name="{x:Bind core:Loc.T('Settings_InstallUpdates')}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Install updates automatically" TextWrapping="Wrap" />
-                                <TextBlock Text="A downloaded update installs the next time SCSKiller starts or quits, never during a compile, an offline session or a game. Off: only Restart to update installs it."
+                                <TextBlock Text="{x:Bind core:Loc.T('Settings_InstallUpdates')}" TextWrapping="Wrap" />
+                                <TextBlock Text="{x:Bind core:Loc.T('Settings_InstallUpdatesDesc')}"
                                            Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
                         <InfoBar IsOpen="{x:Bind Vm.HasUpdateProblem, Mode=OneWay}" Visibility="{x:Bind Vm.HasUpdateProblem, Mode=OneWay}"
                                  Message="{x:Bind Vm.UpdateProblem, Mode=OneWay}" Severity="Warning" IsClosable="False" />
                         <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0" Visibility="{x:Bind Vm.ShowsSource}">
-                            <Button Content="Download source code" Click="OnSource" IsEnabled="{x:Bind Vm.SourceIdle, Mode=OneWay}" />
+                            <Button Content="{x:Bind core:Loc.T('About_DownloadSource')}" Click="OnSource" IsEnabled="{x:Bind Vm.SourceIdle, Mode=OneWay}" />
                             <TextBlock Text="{x:Bind Vm.SourceStatus, Mode=OneWay}" Style="{StaticResource Caption}" VerticalAlignment="Center" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                         </StackPanel>
                         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap"
-                                   Text="Compiles your games' shaders into the graphics driver's cache ahead of time, so they don't stutter the first time you play them." />
+                                   Text="{x:Bind core:Loc.T('About_Tagline')}" />
                         <TextBlock Margin="0,8,0,0" Style="{StaticResource Secondary}">
-                            <Run Text="SCSKiller licence:" FontWeight="SemiBold" /><Run Text=" GPL-3.0-or-later, with an additional permission for Oodle, the Windows App SDK and graphics driver libraries (LICENSE-EXCEPTION.txt)" />
+                            <Run Text="{x:Bind core:Loc.T('About_Licence')}" FontWeight="SemiBold" /><Run Text="{x:Bind core:Loc.T('About_LicenceNote')}" />
                         </TextBlock>
                         <StackPanel Orientation="Horizontal" Spacing="16" Margin="0,4,0,0">
-                            <HyperlinkButton Content="What's new" Padding="0" FontSize="12" Click="OnWhatsNew" />
-                            <HyperlinkButton Content="Website" Padding="0" FontSize="12" NavigateUri="https://scskiller.com" />
-                            <HyperlinkButton Content="Source code" Padding="0" FontSize="12" NavigateUri="https://github.com/BlueHeisenberg/SCSKiller" />
-                            <HyperlinkButton Content="Support on Patreon" Padding="0" FontSize="12" NavigateUri="https://www.patreon.com/SCSKiller" />
+                            <HyperlinkButton Content="{x:Bind core:Loc.T('About_WhatsNew')}" Padding="0" FontSize="12" Click="OnWhatsNew" />
+                            <HyperlinkButton Content="{x:Bind core:Loc.T('About_Website')}" Padding="0" FontSize="12" NavigateUri="https://scskiller.com" />
+                            <HyperlinkButton Content="{x:Bind core:Loc.T('About_SourceCode')}" Padding="0" FontSize="12" NavigateUri="https://github.com/BlueHeisenberg/SCSKiller" />
+                            <HyperlinkButton Content="{x:Bind core:Loc.T('About_SupportPatreon')}" Padding="0" FontSize="12" NavigateUri="https://www.patreon.com/SCSKiller" />
                         </StackPanel>
                     </StackPanel>
                 </Grid>
             </Border>
 
             <StackPanel Spacing="8">
-                <TextBlock Text="Problem reports you sent" Style="{StaticResource Section}" />
-                <TextBlock Text="Reports sent from earlier versions aren't listed." Style="{StaticResource Secondary}" TextWrapping="Wrap"
+                <TextBlock Text="{x:Bind core:Loc.T('Settings_ProblemReports')}" Style="{StaticResource Section}" />
+                <TextBlock Text="{x:Bind core:Loc.T('Settings_EarlierReportsNote')}" Style="{StaticResource Secondary}" TextWrapping="Wrap"
                            Visibility="{x:Bind Vm.NoProblems, Mode=OneWay}" />
                 <ItemsControl ItemsSource="{x:Bind Vm.Problems, Mode=OneWay}" IsTabStop="False">
                     <ItemsControl.ItemsPanel>
@@ -79,18 +80,18 @@
             </StackPanel>
 
             <StackPanel Spacing="8">
-                <TextBlock Text="Use at your own risk" Style="{StaticResource Section}" />
-                <TextBlock Text="SCSKiller is provided as is, without warranty. It checks each game for anti-cheat before adding its recorder, but that check can miss one. You use it at your own risk, and its authors are not responsible for bans, crashes or lost data."
+                <TextBlock Text="{x:Bind core:Loc.T('Common_AtYourOwnRisk')}" Style="{StaticResource Section}" />
+                <TextBlock Text="{x:Bind core:Loc.T('Settings_Disclaimer')}"
                            Style="{StaticResource Secondary}" TextWrapping="Wrap" />
             </StackPanel>
 
-            <Expander x:Name="TrademarksBox" Header="Trademarks" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+            <Expander x:Name="TrademarksBox" Header="{x:Bind core:Loc.T('About_Trademarks')}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                 <TextBlock Text="{x:Bind Vm.Trademarks}" Style="{StaticResource Secondary}" TextWrapping="Wrap" LineHeight="22" IsTextSelectionEnabled="True" />
             </Expander>
 
             <StackPanel Spacing="8">
-                <TextBlock Text="Third-party components" Style="{StaticResource Section}" />
-                <TextBlock Text="Open one to read its licence. The same list, with notes, is in THIRD-PARTY-NOTICES.md next to the app."
+                <TextBlock Text="{x:Bind core:Loc.T('About_ThirdParty')}" Style="{StaticResource Section}" />
+                <TextBlock Text="{x:Bind core:Loc.T('About_LicencesDesc')}"
                            Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                 <ItemsControl x:Name="Components" ItemsSource="{x:Bind Vm.Components}" IsTabStop="False">
                     <ItemsControl.ItemsPanel>

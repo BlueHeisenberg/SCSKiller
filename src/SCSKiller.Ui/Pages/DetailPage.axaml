@@ -1,5 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:loc="using:SCSKiller.Ui"
+             
              xmlns:ui="using:SCSKiller.Ui"
              xmlns:c="using:SCSKiller.Ui.Controls"
              xmlns:m="using:SCSKiller.Ui.Models"
@@ -71,20 +73,20 @@
     <ScrollViewer x:Name="Scroller">
         <StackPanel Margin="36,24,36,28" Spacing="16">
             <StackPanel x:Name="Crumbs" Orientation="Horizontal">
-                <Button Classes="Crumb" Content="Library" Click="OnCrumb" />
+                <Button Classes="Crumb" Content="{loc:T Nav_Library}" Click="OnCrumb" />
                 <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.ChevronRight}" FontSize="12" Margin="2,0" VerticalAlignment="Center" />
                 <TextBlock x:Name="CrumbName" Margin="1,3,1,4" />
             </StackPanel>
 
             <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                    <Button Content="Rename…" Click="OnRename" IsVisible="{Binding IsManual}" ToolTip.Tip="The name SCSKiller shows for this game" />
-                    <Button Content="Game folder…" Click="OnGameFolder" IsVisible="{Binding IsManual}"
-                            ToolTip.Tip="The folder SCSKiller checks for anti-cheat before it records this game" />
-                    <Button Content="Game exe…" Click="OnGameExe" IsVisible="{Binding CanChooseExe}" ToolTip.Tip="Choose the exe SCSKiller compiles and records for" />
-                    <Button Content="Auto exe" Click="OnAutoExe" IsVisible="{Binding ExeChosen}" ToolTip.Tip="Go back to the exe SCSKiller picks" />
-                    <Button Content="Open folder" Click="OnOpenExeFolder" ToolTip.Tip="Open the folder of the game's exe" />
-                    <Button Content="Remove from library" Click="OnRemoveGame" ToolTip.Tip="{Binding RemoveTip}" />
+                    <Button Content="{loc:T Detail_Rename}" Click="OnRename" IsVisible="{Binding IsManual}" ToolTip.Tip="{loc:T Tip_ShownName}" />
+                    <Button Content="{loc:T Library_GameFolder}" Click="OnGameFolder" IsVisible="{Binding IsManual}"
+                            ToolTip.Tip="{loc:T Tip_AntiCheatFolder}" />
+                    <Button Content="{loc:T Library_GameExe}" Click="OnGameExe" IsVisible="{Binding CanChooseExe}" ToolTip.Tip="{loc:T Tip_ChooseExe}" />
+                    <Button Content="{loc:T Detail_AutoExe}" Click="OnAutoExe" IsVisible="{Binding ExeChosen}" ToolTip.Tip="{loc:T Tip_BackToAutoExe}" />
+                    <Button Content="{loc:T Detail_OpenFolder}" Click="OnOpenExeFolder" ToolTip.Tip="{loc:T Tip_OpenExeFolder}" />
+                    <Button Content="{loc:T Detail_RemoveFromLibrary}" Click="OnRemoveGame" ToolTip.Tip="{Binding RemoveTip}" />
                     <Panel Background="Transparent" ToolTip.Tip="{Binding PlayTip}" IsVisible="{Binding ShowPlay}">
                         <Button Content="{Binding PlayText}" Click="OnPlay" IsEnabled="{Binding CanPlay}" />
                     </Panel>
@@ -100,7 +102,7 @@
                     <TextBlock Text="{Binding Sub}" Classes="Secondary" TextWrapping="Wrap" />
                     <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding Playing}">
                         <Ellipse Width="6" Height="6" Fill="{DynamicResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
-                        <TextBlock Text="Playing now" Classes="BodyStrong" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                        <TextBlock Text="{loc:T Common_PlayingNow}" Classes="BodyStrong" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
                     </StackPanel>
                 </StackPanel>
             </Grid>
@@ -118,12 +120,12 @@
                         <TextBlock Text="{Binding DeliveryLine}" IsVisible="{Binding HasDeliveryLine}" Classes="Secondary" TextWrapping="Wrap" />
                         <StackPanel Spacing="2" IsVisible="{Binding HasCleanupLine}">
                             <TextBlock Text="{Binding CleanupLine}" Classes="Secondary" TextWrapping="Wrap" />
-                            <HyperlinkButton Content="Keep Windows from clearing compiled shaders" Padding="0" Click="OnKeepShaders" IsEnabled="{Binding CanKeepShaders}" />
+                            <HyperlinkButton Content="{loc:T Settings_KeepFromClearing}" Padding="0" Click="OnKeepShaders" IsEnabled="{Binding CanKeepShaders}" />
                         </StackPanel>
                         <TextBlock Text="{Binding VulkanRtNote}" IsVisible="{Binding HasVulkanRtNote}" Classes="Secondary" TextWrapping="Wrap" />
                         <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasKeptCache}">
                             <TextBlock Text="{Binding KeptCacheNote}" Classes="Secondary" TextWrapping="Wrap" VerticalAlignment="Center" />
-                            <HyperlinkButton Content="Clear it" Padding="0" Click="OnClearCache" VerticalAlignment="Center" />
+                            <HyperlinkButton Content="{loc:T Cache_ClearIt}" Padding="0" Click="OnClearCache" VerticalAlignment="Center" />
                         </StackPanel>
                         <StackPanel Spacing="2" Margin="0,4,0,0" IsVisible="{Binding HasMaximumLine}">
                             <TextBlock Text="{Binding MaximumLine}" Classes="Secondary" TextWrapping="Wrap" />
@@ -131,29 +133,29 @@
                             <HyperlinkButton Content="{Binding MaximumAction}" Padding="0" Click="OnGameMaximum" IsEnabled="{Binding CanSetMaximum}" />
                         </StackPanel>
                         <ProgressBar Margin="0,6,0,0" Value="{Binding Percent}" IsIndeterminate="{Binding Indeterminate}" IsVisible="{Binding IsCompiling}"
-                                     AutomationProperties.Name="Compile progress" />
+                                     AutomationProperties.Name="{loc:T Detail_CompileProgress}" />
                     </StackPanel>
                     <c:FlowPanel Grid.Row="1" Grid.ColumnSpan="2" Spacing="8" LineAlignment="Right">
-                        <Button Content="Why?" Click="OnPartlyWhy" IsVisible="{Binding IsPartlyCompiled}" />
-                        <Button Content="Set AES key" Click="OnSetAesKey" IsVisible="{Binding NeedsAesKey}" Classes="accent" />
-                        <Button Content="Change AES key" Click="OnChangeAesKey" IsVisible="{Binding CanChangeAesKey}" />
-                        <Button Content="Remove AES key" Click="OnRemoveAesKey" IsVisible="{Binding HasAesKey}" />
-                        <Button Content="Set game key" Click="OnSetGameKey" IsVisible="{Binding NeedsGameKey}" Classes="accent" />
+                        <Button Content="{loc:T Detail_Why}" Click="OnPartlyWhy" IsVisible="{Binding IsPartlyCompiled}" />
+                        <Button Content="{loc:T Detail_SetAesKey}" Click="OnSetAesKey" IsVisible="{Binding NeedsAesKey}" Classes="accent" />
+                        <Button Content="{loc:T Detail_ChangeAesKey}" Click="OnChangeAesKey" IsVisible="{Binding CanChangeAesKey}" />
+                        <Button Content="{loc:T Detail_RemoveAesKey}" Click="OnRemoveAesKey" IsVisible="{Binding HasAesKey}" />
+                        <Button Content="{loc:T Detail_SetGameKey}" Click="OnSetGameKey" IsVisible="{Binding NeedsGameKey}" Classes="accent" />
                         <!-- this font draws its glyph smaller: 18 px for WinUI's 14, and 2 px less padding keeps the button 38 wide -->
-                        <Button Click="OnRefreshGame" IsEnabled="{Binding CanRefresh}" AutomationProperties.Name="Refresh" Padding="9,5,9,6"
-                                ToolTip.Tip="Re-read this game's cache size, recording and last session" VerticalAlignment="Stretch">
+                        <Button Click="OnRefreshGame" IsEnabled="{Binding CanRefresh}" AutomationProperties.Name="{loc:T Common_Refresh}" Padding="9,5,9,6"
+                                ToolTip.Tip="{loc:T Tip_RereadGame}" VerticalAlignment="Stretch">
                             <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Refresh}" FontSize="18" VerticalAlignment="Center" />
                         </Button>
                         <!-- tooltip on a hit-testable wrapper: a disabled button shows none -->
                         <Panel Background="Transparent" ToolTip.Tip="{Binding ReportTip}">
-                            <Button Content="Rate this compile" Click="OnSendReport" IsEnabled="{Binding CanReport}" />
+                            <Button Content="{loc:T Detail_RateCompile}" Click="OnSendReport" IsEnabled="{Binding CanReport}" />
                         </Panel>
-                        <Button Content="Report a problem" Click="OnReportProblem" ToolTip.Tip="Send the SCSKiller team what went wrong with this game" />
+                        <Button Content="{loc:T Settings_ReportProblem}" Click="OnReportProblem" ToolTip.Tip="{loc:T Tip_ReportProblem}" />
                         <Panel Background="Transparent" ToolTip.Tip="{Binding ClearCacheTip}" IsVisible="{Binding ShowClearCache}">
                             <Button Content="{Binding ClearCacheText}" Click="OnClearCache" IsEnabled="{Binding CanClearCache}" />
                         </Panel>
-                        <Button Content="Max compile" Click="OnMaxCompile" IsVisible="{Binding ShowMaxCompile}" IsEnabled="{Binding CanAdd}"
-                                ToolTip.Tip="Compiles every combination of this game's shaders, once" />
+                        <Button Content="{loc:T Detail_MaxCompile}" Click="OnMaxCompile" IsVisible="{Binding ShowMaxCompile}" IsEnabled="{Binding CanAdd}"
+                                ToolTip.Tip="{loc:T Tip_MaxCompile}" />
                         <Panel Background="Transparent" ToolTip.Tip="{Binding CompileTip}" IsVisible="{Binding CanCompile}">
                             <Button Classes.accent="{Binding CompileAccent}" Click="OnCompile" IsEnabled="{Binding CanAdd}" AutomationProperties.Name="{Binding AddText}">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
@@ -167,11 +169,11 @@
                             <Button Content="{Binding BaText}" Classes.accent="{Binding BaAccent}" IsEnabled="{Binding BaEnabled}" Click="OnBeforeAfter"
                                     AutomationProperties.HelpText="{Binding BaTip}" />
                         </Panel>
-                        <Button Content="Compile again" Click="OnBaCompileAgain" IsVisible="{Binding BaCompileAgain}" />
-                        <Button Content="Record the after run again" Click="OnBaRecordAgain" IsVisible="{Binding BaDone}" />
-                        <Button Content="Start over" Click="OnBaStartOver" IsVisible="{Binding BaDone}" />
-                        <Button Content="How it works" Click="OnBaHowItWorks" IsVisible="{Binding BaHasMenu}" />
-                        <Button Content="Cancel the before and after recording" Click="OnBaCancel" IsVisible="{Binding BaInProgress}" />
+                        <Button Content="{loc:T Detail_CompileAgain}" Click="OnBaCompileAgain" IsVisible="{Binding BaCompileAgain}" />
+                        <Button Content="{loc:T Detail_RecordAfterAgain}" Click="OnBaRecordAgain" IsVisible="{Binding BaDone}" />
+                        <Button Content="{loc:T Detail_StartOver}" Click="OnBaStartOver" IsVisible="{Binding BaDone}" />
+                        <Button Content="{loc:T Detail_HowItWorks}" Click="OnBaHowItWorks" IsVisible="{Binding BaHasMenu}" />
+                        <Button Content="{loc:T Detail_CancelBeforeAfter}" Click="OnBaCancel" IsVisible="{Binding BaInProgress}" />
                     </c:FlowPanel>
                     <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="{Binding BaNote}" IsVisible="{Binding HasBaNote}"
                                Classes="Caption" TextWrapping="Wrap" TextAlignment="Right" />
@@ -181,14 +183,14 @@
             <!-- the line a Proton or Vulkan game's Steam launch options need: SCSKiller doesn't write Steam's files -->
             <Border Classes="Card" Padding="20,12" IsVisible="{Binding HasLaunchLine}">
                 <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="16" RowSpacing="6">
-                    <TextBlock Grid.ColumnSpan="2" Text="Paste into the game's Steam launch options:" TextWrapping="Wrap" IsVisible="{Binding OffersLaunchLine}" />
+                    <TextBlock Grid.ColumnSpan="2" Text="{loc:T Detail_PasteLaunchOptions}" TextWrapping="Wrap" IsVisible="{Binding OffersLaunchLine}" />
                     <TextBlock Grid.ColumnSpan="2" Text="{Binding LaunchLineRefused}" TextWrapping="Wrap" IsVisible="{Binding HasLaunchLineRefused}" />
                     <SelectableTextBlock Grid.Row="1" Text="{Binding LaunchLineText}" FontFamily="Cascadia Mono, Consolas, DejaVu Sans Mono" FontSize="12"
                                          Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" VerticalAlignment="Center"
                                          IsVisible="{Binding OffersLaunchLine}" />
                     <Button Grid.Row="1" Grid.Column="1" Content="{Binding CopyLaunchText}" Click="OnCopyLaunchLine" IsVisible="{Binding CanCopyLaunchLine}"
-                            VerticalAlignment="Center" AutomationProperties.Name="Copy the launch options" />
-                    <TextBlock Grid.Row="1" Grid.Column="1" Text="Already set in Steam" IsVisible="{Binding LaunchLineSet}" Classes="Secondary"
+                            VerticalAlignment="Center" AutomationProperties.Name="{loc:T Detail_CopyLaunchOptions}" />
+                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{loc:T Detail_AlreadyInSteam}" IsVisible="{Binding LaunchLineSet}" Classes="Secondary"
                                VerticalAlignment="Center" />
                 </Grid>
             </Border>
@@ -203,7 +205,7 @@
                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
                     <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Warning}" Foreground="{DynamicResource WarnBrush}" VerticalAlignment="Center" />
                     <c:LinkText Grid.Column="1" TextWrapping="Wrap" VerticalAlignment="Center" LinkClick="OnStutterLink">
-                        <Run Text="Stutters without a compile" Foreground="{DynamicResource WarnBrush}" FontWeight="SemiBold" /><Run Text=" · " /><Run Text="{Binding StutterReason}" /><Run Text="  " /><Run Text="{Binding StutterCitation}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" /><Run Classes="Link" Text="{Binding StutterLinkText}" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" TextDecorations="Underline" />
+                        <Run Text="{loc:T Report_StuttersNoCompile}" Foreground="{DynamicResource WarnBrush}" FontWeight="SemiBold" /><Run Text=" · " /><Run Text="{Binding StutterReason}" /><Run Text="  " /><Run Text="{Binding StutterCitation}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" /><Run Classes="Link" Text="{Binding StutterLinkText}" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" TextDecorations="Underline" />
                     </c:LinkText>
                 </Grid>
             </Border>
@@ -212,7 +214,7 @@
                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
                     <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Checkmark}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1" TextWrapping="Wrap" VerticalAlignment="Center">
-                        <Run Text="No shader stutter" FontWeight="SemiBold" /><Run Text=" · " /><Run Text="{Binding NoStutterReason}" /><Run Text=". Compiling it isn't needed." Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        <Run Text="{loc:T Report_NoStutter}" FontWeight="SemiBold" /><Run Text=" · " /><Run Text="{Binding NoStutterReason}" /><Run Text="{loc:T Detail_SelfPrecompiledTail}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                     </TextBlock>
                 </Grid>
             </Border>
@@ -242,7 +244,7 @@
                 <!-- WinUI's template keeps it 32 tall and its glyph 14 px from the text -->
                 <ComboBox x:Name="ApiBox" ItemsSource="{Binding ApiItems}" SelectedIndex="{Binding ApiIndex, Mode=OneWay}" SelectionChanged="OnApiPicked"
                           IsVisible="{Binding ShowApiPicker}" IsEnabled="{Binding CanPickApi}" FontSize="12" MinHeight="32" Padding="10,2,6,3"
-                          AutomationProperties.Name="DirectX" ToolTip.Tip="The DirectX SCSKiller compiles for. Auto uses the detected one." />
+                          AutomationProperties.Name="{loc:T Common_DirectX}" ToolTip.Tip="{loc:T Tip_DirectX}" />
                 <Border Classes="Chip" IsVisible="{Binding HasMiddleware}" ToolTip.Tip="{Binding MiddlewareTip}">
                     <TextBlock Text="{Binding MiddlewareChip}" Classes="ChipText" />
                 </Border>
@@ -265,7 +267,7 @@
             <!-- a game that needs a recording before it can compile -->
             <c:InfoBar Severity="Informational" IsClosable="False" IsVisible="{Binding HasRecordTip}" Title="{Binding RecordTipTitle}" Message="{Binding RecordTip}">
                 <c:InfoBar.ActionButton>
-                    <Button Content="Turn on recording" Click="OnRecordTip" HorizontalAlignment="Right" IsVisible="{Binding ShowRecordAction}" />
+                    <Button Content="{loc:T Detail_TurnOnRecording}" Click="OnRecordTip" HorizontalAlignment="Right" IsVisible="{Binding ShowRecordAction}" />
                 </c:InfoBar.ActionButton>
             </c:InfoBar>
 
@@ -275,13 +277,13 @@
 
             <c:InfoBar Severity="Warning" IsClosable="False" IsVisible="{Binding ShowLeftCallout}" Title="{Binding LeftTitle}" Message="{Binding LeftText}">
                 <c:InfoBar.ActionButton>
-                    <Button Content="Turn on recording" Click="OnRecordTip" HorizontalAlignment="Right" IsVisible="{Binding ShowRecordAction}" />
+                    <Button Content="{loc:T Detail_TurnOnRecording}" Click="OnRecordTip" HorizontalAlignment="Right" IsVisible="{Binding ShowRecordAction}" />
                 </c:InfoBar.ActionButton>
             </c:InfoBar>
 
             <Border Classes="Card" Padding="20,18" IsVisible="{Binding HasCoverageCard}">
                 <StackPanel Spacing="20">
-                    <TextBlock Text="Shader coverage" Classes="Section" />
+                    <TextBlock Text="{loc:T Detail_ShaderCoverage}" Classes="Section" />
                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="40">
                         <Panel Width="120" Height="120" VerticalAlignment="Center" AutomationProperties.Name="{Binding CoverageHeadline}">
                             <Ellipse Stroke="{DynamicResource ControlStrongFillColorDisabledBrush}" StrokeThickness="12" />
@@ -312,12 +314,12 @@
                                     <TextBlock Text="{Binding StuttersValue}" Classes="StatValue" Foreground="{DynamicResource WarnBrush}" IsVisible="{Binding HasStutters}" />
                                 </StackPanel>
                                 <StackPanel Spacing="2" IsVisible="{Binding HasShaderCount}" ToolTip.Tip="{Binding ShaderCountTip}">
-                                    <TextBlock Text="Shaders in the game" Classes="Secondary" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:T Report_ShadersInGame}" Classes="Secondary" TextWrapping="Wrap" />
                                     <TextBlock Text="{Binding ShaderCount}" Classes="StatValue" />
                                 </StackPanel>
                             </c:FlowPanel>
                             <StackPanel Spacing="6" Width="320" IsVisible="{Binding HasSources}">
-                                <TextBlock Text="Where the shaders come from" Classes="Secondary" TextWrapping="Wrap" />
+                                <TextBlock Text="{loc:T Report_ShadersFrom}" Classes="Secondary" TextWrapping="Wrap" />
                                 <ItemsControl ItemsSource="{Binding Sources}" ItemTemplate="{StaticResource SourceRow}">
                                     <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="6" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                                 </ItemsControl>
@@ -326,7 +328,7 @@
                     </Grid>
                     <TextBlock Text="{Binding CoverageHeadline}" Classes="Secondary" TextWrapping="Wrap" IsVisible="{Binding HasRuleNote}" />
 
-                    <Expander x:Name="DetailsExpander" Header="Details" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                    <Expander x:Name="DetailsExpander" Header="{loc:T Common_Details}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                         <ItemsControl ItemsSource="{Binding Details}" ItemTemplate="{StaticResource DetailRow}">
                             <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="8" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                         </ItemsControl>
@@ -338,7 +340,7 @@
             <Border x:Name="FramesCard" Classes="Card" Padding="20,18" IsVisible="{Binding HasFramesCard}">
                 <StackPanel Spacing="12">
                     <StackPanel Spacing="2" IsVisible="{Binding HasFrames}">
-                        <TextBlock Text="Frame times last time you played" Classes="Section" />
+                        <TextBlock Text="{loc:T Detail_FrameTimesTitle}" Classes="Section" />
                         <TextBlock Text="{Binding FramesVerdict}" TextWrapping="Wrap" />
                     </StackPanel>
                     <StackPanel Spacing="4" IsVisible="{Binding HasFrames}">
@@ -348,7 +350,7 @@
                             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
                                 <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding SplitFrames}">
                                     <Ellipse Width="7" Height="7" Fill="{DynamicResource WarnBrush}" VerticalAlignment="Center" />
-                                    <TextBlock Text="shader compile" Classes="CaptionText" />
+                                    <TextBlock Text="{loc:T Graph_ShaderCompile}" Classes="CaptionText" />
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Spacing="4">
                                     <Ellipse Width="7" Height="7" Fill="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
@@ -356,23 +358,23 @@
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Spacing="4">
                                     <Rectangle Width="10" Height="8" Fill="{DynamicResource ControlStrongFillColorDisabledBrush}" Opacity="0.45" VerticalAlignment="Center" />
-                                    <TextBlock Text="loading, quitting" Classes="CaptionText" />
+                                    <TextBlock Text="{loc:T Graph_LoadingQuitting}" Classes="CaptionText" />
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding SplitFrames}">
                                     <Rectangle Width="10" Height="8" Fill="{DynamicResource WarnBrush}" Opacity="0.3" VerticalAlignment="Center" />
-                                    <TextBlock Text="loading, compiling shaders" Classes="CaptionText" />
+                                    <TextBlock Text="{loc:T Graph_LoadingCompiling}" Classes="CaptionText" />
                                 </StackPanel>
                             </StackPanel>
                             <TextBlock Grid.Column="2" Text="{Binding GraphEnd}" Classes="CaptionText" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
                         </Grid>
                     </StackPanel>
-                    <Expander x:Name="EarlierExpander" Header="Earlier sessions" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                    <Expander x:Name="EarlierExpander" Header="{loc:T Detail_EarlierSessions}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
                               IsVisible="{Binding HasEarlierSessions}">
                         <ItemsControl ItemsSource="{Binding EarlierSessions}" ItemTemplate="{StaticResource DetailRow}" MaxWidth="620" HorizontalAlignment="Left">
                             <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="6" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                         </ItemsControl>
                     </Expander>
-                    <Expander x:Name="SlowFramesExpander" Header="Slow frames" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                    <Expander x:Name="SlowFramesExpander" Header="{loc:T Detail_SlowFrames}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
                               IsVisible="{Binding HasFrames}">
                         <StackPanel Spacing="8" MaxWidth="620" HorizontalAlignment="Left">
                             <TextBlock Text="{Binding FramesSummary}" Classes="Secondary" TextWrapping="Wrap" />
@@ -395,37 +397,37 @@
                         <c:InfoBar Severity="Informational" IsClosable="False" IsVisible="{Binding HasSkipped}" Title="{Binding SkippedTitle}" Message="{Binding SkippedText}" />
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" IsVisible="{Binding HasCareful}">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Careful compile" Classes="BodyStrong" />
+                                <TextBlock Text="{loc:T Detail_CarefulCompile}" Classes="BodyStrong" />
                                 <TextBlock Text="{Binding CarefulNote}" Classes="Secondary" TextWrapping="Wrap" />
                             </StackPanel>
                             <ToggleSwitch x:Name="CarefulSwitch" Grid.Column="1" IsChecked="{Binding CarefulOn, Mode=OneWay}" IsEnabled="{Binding CanToggleCareful}"
-                                          IsCheckedChanged="OnCarefulToggled" AutomationProperties.Name="Careful compile" AutomationProperties.HelpText="{Binding CarefulNote}" />
+                                          IsCheckedChanged="OnCarefulToggled" AutomationProperties.Name="{loc:T Detail_CarefulCompile}" AutomationProperties.HelpText="{Binding CarefulNote}" />
                         </Grid>
                         <StackPanel Spacing="2" IsVisible="{Binding HasKept}">
-                            <TextBlock Text="Kept aside" Classes="BodyStrong" />
+                            <TextBlock Text="{loc:T Cache_KeptAside}" Classes="BodyStrong" />
                             <TextBlock Text="{Binding KeptSize}" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding KeptState}" Classes="Secondary" TextWrapping="Wrap" />
                         </StackPanel>
                         <StackPanel Spacing="4">
-                            <TextBlock Text="When this game has new shaders" Classes="BodyStrong" />
+                            <TextBlock Text="{loc:T Detail_NewShaders}" Classes="BodyStrong" />
                             <ComboBox x:Name="NewShadersBox" ItemsSource="{Binding NewShadersChoices}" SelectedIndex="{Binding NewShadersIndex, Mode=OneWay}"
-                                      SelectionChanged="OnNewShadersChanged" AutomationProperties.Name="When this game has new shaders" />
+                                      SelectionChanged="OnNewShadersChanged" AutomationProperties.Name="{loc:T Detail_NewShaders}" />
                         </StackPanel>
                         <StackPanel Spacing="4" IsVisible="{Binding ShowRayTracing}">
-                            <TextBlock Text="Ray tracing shaders" Classes="BodyStrong" />
+                            <TextBlock Text="{loc:T Detail_RayTracing}" Classes="BodyStrong" />
                             <ComboBox x:Name="RayTracingBox" ItemsSource="{Binding RayTracingChoices}" SelectedIndex="{Binding RayTracingIndex, Mode=OneWay}"
-                                      SelectionChanged="OnRayTracingChanged" AutomationProperties.Name="Ray tracing shaders" />
+                                      SelectionChanged="OnRayTracingChanged" AutomationProperties.Name="{loc:T Detail_RayTracing}" />
                         </StackPanel>
                         <StackPanel Spacing="4" IsVisible="{Binding ShowCacheCap}">
-                            <TextBlock Text="Compile size limit" Classes="BodyStrong" />
-                            <TextBlock Text="An estimate of what a compile adds. Recorded pipelines always compile and take part of it. Ray tracing doesn't count." Classes="Secondary" TextWrapping="Wrap" />
+                            <TextBlock Text="{loc:T Settings_SizeLimit}" Classes="BodyStrong" />
+                            <TextBlock Text="{loc:T Detail_CoverageDesc}" Classes="Secondary" TextWrapping="Wrap" />
                             <ComboBox x:Name="CacheCapBox" ItemsSource="{Binding CacheCapChoices}" SelectedIndex="{Binding CacheCapIndex, Mode=OneWay}"
-                                      SelectionChanged="OnCacheCapChanged" AutomationProperties.Name="Compile size limit" />
+                                      SelectionChanged="OnCacheCapChanged" AutomationProperties.Name="{loc:T Settings_SizeLimit}" />
                         </StackPanel>
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                            <TextBlock Text="Leave out of Add all ready" Classes="BodyStrong" VerticalAlignment="Center" />
+                            <TextBlock Text="{loc:T Library_LeaveOut}" Classes="BodyStrong" VerticalAlignment="Center" />
                             <ToggleSwitch x:Name="LeftOutSwitch" Grid.Column="1" IsChecked="{Binding LeftOutOn, Mode=OneWay}" IsCheckedChanged="OnLeftOutToggled"
-                                          AutomationProperties.Name="Leave out of Add all ready" />
+                                          AutomationProperties.Name="{loc:T Library_LeaveOut}" />
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -434,32 +436,32 @@
                     <StackPanel Spacing="14">
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Record while I play" Classes="Section" />
+                                <TextBlock Text="{loc:T Detail_RecordWhilePlay}" Classes="Section" />
                                 <TextBlock Text="{Binding RecordNote}" Classes="Secondary" TextWrapping="Wrap" />
                                 <HyperlinkButton Content="{Binding UseDefaultText}" Click="OnUseDefault" Padding="0" Margin="0,2,0,0" IsVisible="{Binding ShowUseDefault}" />
                             </StackPanel>
                             <ToggleSwitch x:Name="RecordSwitch" Grid.Column="1" IsChecked="{Binding RecordOn, Mode=OneWay}" IsEnabled="{Binding CanToggleRecord}"
-                                          IsCheckedChanged="OnRecordToggled" AutomationProperties.Name="Record while I play" AutomationProperties.HelpText="{Binding RecordNote}" />
+                                          IsCheckedChanged="OnRecordToggled" AutomationProperties.Name="{loc:T Detail_RecordWhilePlay}" AutomationProperties.HelpText="{Binding RecordNote}" />
                         </Grid>
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                             <StackPanel Spacing="2">
-                                <TextBlock Text="Use shared shader hashes" Classes="BodyStrong" />
+                                <TextBlock Text="{loc:T Settings_UseShared}" Classes="BodyStrong" />
                                 <TextBlock Text="{Binding SharedNote}" Classes="Secondary" TextWrapping="Wrap" />
-                                <HyperlinkButton Content="Follow Settings" Click="OnSharedFollow" Padding="0" Margin="0,2,0,0" IsVisible="{Binding ShowSharedFollow}" />
+                                <HyperlinkButton Content="{loc:T Detail_FollowSettings}" Click="OnSharedFollow" Padding="0" Margin="0,2,0,0" IsVisible="{Binding ShowSharedFollow}" />
                             </StackPanel>
                             <ToggleSwitch x:Name="SharedSwitch" Grid.Column="1" IsChecked="{Binding SharedOn, Mode=OneWay}" IsCheckedChanged="OnSharedToggled"
-                                          AutomationProperties.Name="Use shared shader hashes" AutomationProperties.HelpText="{Binding SharedNote}" />
+                                          AutomationProperties.Name="{loc:T Settings_UseShared}" AutomationProperties.HelpText="{Binding SharedNote}" />
                         </Grid>
                         <c:InfoBar Severity="Warning" IsClosable="False" IsVisible="{Binding HasRecorderFailure}" Message="{Binding RecorderFailure}" />
                         <StackPanel Spacing="14" IsVisible="{Binding ShowOfflineOn}">
-                            <c:InfoBar IsClosable="False" Severity="Error" Title="Ban risk" Message="{Binding OfflineRiskText}" />
+                            <c:InfoBar IsClosable="False" Severity="Error" Title="{loc:T Detail_BanRisk}" Message="{Binding OfflineRiskText}" />
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" IsVisible="{Binding ShowAlways}">
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Always record" Classes="BodyStrong" />
-                                    <TextBlock Text="Records every launch without asking each time." Classes="Secondary" TextWrapping="Wrap" />
+                                    <TextBlock Text="{loc:T Detail_AlwaysRecord}" Classes="BodyStrong" />
+                                    <TextBlock Text="{loc:T Detail_AlwaysRecordDesc}" Classes="Secondary" TextWrapping="Wrap" />
                                 </StackPanel>
                                 <ToggleSwitch x:Name="AlwaysSwitch" Grid.Column="1" IsChecked="{Binding AlwaysOn, Mode=OneWay}" IsEnabled="{Binding CanToggleAlways}"
-                                              IsCheckedChanged="OnAlwaysToggled" AutomationProperties.Name="Always record" />
+                                              IsCheckedChanged="OnAlwaysToggled" AutomationProperties.Name="{loc:T Detail_AlwaysRecord}" />
                             </Grid>
                             <c:InfoBar Severity="Informational" IsClosable="False" IsVisible="{Binding HasSessionNote}" Message="{Binding SessionNote}" />
                             <Button HorizontalAlignment="Right" Content="{Binding OfflineButtonText}" Click="OnRecordOffline" IsEnabled="{Binding CanStartOffline}"
@@ -475,17 +477,17 @@
                                           IsCheckedChanged="OnAlongsideToggled" AutomationProperties.Name="{Binding AlongsideTitle}" AutomationProperties.HelpText="{Binding AlongsideNote}" />
                         </Grid>
                         <StackPanel Spacing="4" IsVisible="{Binding ShowTraversal}">
-                            <TextBlock Text="Traversal stutter fix (experimental)" Classes="BodyStrong" />
+                            <TextBlock Text="{loc:T Settings_TraversalTitle}" Classes="BodyStrong" />
                             <TextBlock Text="{Binding TraversalNote}" Classes="Secondary" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding TraversalWarning}" IsVisible="{Binding TraversalLowVram}" Foreground="{DynamicResource WarnBrush}" TextWrapping="Wrap" />
                             <ComboBox x:Name="TraversalBox" ItemsSource="{Binding TraversalChoices}" SelectedIndex="{Binding TraversalIndex, Mode=OneWay}"
-                                      SelectionChanged="OnTraversalChanged" AutomationProperties.Name="Traversal stutter fix (experimental)" AutomationProperties.HelpText="{Binding TraversalNote}" />
+                                      SelectionChanged="OnTraversalChanged" AutomationProperties.Name="{loc:T Settings_TraversalTitle}" AutomationProperties.HelpText="{Binding TraversalNote}" />
                         </StackPanel>
                         <StackPanel Spacing="6" IsVisible="{Binding HasRecording}">
                             <TextBlock Text="{Binding RecordingPausedText}" Foreground="{DynamicResource WarnBrush}" TextWrapping="Wrap" IsVisible="{Binding RecordingPaused}" />
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                                 <TextBlock Text="{Binding RecordingSize}" Classes="Secondary" TextWrapping="Wrap" VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Content="Clear recording" Click="OnClearRecording" IsEnabled="{Binding CanClearRecording}"
+                                <Button Grid.Column="1" Content="{loc:T Detail_ClearRecording}" Click="OnClearRecording" IsEnabled="{Binding CanClearRecording}"
                                         ToolTip.Tip="{Binding ClearRecordingTip}" />
                             </Grid>
                         </StackPanel>
@@ -509,13 +511,13 @@
                             </Border>
                             <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="6" ColumnSpacing="10">
                                 <Rectangle Width="10" Height="10" RadiusX="2" RadiusY="2" Fill="{DynamicResource AccentFillColorDefaultBrush}" />
-                                <TextBlock Grid.Column="1" Text="Ready in the game's own library" Classes="Secondary" TextWrapping="Wrap" />
+                                <TextBlock Grid.Column="1" Text="{loc:T Report_ReadyOwnLibrary}" Classes="Secondary" TextWrapping="Wrap" />
                                 <TextBlock Grid.Column="2" Text="{Binding FromLibrary}" Classes="Secondary" />
                                 <Rectangle Grid.Row="1" Width="10" Height="10" RadiusX="2" RadiusY="2" Fill="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Grid.Row="1" Grid.Column="1" Text="Ready in the driver cache" Classes="Secondary" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{loc:T Report_ReadyDriverCache}" Classes="Secondary" TextWrapping="Wrap" />
                                 <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding CacheHits}" Classes="Secondary" />
                                 <Rectangle Grid.Row="2" Width="10" Height="10" RadiusX="2" RadiusY="2" Fill="{DynamicResource WarnBrush}" />
-                                <TextBlock Grid.Row="2" Grid.Column="1" Text="Compiled during play" Classes="Secondary" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{loc:T Detail_CompiledDuringPlay}" Classes="Secondary" TextWrapping="Wrap" />
                                 <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding Compiles}" Classes="Secondary" />
                             </Grid>
                         </StackPanel>

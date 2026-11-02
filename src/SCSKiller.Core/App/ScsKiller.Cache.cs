@@ -616,11 +616,13 @@ public sealed partial class ScsKiller
     }
 
     /// <summary>The "Clear everything" warning: every game compiles again, and whether Other apps and games is included.</summary>
-    public static string EverythingWarning(CacheInventory inv, bool withOthers) =>
-        $"Deletes {Format.Bytes(inv.Everything(withOthers).Sum(i => i.Bytes))}. Every game compiles its shaders again. Games SCSKiller compiled stutter until you compile them again, and the rest build "
-        + "their cache as you play. " + (withOthers
-            ? $"The {OtherApps.ToLowerInvariant()} group ({Format.Bytes(inv.Bytes(CacheGroupKind.Unattributed))}) is included: apps and games outside SCSKiller build their caches again too."
-            : $"The {OtherApps.ToLowerInvariant()} group ({Format.Bytes(inv.Bytes(CacheGroupKind.Unattributed))}) is kept unless you tick it.");
+    public static string EverythingWarning(CacheInventory inv, bool withOthers)
+    {
+        var others = Loc.T("Cache_OtherAppsLower");
+        return Loc.T("Cache_EverythingWarning", Format.Bytes(inv.Everything(withOthers).Sum(i => i.Bytes)), withOthers
+            ? Loc.T("Cache_OthersIncluded", others, Format.Bytes(inv.Bytes(CacheGroupKind.Unattributed)))
+            : Loc.T("Cache_OthersKept", others, Format.Bytes(inv.Bytes(CacheGroupKind.Unattributed))));
+    }
 
     /// <summary>The D3DSCache folders of the games running now, whose dbs the runtime holds open: never read.</summary>
     HashSet<string> RunningD3DSCache() => Games.Where(s => CacheInUse(s.Game))
