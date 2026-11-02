@@ -72,9 +72,9 @@ sealed class Tray : IDisposable
     void ShowMenu()
     {
         var menu = CreatePopupMenu();
-        AppendMenuW(menu, 0 /* MF_STRING */, IdOpen, "Open SCSKiller");
+        AppendMenuW(menu, 0 /* MF_STRING */, IdOpen, Core.App.Loc.T("Tray_Open"));
         var pause = PauseLabel();
-        AppendMenuW(menu, pause == null ? 0x1u /* MF_GRAYED */ : 0, IdPause, pause ?? "Pause compiling");
+        AppendMenuW(menu, pause == null ? 0x1u /* MF_GRAYED */ : 0, IdPause, pause ?? Core.App.Loc.T("Tray_PauseCompiling"));
         AppendMenuW(menu, 0x800 /* MF_SEPARATOR */, 0, null);
         AppendMenuW(menu, 0, IdQuit, QuitLabel());
         GetCursorPos(out var pt);

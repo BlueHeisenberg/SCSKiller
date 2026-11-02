@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SCSKiller.Core;
+using SCSKiller.Core.App;
 using SCSKiller.Core.Games;
 
 namespace SCSKiller.App;
@@ -25,25 +26,22 @@ static class BeforeAfterUi
         int minutes = 5;
         TextBlock Line(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap };
         var (step1, step3) = (Line(""), Line(""));
-        void Steps() => (step1.Text, step3.Text) = (
-            $"1. SCSKiller deletes this game's shader caches (the driver's, Windows' and the game's own) and starts the game. Load a save you can load again and play. The {minutes} minutes count from the game's first frame, loading and pauses included.",
-            $"3. Load the same save and play the same {minutes} minutes.");
+        void Steps() => (step1.Text, step3.Text) = (Loc.T("Ba_Step1", minutes, Loc.T("Ba_CachesWithSystem")), Loc.T("Ba_Step3", minutes));
         Steps();
         var steps = new StackPanel
         {
             Spacing = 8, Visibility = full ? Visibility.Visible : Visibility.Collapsed,
-            Children = { step1, Line("2. Close the game. SCSKiller deletes the caches again and compiles the game's shaders."), step3,
-                Line("4. You get a before and after report you can save and share.") },
+            Children = { step1, Line(Loc.T("Ba_Step2")), step3, Line(Loc.T("Ba_Step4")) },
         };
-        var how = new HyperlinkButton { Content = "How it works", Padding = new Thickness(0), Visibility = full ? Visibility.Collapsed : Visibility.Visible };
+        var how = new HyperlinkButton { Content = Loc.T("Ba_HowItWorks"), Padding = new Thickness(0), Visibility = full ? Visibility.Collapsed : Visibility.Visible };
         how.Click += (_, _) => (steps.Visibility, how.Visibility) = (Visibility.Visible, Visibility.Collapsed);
 
-        var time = new RadioButtons { Header = "Play time", MaxColumns = 2, Items = { "5 minutes", "10 minutes" }, SelectedIndex = 0 };
+        var time = new RadioButtons { Header = Loc.T("Ba_PlayTime"), MaxColumns = 2, Items = { Loc.T("Ba_5Minutes"), Loc.T("Ba_10Minutes") }, SelectedIndex = 0 };
         time.SelectionChanged += (_, _) => { minutes = time.SelectedIndex == 1 ? 10 : 5; Steps(); };
-        var sound = new CheckBox { Content = "Play a sound when the time is up", IsChecked = s.BeforeAfterSound };
-        var overlay = new CheckBox { Content = "Show the countdown in the game", IsChecked = s.BeforeAfterOverlay };
-        ToolTipService.SetToolTip(overlay, "A small panel at the top right of the game: the time left, your frame times and, on DirectX 12 and Vulkan, each shader compilation stutter. SCSKiller counts down here either way. It isn't shown with FSR or XeSS frame generation on.");
-        var maxRun = new CheckBox { Content = "Max compile for the after run", IsChecked = s.BeforeAfterMax, Visibility = max ? Visibility.Visible : Visibility.Collapsed };
+        var sound = new CheckBox { Content = Loc.T("Ba_Sound"), IsChecked = s.BeforeAfterSound };
+        var overlay = new CheckBox { Content = Loc.T("Ba_Overlay"), IsChecked = s.BeforeAfterOverlay };
+        ToolTipService.SetToolTip(overlay, Loc.T("Ba_OverlayTip"));
+        var maxRun = new CheckBox { Content = Loc.T("Ba_MaxRun"), IsChecked = s.BeforeAfterMax, Visibility = max ? Visibility.Visible : Visibility.Collapsed };
         ToolTipService.SetToolTip(maxRun, DetailVm.MaxCompileWhy);
         var checks = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom, Children = { sound, overlay, maxRun } };
         var choices = new Grid { ColumnSpacing = 24, ColumnDefinitions = { new(), new() { Width = GridLength.Auto } }, Children = { time, checks } };
@@ -57,7 +55,7 @@ static class BeforeAfterUi
         };
         var dialog = new ContentDialog
         {
-            XamlRoot = root, Title = mode == Intro.StartOver ? $"Start over with {game}?" : "Before and after recording",
+            XamlRoot = root, Title = mode == Intro.StartOver ? Loc.T("Ba_StartOverTitle", game) : Loc.T("Ba_Title"),
             Content = new ScrollViewer
             {
                 Content = new StackPanel
@@ -68,7 +66,7 @@ static class BeforeAfterUi
                         new InfoBar
                         {
                             IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Warning,
-                            Message = "This also deletes the game's own shader cache, which isn't backed up and can be 2 GB. The game rebuilds it, which can take minutes.",
+                            Message = Loc.T("Ba_Warning"),
                         },
                         steps, how, choices,
                         new StackPanel
@@ -76,17 +74,17 @@ static class BeforeAfterUi
                             Spacing = 6,
                             Children =
                             {
-                                Bullet("Don't change graphics settings between the two runs."),
-                                Bullet("Your current compile for this game is deleted, it's compiled again in step 2."),
-                                Bullet("A small d3d11.dll goes next to the game for this recording only, then it's removed.", frames11),
-                                Bullet("Frame times stay on this PC. With sharing on, the usual anonymous hashes are sent."),
+                                Bullet(Loc.T("Ba_Bullet1")),
+                                Bullet(Loc.T("Ba_Bullet2")),
+                                Bullet(Loc.T("Ba_Bullet3"), frames11),
+                                Bullet(Loc.T("Ba_Bullet4")),
                             },
                         },
                     },
                 },
             },
-            CloseButtonText = mode == Intro.HowItWorks ? "Close" : "Cancel",
-            PrimaryButtonText = mode == Intro.HowItWorks ? "" : "Start the before run",
+            CloseButtonText = mode == Intro.HowItWorks ? Loc.T("Common_Close") : Loc.T("Common_Cancel"),
+            PrimaryButtonText = mode == Intro.HowItWorks ? "" : Loc.T("Ba_StartBefore"),
             DefaultButton = mode == Intro.HowItWorks ? ContentDialogButton.Close : ContentDialogButton.Primary,
         };
         Showing = dialog;
@@ -148,9 +146,9 @@ static class BeforeAfterUi
     {
         var dialog = new ContentDialog
         {
-            XamlRoot = root, Title = "Record the after run again?",
-            Content = new TextBlock { TextWrapping = TextWrapping.Wrap, Text = "SCSKiller clears the caches and compiles again first, so the new run isn't helped by the last one. Then play the same save again." },
-            PrimaryButtonText = "Record again", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = root, Title = Loc.T("Ba_AgainTitle"),
+            Content = new TextBlock { TextWrapping = TextWrapping.Wrap, Text = Loc.T("Ba_AgainBody") },
+            PrimaryButtonText = Loc.T("Ba_RecordAgain"), CloseButtonText = Loc.T("Common_Cancel"), DefaultButton = ContentDialogButton.Primary,
         };
         if (await App.ShowAsync(dialog) != ContentDialogResult.Primary) return null;
         try { await Task.Run(() => App.Core.RecordAfterAgain(id)); return null; }
@@ -162,9 +160,9 @@ static class BeforeAfterUi
     {
         var dialog = new ContentDialog
         {
-            XamlRoot = root, Title = "Cancel the before and after recording?",
-            Content = new TextBlock { TextWrapping = TextWrapping.Wrap, Text = "Its shader caches were cleared, so the game stutters until it's compiled again." },
-            PrimaryButtonText = "Compile now", SecondaryButtonText = "Don't compile", CloseButtonText = "Keep going", DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = root, Title = Loc.T("Ba_CancelTitle"),
+            Content = new TextBlock { TextWrapping = TextWrapping.Wrap, Text = Loc.T("Ba_CancelBody") },
+            PrimaryButtonText = Loc.T("Toast_CompileNow"), SecondaryButtonText = Loc.T("Ba_DontCompile"), CloseButtonText = Loc.T("Ba_KeepGoing"), DefaultButton = ContentDialogButton.Primary,
         };
         var result = await App.ShowAsync(dialog);
         if (result is not (ContentDialogResult.Primary or ContentDialogResult.Secondary)) return null;

@@ -4,6 +4,13 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**New**
+
+- The app speaks nine languages beside English: Simplified Chinese, Japanese, Korean, German, French, Spanish, Russian
+  and Brazilian Portuguese. Settings picks one, or follows the system's, and it applies at the next start. Both the
+  Windows and the Linux app, and every text they show: pages, dialogs, notifications and tooltips. The command line
+  stays English.
+
 ## [1.4.3] - 2026-10-31
 
 **New**

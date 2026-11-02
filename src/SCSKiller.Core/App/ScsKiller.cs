@@ -50,11 +50,11 @@ public sealed partial class ScsKiller : IScsKiller
     /// <see cref="LargeCompile"/>; else null. It names that game's own cache estimate, as the Library shows it, in whole GB.
     /// On AMD the driver's cache can't hold it all.</summary>
     public static string? LargeCompileWarning(IEnumerable<(long Growth, long Estimate)> queue, GpuVendor vendor, long? ram = null) =>
-        LargeCompileGb(queue) is { } gb ? $"This compile adds about {gb:0} GB. {LargeCacheCost(queue, vendor, ram)}"
-            + (vendor == GpuVendor.Amd ? $" It's more than the AMD driver's {App.Format.Bytes(AmdAppCache.DxcCacheCap)} cache can hold." : "") : null;
+        LargeCompileGb(queue) is { } gb ? Loc.T("Queue_LargeCompile", $"{gb:0}") + " " + LargeCacheCost(queue, vendor, ram)
+            + (vendor == GpuVendor.Amd ? " " + Loc.T("Queue_LargeCompileAmd", App.Format.Bytes(AmdAppCache.DxcCacheCap)) : "") : null;
 
-    const string LargeCacheSlower = "Very large caches can make the game start slower and use more memory.";
-    public const string LargeCacheOverRam = "In game, the driver keeps about half of this cache in memory, which is more than this PC's RAM leaves free.";
+    static string LargeCacheSlower => Loc.T("Queue_LargeCacheSlower");
+    public static string LargeCacheOverRam => Loc.T("Queue_LargeCacheOverRam");
     /// <summary>What the game and Windows use beside the driver's cache. ponytail: one figure for every game, per game if a
     /// measured footprint is ever kept.</summary>
     public const long GameFootprint = 16L << 30;
@@ -263,14 +263,14 @@ public sealed partial class ScsKiller : IScsKiller
                     _goneSince = null;
                     // the backend is chosen at start: a pick (or one back from being gone) that lands on another adapter needs a restart
                     GpuRestartNote = (Settings.Gpu != null || _startGpu != null) && GpuBackends.Pick(all, Settings.Gpu, Settings.ExperimentalIntel) is { } picked && picked.Gpu.AdapterLuid != now.Gpu.AdapterLuid
-                        ? $"Restart SCSKiller to use {picked.Gpu.Name}" : null;
+                        ? Loc.T("Note_RestartForGpu", picked.Gpu.Name) : null;
                     if (now != _known || !_resolved) (_resolved, _known) = (Vendor is not IRefreshableGpu gpu || gpu.Refresh(now.Gpu), now);
                     if (now.Gpu.DriverVersion.Length > 0)   // none: the last one stays
                         _id = $"{(int)now.Gpu.Vendor:x4}:{now.DeviceId:x4}:{now.SubSysId:x8}:{now.Gpu.DriverVersion}";
                     if (_resolved && _id != null) _completeId = _id;
                 }
                 else if (Clock() - (_goneSince ??= Clock()) >= GpuGoneAfter && GpuBackends.Pick(all, Settings.Gpu, Settings.ExperimentalIntel) is { } other)
-                    GpuRestartNote = $"Restart SCSKiller to use {other.Gpu.Name}";
+                    GpuRestartNote = Loc.T("Note_RestartForGpu", other.Gpu.Name);
                 if (GpuRestartNote == note && Vendor.Gpu == before && DriverId == id) return false;
             }
             catch (Exception e)
@@ -1768,9 +1768,9 @@ public sealed partial class ScsKiller : IScsKiller
     public static readonly int[] RecordingLimits = [32, 128, 256, 512, 1024, 0];
 
     /// <summary>"256 MB", "1 GB"; "Unlimited" for 0.</summary>
-    public static string LimitText(int mb) => mb <= 0 ? "Unlimited" : mb % 1024 == 0 ? $"{mb / 1024} GB" : $"{mb} MB";
+    public static string LimitText(int mb) => mb <= 0 ? Loc.T("Common_Unlimited") : mb % 1024 == 0 ? $"{mb / 1024} GB" : $"{mb} MB";
 
-    public static string PausedNote(Settings s) => $"Recording paused: limit reached ({LimitText(s.RecordingLimitMB)})";
+    public static string PausedNote(Settings s) => Loc.T("Note_PausedLimit", LimitText(s.RecordingLimitMB));
 
     /// <summary>The last build can't compile the game's ray tracing and no recording has any: more than 10% of its DXIL
     /// libraries have no synthesized collection and no recorded state object (<see cref="PlanStats.RtUncovered"/>): AMD (its
@@ -1928,8 +1928,8 @@ public sealed partial class ScsKiller : IScsKiller
 
     /// <summary>Why a game's ray tracing needs a recording on this PC (<see cref="NeedsRtRecording"/>), for the detail page.</summary>
     public static string RtWhy(VendorCaps caps, EngineInfo? e) => caps.RtCacheGranularity == RtCacheGranularity.WholeObject
-        ? "This GPU's driver reuses ray tracing pipelines only exactly as the game builds them, and which ones it builds isn't in its files."
-        : $"SCSKiller can't rebuild {(e is { } x ? Format.Engine(x) : "this engine")}'s ray tracing layout from the game files yet.";
+        ? Loc.T("Note_RtWhyWholeObject")
+        : Loc.T("Note_RtWhyLayout", e is { } x ? Format.Engine(x) : Loc.T("Note_ThisEngine"));
 
     static string RtBlocked(bool rt, string? noRecording, string reason) => !rt ? reason
         : Format.Then(reason, noRecording != null ? $"ray-traced effects aren't compiled: they need a recording, {noRecording}" : RtAfterRecordingNote);
@@ -2030,13 +2030,13 @@ public sealed partial class ScsKiller : IScsKiller
     /// a supported engine.</summary>
     public static string? SessionKeptNote(GameState s) => s.Engine switch
     {
-        { Encrypted: true } => "Its recording is kept for later. It compiles once you add the game's AES key.",
-        { Unsupported: not null } e when !CarvedReader.RecordedOnly(e) => "This game isn't supported yet, so its recording is kept for later and nothing compiles from it now.",
+        { Encrypted: true } => Loc.T("Note_SessionKeptEncrypted"),
+        { Unsupported: not null } e when !CarvedReader.RecordedOnly(e) => Loc.T("Note_SessionKeptUnsupported"),
         _ => null,
     };
 
     /// <summary>The game page's line for a game a risk session would be offered for but for its store (<see cref="GameState.RiskNoLaunch"/>).</summary>
-    public static string NoLaunchNote(string store) => $"No recording session: SCSKiller can't start games from {store}.";
+    public static string NoLaunchNote(string store) => Loc.T("Note_NoLaunch", store);
     /// <summary>An EasyAntiCheat game that an offline session can record (<see cref="OfflineEac"/>), with no recording yet:
     /// NeedsRecording with this reason, "Needs an offline session".</summary>
     public const string OfflineSessionNote = "EasyAntiCheat blocks the recorder, but you can record at your own risk with an offline session.";
@@ -2193,24 +2193,24 @@ public sealed partial class ScsKiller : IScsKiller
     public static bool ShowsCoverage(GameState s) => s.Plan != null && (s.Status != GameStatus.Unsupported || s.WarmedAt != null);
 
     /// <summary>The game page's row for pipelines the plan of a game on <paramref name="engine"/> leaves out for the cache budget (<see cref="PlanStats.CacheBudgetLeftOut"/>).</summary>
-    public static string CacheBudgetTitle(VendorCaps caps, EngineInfo? engine = null, int? capGB = null) => VulkanCap(caps, engine) != null ? $"More than one {PerGameVendor(caps)} shader cache file holds"
-        : UserCap(caps, capGB) != null ? "More than this game's compile size limit"
-        : caps.PerGameCacheCap != null && caps.Profile == NvidiaLinux.Profile ? "More than SCSKiller's compile folder holds"
-        : caps.PerGameCacheCap != null ? $"More than the {PerGameVendor(caps)} shader cache keeps per game"
-        : "More than the AMD shader cache holds";
+    public static string CacheBudgetTitle(VendorCaps caps, EngineInfo? engine = null, int? capGB = null) => VulkanCap(caps, engine) != null ? Loc.T("Note_CacheBudgetVulkanFile", PerGameVendor(caps))
+        : UserCap(caps, capGB) != null ? Loc.T("Note_CacheBudgetUserCap")
+        : caps.PerGameCacheCap != null && caps.Profile == NvidiaLinux.Profile ? Loc.T("Note_CacheBudgetFolder")
+        : caps.PerGameCacheCap != null ? Loc.T("Note_CacheBudgetPerGame", PerGameVendor(caps))
+        : Loc.T("Note_CacheBudgetAmd");
 
     /// <summary>Why the plan of a game on <paramref name="engine"/> leaves pipelines out for the cache budget (<see cref="PlanStats.CacheBudgetLeftOut"/>), on the game page.</summary>
     public static string CacheBudgetNote(VendorCaps caps, EngineInfo? engine = null, int? capGB = null) => (VulkanCap(caps, engine) is { } file
-            ? $"This game has more pipelines than one {PerGameVendor(caps)} shader cache file holds ({App.Format.Bytes(file)}). "
+            ? Loc.T("Note_CacheBudgetNVulkan", PerGameVendor(caps), App.Format.Bytes(file))
             : UserCap(caps, capGB) is { } user
-            ? $"This game has more pipelines than its compile size limit ({App.Format.Bytes(user)}). "
+            ? Loc.T("Note_CacheBudgetNUser", App.Format.Bytes(user))
             : caps.PerGameCacheCap is { } folder && caps.Profile == NvidiaLinux.Profile
-            ? $"This game has more pipelines than SCSKiller's compile folder holds for it ({App.Format.Bytes(folder)}"
+            ? Loc.T("Note_CacheBudgetNFolder", App.Format.Bytes(folder))
                 + (folder == NvidiaLinux.PlacedCacheSize ? $", {SteamFilesFit}). " : "). ")
             : caps.PerGameCacheCap is { } cap
-            ? $"This game has more pipelines than the {PerGameVendor(caps)} driver keeps for one game ({App.Format.Bytes(cap)}). "
-            : $"This game has more pipelines than the AMD driver's whole shader cache can hold ({App.Format.Bytes(AmdAppCache.DxcCacheCap)}). ")
-        + "So SCSKiller compiles the ones most likely to be used, recorded ones first. The rest compile while you play.";
+            ? Loc.T("Note_CacheBudgetNPerGame", PerGameVendor(caps), App.Format.Bytes(cap))
+            : Loc.T("Note_CacheBudgetNAmd", App.Format.Bytes(AmdAppCache.DxcCacheCap)))
+        + Loc.T("Note_CacheBudgetTail");
 
     // NvidiaLinux.PlacedCacheSize: what the placer fits in Steam's files, each read up to NvidiaLinux.CacheFileIndexed
     static readonly string SteamFilesFit = $"what fits in Steam's shader cache files of {App.Format.Bytes(NvidiaLinux.CacheFileIndexed)} each";
@@ -2225,20 +2225,20 @@ public sealed partial class ScsKiller : IScsKiller
     public static string LeftOutValue(PlanStats p)
     {
         if (p.DescriptorHeap > 0)
-            return $"{p.LeftOut:N0} (" + (p.LeftOut > p.DescriptorHeap ? $"{p.LeftOut - p.DescriptorHeap:N0} ray tracing, {p.DescriptorHeap:N0} " : "")
-                + "using descriptor heaps, which the driver reads only from the game's own shader cache)";
+            return $"{p.LeftOut:N0} (" + (p.LeftOut > p.DescriptorHeap ? Loc.T("Note_LeftOutRtAndHeaps", $"{p.LeftOut - p.DescriptorHeap:N0}", $"{p.DescriptorHeap:N0}") : Loc.T("Note_LeftOutHeaps"))
+                + Loc.T("Note_LeftOutHeapsWhy") + ")";
         var notSeen = p.LeftOut - p.Uncovered;
-        return $"{p.LeftOut:N0} (" + (notSeen <= 0 ? "shader slots SCSKiller can't rebuild"
-            : p.Uncovered > 0 ? $"{p.Uncovered:N0} for shader slots SCSKiller can't rebuild, {notSeen:N0} not seen in a recording yet"
-            : "not seen in a recording yet") + ")";
+        return $"{p.LeftOut:N0} (" + (notSeen <= 0 ? Loc.T("Note_LeftOutSlots")
+            : p.Uncovered > 0 ? Loc.T("Note_LeftOutSlotsAndNotSeen", $"{p.Uncovered:N0}", $"{notSeen:N0}")
+            : Loc.T("Note_LeftOutNotSeen")) + ")";
     }
 
     /// <summary>The game page's line for a plan whose left-out stage sets no recording showed yet; with a recording the
     /// rule didn't match (<see cref="LearnedOnly"/>), why only what it saw is planned.</summary>
-    public static string NotSeenNote(bool recordOn, PlanStats? p = null) => (LearnedOnly(p) ? LearnedNote + " " : "") + "SCSKiller hasn't seen how the game sets the rest up yet. "
-        + (recordOn ? "Keep playing with recording on. What it sees is added the next time it compiles." : "Playing longer with recording on teaches it.");
+    public static string NotSeenNote(bool recordOn, PlanStats? p = null) => (LearnedOnly(p) ? LearnedNote + " " : "") + Loc.T("Note_NotSeenHead")
+        + (recordOn ? Loc.T("Note_NotSeenOn") : Loc.T("Note_NotSeenOff"));
 
-    public const string LearnedNote = "Your recording showed this game builds its shaders differently, so SCSKiller compiles the combinations it saw.";
+    public static string LearnedNote => Loc.T("Note_Learned");
 
     /// <summary>A plan from a recording whose root signatures the engine version's rule didn't rebuild: only the stage sets
     /// the recording showed are planned (PlanBuilder's learned lookup, no rule fallback), most of the rest not seen yet.</summary>
@@ -2248,24 +2248,23 @@ public sealed partial class ScsKiller : IScsKiller
     public static bool RuleUnconfirmed(GameState s) => s is { Plan: { Recorded: 0, RootSigRuleVerified: false }, Engine.Family: "Unreal" };
 
     /// <summary>The game page's coverage headline after its verb ("Covers", "Will cover").</summary>
-    public static string CoverageWhat(GameState s, int pct) => pct < 100 ? $" about {pct}% of the shader combinations found in this game"
-        : RuleUnconfirmed(s) ? " the shader combinations found in the game. A recording confirms them." : " all the shader combinations found in this game";
+    public static string CoverageWhat(GameState s, int pct) => pct < 100 ? Loc.T("Note_CoverageAbout", pct)
+        : RuleUnconfirmed(s) ? Loc.T("Note_CoverageAllUnconfirmed") : Loc.T("Note_CoverageAll");
 
     /// <summary>The game page's shader count: a DirectX 11-only plan's own (<see cref="PlanStats.D3D11Shaders"/>), else every
     /// platform's in the game files.</summary>
     public static long? PageShaders(GameState s) => s.Plan is { StageSets: 0, Generated: 0, D3D11Shaders: > 0 } p ? p.D3D11Shaders : s.ShaderCount;
 
     /// <summary>The page shader count's tooltip when it isn't every platform's; null otherwise.</summary>
-    public static string? AllShadersTip(GameState s) => s.ShaderCount is { } n && PageShaders(s) != n ? $"{n:N0} in the game files, for every graphics API" : null;
+    public static string? AllShadersTip(GameState s) => s.ShaderCount is { } n && PageShaders(s) != n ? Loc.T("Note_AllShadersTip", $"{n:N0}") : null;
 
     /// <summary>The game page's line for a plan whose left-out stage sets use root signature slots the engine adds.</summary>
-    public static string EngineSlotsNote(bool recordOn) => "The rest use shader slots this game's engine adds. "
-        + (recordOn ? "Keep playing with recording on. They're rebuilt the next time it compiles." : "A 5-minute recording lets SCSKiller rebuild them.");
+    public static string EngineSlotsNote(bool recordOn) => Loc.T("Note_EngineSlotsHead")
+        + (recordOn ? Loc.T("Note_EngineSlotsOn") : Loc.T("Note_EngineSlotsOff"));
 
     /// <summary>The last compile ended where the game's compile cache held no more (<see cref="GameRecord.WarmedRoomLeft"/>); null when it didn't.</summary>
     static string? RoomNote(GameRecord r) => r.WarmedRoomLeft is not { } left ? null
-        : left > 0 ? $"{left:N0} pipelines didn't fit in the game's compiled cache and compile while you play"
-        : "the game's compiled cache is full, so new pipelines compile while you play";
+        : left > 0 ? Loc.T("Note_RoomLeft", $"{left:N0}") : Loc.T("Note_RoomFull");
 
     /// <summary>The status note of a partial plan (<see cref="IsPartial"/>): what it compiles and what would add the rest.</summary>
     public static string? PartialNote(PlanStats? p) => !IsPartial(p) ? null
@@ -2291,13 +2290,16 @@ public sealed partial class ScsKiller : IScsKiller
     }
 
     /// <summary>"memory limit: 4 of 32 threads" while the warm's memory budget runs fewer threads than asked; null otherwise.</summary>
-    public static string? MemoryLimitNote(WarmProgress p) => p is { Workers: > 0 } && p.Workers < p.Threads ? $"memory limit: {p.Workers} of {p.Threads} threads" : null;
+    public static string? MemoryLimitNote(WarmProgress p) => p is { Workers: > 0 } && p.Workers < p.Threads ? Loc.T("Queue_MemoryLimit", p.Workers, p.Threads) : null;
 
     /// <summary>A warming item's note when its done count stopped moving (<see cref="StallAfter"/>): "no progress for 3 min".</summary>
-    public static string StalledNote(TimeSpan since) => $"no progress for {Math.Max(1, (int)since.TotalMinutes)} min";
+    public static string StalledNote(TimeSpan since) => Loc.T("Queue_NoProgress", Math.Max(1, (int)since.TotalMinutes));
 
     /// <summary>A warming item that stopped moving: its note says for how long, and it has no time estimate.</summary>
-    public static bool Stalled(QueueItem q) => q.Stage == QueueStage.Warming && q.Note?.StartsWith("no progress") == true;
+    public static bool Stalled(QueueItem q) => q.Stage == QueueStage.Warming && q.Note is { } n && n.StartsWith(StalledPrefix, StringComparison.Ordinal);
+
+    /// <summary>What a stalled note begins with in the loaded language (the note and the check are the same process, the same table).</summary>
+    static string StalledPrefix => new(Loc.T("Queue_NoProgress", 0).TakeWhile(c => !char.IsDigit(c)).ToArray());
 
     static string Took(TimeSpan t) => t.TotalHours >= 1 ? $"{(int)t.TotalHours}h{t.Minutes:00}m{t.Seconds:00}s" : t.TotalMinutes >= 1 ? $"{t.Minutes}m{t.Seconds:00}s" : $"{(int)t.TotalSeconds}s";
 
@@ -2312,25 +2314,25 @@ public sealed partial class ScsKiller : IScsKiller
         long unsupported = 0, long known = 0, int? failedBy = null, long crashedBefore = 0) =>
         string.Join(", ", new[]
         {
-            failed > 0 ? $"{failed} failed" + failedBy switch
+            failed > 0 ? Loc.T("Queue_CountsFailed", failed) + failedBy switch
             {
-                0 => " (the driver refused their root signatures)",
-                1 => " (the driver rejected them)",
-                2 => " (SCSKiller couldn't build them from the game's files)",
+                0 => Loc.T("Queue_CountsFailedRootSigs"),
+                1 => Loc.T("Queue_CountsFailedRejected"),
+                2 => Loc.T("Queue_CountsFailedUnbuilt"),
                 _ => "",
             } : null,
-            skipped > 0 ? $"{skipped} skipped ({SkippedWhy(plan)})" : null,
-            crashed - crashedBefore is > 0 and var crashedNow ? $"{crashedNow} skipped ({(crashedNow == 1 ? "it crashes" : "they crash")} the GPU driver)" : null,
-            driverSkipped - known is > 0 and var now ? $"{now} skipped for this compile (the GPU driver crashed or hung on {(now == 1 ? "it" : "them")} or on what {(now == 1 ? "it builds" : "they build")} on, or {(now == 1 ? "it wasn't" : "they weren't")} tried past a spot where it kept failing)" : null,
-            unbuilt > 0 ? $"{unbuilt} skipped (SCSKiller can't build {(unbuilt == 1 ? "it" : "them")} yet)" : null,
-            invalid > 0 ? $"{invalid} skipped ({InvalidWhy(invalid)})" : null,
-            unsupported > 0 ? $"{unsupported} skipped ({UnsupportedWhy(unsupported)})" : null,
+            skipped > 0 ? Loc.T("Queue_CountsSkipped", skipped, SkippedWhy(plan)) : null,
+            crashed - crashedBefore is > 0 and var crashedNow ? Loc.T(crashedNow == 1 ? "Queue_CountsCrashOne" : "Queue_CountsCrashMany", crashedNow) : null,
+            driverSkipped - known is > 0 and var now ? Loc.T(now == 1 ? "Queue_CountsDriverOne" : "Queue_CountsDriverMany", now) : null,
+            unbuilt > 0 ? Loc.T(unbuilt == 1 ? "Queue_CountsUnbuiltOne" : "Queue_CountsUnbuiltMany", unbuilt) : null,
+            invalid > 0 ? Loc.T("Queue_CountsSkipped", invalid, InvalidWhy(invalid)) : null,
+            unsupported > 0 ? Loc.T("Queue_CountsSkipped", unsupported, UnsupportedWhy(unsupported)) : null,
             known + crashedBefore > 0 ? KnownNote(known + crashedBefore) : null,
         }.OfType<string>()) is { Length: > 0 } s ? s : null;
 
     /// <summary>Items skipped because they crashed or hung this driver in an earlier compile (<see cref="WarmResult.Known"/>, and
     /// crash keys found before).</summary>
-    public static string KnownNote(long known) => $"{known:N0} skipped: they crashed this driver before";
+    public static string KnownNote(long known) => Loc.T("Queue_CountsKnown", $"{known:N0}");
 
     /// <summary>The most keys <see cref="GameRecord.KnownKeys"/> holds: past it a crash or hang is skipped for its compile only.</summary>
     public const int MaxKnownKeys = 1000;
@@ -2339,18 +2341,18 @@ public sealed partial class ScsKiller : IScsKiller
     /// left out), where the last one refused at least as many and the driver refused every one again; null otherwise.</summary>
     public static string? RetriedNote(long total, long failed, long keptEarlier, long refusedBefore) =>
         keptEarlier > 0 && total > 0 && failed == total && refusedBefore >= total
-            ? $"0 of {total:N0} retried pipelines created, the driver refuses them every time. The {keptEarlier:N0} compiled earlier are kept." : null;
+            ? Loc.T("Queue_RetriedNote", $"{total:N0}", $"{keptEarlier:N0}") : null;
 
     /// <summary>Why <see cref="WarmResult.Invalid"/> pipelines were skipped.</summary>
-    public static string InvalidWhy(long n) => n == 1 ? "its shaders fail Vulkan validation, Steam skips it too" : "their shaders fail Vulkan validation, Steam skips them too";
+    public static string InvalidWhy(long n) => Loc.T(n == 1 ? "Queue_InvalidWhyOne" : "Queue_InvalidWhyMany");
 
     /// <summary>Why <see cref="WarmResult.Unsupported"/> pipelines were skipped.</summary>
-    public static string UnsupportedWhy(long n) => n == 1 ? "this GPU doesn't support what it needs" : "this GPU doesn't support what they need";
+    public static string UnsupportedWhy(long n) => Loc.T(n == 1 ? "Queue_UnsupportedWhyOne" : "Queue_UnsupportedWhyMany");
 
     /// <summary>Why a warm's skipped pipelines were never replayed. A Vulkan plan with Valve's download
     /// (<see cref="PlanStats.FromDownload"/>): the download names shader modules it doesn't carry.</summary>
-    public static string SkippedWhy(PlanStats? p) => p is { FromDownload: > 0, Generated: 0 } ? DownloadSkipped : "a shader not in this install";
-    public const string DownloadSkipped = "Steam's download names shaders it doesn't include";
+    public static string SkippedWhy(PlanStats? p) => p is { FromDownload: > 0, Generated: 0 } ? DownloadSkipped : Loc.T("Queue_NotInInstall");
+    public static string DownloadSkipped => Loc.T("Queue_DownloadSkipped");
 
     /// <summary>Warm rate (PSO/s) before this PC measured one, per vendor: NVIDIA 450 (30 threads: 450-1350);
     /// AMD 160 (~8 threads, from the AMD smoke and per-stage A/B runs: a cold PSO there is ~10 ms).</summary>
@@ -2902,7 +2904,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// shows for them; null = none.</summary>
     public static string? PlanCheckLine(IEnumerable<QueueItem> queue) =>
         queue.Where(q => q.PlanCheck && !Finished(q.Stage)).ToList() is { Count: > 0 and var n } checks
-            ? $"Checking {n} game{(n == 1 ? "" : "s")} for more to compile" + (checks.All(q => q.Note == WhenIdleNote) ? " (while idle)" : "") : null;
+            ? Loc.T(n == 1 ? "Queue_PlanCheckOne" : "Queue_PlanCheckMany", n) + (checks.All(q => q.Note == WhenIdleNote) ? Loc.T("Queue_WhileIdleSuffix") : "") : null;
 
     /// <summary>What the queue's Clear queue (<paramref name="only"/> null) or Remove selected removes: the listed items but
     /// the running one, which only its own Stop and remove stops.</summary>
@@ -9311,7 +9313,7 @@ public sealed partial class ScsKiller : IScsKiller
 
     string IdleWaitNote(string id)
     {
-        lock (_lock) return _prompt.Contains(id) ? "paused while a game runs" : "paused until the PC is idle";
+        lock (_lock) return _prompt.Contains(id) ? Loc.T("Queue_NotePausedWhilePlayingFold") : Loc.T("Queue_NotePausedUntilIdleFold");
     }
 
     /// <summary>The running item's line says why it waits; a paused queue shows its own Paused.</summary>
@@ -10444,8 +10446,8 @@ public sealed partial class ScsKiller : IScsKiller
     bool Undelivered(string gameId, GameRecord r) => r.D3DSCacheLinked == null
         && (r.D3DSCacheSince != null || Holds(Path.Combine(Store.GameDir(gameId), D3DSCacheWaiting), "*", dirs: true) == true);
 
-    public static (string Title, string Text) CompiledNotice(string name) => ($"{name} is compiled", $"Finished {DateTime.Now:t}");
-    public static (string Title, string Text) StartedNotice(string name) => ($"{name} started before its compile was in the game's cache.", "The rest goes in when the game closes.");
+    public static (string Title, string Text) CompiledNotice(string name) => (Loc.T("Notice_CompiledTitle", name), Loc.T("Notice_CompiledText", DateTime.Now.ToString("t")));
+    public static (string Title, string Text) StartedNotice(string name) => (Loc.T("Notice_StartedTitle", name), Loc.T("Notice_StartedText"));
 
     /// <summary>A compile whose own fold was cut short is compiled once a later fold put every staged db in: one notification,
     /// and its Stopped item ends Done.</summary>
@@ -11793,8 +11795,8 @@ public sealed partial class ScsKiller : IScsKiller
             bool background, rightAway;
             lock (_lock) (background, rightAway) = (Background || _whenIdle.Contains(id), _whenIdle.Contains(id) && _rightAway.Contains(id));   // a Compile click during the warm: no longer paused for games
             var playing = background && (Settings.PauseWhileGaming || rightAway) ? GameNameIn(running) : null;
-            _pauseWhy = playing != null ? $"paused while {playing} is running" : LowDisk() ?? (WaitsForIdle(id) ? "paused until the PC is idle" : null);
-            var want = _go.IsSet ? _pauseWhy : _pauseWhy ?? "paused";
+            _pauseWhy = playing != null ? Loc.T("Queue_NotePausedWhilePlaying", playing) : LowDisk() ?? (WaitsForIdle(id) ? Loc.T("Queue_NotePausedUntilIdle") : null);
+            var want = _go.IsSet ? _pauseWhy : _pauseWhy ?? Loc.T("Queue_NotePaused");
             if (want == applied) continue;
             applied = want;
             if (want == null) { run.Resume(); SetCurrent(QueueStage.Warming); }
@@ -11806,7 +11808,7 @@ public sealed partial class ScsKiller : IScsKiller
 
     /// <summary>A warm writes the driver's cache and D3DSCache under LocalAppData and its staging under the data folder.</summary>
     string? LowDisk() => new[] { LocalAppData, Store.DataDir }.FirstOrDefault(d => D3DSCache.FreeBytes(d) < D3DSCache.DiskFloor) is { } low
-        ? $"paused below {Format.Bytes(D3DSCache.DiskFloor)} free on {D3DSCache.Drive(low)}" : null;
+        ? Loc.T("Queue_NotePausedLowDisk", Format.Bytes(D3DSCache.DiskFloor), D3DSCache.Drive(low)) : null;
 
     /// <summary>Names the processes of that exe name, SCSKiller's staged warms left out, with their paths when they can be
     /// read: one the user doesn't know of (a leftover, a copy elsewhere) can then be found in Task Manager.</summary>
@@ -11815,7 +11817,7 @@ public sealed partial class ScsKiller : IScsKiller
         var all = Processes(true);
         var held = all.Where(p => p.Exe.Equals(exe, StringComparison.OrdinalIgnoreCase) && NotOurs(p, all)).Take(3)
             .Select(p => ProcessPath(p.Pid) is { } path ? $"process {p.Pid}: {path}" : $"process {p.Pid}").ToList();
-        return $"stopped while {name} is running: continues when it exits" + (held.Count > 0 ? $" ({string.Join(", ", held)})" : "");
+        return Loc.T("Queue_NoteStoppedFor", name) + (held.Count > 0 ? $" ({string.Join(", ", held)})" : "");
     }
 
     /// <summary>Waits while a process named like the warm's exe runs (see RunItem), and until it has stayed closed for
@@ -11840,7 +11842,7 @@ public sealed partial class ScsKiller : IScsKiller
             {
                 if (runs != shown)
                 {
-                    _pauseWhy = (shown = runs) ? StoppedFor(name, exe) : $"continues {GameClosedFor.TotalMinutes:0} min after {name} closes";
+                    _pauseWhy = (shown = runs) ? StoppedFor(name, exe) : Loc.T("Queue_NoteContinuesAfter", $"{GameClosedFor.TotalMinutes:0}", name);
                     SetCurrent(QueueStage.Paused, _pauseWhy);
                 }
                 if (runs && learn != null && (sampled == null || sampled.Elapsed >= AttributionInterval)) { sampled = Stopwatch.StartNew(); learn(); }

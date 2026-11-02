@@ -26,7 +26,10 @@ static class Program
     public static int Main(string[] args)
     {
         Core.App.Format.PlainGroupSeparator();
-        if (App.RunCli(args) is { } cli) return cli;
+        if (App.RunCli(args) is { } cli) return cli;   // the CLI keeps English: no Loc.Load
+        // the texts of every later Loc.T: the setting's language, or the system's, before any window reads one
+        try { Loc.Load(new AppStore(AppStore.DefaultDir).LoadSettings().Language); }
+        catch (Exception e) { LogCrash(e); }   // a broken strings file never keeps the app from starting: it runs in English
         Host.Platform = Features.Current;
         if (!Host.Platform.Tray) args = [.. args.Where(a => a != WindowsStartup.TrayArg)];   // no icon to come back from
         int shots = Array.IndexOf(args, "--screenshots");

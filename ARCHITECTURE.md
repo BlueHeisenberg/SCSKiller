@@ -43,6 +43,13 @@ the compile queue and the recorder's lifecycle. It builds for Windows (`net10.0-
 - *Recorder management* (`App/ScsKiller.cs`, `App/Recordings.cs`): install, its stamp, import, the keys file.
 - *Community* (`App/Community.cs`, `App/Sharing.cs`, `Planning/HashOnly.cs`, `Planning/Rehydrate.cs`).
 - *Updates and content* (`App/Updates.cs`, `App/ContentTrust.cs`, `App/Account.cs`, `App/RouteFailover.cs`).
+- *Texts* (`App/Loc.cs`, `App/Strings/*.json`): one flat key→text table per language, embedded, en the source every
+  other language falls to for a key it lacks (and a key en itself lacks is the key: a missing text is seen). `Loc.Load`
+  runs once at start, for the setting's language (`Settings.Language`) or, null, the system UI culture's (zh-Hant too
+  reads Simplified Chinese); until then, and in the CLI, which never loads one, it is English. The app's texts change at
+  the next start, not live. The WinUI app reads keys in XAML as `{x:Bind core:Loc.T('Key')}` (one read at load), the
+  Avalonia one as `{loc:T Key}` (`Ui/TExtension.cs`); every text a view model or Core shows goes through `Loc.T`, with
+  `{0}` placeholders where a name, count or version goes.
 
 **Recorder** (`proxy/proxy.cpp`, built as `d3d12.dll`). Forwards every export to the system DLL. Only in an admitted
 launch (see [Rules](#rules)) does it hook the device and record what the game creates. As `d3d11.dll`, in a DirectX 11

@@ -14,12 +14,16 @@ namespace SCSKiller.Core.App;
 /// "alpha", "prio", "internal"; the UI ignores others) and <c>until</c>, when they end, grace included (null: no end date).</summary>
 public sealed record AccountStatus(IReadOnlyList<string> Ent, DateTimeOffset? Until)
 {
-    static readonly Dictionary<string, string> Names = new() { ["db"] = "community shader hash database", ["beta"] = "beta builds", ["alpha"] = "alpha builds", ["prio"] = "priority requests" };
+    static string NameOf(string flag) => flag switch
+    {
+        "db" => Loc.T("Acct_EntDb"), "beta" => Loc.T("Acct_EntBeta"), "alpha" => Loc.T("Acct_EntAlpha"), "prio" => Loc.T("Acct_EntPrio"), _ => "",
+    };
+    static readonly string[] Flags = ["db", "beta", "alpha", "prio"];
 
     /// <summary>The Account card's line, e.g. "Supporter: beta builds and alpha builds."; null when no flag is shown.</summary>
-    public string? Benefits => Ent.Where(Names.ContainsKey).Select(k => Names[k]).ToList() is { Count: > 0 } names
-        ? "Supporter: " + (names.Count > 1 ? string.Join(", ", names[..^1]) + " and " + names[^1] : names[0])
-            + (Until is { } until ? $", until {until.ToLocalTime():d MMM yyyy}." : ".")
+    public string? Benefits => (from k in Flags where Ent.Contains(k) select NameOf(k)).ToList() is { Count: > 0 } names
+        ? Loc.T("Acct_Benefits", names.Count > 1 ? Loc.T("Acct_ListAnd", string.Join(Loc.T("Acct_Comma"), names[..^1]), names[^1]) : names[0],
+            Until is { } until ? Loc.T("Acct_UntilSuffix", until.ToLocalTime().ToString("d MMM yyyy")) : ".")
         : null;
 }
 
@@ -36,11 +40,11 @@ public sealed class AccountException(string message) : Exception(message)
 public sealed class Account
 {
     public static readonly TimeSpan SignInTimeout = TimeSpan.FromMinutes(5);
-    const string Unreachable = "Can't reach the SCSKiller server right now. Check your internet connection, or try again later.";
-    const string NotRevoked = "Signed out on this PC. The server couldn't remove it from your account's devices. It drops off there after 90 days unused.";
-    const string KeptInFile = "The system keyring is locked or not running, so your sign-in is kept in a file only your user can read.";
-    const string KeyringLocked = "Your sign-in is in the system keyring, which is locked or not running. Unlock it, then click Refresh status.";
-    const string KeyringUnreadable = "Your sign-in in the system keyring can't be read. Sign out, then sign in again.";
+    static string Unreachable => Loc.T("Acct_Unreachable");
+    static string NotRevoked => Loc.T("Acct_NotRevoked");
+    static string KeptInFile => Loc.T("Acct_KeptInFile");
+    static string KeyringLocked => Loc.T("Acct_KeyringLocked");
+    static string KeyringUnreadable => Loc.T("Acct_KeyringUnreadable");
 
     readonly TokenFile<Stored> file;
     readonly RouteFailover routes;
@@ -64,7 +68,7 @@ public sealed class Account
         this.openBrowser = openBrowser ?? (u => Process.Start(new ProcessStartInfo(u.AbsoluteUri) { UseShellExecute = true })?.Dispose());
         this.clock = clock ?? TimeProvider.System;
         kept = file.Peek(out var refused);   // another user's or a damaged file: signed out
-        if (refused != null) Problem = $"Your saved sign-in wasn't used because {refused}. Sign in again.";
+        if (refused != null) Problem = Loc.T("Acct_SavedRefused", refused);
     }
 
     /// <summary>Raised after any change of the properties below, on whatever thread made it.</summary>
@@ -113,7 +117,7 @@ public sealed class Account
             var code = await loopback.WaitAsync(state, any.Token);
             using var r = await SendAsync(HttpMethod.Post, "v1/auth/exchange", null, any.Token, new { code, verifier, label = DeviceLabel() });
             if (r.StatusCode == HttpStatusCode.BadRequest)   // invalid_grant: the one-time code expired (60 s) or was used
-                throw new AccountException("The sign-in expired or was already used. Please try again.");
+                throw new AccountException(Loc.T("Acct_CodeExpired"));
             var json = await AnswerAsync(r, any.Token);
             // committed only while this sign-in is the running one: another cancels it first, however long the keyring takes
             await file.SaveAsync(new Stored(json.GetProperty("device_token").GetString()!), any.Token, (saved, inFile) =>
@@ -127,8 +131,7 @@ public sealed class Account
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested && !mine.IsCancellationRequested)
         {
-            Problem = $"Sign-in timed out after {SignInTimeout.TotalMinutes:0} minutes. If the Patreon page didn't load, Patreon may be " +
-                      "unreachable from your network right now. If a football match is on, try again afterwards.";
+            Problem = Loc.T("Acct_SignInTimeout", $"{SignInTimeout.TotalMinutes:0}");
         }
         catch (OperationCanceledException) when (mine.IsCancellationRequested) { }
         catch (Exception e) { Problem = Plain(e); }
@@ -222,7 +225,7 @@ public sealed class Account
         if (r.StatusCode == HttpStatusCode.Unauthorized)   // revoked: removed from the account, 6th device, or 90 days unused (§2.4, §2.5)
         {
             await ForgetAsync(k);
-            throw new AccountException("This PC was signed out of your Patreon account (removed from its devices, or unused for 90 days). Sign in again.");
+            throw new AccountException(Loc.T("Acct_SignedOutRemoved"));
         }
         SetAccess(r, await AnswerAsync(r, ct));
     }
@@ -249,9 +252,9 @@ public sealed class Account
     {
         if (!r.IsSuccessStatusCode) throw new AccountException(r.StatusCode switch
         {
-            HttpStatusCode.TooManyRequests => "Too many attempts from your network. Wait a while and try again.",
-            >= HttpStatusCode.InternalServerError => $"The SCSKiller server had a problem (error {(int)r.StatusCode}). Try again in a few minutes.",
-            _ => $"The SCSKiller server refused the request (error {(int)r.StatusCode}). If it keeps happening, sign out and in again.",
+            HttpStatusCode.TooManyRequests => Loc.T("Acct_TooMany"),
+            >= HttpStatusCode.InternalServerError => Loc.T("Acct_ServerProblem", (int)r.StatusCode),
+            _ => Loc.T("Acct_ServerRefused", (int)r.StatusCode),
         });
         return await r.Content.ReadFromJsonAsync<JsonElement>(ct);
     }
@@ -260,10 +263,9 @@ public sealed class Account
     {
         AccountException => e.Message,
         HttpRequestException => Unreachable,
-        OperationCanceledException => "The SCSKiller server didn't answer in time. Try again later.",
-        JsonException or KeyNotFoundException or InvalidOperationException or FormatException =>
-            "The SCSKiller server gave an answer this version doesn't understand. An update of SCSKiller may fix it.",
-        Win32Exception => "Couldn't open your web browser: " + e.Message,
+        OperationCanceledException => Loc.T("Acct_NoAnswer"),
+        JsonException or KeyNotFoundException or InvalidOperationException or FormatException => Loc.T("Acct_BadAnswer"),
+        Win32Exception => Loc.T("Acct_NoBrowser", e.Message),
         _ => e.Message,
     };
 
@@ -288,7 +290,7 @@ public sealed class Account
         if (read == null)
         {
             await ForgetAsync(k);
-            throw new AccountException("Your sign-in is no longer in the system keyring. Sign in again.") { Keyring = true };
+            throw new AccountException(Loc.T("Acct_KeyringGone")) { Keyring = true };
         }
         kept = k with { Value = read };
         return read.Member;
@@ -333,19 +335,19 @@ public sealed class LoopbackCallback : IDisposable
         while (true)
         {
             var c = await listener.GetContextAsync().WaitAsync(ct);
-            if (c.Request.Url?.AbsolutePath != "/cb") { Reply(c, 404, "Not found."); continue; }
+            if (c.Request.Url?.AbsolutePath != "/cb") { Reply(c, 404, Loc.T("Acct_CbNotFound")); continue; }
             var q = c.Request.QueryString;
             if (q["state"] != state)
             {
-                Reply(c, 400, "This page doesn't belong to the sign-in SCSKiller is waiting for. Start again from SCSKiller.");
-                throw new AccountException("The browser's answer didn't match this sign-in, so it was refused. Please try again.");
+                Reply(c, 400, Loc.T("Acct_CbWrongState"));
+                throw new AccountException(Loc.T("Acct_StateMismatch"));
             }
             if (q["error"] != null || q["code"] is not { Length: > 0 } code)
             {
-                Reply(c, 400, "Sign-in didn't complete. You can close this tab and try again from SCSKiller.");
-                throw new AccountException(q["error"] == "access_denied" ? "Sign-in was cancelled on Patreon." : $"Sign-in didn't complete ({q["error"] ?? "no code"}). Please try again.");
+                Reply(c, 400, Loc.T("Acct_CbIncomplete"));
+                throw new AccountException(q["error"] == "access_denied" ? Loc.T("Acct_Cancelled") : Loc.T("Acct_Incomplete", q["error"] ?? Loc.T("Acct_NoCode")));
             }
-            Reply(c, 200, "You're signed in. You can close this tab and go back to SCSKiller.");
+            Reply(c, 200, Loc.T("Acct_CbSignedIn"));
             return code;
         }
     }

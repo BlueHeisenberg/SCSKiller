@@ -67,29 +67,27 @@ public sealed class AccountVm : Bindable
             Changed();
         }
     }
-    public string? DbNote => !A.SignedIn ? "The list of games it covers is checked for everyone. The shared hashes need a Patreon subscription."
+    public string? DbNote => !A.SignedIn ? Loc.T("Settings_DbNoteSignedOut")
         : A.Status is not { } st ? null   // not read yet: the status line above says "Checking…"
-        : !A.HasDb ? "Your Patreon membership doesn't include it right now. What was downloaded before keeps working."
+        : !A.HasDb ? Loc.T("Settings_DbNoteNoInclude")
         : (Host.Core as ScsKiller)?.Community?.Problem;
     public bool HasDbNote => DbNote != null;
 
     public string Benefits => A.Status switch
     {
-        null => A.Busy ? "Checking your supporter status…" : "Supporter status not checked yet.",
+        null => A.Busy ? Loc.T("Settings_CheckingStatus") : Loc.T("Settings_StatusNotChecked"),
         { Benefits: { } b } => b,   // the flag names live in Core (AccountStatus) so they're testable
-        _ => "No supporter benefits right now. They start once your Patreon membership is active: then click Refresh status.",
+        _ => Loc.T("Settings_NoBenefits"),
     };
 
     // Update channel: a picker only when the token grants more than stable.
-    static readonly Dictionary<string, string> ChannelNames = new()
-    {
-        [UpdateChannels.Stable] = "Stable", [UpdateChannels.Beta] = "Beta (Patreon supporter)",
-        [UpdateChannels.Alpha] = "Alpha (Patreon backer)", [UpdateChannels.Internal] = "Internal",
-    };
+    static string ChannelName(string channel) => channel == UpdateChannels.Stable ? Loc.T("Settings_ChannelStable")
+        : channel == UpdateChannels.Beta ? Loc.T("Settings_ChannelBeta")
+        : channel == UpdateChannels.Alpha ? Loc.T("Settings_ChannelAlpha") : Loc.T("Settings_ChannelInternal");
     static IReadOnlyList<string> Offered => UpdateChannels.Offered(A.Status?.Ent);
     static string Chosen => UpdateChannels.Effective(Host.Core.Settings.UpdateChannel, AppVersion.Current.Channel, A.Status?.Ent);
     List<string> labels = [];
-    public List<string> ChannelLabels => labels.SequenceEqual(Offered.Select(c => ChannelNames[c])) ? labels : labels = Offered.Select(c => ChannelNames[c]).ToList();   // same list: the ComboBox keeps its selection
+    public List<string> ChannelLabels => labels.SequenceEqual(Offered.Select(ChannelName)) ? labels : labels = Offered.Select(ChannelName).ToList();   // same list: the ComboBox keeps its selection
     // a Flatpak or a package: no channel to pick, and the note says where its updates come from
     static string? UpdatesFrom => Wired ? Updater.Installation.UpdatesFrom : null;
     bool Entitled => A.SignedIn && Offered.Count > 1;
@@ -110,10 +108,10 @@ public sealed class AccountVm : Bindable
     /// <summary>"Go back to stable now": on an installed pre-release build, whatever the account.</summary>
     public bool OffersBackToStable => Wired && Updater.Installed && AppVersion.Current.Channel != UpdateChannels.Stable;
     public bool ShowsUpdates => Entitled || OffersBackToStable || UpdatesFrom != null;
-    public string ChannelNote => UpdatesFrom ?? (Updater.Checking ? "Checking for updates…"
+    public string ChannelNote => UpdatesFrom ?? (Updater.Checking ? Loc.T("Settings_CheckingUpdates")
         : Wired && Updater.Ready is { } v ? AutoInstall.ReadyNote(v, Updater.InstallsAutomatically)
-        : (InstallsAutomatically ? "Updates download in the background and install the next time SCSKiller starts or quits, never during a compile or a game."
-            : "Updates download in the background, and Restart to update installs them.") + " Leaving an early channel keeps this build until Stable passes it.");
+        : (InstallsAutomatically ? Loc.T("Settings_UpdateAutoNote")
+            : Loc.T("Settings_UpdateManualNote")) + Loc.T("Settings_EarlyChannelKeeps"));
     // unwired, nothing is downloaded: the next download's channel is the chosen one, as Updater.Channel says then
     static bool InstallsAutomatically => Wired ? Updater.InstallsAutomatically : AutoInstall.On(Host.Core.Settings, Chosen);
     public string? UpdateProblem => Updater.Problem;

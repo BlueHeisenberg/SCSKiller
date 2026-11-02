@@ -30,7 +30,7 @@ public sealed partial class ReportWindow : Window
     ReportWindow(string id, string game, BeforeAfterResult r) : this()
     {
         (this.id, this.game, this.r) = (id, game, r);
-        Title = $"Before and after · {game}";
+        Title = Loc.T("Ba_ReportTitle", game);
         RequestedThemeVariant = App.Main.RequestedThemeVariant;
         App.Main.PropertyChanged += FollowTheme;
         Host.Icons.Changed += ShowIcon;
@@ -100,7 +100,7 @@ public sealed partial class ReportWindow : Window
 
     void Fill()
     {
-        Heading.Text = $"Before and after · {game}";
+        Heading.Text = Loc.T("Ba_ReportTitle", game);
         CardGame.Text = game.ToUpperInvariant();
         ShowIcon();
         var text = BeforeAfter.Report(game, r, Host.Core.Vendor.Vendor);
@@ -110,7 +110,7 @@ public sealed partial class ReportWindow : Window
         (LabelWorst.Text, TileWorst.Text) = text.Tiles[2];
 
         var (before, after) = (FrameData.Of(r.Before) with { Neutral = C.Dx11 }, FrameData.Of(r.After) with { Neutral = C.Dx11 });
-        if (C.Dx11) (LegendShader.IsVisible, LegendOther.Text) = (false, "stutter");
+        if (C.Dx11) (LegendShader.IsVisible, LegendOther.Text) = (false, Loc.T("Ba_LegendStutter"));
         double top = FrameGraph.TopFor(r.Before.Hitches.Concat(r.After.Hitches));
         double spp = Math.Max(Span(before), Span(after)) / 1000 / GraphWidth;
         Graph(BeforeGraph, BeforeAxis, BeforeEnd, before, C.Before);
@@ -119,7 +119,7 @@ public sealed partial class ReportWindow : Window
         {
             graph.Show(d, d.Play.From, d.Play.To, top, spp);
             axis.Width = graph.Width;
-            end.Text = BeforeAfter.Clock(run.PlaySeconds) + " of play";
+            end.Text = Loc.T("Report_OfPlay", BeforeAfter.Clock(run.PlaySeconds));
         }
 
         ShowGpu.IsChecked = Host.Core.Settings.BeforeAfterShowGpu;
@@ -128,7 +128,7 @@ public sealed partial class ReportWindow : Window
 
         Details.Children.Clear();
         Details.RowDefinitions.Clear();
-        Row(new("Details", "Before", "After"), header: true);
+        Row(new(Loc.T("Common_Details"), Loc.T("Common_Before"), Loc.T("Common_After")), header: true);
         foreach (var row in text.Rows) Row(row);
 
         Notes.Children.Clear();
@@ -207,7 +207,7 @@ public sealed partial class ReportWindow : Window
             {
                 SuggestedFileName = BeforeAfter.ImageName(game), DefaultExtension = "png",
                 SuggestedStartLocation = await StorageProvider.TryGetWellKnownFolderAsync(WellKnownFolder.Pictures),
-                FileTypeChoices = [new("PNG image") { Patterns = ["*.png"] }],
+                FileTypeChoices = [new(Loc.T("Report_PngImage")) { Patterns = ["*.png"] }],
             });
             if (file == null) return;
             using (var image = CardImage())
@@ -216,16 +216,16 @@ public sealed partial class ReportWindow : Window
                 target.SetLength(0);
                 image.Save(target, PngBitmapEncoderOptions.Default);
             }
-            Tell($"Saved {file.Name}");
+            Tell(Loc.T("Report_Saved", file.Name));
         }
-        catch (Exception e) { Tell("Couldn't save the image: " + BeforeAfterUi.Describe(e), InfoBarSeverity.Error); }
+        catch (Exception e) { Tell(Loc.T("Report_CouldntSaveImage", BeforeAfterUi.Describe(e)), InfoBarSeverity.Error); }
     }
 
     /// <summary>Text from Core (BeforeAfter.ShareText); null with the error shown.</summary>
     string? Text()
     {
         try { return BeforeAfter.ShareText(game, C); }
-        catch (Exception e) { Tell("Couldn't make the share text: " + BeforeAfterUi.Describe(e), InfoBarSeverity.Error); return null; }
+        catch (Exception e) { Tell(Loc.T("Report_CouldntMakeText", BeforeAfterUi.Describe(e)), InfoBarSeverity.Error); return null; }
     }
 
     /// <summary>Kept on the clipboard after the app quits (on Windows: X11 drops it unless a clipboard manager takes it).</summary>
@@ -257,22 +257,22 @@ public sealed partial class ReportWindow : Window
             await clipboard.FlushAsync();
             return true;
         }
-        catch (Exception e) { Tell("Couldn't copy: " + BeforeAfterUi.Describe(e), InfoBarSeverity.Error); return false; }
+        catch (Exception e) { Tell(Loc.T("Report_CouldntCopy", BeforeAfterUi.Describe(e)), InfoBarSeverity.Error); return false; }
     }
 
     async void OnCopy(object? _, RoutedEventArgs __)
     {
-        if (await CopyAsync(image: true, Text())) Tell("Image copied");
+        if (await CopyAsync(image: true, Text())) Tell(Loc.T("Report_ImageCopied"));
     }
 
     async void OnDiscord(object? _, RoutedEventArgs __)
     {
-        if (await CopyAsync(image: true, Text())) Tell("Image and text copied: paste them in Discord");
+        if (await CopyAsync(image: true, Text())) Tell(Loc.T("Report_ImageTextCopied"));
     }
 
     async void OnCopyText(object? _, RoutedEventArgs __)
     {
-        if (Text() is { } text && await CopyAsync(image: false, text)) Tell("Text copied");
+        if (Text() is { } text && await CopyAsync(image: false, text)) Tell(Loc.T("Report_TextCopied"));
     }
 
     // neither composer takes an image from a link: it goes to the clipboard, and a toast over the browser says to paste it
@@ -286,9 +286,9 @@ public sealed partial class ReportWindow : Window
         {
             if (!await Launcher.LaunchUriAsync(new Uri(url(text)))) throw new InvalidOperationException("No browser");
         }
-        catch (Exception e) { Tell("Couldn't open the browser: " + BeforeAfterUi.Describe(e), InfoBarSeverity.Error); return; }
-        Tell("Paste (Ctrl+V) to add the image", InfoBarSeverity.Informational);
-        App.Hint?.Invoke("The image is copied", "Press Ctrl+V in the post to add it.");
+        catch (Exception e) { Tell(Loc.T("Common_CouldntOpenBrowser", BeforeAfterUi.Describe(e)), InfoBarSeverity.Error); return; }
+        Tell(Loc.T("Report_PasteHint"), InfoBarSeverity.Informational);
+        App.Hint?.Invoke(Loc.T("Report_ImageCopiedHintTitle"), Loc.T("Report_ImageCopiedHintText"));
     }
 
     async void OnRecordAgain(object? _, RoutedEventArgs __)

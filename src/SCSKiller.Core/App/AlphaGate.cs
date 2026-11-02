@@ -24,16 +24,16 @@ public static class AlphaGate
 
     public const string FileName = "alpha-pass";
     static bool Beta => AppVersion.Current.Channel == UpdateChannels.Beta;
-    public static string Title => Beta ? "Beta builds are for Patreon supporters." : "Alpha builds are for Patreon backers.";
-    public static string Intro => Beta ? "Sign in with Patreon once. After that this beta runs offline." : "Sign in with Patreon once. After that this alpha runs offline.";
-    public const string SignIn = "Sign in with Patreon";
-    public const string Waiting = "Finish the sign-in in your browser.";
-    public const string NotBacker = "This Patreon account isn't a backer. Alpha builds come with the backer tier.";
-    public const string SupporterOnly = "Your tier includes beta builds, not alpha builds.";
-    public const string NotSupporter = "This Patreon account isn't a supporter. Beta builds come with the supporter tier.";
-    public static string TooOld => Beta ? "This beta is too old to sign in. Download the latest beta." : "This alpha is too old to sign in. Download the latest alpha.";
-    public const string Stable = "Get the stable version";
-    public const string Quit = "Quit";
+    public static string Title => Loc.T(Beta ? "Gate_TitleBeta" : "Gate_TitleAlpha");
+    public static string Intro => Loc.T(Beta ? "Gate_IntroBeta" : "Gate_IntroAlpha");
+    public static string SignIn => Loc.T("Settings_SignInPatreon");
+    public static string Waiting => Loc.T("Gate_Waiting");
+    public static string NotBacker => Loc.T("Gate_NotBacker");
+    public static string SupporterOnly => Loc.T("Gate_SupporterOnly");
+    public static string NotSupporter => Loc.T("Gate_NotSupporter");
+    public static string TooOld => Loc.T(Beta ? "Gate_TooOldBeta" : "Gate_TooOldAlpha");
+    public static string Stable => Loc.T("Gate_GetStable");
+    public static string Quit => Loc.T("Tray_Quit");
     public static string Cli => Beta ? "This beta needs a Patreon supporter sign-in in the SCSKiller app first." : "This alpha needs a Patreon backer sign-in in the SCSKiller app first.";
     public static readonly Uri StableUri = new($"https://github.com/{UpdateFeeds.GhRepo}/releases/latest");
 

@@ -46,6 +46,16 @@
     <EmbeddedResource Include="Planning\confirmed-engines.json" LogicalName="SCSKiller.Core.Planning.confirmed-engines.json" />
     <EmbeddedResource Include="Planning\plan-rules.json" LogicalName="SCSKiller.Core.Planning.plan-rules.json" />
     <EmbeddedResource Include="App\welcome.json" LogicalName="SCSKiller.Core.App.welcome.json" />
+    <!-- the app's texts (App/Loc.cs): en is the source every other language falls to for a key it lacks -->
+    <EmbeddedResource Include="App\Strings\en.json" LogicalName="SCSKiller.Core.App.Strings.en.json" />
+    <EmbeddedResource Include="App\Strings\zh-Hans.json" LogicalName="SCSKiller.Core.App.Strings.zh-Hans.json" />
+    <EmbeddedResource Include="App\Strings\ja.json" LogicalName="SCSKiller.Core.App.Strings.ja.json" />
+    <EmbeddedResource Include="App\Strings\ko.json" LogicalName="SCSKiller.Core.App.Strings.ko.json" />
+    <EmbeddedResource Include="App\Strings\de.json" LogicalName="SCSKiller.Core.App.Strings.de.json" />
+    <EmbeddedResource Include="App\Strings\fr.json" LogicalName="SCSKiller.Core.App.Strings.fr.json" />
+    <EmbeddedResource Include="App\Strings\es.json" LogicalName="SCSKiller.Core.App.Strings.es.json" />
+    <EmbeddedResource Include="App\Strings\ru.json" LogicalName="SCSKiller.Core.App.Strings.ru.json" />
+    <EmbeddedResource Include="App\Strings\pt-BR.json" LogicalName="SCSKiller.Core.App.Strings.pt-BR.json" />
     <EmbeddedResource Include="..\..\CHANGELOG.md" LogicalName="SCSKiller.Core.CHANGELOG.md" />
   </ItemGroup>
 

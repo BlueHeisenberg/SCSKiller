@@ -13,6 +13,8 @@ public sealed record AppPlatform
     public required string UpdatingStores { get; init; }
     /// <summary>The theme choice that follows the system's.</summary>
     public required string SystemTheme { get; init; }
+    /// <summary>The language choice that follows the system's, as a Loc key (the platform's text for it).</summary>
+    public required string SystemLanguageKey { get; init; }
     /// <summary>What builds a game's pipelines besides the driver.</summary>
     public required string Runtime { get; init; }
     /// <summary>Games added by hand and game folders (ManualSource).</summary>
@@ -39,7 +41,7 @@ public sealed record AppPlatform
     public static readonly AppPlatform Windows = new()
     {
         Name = "Windows", Stores = ["Steam", "Epic", "Xbox", "EA", "GOG", "Ubisoft Connect", "Battle.net", "PURPLE", "HoYoPlay", "Gaijin", "Riot Client"],
-        UpdatingStores = "Steam or the Xbox app", SystemTheme = "Use Windows setting", Runtime = "Windows",
+        UpdatingStores = "Steam or the Xbox app", SystemTheme = "Use Windows setting", SystemLanguageKey = "Common_UseWindowsSetting", Runtime = "Windows",
         AddGames = true, StartAtSignIn = true, Tray = true, DriverUpdateModes = true, AutoShaderCompilation = true, SystemShaderCache = true,
         RecordAntiCheatGames = true,
     };
@@ -48,7 +50,7 @@ public sealed record AppPlatform
     public static AppPlatform Linux(Func<bool> steam) => new()
     {
         // the flags left off are features Linux doesn't have yet, each turned on once it does
-        Name = "Linux", Stores = ["Steam", "Heroic", "Lutris"], UpdatingStores = "Steam", SystemTheme = "Use system setting", Runtime = "Proton", Tray = true, StartAtSignIn = true, DriverUpdateModes = true,
+        Name = "Linux", Stores = ["Steam", "Heroic", "Lutris"], UpdatingStores = "Steam", SystemTheme = "Use system setting", SystemLanguageKey = "Common_UseSystemSetting", Runtime = "Proton", Tray = true, StartAtSignIn = true, DriverUpdateModes = true,
         NoGamesNote = () => steam() ? "SCSKiller lists the Windows games you installed with Steam, Heroic or Lutris, and the ones you added to Steam with Proton."
             : "SCSKiller lists the Windows games of Steam, Heroic and Lutris.",
         SteamLaunchLine = true, RecordAntiCheatGames = true,
@@ -59,7 +61,7 @@ public sealed record AppPlatform
     /// <summary>The UI on the Linux build's core, with no game scan, compile, recorder or Vulkan layer yet.</summary>
     public static readonly AppPlatform MacOS = new()
     {
-        Name = "macOS", Stores = ["Steam"], UpdatingStores = "Steam", SystemTheme = "Use system setting", Runtime = "the game's runtime",
+        Name = "macOS", Stores = ["Steam"], UpdatingStores = "Steam", SystemTheme = "Use system setting", SystemLanguageKey = "Common_UseSystemSetting", Runtime = "the game's runtime",
         NoGamesNote = () => "Finding and compiling games isn't available on macOS yet.",
     };
 }

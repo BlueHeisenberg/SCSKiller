@@ -57,8 +57,8 @@ static class StartDialogs
         foreach (var p in c.Paragraphs) panel.Children.Add(new TextBlock { Text = p, TextWrapping = TextWrapping.Wrap });
         if (c.Link != null) panel.Children.Add(new HyperlinkButton { Content = c.Link.Text, NavigateUri = new Uri(c.Link.Url), Padding = new(0) });
         var share = Box(c.Share);
-        var diagnostics = Box("Share diagnostics to help fix problems");
-        var active = Box("Send an anonymous daily check", "Helps us count active installs so we can size our servers. Once a day, the app's version and GPU vendor, no identifier.");
+        var diagnostics = Box(Loc.T("Settings_ShareDiagnostics"));
+        var active = Box(Loc.T("Settings_ActiveCheck"), Loc.T("Settings_ActiveCheckDesc"));
         panel.Children.AddRange([share, diagnostics, active]);
         var dialog = new ContentDialog { Title = c.Title, Content = panel, PrimaryButtonText = c.SignIn, CloseButtonText = c.Dismiss, DefaultButton = ContentDialogButton.Primary };
         return (dialog, result => new(share.IsChecked == true, diagnostics.IsChecked == true, active.IsChecked == true, result == ContentDialogResult.Primary));
@@ -78,7 +78,7 @@ static class StartDialogs
 
     public static ContentDialog ActiveCheckDialog() => new()
     {
-        Title = "Anonymous daily check",
+        Title = Loc.T("Dialog_ActiveCheckTitle"),
         Content = new StackPanel
         {
             Spacing = 8,
@@ -86,14 +86,13 @@ static class StartDialogs
             {
                 new TextBlock
                 {
-                    Text = "Once a day SCSKiller can tell our server that an install is active, with its version and GPU vendor and no identifier. "
-                        + "This helps us count active installs so we can size our servers. It's off until you turn it on.",
+                    Text = Loc.T("Dialog_ActiveCheckBody"),
                     TextWrapping = TextWrapping.Wrap,
                 },
-                new TextBlock { Text = "Change it any time in Settings.", TextWrapping = TextWrapping.Wrap, Classes = { "Caption" } },
+                new TextBlock { Text = Loc.T("Dialog_ChangeInSettings"), TextWrapping = TextWrapping.Wrap, Classes = { "Caption" } },
             },
         },
-        PrimaryButtonText = "Turn it on", CloseButtonText = "Keep it off", DefaultButton = ContentDialogButton.None,   // no nudge either way
+        PrimaryButtonText = Loc.T("Common_TurnItOn"), CloseButtonText = Loc.T("Common_KeepItOff"), DefaultButton = ContentDialogButton.None,   // no nudge either way
     };
 
     static async Task<TraversalMode?> AskTraversalAsync() => await TryShowAsync(TraversalDialog(TraversalFix.LowVram(Host.Core.Vendor.Gpu))) is { } r
@@ -116,8 +115,8 @@ static class StartDialogs
 
     static async Task<bool?> AskDiagnosticsAsync() => await TryShowAsync(new ContentDialog
     {
-        Title = "Share diagnostics to help fix problems?",
-        Content = "When a compile fails, send its error codes, once per compile. You can change this in Settings.",
-        PrimaryButtonText = "Share diagnostics", CloseButtonText = "No thanks", DefaultButton = ContentDialogButton.Close,
+        Title = Loc.T("Dialog_DiagnosticsTitle"),
+        Content = Loc.T("Dialog_DiagnosticsBody"),
+        PrimaryButtonText = Loc.T("Settings_ShareDiagnostics"), CloseButtonText = Loc.T("Common_NoThanks"), DefaultButton = ContentDialogButton.Close,
     }) is { } r ? r == ContentDialogResult.Primary : null;
 }

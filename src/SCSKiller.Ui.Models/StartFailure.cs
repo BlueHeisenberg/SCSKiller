@@ -11,6 +11,6 @@ public sealed record StartFailure(string Text, string? LogPath)
     public static StartFailure Of(Exception e, string dataDir, bool logged)
     {
         var log = Path.Combine(dataDir, CrashLog.FileName);
-        return logged ? new($"SCSKiller couldn't start. Details are in {log}", log) : new($"SCSKiller couldn't start. {e.Message}", null);
+        return logged ? new(Loc.T("App_CouldntStart", log), log) : new(Loc.T("App_CouldntStartNoLog", e.Message), null);
     }
 }

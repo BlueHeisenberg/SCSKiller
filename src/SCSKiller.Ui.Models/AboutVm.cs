@@ -13,19 +13,19 @@ public sealed record Notice(string Name, string Version, string Licence, string 
     /// <summary>The SPDX id, or what a LicenseRef / NOASSERTION means in words.</summary>
     public string LicenceName => Licence switch
     {
-        "NOASSERTION" => "No licence stated",
-        _ when Licence.StartsWith("LicenseRef-Microsoft") => "Microsoft licence",
-        _ when Licence.EndsWith("Proprietary") => "Proprietary",
+        "NOASSERTION" => Loc.T("About_NoLicence"),
+        _ when Licence.StartsWith("LicenseRef-Microsoft") => Loc.T("About_MicrosoftLicence"),
+        _ when Licence.EndsWith("Proprietary") => Loc.T("About_ProprietaryLicence"),
         _ => Licence,
     };
     public string Detail => $"{LicenceName} · {Copyright}";
     public bool HasNote => Note.Length > 0;
-    public string Body => Text.Length > 0 ? Text : "No licence text is published with it.";
+    public string Body => Text.Length > 0 ? Text : Loc.T("About_NoLicenceText");
 }
 
 public sealed class AboutVm : Bindable
 {
-    static readonly string Build = "Version " + (typeof(AboutVm).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "?");
+    static readonly string Build = Loc.T("About_VersionPrefix") + " " + (typeof(AboutVm).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "?");
     public string Version => $"{Build} · {(UpdatedElsewhere ? UpdateChannels.Shown(AppVersion.Current.Channel) : UpdateChannels.Shown(Host.Core.Settings.UpdateChannel, AppVersion.Current.Channel, Host.Account?.Status?.Ent, Host.Account?.SignedIn == true))}";
 
     // "Download source code": stable opens the public repo's tag; alpha and beta
@@ -43,7 +43,7 @@ public sealed class AboutVm : Bindable
             Process.Start(new ProcessStartInfo(url.AbsoluteUri) { UseShellExecute = true })?.Dispose();
             return;
         }
-        (SourceIdle, SourceStatus) = (false, "Downloading…");
+        (SourceIdle, SourceStatus) = (false, Loc.T("About_Downloading"));
         Changed();
         try
         {
@@ -55,9 +55,9 @@ public sealed class AboutVm : Bindable
             var file = Path.Combine(DownloadsFolder(), $"SCSKiller-source-{v}.zip");
             await using (var f = File.Create(file + ".partial")) await r.Content.CopyToAsync(f);
             File.Move(file + ".partial", file, overwrite: true);
-            SourceStatus = "Saved to " + file;
+            SourceStatus = Loc.T("About_SavedTo", file);
         }
-        catch (Exception e) { SourceStatus = "Couldn't download it: " + e.Message; }
+        catch (Exception e) { SourceStatus = Loc.T("About_CouldntDownload", e.Message); }
         SourceIdle = true;
         Changed();
     }
@@ -105,8 +105,8 @@ public sealed class AboutVm : Bindable
     public bool UpdatedElsewhere => UpdatesFrom != null;
     public bool ShowsAutoInstall => ShowsCheck && (!Wired || Updater.Channel != UpdateChannels.Internal);
     public bool CanCheck => !Updater.Checking && !Updater.Restarting;
-    public string UpdateNote => Updater.Downloading is { } d ? $"Downloading SCSKiller {d}…"
-        : Updater.Checking ? "Checking for updates…"
+    public string UpdateNote => Updater.Downloading is { } d ? Loc.T("About_DownloadingVersion", d)
+        : Updater.Checking ? Loc.T("About_CheckingUpdates")
         : Wired && Updater.Ready is { } v ? AutoInstall.ReadyNote(v, Updater.InstallsAutomatically)
         : Updater.UpToDateOn is { } c ? UpdateChannels.UpToDate(c, Host.Core.Settings.UpdateChannel, AppVersion.Current.Channel) : "";
     public string? UpdateProblem => Updater.Problem;
