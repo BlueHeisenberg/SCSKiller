@@ -15,9 +15,11 @@ public sealed record AppPlatform
     public required string SystemTheme { get; init; }
     /// <summary>What builds a game's pipelines besides the driver.</summary>
     public required string Runtime { get; init; }
-    /// <summary>Games added by hand and game folders (ManualSource).</summary>
+    /// <summary>Games added by hand (ManualSource).</summary>
     public bool AddGames { get; init; }
-    /// <summary>The Library's line on how to add a game no store lists, where <see cref="AddGames"/> is off; null: none.</summary>
+    /// <summary>Folders of games added by hand (ManualSource's folders).</summary>
+    public bool GameFolders { get; init; }
+    /// <summary>The add dialog's line on which exe a game added by hand takes; null: none.</summary>
     public string? AddGamesNote { get; init; }
     public bool StartAtSignIn { get; init; }
     /// <summary>The notification-area icon: closing the window can leave SCSKiller running. On Linux only while a
@@ -25,6 +27,8 @@ public sealed record AppPlatform
     public bool Tray { get; init; }
     /// <summary>The driver-update setting's sign-in and idle check, which notifies or compiles (ScheduledTask).</summary>
     public bool DriverUpdateModes { get; init; }
+    /// <summary>The Library's line for the "When idle" rebuild after a driver update.</summary>
+    public string IdleRebuildNote { get; init; } = "Rebuilds on its own while you're away from the PC";
     /// <summary>NVIDIA App's Automatic Shader Compilation, a setting of the Windows driver.</summary>
     public bool AutoShaderCompilation { get; init; }
     /// <summary>The OS's own shader cache of each game (Windows' D3DSCache), which clearing a game's caches deletes too.</summary>
@@ -33,14 +37,16 @@ public sealed record AppPlatform
     public bool RecordAntiCheatGames { get; init; }
     /// <summary>The empty library's line, read when the library is empty; null: no empty state.</summary>
     public Func<string>? NoGamesNote { get; init; }
-    /// <summary>The game page's line for Steam's launch options (IScsKiller.LaunchLineOf), which SCSKiller doesn't write.</summary>
-    public bool SteamLaunchLine { get; init; }
+    /// <summary>The game page's line on the cache SCSKiller puts in Steam's own folder (IScsKiller.SteamCacheNote).</summary>
+    public bool SteamCacheNote { get; init; }
+    /// <summary>The Cache page's line under where the driver keeps its cache.</summary>
+    public string CacheFolderNote { get; init; } = "Games read their cache from here, and new caches are written here. The driver has no setting to move it.";
 
     public static readonly AppPlatform Windows = new()
     {
-        Name = "Windows", Stores = ["Steam", "Epic", "Xbox", "EA", "GOG", "Ubisoft Connect", "Battle.net", "PURPLE", "HoYoPlay", "Gaijin", "Riot Client"],
+        Name = "Windows", Stores = ["Steam", "Epic", "Xbox", "EA", "GOG", "Ubisoft Connect", "Battle.net", "PURPLE", "HoYoPlay", "GRYPHLINK", "WeGame", "Gaijin", "Riot Client"],
         UpdatingStores = "Steam or the Xbox app", SystemTheme = "Use Windows setting", Runtime = "Windows",
-        AddGames = true, StartAtSignIn = true, Tray = true, DriverUpdateModes = true, AutoShaderCompilation = true, SystemShaderCache = true,
+        AddGames = true, GameFolders = true, StartAtSignIn = true, Tray = true, DriverUpdateModes = true, AutoShaderCompilation = true, SystemShaderCache = true,
         RecordAntiCheatGames = true,
     };
 
@@ -48,12 +54,14 @@ public sealed record AppPlatform
     public static AppPlatform Linux(Func<bool> steam) => new()
     {
         // the flags left off are features Linux doesn't have yet, each turned on once it does
-        Name = "Linux", Stores = ["Steam", "Heroic", "Lutris"], UpdatingStores = "Steam", SystemTheme = "Use system setting", Runtime = "Proton", Tray = true, StartAtSignIn = true, DriverUpdateModes = true,
-        NoGamesNote = () => steam() ? "SCSKiller lists the Windows games you installed with Steam, Heroic or Lutris, and the ones you added to Steam with Proton."
-            : "SCSKiller lists the Windows games of Steam, Heroic and Lutris.",
-        SteamLaunchLine = true, RecordAntiCheatGames = true,
-        // Steam's shortcut gives the game a Proton prefix, which a game added by hand wouldn't have
-        AddGamesNote = "To add another Windows game, use Add a Non-Steam Game in Steam. SCSKiller lists it at the next scan.",
+        Name = "Linux", Stores = ["Steam", "Heroic", "Lutris", "Faugus"], UpdatingStores = "Steam", SystemTheme = "Use system setting", Runtime = "Proton", Tray = true, StartAtSignIn = true, DriverUpdateModes = true,
+        NoGamesNote = () => steam() ? "SCSKiller lists the Windows games you installed with Steam, Heroic, Lutris or Faugus, and the ones you added to Steam with Proton."
+            : "SCSKiller lists the Windows games of Steam, Heroic, Lutris and Faugus.",
+        // no input idle time: the background compile starts at once and pauses only for a game
+        IdleRebuildNote = "Rebuilds in the background and pauses while a game runs",
+        SteamCacheNote = true, RecordAntiCheatGames = true, AddGames = true,
+        CacheFolderNote = "Games read their cache from here, and new caches are written here. Steam picks this folder for its games, the driver's default folder holds the rest.",
+        AddGamesNote = "The game's exe needs to be inside its Wine prefix.",
     };
 
     /// <summary>The UI on the Linux build's core, with no game scan, compile, recorder or Vulkan layer yet.</summary>

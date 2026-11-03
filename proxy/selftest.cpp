@@ -3995,7 +3995,7 @@ static std::string read_all(const std::wstring& path) {
 // shown). Then, under Y, the warm with its stop event set before it starts: it creates nothing, exits 0 with a stopped
 // done line, and its failed keys are every pipeline's. With the test hooks, under Z, the last graphics pipeline faults in
 // the driver (SCSKILLER_REPLAY_CRASH) and the last compute one hangs (SCSKILLER_REPLAY_HANG, a 10 s timeout): those two
-// alone are skipped by the driver and in the failed keys, nothing counts as failed, the app under Z hits the rest as X's
+// alone are crashed (the done event names their keys) and in the failed keys, nothing counts as failed, the app under Z hits the rest as X's
 // does, and the warm exits 0. Under V a pipeline stuck only once beside the hang is replayed again and not skipped.
 static int vkwarm_parent(const std::wstring& a, const std::wstring& bin, const std::wstring& dir, const std::wstring& src) {
     namespace fs = std::filesystem;
@@ -4046,7 +4046,7 @@ static int vkwarm_parent(const std::wstring& a, const std::wstring& bin, const s
     printf("recorded %zu pipelines\n", pipelines.size());
     CHECK(!pipelines.empty());
 
-    struct Done { int code = -1; long long done = -1, total = -1, failed = -1, skipped = -1; bool stopped = false; std::string keys; };
+    struct Done { int code = -1; long long done = -1, total = -1, failed = -1, skipped = -1; bool stopped = false; std::string keys, crashed; };
     // scskiller_warm --vulkan from its own work folder, its JSON lines to a file
     auto warm = [&](const wchar_t* tag, bool stopped, const std::string& crash, int threads = 4, const std::string& hang = "", const std::string& wait = "") {
         Done d;
@@ -4082,14 +4082,21 @@ static int vkwarm_parent(const std::wstring& a, const std::wstring& bin, const s
         };
         d.done = num("\"done\":"), d.total = num("\"total\":"), d.failed = num("\"failed\":"), d.skipped = num("\"driverSkipped\":");
         d.stopped = at != std::string::npos && text.find("\"stopped\":true", at) != std::string::npos;
+        if (size_t c = at == std::string::npos ? at : text.find("\"crashed\":[", at); c != std::string::npos)
+            d.crashed = text.substr(c + 11, text.find(']', c) - c - 11);
         for (fs::recursive_directory_iterator it(work, ec), end; !ec && it != end; it.increment(ec))
             if (it->path().filename() == L"scskiller_failed.keys") d.keys += read_all(it->path().wstring());
-        printf("warm %ls: exit %d, done %lld of %lld, failed %lld, driver skipped %lld%s, %zu failed keys\n", tag, d.code, d.done, d.total, d.failed,
-               d.skipped, d.stopped ? ", stopped" : "", d.keys.size() / 20);
+        printf("warm %ls: exit %d, done %lld of %lld, failed %lld, driver skipped %lld%s, %zu failed keys, crashed [%s]\n", tag, d.code, d.done, d.total,
+               d.failed, d.skipped, d.stopped ? ", stopped" : "", d.keys.size() / 20, d.crashed.c_str());
         if (at == std::string::npos) printf("%s", text.c_str());
         return d;
     };
     auto key = [](const std::string& n) { auto h = sha1_of('V', n); return std::string((const char*)h.data(), 20); };
+    auto quoted = [&](const std::string& n) {  // as the done event's crashed names it
+        std::string q = "\"";
+        for (unsigned char c : key(n)) q += "0123456789abcdef"[c >> 4], q += "0123456789abcdef"[c & 15];
+        return q + "\"";
+    };
     int bad = 0;
 
     // the app under the warm's name afterwards: each plain row must be created without compiling
@@ -4134,7 +4141,7 @@ static int vkwarm_parent(const std::wstring& a, const std::wstring& bin, const s
     SetEnvironmentVariableW(L"SCSKILLER_REPLAY_TIMEOUT_S", L"10");
     Done z = warm(L"z", false, crash.substr(24), 4, hang.substr(24));
     SetEnvironmentVariableW(L"SCSKILLER_REPLAY_TIMEOUT_S", nullptr);
-    bad += z.code != 0 || z.skipped != 2 || z.failed != 0 || z.done != z.total || z.keys != key(crash) + key(hang);  // graphics keys come first
+    bad += z.code != 0 || z.skipped != 0 || z.crashed != quoted(crash) + "," + quoted(hang) || z.failed != 0 || z.done != z.total || z.keys != key(crash) + key(hang);  // graphics keys come first
     bad += app(L"z");
 
     // under V the first compute pipeline is stuck too, but only in the first process: both are in flight at the timeout,
@@ -4146,7 +4153,7 @@ static int vkwarm_parent(const std::wstring& a, const std::wstring& bin, const s
     SetEnvironmentVariableW(L"SCSKILLER_REPLAY_TIMEOUT_S", L"10");
     Done v = warm(L"v", false, "", 4, hang.substr(24), wait.substr(24));
     SetEnvironmentVariableW(L"SCSKILLER_REPLAY_TIMEOUT_S", nullptr);
-    bad += v.code != 0 || v.skipped != 1 || v.failed != 0 || v.done != v.total || v.keys != key(hang);
+    bad += v.code != 0 || v.skipped != 0 || v.crashed != quoted(hang) || v.failed != 0 || v.done != v.total || v.keys != key(hang);
 #endif
     printf("vkwarm: %s\n", bad ? "FAILED" : "passed");
     return bad ? 1 : 0;
@@ -4156,7 +4163,7 @@ static int vkwarm_parent(const std::wstring& a, const std::wstring& bin, const s
 // folder, made by vkchild 9 on the system's loader. Under X the copy is armed (its signed scskiller.ini) and the layer is
 // explicit, with FOSSILIZE_DUMP_PATH aimed at the copy's folder and a cache redirect variable set: the archive, the csv
 // (#api,vulkan, the #cache line, a row per pipeline) go to the recorder folder's vulkan\<exe key>\, and nothing but the ini
-// is in the copy's folder. Under U unarmed: it passes through, writes nothing there, and its refusal is in refused\. Then
+// is in the copy's folder. Under U without an ini: it passes through, writes nothing there and no refusal. Then
 // the layer as an implicit one enabled by SteamAppId=4242 only: without it the layer isn't loaded (nothing written, no
 // refusal), with it the armed copy records.
 // run, with the child's stdout and stderr into out
@@ -4422,7 +4429,7 @@ static int vkrec_parent(const std::wstring& a, const std::wstring& bin, const st
 
     CHECK(DeleteFileW((game + L"scskiller.ini").c_str()));
     Seen u = play(L"u");
-    bad += u.code != 0 || u.foz || u.rows || !u.refused || u.game.size() != 1;
+    bad += u.code != 0 || u.foz || u.rows || u.refused || u.game.size() != 1;
 
     clean();
     arm_self(game, exe);
@@ -6670,11 +6677,29 @@ static void arm_self(const std::wstring& dir, const std::wstring& exe) {
         GetPrivateProfileStringW(L"scskiller", k, L"", v, 64, ini.c_str());
         return std::wstring(v);
     };
-    const std::wstring stamp = signed_stamp(size, time, L"", L"", L"", line(L"vendor"), line(L"overlay"), line(L"ab_play_s"), line(L"ab_tag"));
+    // arm=: the one arms\ keeps for this folder, else a new one kept there, under both keys (ScsKiller.Arm)
+    const std::wstring here_key = path_folder_key(dir.substr(0, dir.size() - 1));
+    std::wstring arm;
+    for (const std::wstring& k : {file_key(dir.substr(0, dir.size() - 1)), here_key})
+        if (arm.empty() && !k.empty()) arm = arm_line(read_all(rdir + L"\\arms\\" + k));
+    if (!arm_well_formed(arm)) {
+        std::random_device rd;
+        std::string a8;
+        for (int i = 0; i < 32; ++i) a8 += "0123456789abcdef"[rd() & 15];
+        arm.assign(a8.begin(), a8.end());
+        DWORD wrote;
+        CreateDirectoryW((rdir + L"\\arms").c_str(), nullptr);
+        for (const std::wstring& k : {file_key(dir.substr(0, dir.size() - 1)), here_key})
+            if (!k.empty()) {
+                h = CreateFileW((rdir + L"\\arms\\" + k).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+                if (h != INVALID_HANDLE_VALUE) WriteFile(h, a8.data(), 32, &wrote, nullptr), CloseHandle(h);
+            }
+    }
+    WritePrivateProfileStringW(L"scskiller", L"arm", arm.c_str(), ini.c_str());
+    const std::wstring stamp = signed_stamp(size, time, L"", L"", L"", line(L"vendor"), line(L"overlay"), line(L"ab_play_s"), line(L"ab_tag"), L"", arm);
     const std::wstring sig = recorder_sig(std::string(key, n), file_key(exe), file_key(dir.substr(0, dir.size() - 1)), stamp, root, file_key(root_dir));
     if (!sig.empty()) WritePrivateProfileStringW(L"scskiller", L"sig", sig.c_str(), ini.c_str());
     // the path form in stamps\, as ScsKiller.Signed keeps it
-    const std::wstring here_key = path_folder_key(dir.substr(0, dir.size() - 1));
     const std::wstring by_path = here_key.empty() || wcscmp(root, L".") ? L"" : recorder_sig(std::string(key, n), file_key(exe), here_key, stamp, L".", here_key);
     if (by_path.empty()) return;
     CreateDirectoryW((rdir + L"\\stamps").c_str(), nullptr);

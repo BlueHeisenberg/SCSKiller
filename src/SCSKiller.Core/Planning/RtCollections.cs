@@ -93,11 +93,14 @@ public static class RtCollections
     /// a ray generation shader (it binds through the global one); else the hit group system parameters (index and vertex
     /// buffer SRVs t0/t1 and 4 root constants b0, space 2), then an SRV, sampler and UAV table of the shader's counts
     /// (only those it has) and its root CBVs b0.., space 0. Rebuilds all 277 of Jedi's recorded local root signatures
-    /// from the library's resource counts. <paramref name="systemConstants"/>: 4 in UE 4, 6 in UE 5.1.</summary>
-    public static RootSig.Desc LocalRs(ResourceCounts c, bool rayGen, IReadOnlyList<Binding>? bindings = null, uint systemConstants = 4)
+    /// from the library's resource counts. <paramref name="systemConstants"/>: 4 in UE 4, 6 in UE 5.1. <paramref name="ue55"/>:
+    /// UE 5.5's order, the 4 system constants first, then t0/t1; with bindless resources one block of 8 constants instead.</summary>
+    public static RootSig.Desc LocalRs(ResourceCounts c, bool rayGen, IReadOnlyList<Binding>? bindings = null, uint systemConstants = 4, bool ue55 = false)
     {
         if (rayGen) return new(0x80, []);
-        List<uint[]> rows = [[3, 0, 0, 2, 0], [3, 0, 1, 2, 0], [1, 0, 0, 2, systemConstants]];
+        List<uint[]> rows = !ue55 ? [[3, 0, 0, 2, 0], [3, 0, 1, 2, 0], [1, 0, 0, 2, systemConstants]]
+            : (c.Flags & ShaderContainer.UeFlags.BindlessResources) != 0 ? [[1, 0, 0, 2, 8]]
+            : [[1, 0, 0, 2, 4], [3, 0, 0, 2, 0], [3, 0, 1, 2, 0]];
         if (c.Srv > 0) rows.Add([0, 0, 0, (uint)c.Srv, 0, 0, 5]);
         if (bindings?.Any(b => b is { Class: "srv", Count: -1, Space: 4 }) == true) rows.Add([0, 0, 0, uint.MaxValue, 0, 4, 5]); // Avalanche's fork: bindless space 4
         if (c.Sampler > 0) rows.Add([0, 0, 3, (uint)c.Sampler, 0, 0, 1]);
@@ -131,14 +134,22 @@ public static class RtCollections
         return new(H(0), H(1), H(2), H(3), U(0), U(1), U(2), U(3), p.Length >= 108 ? new Nv(U(4), U(5), U(6)) : null);
     }
 
-    /// <summary>The NVAPI state a recording's collections share, from its 'N' records: the most common one when at least 99%
-    /// of <paramref name="collections"/> carry one; null otherwise (the game sets none, or the recorder predates capturing it).</summary>
-    public static Nv? LearnedNv(IReadOnlyCollection<Rec> collections, IEnumerable<Rec> records)
+    /// <summary>The NVAPI states a recording's collections were created with, from its 'N' records, the most common first: each
+    /// slot and options at least 10% of <paramref name="collections"/> have, both being in NVIDIA's key of a state object
+    /// (selftest nvext). Players' games differ: Phantom Blade Zero's community entry has the same collections without a slot
+    /// and with u0 space 1001, options 1 or 0, and the game here creates each with the slot and 1. A collection without an 'N'
+    /// counts as one without a slot; options a recorder may have lost (no <see cref="NvState.GlobalOptions"/>) are
+    /// <paramref name="options"/>. Empty when no 'N' names a collection.</summary>
+    public static List<Nv> LearnedNvs(IReadOnlyCollection<Rec> collections, IEnumerable<Rec> records, uint options)
     {
         var keys = collections.Select(r => r.Key).ToHashSet();
-        var nv = records.Where(r => r.Tag == 'N').Select(NvState.Parse).Where(n => keys.Contains(n.Target) && !n.Bare).ToList();
-        if (keys.Count == 0 || nv.Select(n => n.Target).Distinct().Count() < 0.99 * keys.Count) return null;
-        return nv.GroupBy(n => new Nv(n.Slot, n.Space, n.Options)).MaxBy(g => g.Count())!.Key;
+        var states = new Dictionary<string, HashSet<Nv>>();
+        foreach (var n in records.Where(r => r.Tag == 'N' && r.Payload.Length == NvState.Size).Select(NvState.Parse).Where(n => keys.Contains(n.Target)))
+            (states.TryGetValue(n.Target, out var s) ? s : states[n.Target] = []).Add(new(n.Slot, n.Space, n.Options == 0 && (n.Scope & NvState.GlobalOptions) == 0 ? options : n.Options));
+        if (states.Count == 0) return [];
+        var none = new Nv(uint.MaxValue, 0, options);
+        return [.. keys.SelectMany(k => states.TryGetValue(k, out var s) ? s : [none]).GroupBy(x => x)
+            .Where(g => g.Count() >= 0.1 * keys.Count).OrderByDescending(g => g.Count()).Select(g => g.Key)];
     }
 
     /// <summary>The NVAPI pipeline creation options a recording's ray tracing state objects are created with: the most common

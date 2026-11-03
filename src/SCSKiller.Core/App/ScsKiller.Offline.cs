@@ -46,9 +46,11 @@ public sealed partial class ScsKiller
     /// <summary>The game page's note for a risk or offline session the proxy admitted none of, from its refusal during the session (null:
     /// it wrote none). An unstamped ini's refusal is the store's game reaching its first device before <see cref="BindRisk"/>
     /// signed it: the proxy decides once per process.</summary>
-    internal static string SessionNote(string? refused, string neverSaw = NeverSawNote) => refused switch
+    internal static string SessionNote(string? refused, string neverSaw = NeverSawNote, string? noDevice = null) => refused switch
     {
         null => neverSaw,
+        _ when NoDevice11(refused) => NoDevice11Note,
+        _ when NoDevice(refused) => noDevice ?? neverSaw,
         _ when Unstamped(refused) || refused == "scskiller.ini changed while deciding" => UnboundSessionNote,
         _ => NotRecordedNote(refused),
     };
@@ -130,7 +132,7 @@ public sealed partial class ScsKiller
     /// <summary><see cref="OfflineEac.Of"/>, never for a game added by hand before its folder is confirmed (as the recorder), nor
     /// where this OS has no offline sessions (<see cref="OfflineUnavailable"/>); an unsupported engine only while Settings.RecordAntiCheatGames is on.</summary>
     OfflineEacGame? OfflineEntry(Game g, AntiCheat antiCheat, EngineInfo? engine) =>
-        OfflineUnavailable != null || Unconfirmed(g) || RecorderCrashes(g) ? null : OfflineEac.Of(g, antiCheat, engine, unsupported: Settings.RecordAntiCheatGames);
+        OfflineUnavailable != null || Unconfirmed(g) || RecorderCrashes(g) || GameFiles.WeGameId(g) != null ? null : OfflineEac.Of(g, antiCheat, engine, unsupported: Settings.RecordAntiCheatGames);
 
     /// <summary>Why this OS has no offline sessions: they start the game suspended (<see cref="StartAttested"/>), which only
     /// Windows does. Null where it has them.</summary>
@@ -243,7 +245,7 @@ public sealed partial class ScsKiller
     /// <summary>The game may record every launch now: a session is offered for it (RiskEligible, which includes
     /// Settings.RecordAntiCheatGames) and both its switches are on.</summary>
     bool AlwaysAllowed(string gameId) =>
-        RecordsAntiCheat && Games.FirstOrDefault(s => s.Game.Id == gameId) is { RiskEligible: true } st && !IntelLocalDriver(st.Game) && Store.LoadGame(gameId) is { OfflineRecord: true, AlwaysRecord: true };
+        RecordsAntiCheat && Games.FirstOrDefault(s => s.Game.Id == gameId) is { RiskEligible: true } st && !IntelLocalDriver(st.Game) && GameFiles.WeGameId(st.Game) == null && Store.LoadGame(gameId) is { OfflineRecord: true, AlwaysRecord: true };
 
     /// <summary>Calls off the Always record sessions still waiting for a launch (null: every game's): each takes its files out
     /// as a session's end does. One already bound runs to its end. True when one was waiting.</summary>
@@ -268,7 +270,7 @@ public sealed partial class ScsKiller
     };
 
     /// <summary><see cref="AntiCheatName(AntiCheat)"/>; "VAC" for a game whose only anti-cheat is VAC.</summary>
-    public static string AntiCheatName(GameState s) => AntiCheatName(s.AntiCheat, s.Vac);
+    public static string AntiCheatName(GameState s) => AntiCheatName(s.AntiCheatUnfinished ? AntiCheat.None : s.AntiCheat, s.Vac);
 
     static string AntiCheatName(AntiCheat a, bool vac) => a == AntiCheat.None && vac ? "VAC" : AntiCheatName(a);
 
@@ -281,7 +283,10 @@ public sealed partial class ScsKiller
     internal Func<Game, bool> StoreLaunches { get; set; } = StoreLaunch.Supported;
 
     bool RiskOfferedButLaunch(Game g, EngineInfo? engine, bool anyAntiCheat) =>
-        RecordsAntiCheat && anyAntiCheat && !Unconfirmed(g) && !RecorderCrashes(g)
+        RecordsAntiCheat && anyAntiCheat && RiskFits(g, engine);
+
+    /// <summary>A risk session could record the game, the setting and its launch aside.</summary>
+    bool RiskFits(Game g, EngineInfo? engine) => !Unconfirmed(g) && !RecorderCrashes(g) && GameFiles.WeGameId(g) == null   // a WeGame game records only when confirmed clean, never at your own risk
         && engine is { } e && RecordsApi(g, e) && GameVerdicts.Current.Unsupported(g, engine) == null;
 
     /// <summary>A recorder can record the game's API on this OS and GPU: DirectX 12, DirectX 11 where its recording records
@@ -335,10 +340,15 @@ public sealed partial class ScsKiller
         CleanOfflineSessions();
     }
 
-    public Task<AntiCheat> CheckAntiCheatAsync(string gameId)
+    public Task<AntiCheatCheck> CheckAntiCheatAsync(string gameId)
     {
         var g = Find(gameId).Game;
-        return Task.Run(() => GameFiles.DetectAntiCheat(g));
+        return Task.Run(() =>
+        {
+            var late = false;
+            var found = GameFiles.DetectAntiCheat(g, late: () => late = true);
+            return new AntiCheatCheck(found, late);
+        });
     }
 
     public Task StartRiskSession(string gameId, bool confirmed, AntiCheat shown)
@@ -385,7 +395,7 @@ public sealed partial class ScsKiller
                 if (RiskUnavailable is { } unavailable) return unavailable;
                 if (_removedFromAll) return RemovedFromAllNote;
                 if (!Settings.RecordAntiCheatGames) return "allow recording in games with anti-cheat in Settings first";
-                if (!s.RiskEligible) return "recording while you play isn't available for this game";
+                if (!s.RiskEligible || GameFiles.WeGameId(g) != null) return "recording while you play isn't available for this game";   // fresh: rail_files may be new since the state
                 if (vulkan && key == null) return VulkanRecorderMissing;   // no layer key: the layer's route is Steam's there
                 if (dll == Dll12 && s.StreamlineFirst) return SkipStreamline;   // a session places no preloader beside anti-cheat
                 if (!rec.OfflineRecord) return "turn on Record while I play for this game first";
@@ -401,7 +411,9 @@ public sealed partial class ScsKiller
                 if (vulkan && VulkanBlocked(g, key!, VulkanManifest(key!)) is { } blocked) return blocked;
                 if (stamp == null) return "its exe can't be read";
                 // fresh, not the scan's: what the confirmation named is what is there
-                (found, vac) = (GameFiles.DetectAntiCheat(g), VacCheck(g));
+                var late = false;
+                (found, vac) = (GameFiles.DetectAntiCheat(g, late: () => late = true), VacCheck(g));
+                if (late) return "its anti-cheat check didn't finish";   // unknown: no session, Always record stays on and tries again
                 if (found != shown)
                 {
                     changed = true;
@@ -447,7 +459,7 @@ public sealed partial class ScsKiller
                     if (VulkanInboxDir(g) is { } inbox && !now.VulkanInboxes.Contains(inbox, StringComparer.OrdinalIgnoreCase)) now.VulkanInboxes.Add(inbox);   // imported after Steam replaces the exe too
                 }
                 now.RecorderFiles = new() { [dll] = manifest != null ? Sha256(VulkanLayerSource!) : ProxySha(dll)! };
-                SetIni(Store, dir, _ => new IniOwner(dir, Hex(ini), Install: g.InstallDir));
+                SetIni(Store, dir, _ => new IniOwner(dir, Hex(ini), Install: g.InstallDir, Wrote: Hex(ini)));
                 also?.Invoke(now);
                 Store.SaveGame(gameId, now);
                 // the Linux layer reads it as a Linux path, the proxy under Wine through its drives
@@ -457,7 +469,7 @@ public sealed partial class ScsKiller
                 if (manifest != null)
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(manifest)!);
-                    Place(manifest, Text(VulkanLayer.Manifest(key!, Path.Combine(dir, dll))), replace: true);
+                    Place(manifest, Text(VulkanManifestText(g, key!, Path.Combine(dir, dll))), replace: true);
                     VulkanLayer.Register(manifest, g);
                 }
                 Place(Path.Combine(dir, "scskiller.ini"), Text(ini));
@@ -495,7 +507,7 @@ public sealed partial class ScsKiller
             catch (Exception e)
             {
                 _offline.TryRemove(gameId, out _);
-                CleanOffline(gameId);
+                CleanFailedStart(g);
                 throw new InvalidOperationException($"{g.Name}: the session didn't start: {e.Message}", e);
             }
             if (process != null)
@@ -563,12 +575,16 @@ public sealed partial class ScsKiller
                 if (_removedFromAll) throw new RemovedFromAllException();   // a binding that waited while the removal left the running game's unsigned ini
                 armed.ThrowIfCancellationRequested();
                 if (IntelLocalDriver(g)) throw new InvalidOperationException(SkipIntelDriver);
+                if (GameFiles.WeGameId(g) != null) throw new InvalidOperationException("recording while you play isn't available for this game");
                 if (armed.CanBeCanceled)
                 {
                     // as a confirmed session's start checks it, now: the session may have waited through an update or a change
                     if (!AlwaysAllowed(g.Id)) throw new InvalidOperationException("Always record isn't available for this game now");
                     stamp = Stamp(g.ExePath) ?? throw new InvalidOperationException("its exe can't be read");
-                    if (GameFiles.DetectAntiCheat(g) is var found && found != confirmed)
+                    var late = false;
+                    if (GameFiles.DetectAntiCheat(g, late: () => late = true) is var found && late)
+                        throw new InvalidOperationException("its anti-cheat check didn't finish");   // unknown: Always record stays on, armed again
+                    if (found != confirmed)
                     {
                         var off = Store.LoadGame(g.Id);
                         off.AlwaysRecord = false;
@@ -600,8 +616,7 @@ public sealed partial class ScsKiller
             _sessionNotes.TryRemove(new KeyValuePair<string, string>(g.Id, LauncherSessionNote));
             _offline.TryRemove(g.Id, out _);
             process?.Dispose();
-            CleanOffline(g.Id);
-            Refresh(g);
+            CleanFailedStart(g);
             throw new InvalidOperationException($"{g.Name}: the session didn't start: {e.Message}", e);
         }
         _sessionNotes.TryRemove(new KeyValuePair<string, string>(g.Id, LauncherSessionNote));
@@ -727,6 +742,7 @@ public sealed partial class ScsKiller
             var addAppId = !File.Exists(appIdFile);   // else the user's own, with this id: left as it is
             var dll = RiskDll(s.Engine, Vendor.Caps);
             var neverSaw = OfflineNeverSaw(s.Engine, dll);
+            var noDevice = ApiKey(s.ApiDetected ?? s.Engine?.GraphicsApi) == "11+12" ? NeverSawDx11Note : NoDeviceNote;   // as detected, not as picked
             string[] placed = [.. WritesLedger ? new[] { LedgerStamp } : [], dll, "scskiller.ini", .. addAppId ? new[] { SteamAppIdFile } : []];
             var stamp = Stamp(g.ExePath);   // before the full check below
             string? Refusal()
@@ -786,7 +802,7 @@ public sealed partial class ScsKiller
                     // every hash final before its file exists: the cleanup deletes a placed name only while it holds these bytes (the
                     // ini by its folder's entry)
                     now.RecorderFiles = new() { [dll] = ProxySha(dll)! };
-                    SetIni(Store, dir, _ => new IniOwner(dir, Hex(ini), Install: g.InstallDir));
+                    SetIni(Store, dir, _ => new IniOwner(dir, Hex(ini), Install: g.InstallDir, Wrote: Hex(ini)));
                     if (addAppId) now.RecorderFiles[SteamAppIdFile] = Hex(entry!.AppId);
                     now.OfflineSession = session = session with { Pid = pid, Started = started };
                     Store.SaveGame(gameId, now);
@@ -807,12 +823,12 @@ public sealed partial class ScsKiller
             catch (Exception e)
             {
                 _offline.TryRemove(gameId, out _);
-                CleanOffline(gameId);
+                CleanFailedStart(g);
                 throw new InvalidOperationException($"{g.Name}: the offline session didn't start: {e.Message}", e);
             }
             RecorderLog($"{g.Name}: offline session started ({g.ExePath}, process {session.Pid}): only that process records");
             Refresh(g);
-            return Task.Run(() => EndOffline(g, process!, since, false, neverSaw));
+            return Task.Run(() => EndOffline(g, process!, since, false, neverSaw, noDevice: noDevice));
         }
     }
 
@@ -880,7 +896,8 @@ public sealed partial class ScsKiller
     /// ends with <see cref="SessionNote"/> when the proxy admitted none of its processes since <paramref name="since"/>; a
     /// <paramref name="vulkan"/> session whose layer never loaded with why, where the game ran elevated or on DirectX.</summary>
     /// <param name="bound">the session as bound: elsewhere than on Windows its process is waited for by its pid and start time</param>
-    async Task EndOffline(Game g, SafeProcessHandle process, DateTime since, bool risk, string neverSaw, bool vulkan = false, bool elevated = false, OfflineSession? bound = null)
+    async Task EndOffline(Game g, SafeProcessHandle process, DateTime since, bool risk, string neverSaw, bool vulkan = false, bool elevated = false, OfflineSession? bound = null,
+        string? noDevice = null)
     {
         try
         {
@@ -910,8 +927,8 @@ public sealed partial class ScsKiller
             var state = vulkan && why == null && !elevated ? Games.FirstOrDefault(s => s.Game.Id == g.Id) : null;
             var ran = state == null ? null : RanApi(g, state.Engine, since);
             _sessionNotes[g.Id] = why == null && elevated ? ElevatedSessionNote
-                : ran != null && ApiKey(ran) != "vk" ? RanOnNote(ran, state!.ApiOverride == DxApi.Vulkan) : SessionNote(why, neverSaw);
-            RecorderLog($"{g.Name}: the {kind} recorded nothing: {(why != null ? "the recorder refused it: " + why : "the recorder never loaded, no scskiller.log written during the run")}"
+                : ran != null && ApiKey(ran) != "vk" ? RanOnNote(ran, state!.ApiOverride == DxApi.Vulkan) : SessionNote(why, neverSaw, noDevice);
+            RecorderLog($"{g.Name}: the {kind} recorded nothing: {(why != null ? RefusedCause(why) : "the recorder never loaded, no scskiller.log written during the run")}"
                 + (why == null && elevated ? ", the game ran as administrator" : ran != null ? $", the game ran on {ApiName(ran)}" : ""));
         }
         else if (elevated) _sessionNotes.TryRemove(new KeyValuePair<string, string>(g.Id, ElevatedSessionNote));   // it loaded all the same
@@ -924,10 +941,11 @@ public sealed partial class ScsKiller
         if (_offlineLeft is { } known) return known;
         var found = new ConcurrentDictionary<string, bool>();
         var games = Path.Combine(Store.DataDir, "games");
+        var scope = IdScope();
         foreach (var d in Directory.Exists(games) ? Directory.GetDirectories(games) : [])
             try
             {
-                if (Store.LoadGame(AppStore.GameId(Path.GetFileName(d))).OfflineSession is { } s) found[s.GameId] = true;
+                if (scope(AppStore.GameId(Path.GetFileName(d))) && Store.LoadGame(AppStore.GameId(Path.GetFileName(d))).OfflineSession is { } s) found[s.GameId] = true;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or ArgumentException) { }
         return Interlocked.CompareExchange(ref _offlineLeft, found, null) ?? found;
@@ -942,12 +960,20 @@ public sealed partial class ScsKiller
             catch (Exception e) { RecorderLog($"{id}: cleaning up after an offline session failed: {e.Message}"); }
     }
 
+    /// <summary><see cref="CleanOffline"/> after a session failed to start. The refresh runs even when the cleanup throws: files
+    /// left must show as a session, never as the start button.</summary>
+    void CleanFailedStart(Game g)
+    {
+        try { CleanOffline(g.Id); }
+        finally { Refresh(g); }
+    }
+
     /// <summary><see cref="CleanOfflineSession"/> for a session not running in this app. True when nothing of it is left.</summary>
     bool CleanOffline(string id)
     {
         if (OfflineLive(id)) return false;
         bool done;
-        lock (_recorderLock) done = !OfflineLive(id) && CleanOfflineSession(Store, id, OfflineRuns, RecorderLog) == null;
+        lock (_recorderLock) done = !OfflineLive(id) && CleanOfflineSession(Store, id, OfflineRuns, RecorderLog, Only != null) == null;
         if (done) _offlineLeft?.TryRemove(id, out _);
         if (done && Games.FirstOrDefault(s => s.Game.Id == id) is { } state)
         {
@@ -966,10 +992,10 @@ public sealed partial class ScsKiller
     /// before it), once its recording is merged and its report kept, which waits while another process <paramref name="runs"/>
     /// from the folder; its copy's marker (<see cref="LedgerStamp"/>) last. The session stays recorded, and its logon entry,
     /// until nothing of it is left. Every step can run again. Null when nothing of it is left, else what is.</summary>
-    internal static List<string>? CleanOfflineSession(AppStore store, string id, Func<OfflineSession, bool> runs, Action<string> log)
+    internal static List<string>? CleanOfflineSession(AppStore store, string id, Func<OfflineSession, bool> runs, Action<string> log, bool justThis = false)
     {
         using var gate = new AppStore.PathGate(Path.Combine(store.GameDir(id), "offline"));
-        MigrateInis(store);   // this helper may run before the app's first start does it
+        MigrateInis(store, scope: justThis ? x => x == id : null);   // this helper may run before the app's first start does it
         var rec = store.LoadGame(id);
         if (rec.OfflineSession is not { } s)
         {
@@ -1090,8 +1116,9 @@ public sealed partial class ScsKiller
             try
             {
                 var recording = Path.Combine(store.GameDir(id), "recording.db");
-                using (Recordings.Lock(recording)) Recordings.Merge(recording, inbox.FullName, null);
-                rec.RecordingImportedAt = DateTimeOffset.Now;
+                int pipelines;
+                using (Recordings.Lock(recording)) Recordings.Merge(recording, inbox.FullName, null, out _, out pipelines);
+                (rec.RecordingImportedAt, rec.RecordedPipelines) = (DateTimeOffset.Now, pipelines);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
             {

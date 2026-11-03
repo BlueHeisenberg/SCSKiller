@@ -13,7 +13,7 @@
             <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
         </Style>
         <Style Selector="SelectableTextBlock.Caption">
-            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontSize" Value="{DynamicResource TextSize.12}" />
             <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
         </Style>
         <!-- a component's name on the left, its licence on the right -->
@@ -26,7 +26,7 @@
         </Style>
         <Style Selector="HyperlinkButton.Link">
             <Setter Property="Padding" Value="0" />
-            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontSize" Value="{DynamicResource TextSize.12}" />
         </Style>
     </UserControl.Styles>
 
@@ -38,13 +38,13 @@
                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
                     <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Bolt}" FontSize="36" VerticalAlignment="Top" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
                     <StackPanel Grid.Column="1" Spacing="4">
-                        <TextBlock Text="SCSKiller" Classes="Section" FontSize="20" />
+                        <TextBlock Text="SCSKiller" Classes="Section" FontSize="{DynamicResource TextSize.20}" />
                         <TextBlock Text="Shader Compilation Stutter Killer" Classes="Secondary" />
-                        <SelectableTextBlock Text="{Binding Version}" Classes="Caption" />
-                        <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0" IsVisible="{Binding ShowsCheck}">
+                        <SelectableTextBlock Text="{Binding Version}" Classes="Caption" TextWrapping="Wrap" />
+                        <WrapPanel ItemSpacing="12" Margin="0,4,0,0" IsVisible="{Binding ShowsCheck}">
                             <Button Content="Check for updates" Click="OnCheckForUpdates" IsEnabled="{Binding CanCheck}" />
                             <TextBlock Text="{Binding UpdateNote}" Classes="Caption" VerticalAlignment="Center" TextWrapping="Wrap" />
-                        </StackPanel>
+                        </WrapPanel>
                         <TextBlock Text="{Binding UpdatesFrom}" Classes="Caption" Margin="0,4,0,0" TextWrapping="Wrap" IsVisible="{Binding UpdatedElsewhere}" />
                         <CheckBox IsChecked="{Binding InstallUpdatesAutomatically, Mode=TwoWay}" IsVisible="{Binding ShowsAutoInstall}"
                                   AutomationProperties.Name="Install updates automatically">
@@ -55,10 +55,10 @@
                             </StackPanel>
                         </CheckBox>
                         <c:InfoBar IsVisible="{Binding HasUpdateProblem}" Message="{Binding UpdateProblem}" Severity="Warning" IsClosable="False" />
-                        <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0" IsVisible="{Binding ShowsSource}">
+                        <WrapPanel ItemSpacing="12" Margin="0,4,0,0" IsVisible="{Binding ShowsSource}">
                             <Button Content="Download source code" Click="OnSource" IsEnabled="{Binding SourceIdle}" />
                             <SelectableTextBlock Text="{Binding SourceStatus}" Classes="Caption" VerticalAlignment="Center" TextWrapping="Wrap" />
-                        </StackPanel>
+                        </WrapPanel>
                         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap"
                                    Text="Compiles your games' shaders into the graphics driver's cache ahead of time, so they don't stutter the first time you play them." />
                         <TextBlock Margin="0,8,0,0" Classes="Secondary" TextWrapping="Wrap">
@@ -102,7 +102,7 @@
 
             <Expander x:Name="TrademarksBox" Header="Trademarks" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                 <!-- FontSize first: the app sets every TextBlock's line height when its font size changes -->
-                <SelectableTextBlock Text="{Binding Trademarks}" Classes="Secondary" TextWrapping="Wrap" FontSize="14" LineHeight="22" />
+                <SelectableTextBlock Text="{Binding Trademarks}" Classes="Secondary Loose" TextWrapping="Wrap" FontSize="{DynamicResource TextSize.14}" LineHeight="{DynamicResource TextFit.22}" />
             </Expander>
 
             <StackPanel Spacing="8">
@@ -120,7 +120,7 @@
                             <Expander Classes="Notice" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                                 <Expander.Header>
                                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,8">
-                                        <TextBlock Text="{Binding Header}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding Header}" TextWrapping="Wrap" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="1" Text="{Binding LicenceName}" Classes="Caption" VerticalAlignment="Center" />
                                     </Grid>
                                 </Expander.Header>
@@ -128,7 +128,7 @@
                                     <SelectableTextBlock Text="{Binding Detail}" Classes="Secondary" TextWrapping="Wrap" />
                                     <SelectableTextBlock Text="{Binding Project}" Classes="Caption" />
                                     <SelectableTextBlock Text="{Binding Note}" Classes="Secondary" TextWrapping="Wrap" IsVisible="{Binding HasNote}" />
-                                    <SelectableTextBlock Text="{Binding Body}" FontFamily="Cascadia Mono, Consolas, DejaVu Sans Mono" FontSize="12" TextWrapping="Wrap" />
+                                    <SelectableTextBlock Text="{Binding Body}" Classes="Natural" FontFamily="Cascadia Mono, Consolas, DejaVu Sans Mono" FontSize="{DynamicResource TextSize.12}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Expander>
                         </DataTemplate>

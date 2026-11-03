@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
 using Path = Avalonia.Controls.Shapes.Path;
 using Avalonia.Layout;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using SCSKiller.Core;
 using SCSKiller.Core.App;
@@ -35,7 +36,7 @@ public sealed class FrameGraph : UserControl
 
     readonly Path loadingBand = new() { Opacity = 0.45 }, compilingBand = new() { Opacity = 0.3 }, otherDots = new(), shaderDots = new();
     readonly Line line50 = new() { StrokeThickness = 1, StrokeDashArray = [4, 3] };
-    readonly TextBlock label50 = new() { Text = "50 ms", FontSize = 12, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
+    readonly TextBlock label50 = new() { Text = "50 ms", [!TextBlock.FontSizeProperty] = new DynamicResourceExtension("TextSize.12"), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
     readonly Polyline times = new() { StrokeThickness = 1 };
     readonly Canvas tips = new();
     readonly Panel area;
@@ -51,6 +52,7 @@ public sealed class FrameGraph : UserControl
         Res(shaderDots, Shape.FillProperty, "WarnBrush");
         area = new Panel { Background = Brushes.Transparent, Children = { loadingBand, compilingBand, line50, label50, times, otherDots, shaderDots, tips } };
         area.SizeChanged += (_, _) => Draw();
+        label50.PropertyChanged += (_, e) => { if (e.Property == TextBlock.FontSizeProperty) { drawn = default; Draw(); } };
         Content = area;
     }
 
@@ -91,7 +93,7 @@ public sealed class FrameGraph : UserControl
         for (int c = 0; c < cols; c++) points.Add(new Point((c + 0.5) * w / cols, Y(col[c])));
         times.Points = points;
         (line50.StartPoint, line50.EndPoint) = (new Point(0, Y(50)), new Point(w, Y(50)));
-        label50.Margin = new Thickness(0, Y(50) - 16, 2, 0);
+        label50.Margin = new Thickness(0, Y(50) - Math.Round(label50.FontSize * 4 / 3), 2, 0);   // one line above the dashed line
 
         static void Band(GeometryGroup g, double left, double right, double h, double w)
         {

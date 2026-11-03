@@ -36,7 +36,7 @@ public static partial class GameFiles
             .Select(f => new FileInfo(f))
             .GroupBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
             .Select(same => same.MinBy(f => Path.GetRelativePath(installDir, f.FullName).Count(c => c == Path.DirectorySeparatorChar))!)
-            .OrderByDescending(f => IsShipping(f.FullName) && !NotTheGameBuild.Any(n => BuildName(f.FullName).Contains(n, StringComparison.OrdinalIgnoreCase)))
+            .OrderByDescending(f => IsGameShipping(f.FullName))
             .ThenByDescending(f => f.Length).ToList();
         if (unreal.Count > 0 && UnrealExe(installDir, unreal) is { } built) return built;
         if (BattlEyeTarget(installDir) is { } be) return be;
@@ -204,6 +204,9 @@ public static partial class GameFiles
     // Shipping builds that ship beside a game and aren't it
     static readonly string[] NotTheGameBuild = ["Server", "Editor", "Tool", "Benchmark", "CrashReport"];
 
+    /// <summary>An Unreal game's own build: <see cref="IsShipping"/>, its project no server, editor, tool, benchmark or crash reporter build.</summary>
+    public static bool IsGameShipping(string exe) => IsShipping(exe) && !NotTheGameBuild.Any(n => BuildName(exe).Contains(n, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>&lt;Name&gt;-&lt;Platform&gt;-Shipping.exe in a Binaries\&lt;Platform&gt; folder.</summary>
     public static bool IsShipping(string exe) =>
         Path.GetDirectoryName(exe) is { } dir && string.Equals(Path.GetFileName(Path.GetDirectoryName(dir)), "Binaries", StringComparison.OrdinalIgnoreCase)
@@ -364,19 +367,26 @@ public static partial class GameFiles
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException) { return null; }
     }
 
-    /// <summary>Streamline's interposer is beside the exe and nothing the exe imports statically, itself or through the DLLs of
-    /// its folder, imports d3d12.dll: the first d3d12.dll comes with Streamline's plugins. NVIDIA's downloaded plugins load
-    /// System32's, so the recorder never loads. An import found in neither the exe's folder nor <paramref name="system"/>
-    /// (<see cref="SystemFolder"/>), API sets aside, is resolved somewhere this can't follow: null, as for a module that can't
-    /// be read. A DLL of the exe's folder that forwards an export to d3d12 counts as importing it. <paramref name="files"/>
-    /// gets the files the answer depends on: sl.interposer.dll and each import's path in the exe's folder, found or not, and
-    /// for a null answer the system folder (<see cref="Stamp"/>).</summary>
+    /// <summary>Streamline's interposer is beside the exe, or in its Streamline\ folder (Path of Exile 2), and nothing the exe
+    /// imports statically, itself or through the DLLs of its folder, imports d3d12.dll: the first d3d12.dll comes with
+    /// Streamline. NVIDIA's downloaded plugins load System32's, so the recorder never loads. An import found in neither the
+    /// exe's folder nor <paramref name="system"/> (<see cref="SystemFolder"/>), API sets aside, is resolved somewhere this
+    /// can't follow: null, as for a module that can't be read. A DLL of the exe's folder that forwards an export to d3d12
+    /// counts as importing it. <paramref name="files"/> gets the files the answer depends on: sl.interposer.dll in both
+    /// places, each import's path in the exe's folder, found or not, and for a null answer the system folder
+    /// (<see cref="Stamp"/>).</summary>
     internal static bool? StreamlineFirst(string exe, string? system, List<string> files)
     {
         var dir = Path.GetDirectoryName(exe)!;
         var interposer = Find(dir, "sl.interposer.dll");
         files.Add(interposer);
-        if (!File.Exists(interposer)) return false;
+        if (!File.Exists(interposer))
+        {
+            if (!OperatingSystem.IsWindows()) return false;
+            interposer = Find(dir, Path.Combine("Streamline", "sl.interposer.dll"));
+            files.Add(interposer);
+            if (!File.Exists(interposer)) return false;
+        }
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var todo = new Stack<(string Path, bool Local)>([(exe, true)]);
         try
@@ -405,9 +415,43 @@ public static partial class GameFiles
         return true;
     }
 
+    /// <summary>The exe, then each DLL of its folder that its static imports reach, directly or through each other, in the
+    /// order reached, with the static imports no module before it has (file names). A name the folder holds stays in: it may
+    /// be the preloader put there under it.</summary>
+    internal static List<(string Module, List<string> Imports)> LocalImports(string exe)
+    {
+        var dir = Path.GetDirectoryName(exe)!;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var walked = new List<(string, List<string>)>();
+        var todo = new Queue<string>([exe]);
+        while (todo.TryDequeue(out var module))
+        {
+            using var pe = PeFile.Open(module);
+            var found = new List<string>();
+            foreach (var dll in CarvedReader.PeImports(pe, delayed: false))
+            {
+                if (!seen.Add(dll)) continue;
+                var local = Find(dir, dll);
+                // the loader never takes a KnownDLL or an API set from the folder: a copy there loads nothing
+                if (File.Exists(local) && !App.PreloadPe.Known(dll) && !dll.StartsWith("api-ms-", StringComparison.OrdinalIgnoreCase)
+                    && !dll.StartsWith("ext-ms-", StringComparison.OrdinalIgnoreCase)) todo.Enqueue(local);
+                found.Add(dll);
+            }
+            walked.Add((Path.GetFileName(module), found));
+        }
+        return walked;
+    }
+
     /// <summary>The folder of the system DLLs the game's exe loads: System32, or under Proton its prefix's system32; null when
     /// that isn't known (a game Steam doesn't run).</summary>
     internal static partial string? SystemFolder(Game game);
+
+    /// <summary>The Wine prefix the game runs in: a Steam game's or non-Steam game's Proton prefix, a launcher's (Heroic,
+    /// Lutris, Faugus); null on Windows or when none is known.</summary>
+    internal static partial string? PrefixOf(Game game);
+
+    /// <summary>How a game added by hand runs (<see cref="LauncherPrefix.Added"/>); null on Windows.</summary>
+    internal static partial LauncherPrefix? AddedPrefix(Game game, out string? why);
 
     /// <summary>SHA-256 of each AMD AGS build whose version is known to fit the recorder's AGS wrapper (its exports are still
     /// matched): Cyberpunk 2077's AGS 5.4.</summary>
@@ -546,6 +590,53 @@ public static partial class GameFiles
         return id;
     }
 
+    /// <summary>The folder as named (<see cref="DirKey"/>), then as it is on disk (<see cref="FinalPath(string)"/>) when a link,
+    /// junction, 8.3 name or \\?\ prefix makes that another path.</summary>
+    internal static string[] Spellings(string dir)
+    {
+        var key = DirKey(dir);
+        return key.Length > 0 && FinalPath(key) is { } f && DirKey(f) is var real && !real.Equals(key, Names) ? [key, real] : [key];
+    }
+
+    /// <summary>The folder and each folder above it, by every name links give them: as named, as on disk
+    /// (<see cref="Spellings"/>) and, for a junction or symlink, the folder it points to, each of those climbed too (a link
+    /// into another game's subfolder has that game's folders above it). Self: a name of <paramref name="dir"/> itself. A drive's
+    /// root isn't given (a share's root is); a store's folder of games (<see cref="ManualSource.IsLibrary"/>), by any of its
+    /// names, isn't given and ends that climb.</summary>
+    internal static IEnumerable<(string Dir, bool Self)> LinkedAncestors(string dir)
+    {
+        var names = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        // first the libraries' names, each climb ending at one (a library reached by another name first may be climbed past)
+        var libraries = new HashSet<string>(names);
+        bool Library(string[] n) => n.Any(libraries.Contains);
+        Climb(dir, n =>
+        {
+            if (!n.Any(ManualSource.IsLibrary)) return Library(n);
+            libraries.UnionWith(n);
+            return true;
+        });
+        // \\?\C:\ is a drive's root too, \\server\share isn't
+        static bool DriveRoot(string n) => Path.GetPathRoot(n) == n && (!n.StartsWith(@"\\", StringComparison.Ordinal) || n.TrimEnd('\\').EndsWith(':'));
+        return Climb(dir, Library).Where(f => !Library(f.Names) && !f.Names.Any(DriveRoot)).Select(f => (f.Names[0], f.Self));
+
+        List<(string[] Names, bool Self)> Climb(string from, Func<string[], bool> end)
+        {
+            var found = new List<(string[] Names, bool Self)>();
+            var queue = new Queue<(string Dir, bool Self)>([(DirKey(from), true)]);
+            var seen = new HashSet<string>(names);
+            while (queue.TryDequeue(out var item))
+            {
+                var (d, self) = item;
+                if (!seen.Add(d)) continue;
+                string[] all = new DirectoryInfo(d).LinkTarget is { } target ? [.. Spellings(d), DirKey(Path.GetFullPath(target, Path.GetDirectoryName(d) ?? d))] : Spellings(d);
+                foreach (var other in all.Skip(1)) queue.Enqueue((other, self));
+                found.Add((all, self));
+                if (!end(all) && Path.GetDirectoryName(d) is { } up) queue.Enqueue((up, false));
+            }
+            return found;
+        }
+    }
+
     /// <summary>The folder's own name, also from a path ending in a separator (Ubisoft Connect's end in "/").</summary>
     public static string FolderName(string dir) => Path.GetFileName(Path.TrimEndingDirectorySeparator(dir));
 
@@ -627,7 +718,8 @@ public static partial class GameFiles
         }
     }
 
-    static readonly string[] NotTheGame = ["redist", "directx", "crash", "unins", "setup", "vconsole"];   // vconsole2.exe: Source 2's developer console
+    static readonly string[] NotTheGame = ["redist", "directx", "crash", "unins", "setup", "vconsole",   // vconsole2.exe: Source 2's developer console
+        "WeGameLauncher", "rail_files"];   // the launcher and files WeGame installs in each of its games
 
     // the Epic Online Services installer is 64-bit and can be the largest exe in an Unreal game's Binaries\Win64
     static readonly string[] Helpers = ["EpicOnlineServices", "EOSBootstrapper", "EpicWebHelper", "CrashReport", "UnrealCEFSubProcess",
@@ -725,7 +817,7 @@ public static partial class GameFiles
     /// read where it is, and one outside is another folder's; one on the way from the install root to the exe is Other. <paramref name="quick"/>: the install root's and the exe
     /// folder's own entries only, for a recheck right after a full one. A game added by hand (<see cref="Store.Manual"/>), or to
     /// Steam as a non-Steam game (<see cref="SteamShortcuts"/>), also has
-    /// the entries of each folder above its install read, one level each, up to a drive root or a store's folder of games
+    /// the entries of each folder above its install read, by every name links give them (<see cref="LinkedAncestors"/>), one level each, up to a drive root or a store's folder of games
     /// (<see cref="ManualSource.IsLibrary"/>), not included: the folder the user confirmed, or the one found from the exe they
     /// picked, may be a subfolder of the game's. Battle.net titles are marked conservatively:
     /// Blizzard's Warden is server-side, not a file the install carries. HoYoPlay titles too: every HoYoverse game ships a kernel anti-cheat. So are the truck simulators on a PC with TruckersMP (<see cref="TruckersMpExes"/>), and anything under a "Riot Games" folder or listed by the Riot Client. The only anti-cheat detector: engine readers and
@@ -737,17 +829,47 @@ public static partial class GameFiles
     /// <paramref name="at"/>: given the path of the marker found; not called for a verdict no file gave (the game's store, a
     /// tree that can't be read whole, TruckersMP, a Riot Games path, a launch option).
     /// <paramref name="steamRoot"/>: Steam's folder (default: Steam's own).
-    /// <paramref name="late"/>: called when the time ran out, an Other that isn't a finding.
-    /// <paramref name="unreadable"/>: given the error when a read failed, also an Other that isn't a finding.</summary>
+    /// <paramref name="late"/>: called when the time ran out or a read failed, an Other that isn't a finding. A WeGame game
+    /// (<see cref="WeGameId"/>) is found only by a marker under its install folder; any other Other, and a clean walk unless its id is
+    /// confirmed clean (<see cref="GameVerdicts.NoAntiCheat"/>), is held: Other with <paramref name="late"/> called.
+    /// <paramref name="unreadable"/>: given the error when a read failed (after <paramref name="late"/>).</summary>
     public static AntiCheat DetectAntiCheat(Game game, bool quick = false, TimeSpan? budget = null, AntiCheat ignore = AntiCheat.None, Action<string>? at = null,
         string? steamRoot = null, Action? late = null, Action<Exception>? unreadable = null)
     {
+        if (WeGameId(game) is not { } wegame) return Walked(game, quick, budget, ignore, at, steamRoot, late, unreadable);
+        string? marker = null;
+        var wasLate = false;
+        string install;
+        try { install = Path.TrimEndingDirectorySeparator(Path.GetFullPath(game.InstallDir)); }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or IOException or System.Security.SecurityException)
+        {
+            late?.Invoke();
+            return AntiCheat.Other;
+        }
+        var named = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        void Own(string p)   // a marker above a hand-added folder, or beside an exe outside it, isn't the game's own
+        {
+            var full = Path.GetFullPath(p);
+            if (!full.Equals(install, named) && !full.StartsWith(install + Path.DirectorySeparatorChar, named)) return;
+            marker = p;
+            at?.Invoke(p);
+        }
+        var found = Walked(game, quick, budget, ignore, Own, steamRoot, () => { wasLate = true; late?.Invoke(); }, unreadable);
+        if (marker != null && found != AntiCheat.None || found == AntiCheat.None && GameVerdicts.Current.NoAntiCheat(wegame)) return found;
+        if (!wasLate) late?.Invoke();
+        return AntiCheat.Other;
+    }
+
+    /// <summary><see cref="DetectAntiCheat"/> before a WeGame game's hold.</summary>
+    static AntiCheat Walked(Game game, bool quick, TimeSpan? budget, AntiCheat ignore, Action<string>? at, string? steamRoot, Action? late, Action<Exception>? unreadable)
+    {
         AntiCheat Marker(string name) => GameFiles.Marker(name) is var kind && kind == ignore ? AntiCheat.None : kind;
+        void Unread(Exception e) { late?.Invoke(); unreadable?.Invoke(e); }
         if (game.Id.StartsWith("battlenet:", StringComparison.Ordinal) || game.Id.StartsWith("hoyoplay:", StringComparison.Ordinal)) return AntiCheat.Other;
         if (game.Id.StartsWith("riot:", StringComparison.Ordinal) || RiotGames(game.InstallDir) || RiotGames(game.ExePath)) return AntiCheat.Other;
         if (AntiCheatIds.Contains(game.Id, StringComparer.OrdinalIgnoreCase)) return AntiCheat.Other;
         // the same install listed under another id (added by hand, also through a junction): the Steam app whose folder it is counts too
-        if (!game.Id.StartsWith("steam:", StringComparison.Ordinal) && SteamAntiCheatApp(game, steamRoot)) return AntiCheat.Other;
+        if (!game.Id.StartsWith("steam:", StringComparison.Ordinal) && SteamAntiCheatApp(game, steamRoot, Unread)) return AntiCheat.Other;
         var install =Path.TrimEndingDirectorySeparator(Path.GetFullPath(game.InstallDir));
         var exeDir = Path.GetDirectoryName(Path.GetFullPath(game.ExePath))!;
         // off Windows a folder spelled otherwise is another folder, and one reached twice has one real path
@@ -817,9 +939,10 @@ public static partial class GameFiles
                     at?.Invoke(d);
                     return kind;
                 }
-            if (game.Store == Store.Manual || SteamShortcuts.Is(game.Id) || LutrisSource.Is(game.Id))
-                for (var d = Path.GetDirectoryName(install); d != null && Path.GetPathRoot(d) != d && !ManualSource.IsLibrary(d); d = Path.GetDirectoryName(d))
+            if (game.Store == Store.Manual || SteamShortcuts.Is(game.Id) || LutrisSource.Is(game.Id) || FaugusSource.Is(game.Id) || HeroicSource.Sideload(game.Id))
+                foreach (var (d, self) in LinkedAncestors(install))
                 {
+                    if (self) continue;   // the install's own entries: walked above
                     if (ignore != AntiCheat.Other && RootMarker(d) is { } marker)
                     {
                         at?.Invoke(marker);
@@ -829,12 +952,36 @@ public static partial class GameFiles
                 }
             if (Vac.LaunchExes(game, steamRoot).Any(e => Marker(e) != AntiCheat.None)) return AntiCheat.Other;
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        // a link target that isn't a path (LinkedAncestors) counts as unreadable too: never clean
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException or NotSupportedException)
         {
-            unreadable?.Invoke(e);
+            Unread(e);
             return AntiCheat.Other;
         }
         return AntiCheat.None;
+    }
+
+    /// <summary>The id of a game WeGame installed: its wegame: id, else wegame:&lt;game_id&gt; of the rail_files folder in its
+    /// folder or one above (a copy added by hand); "" when that id can't be read; null for any other game. Anti-Cheat Expert
+    /// can install outside the game's folder, so a clean walk of such a game proves nothing.</summary>
+    internal static string? WeGameId(Game game)
+    {
+        if (WeGameSource.Is(game.Id)) return game.Id;
+        if (game.InstallDir.Length == 0) return null;
+        var seen = false;
+        try
+        {
+            // as named and as it is on disk: a folder added through a junction into a WeGame game's
+            foreach (var start in new[] { Path.GetFullPath(game.InstallDir), Directory.Exists(game.InstallDir) ? FinalPath(game.InstallDir) : null })
+                for (var d = start; d != null; d = Path.GetDirectoryName(d))
+                    if (Directory.Exists(Path.Combine(d, "rail_files")))   // the folder, not the file: an identity it can't read still holds
+                    {
+                        seen = true;
+                        return WeGameSource.GameId(Path.Combine(d, WeGameSource.Identity)) is { } n ? WeGameSource.Prefix + n : "";
+                    }
+        }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException or System.Security.SecurityException) { return seen ? "" : null; }
+        return null;
     }
 
     /// <summary>The path has a "Riot Games" folder: the Riot Client installs every Riot title under one.</summary>
@@ -853,7 +1000,13 @@ public static partial class GameFiles
     public const int MaxEntries = 2_000_000;
 
     /// <summary>The time one detection takes at most (the slowest install measured: about 0.3 s cold).</summary>
+#if SCSK_TEST_HOOKS
+    // SCSKILLER_TEST_AC_BUDGET_MS: a shorter budget, so a test's walk runs out of time on a small tree
+    public static readonly TimeSpan Budget = int.TryParse(Environment.GetEnvironmentVariable("SCSKILLER_TEST_AC_BUDGET_MS"), out var ms) && ms > 0
+        ? TimeSpan.FromMilliseconds(ms) : TimeSpan.FromSeconds(30);
+#else
     public static readonly TimeSpan Budget = TimeSpan.FromSeconds(30);
+#endif
 
     /// <summary>Euro Truck Simulator 2 and American Truck Simulator. TruckersMP's launcher injects its client (core_ets2mp.dll,
     /// core_atsmp.dll) from its own folder, so nothing of it is in the game's; with TruckersMP anywhere on the PC (<see cref="TruckersMp"/>)
@@ -871,9 +1024,11 @@ public static partial class GameFiles
 
     /// <summary>The game's folder or exe, as given or as it is on disk, lies in the install folder, as named or as it is on disk,
     /// of a Steam app on <see cref="AntiCheatIds"/>: in a library Steam lists or the one the game's path is in. Such an app's
-    /// manifest that can't be read counts for its library's whole steamapps\common, each folder in it as on disk too.</summary>
-    static bool SteamAntiCheatApp(Game g, string? steamRoot)
+    /// manifest that can't be read counts for its library's whole steamapps\common, each folder in it as on disk too, as unknown
+    /// (<paramref name="unreadable"/>) unless another manifest names the game.</summary>
+    static bool SteamAntiCheatApp(Game g, string? steamRoot, Action<Exception> unreadable)
     {
+        Exception? unread = null;
         var names = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         var paths = new[] { g.InstallDir, g.ExePath }.SelectMany(p => new[] { Path.GetFullPath(p), FinalPath(p) }).OfType<string>().ToList();
         var libraries = paths.Select(p => p.IndexOf(SteamSource.CommonPart, names) is var at and >= 0 ? p[..at] : null).OfType<string>().ToList();
@@ -894,13 +1049,14 @@ public static partial class GameFiles
                 catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { continue; }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                 {
-                    if (Holds(common) || Holds(FinalPath(common)) || Folders(common).Any(f => Holds(FinalPath(f)))) return true;
+                    if (Holds(common) || Holds(FinalPath(common)) || Folders(common).Any(f => Holds(FinalPath(f)))) unread ??= e;
                     continue;
                 }
                 var root = string.IsNullOrEmpty(dir) ? common : Path.Combine(common, dir);
                 if (Holds(root) || Holds(FinalPath(root))) return true;
             }
-        return false;
+        if (unread != null) unreadable(unread);
+        return unread != null;
     }
 
     /// <summary>A TruckersMP folder (any leftover counts) or an installed program named like it.</summary>

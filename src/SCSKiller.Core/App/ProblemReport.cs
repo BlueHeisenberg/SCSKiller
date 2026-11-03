@@ -17,7 +17,8 @@ public sealed record SentProblem(string Id, string Game, DateTimeOffset At)
 /// no device, no account: the body is the user's message and that text, nothing else.</summary>
 public static class ProblemReport
 {
-    public const int MaxLogLines = 50, MaxLineChars = 300, MaxMessageChars = 4000, MaxHitches = 20, MaxTraversalChars = 700;
+    public const int MaxLogLines = 50, MaxLineChars = 300, MaxMessageChars = 4000, MaxHitches = 20, MaxTraversalChars = 700,
+        MaxWarmLines = 80, MaxWarmBytes = 10 << 10;
 
     /// <summary>Masks what could name the user or the PC: the profile folder (~), the Windows user name, the computer
     /// name, e-mail addresses and access tokens.</summary>
@@ -42,9 +43,11 @@ public static class ProblemReport
     }
 
     /// <summary>The report as shown and sent. <paramref name="system"/>: <see cref="CompatReport.SystemLine"/>.
-    /// <paramref name="log"/> null leaves the log section out, <paramref name="traversal"/> null or empty the Traversal one.</summary>
+    /// <paramref name="log"/> null leaves the log section out, <paramref name="traversal"/> null or empty the Traversal one,
+    /// <paramref name="warm"/> null or without lines the failed warm's.</summary>
     public static string Build(string appVersion, string game, string store, string? vendor, string? gpu, string? driver, string system,
-        IEnumerable<(string Label, string Value)> page, IEnumerable<string>? log, Masker mask, IReadOnlyList<string>? traversal = null)
+        IEnumerable<(string Label, string Value)> page, IEnumerable<string>? log, Masker mask, IReadOnlyList<string>? traversal = null,
+        (DateTime At, IReadOnlyList<string> Lines)? warm = null)
     {
         var b = new System.Text.StringBuilder();
         b.AppendLine($"SCSKiller {appVersion}");
@@ -62,11 +65,16 @@ public static class ProblemReport
             var any = false;
             foreach (var line in log)
             {
-                var masked = mask.Mask(line);   // before the cut, which could split what the mask matches
-                b.AppendLine(masked.Length > MaxLineChars ? masked[..MaxLineChars] + "…" : masked);
+                Line(line);
                 any = true;
             }
             if (!any) b.AppendLine("(none)");
+        }
+        if (warm is { Lines.Count: > 0 } w)
+        {
+            b.AppendLine();
+            b.AppendLine($"warm-failed.log, the last failed compile ({w.At:yyyy-MM-dd HH:mm:ss}Z), its last lines:");
+            foreach (var line in w.Lines) Line(line);
         }
         if (traversal is { Count: > 0 })
         {
@@ -79,6 +87,12 @@ public static class ProblemReport
             }
         }
         return mask.Mask(b.ToString().TrimEnd());
+
+        void Line(string line)
+        {
+            var masked = mask.Mask(line);   // before the cut, which could split what the mask matches
+            b.AppendLine(masked.Length > MaxLineChars ? masked[..MaxLineChars] + "…" : masked);
+        }
     }
 
     /// <summary>From the last session of <paramref name="scskillerLog"/> with "traversal:" lines: the startup line, the last
@@ -123,6 +137,26 @@ public static class ProblemReport
                     if (kept.Count > MaxLogLines) kept.Dequeue();
                 }
         return [.. kept];
+    }
+
+    /// <summary>When <paramref name="path"/> was written and its last <see cref="MaxWarmLines"/> lines within its last
+    /// <see cref="MaxWarmBytes"/>, as <see cref="LogLines"/> keeps them; no lines when there is no such file.</summary>
+    public static (DateTime At, IReadOnlyList<string> Lines) TailLines(string path)
+    {
+        try
+        {
+            using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var at = File.GetLastWriteTimeUtc(f.SafeFileHandle);
+            var tail = new byte[(int)Math.Min(f.Length, MaxWarmBytes)];
+            var from = f.Seek(-tail.Length, SeekOrigin.End);
+            f.ReadExactly(tail);
+            // whole lines only: a cut one (a cut character, half of what the mask matches) at either end is left out
+            var (skip, end) = (from == 0 ? 0 : Array.IndexOf(tail, (byte)'\n') + 1, Array.LastIndexOf(tail, (byte)'\n') + 1);
+            if (end <= skip) return (at, []);
+            return (at, [.. System.Text.Encoding.UTF8.GetString(tail, skip, end - skip)
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(l => !Auth.IsMatch(l)).TakeLast(MaxWarmLines)]);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return (default, []); }
     }
 
     static IEnumerable<string> Read(string path)

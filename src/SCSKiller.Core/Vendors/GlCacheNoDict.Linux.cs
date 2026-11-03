@@ -147,8 +147,10 @@ sealed class GlCacheNoDict(string gameDir, string appName)
         return bins;
     }
 
-    /// <summary>The cache keys of the warm's sets in the folder (<see cref="NvidiaLinuxAppCache"/>), as <see cref="Added"/> names them.</summary>
-    public IReadOnlySet<string> Keys() => Bins().Keys.Select(bin => (Live: Path.GetDirectoryName(bin)!, Set: Path.GetFileNameWithoutExtension(bin)))
+    /// <summary>The cache keys of the warm's sets in the folder (<see cref="NvidiaLinuxAppCache"/>), as <see cref="Added"/> names them;
+    /// with <paramref name="folders"/>, of those in these driver folders alone.</summary>
+    public IReadOnlySet<string> Keys(IReadOnlySet<string>? folders = null) => Bins().Keys.Select(bin => (Live: Path.GetDirectoryName(bin)!, Set: Path.GetFileNameWithoutExtension(bin)))
+        .Where(b => folders?.Contains(b.Live) != false)
         .Select(b => $"{Path.GetFileName(Path.TrimEndingDirectorySeparator(gameDir))}/{Path.GetFileName(Path.GetDirectoryName(b.Live))}/{Path.GetFileName(b.Live)}/{b.Set}")
         .ToHashSet(StringComparer.Ordinal);
 

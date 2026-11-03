@@ -24,6 +24,9 @@ public static partial class WhatsNew
     [GeneratedRegex(@"^\*\*([^*]+)\*\*\s*$")]
     private static partial Regex Subheading();
 
+    [GeneratedRegex(@"^On (?<os>Windows|Linux)(,| with )")]
+    private static partial Regex OnOs();
+
     [GeneratedRegex(@"\*\*(?<b>[^*]+)\*\*|`(?<c>[^`]+)`|\[(?<t>[^\]]+)\]\((?<u>https://[^)\s]+)\)")]
     private static partial Regex Inline();
 
@@ -51,7 +54,7 @@ public static partial class WhatsNew
     public static WhatsNewSection? Section(string changelog, string version)
     {
         var lines = new List<WhatsNewLine>();
-        var inside = false;
+        bool inside = false, otherOs = false;
         foreach (var raw in changelog.Split('\n'))
         {
             var line = raw.TrimEnd('\r');
@@ -59,11 +62,17 @@ public static partial class WhatsNew
             else if (!inside) continue;
             else if (line.StartsWith("### ")) lines.Add(new(line[4..].Trim(), Heading: true, Group: true));
             else if (Subheading().Match(line) is { Success: true } m) lines.Add(new(m.Groups[1].Value.Trim(), Heading: true));
-            else if (line.StartsWith("- ")) lines.Add(new(line[2..].Trim()));
-            else if (line.StartsWith("  ") && line.Trim().Length > 0 && lines.Count > 0 && !lines[^1].Heading) lines[^1] = new(lines[^1].Text + " " + line.Trim());
+            else if (line.StartsWith("- ")) { if (!(otherOs = OtherOs(line[2..]))) lines.Add(new(line[2..].Trim())); }
+            else if (line.StartsWith("  ") && line.Trim().Length > 0 && !otherOs && lines.Count > 0 && !lines[^1].Heading) lines[^1] = new(lines[^1].Text + " " + line.Trim());
         }
+        // a heading left without lines (all another OS's) goes too
+        for (var i = lines.Count - 1; i >= 0; i--)
+            if (lines[i].Heading && (i + 1 == lines.Count || lines[i + 1].Heading && (!lines[i].Group || lines[i + 1].Group))) lines.RemoveAt(i);
         return lines.Any(l => !l.Heading) ? new(version, lines.Select(l => l.Heading ? l : new(FirstSentence(l.Text))).ToList()) : null;
     }
+
+    /// <summary>A bullet for another OS than this one, which the CHANGELOG starts "On Linux, " or "On Windows with NVIDIA, ".</summary>
+    static bool OtherOs(string text) => OnOs().Match(text) is { Success: true } m && !OperatingSystem.IsOSPlatform(m.Groups["os"].Value);
 
     /// <summary>A bullet's first sentence: the dialog stays short, the release notes have the rest.</summary>
     static string FirstSentence(string s) => s.IndexOf(". ", StringComparison.Ordinal) is var end and > 0 ? s[..(end + 1)] : s;

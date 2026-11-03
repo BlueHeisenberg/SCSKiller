@@ -4,18 +4,20 @@ namespace SCSKiller.Core.Warming;
 
 /// <summary>Paths between Core's view and a warm's in a Wine prefix, through the prefix's dosdevices drives as they are when
 /// it's made. A Linux path takes the deepest drive whose root is one of its folders (by device and inode, the lowest
-/// letter on a tie), as Wine names it. Proton makes z: (the root) before it runs anything, so a prefix without one gets it.</summary>
+/// letter on a tie), as Wine names it. Proton makes z: (the root) before it runs anything, so a prefix without one gets it.
+/// Under Proton s: and t: never hold a path: Proton remakes or removes them from the environment at every start.</summary>
 sealed class ProtonPaths
 {
     readonly string _devices;
     readonly List<(char Letter, string Root, uint Major, uint Minor, ulong Inode)> _drives = [];
 
     /// <param name="prefix">the prefix folder (compatdata's pfx)</param>
-    public ProtonPaths(string prefix)
+    /// <param name="proton">the warm starts through Proton, not plain Wine</param>
+    public ProtonPaths(string prefix, bool proton = false)
     {
         _devices = Path.Combine(prefix, "dosdevices");
         for (var c = 'a'; c <= 'z'; c++)
-            if (Root(c) is { } root && Libc.Stat(root) is { } s) _drives.Add((c, root, s.DevMajor, s.DevMinor, s.Inode));
+            if (!(proton && c is ('s' or 't')) && Root(c) is { } root && Libc.Stat(root) is { } s) _drives.Add((c, root, s.DevMajor, s.DevMinor, s.Inode));
         if (!_drives.Any(d => d.Letter == 'z') && Libc.Stat("/") is { } r) _drives.Add(('z', "/", r.DevMajor, r.DevMinor, r.Inode));
     }
 

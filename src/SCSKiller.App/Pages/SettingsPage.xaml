@@ -407,7 +407,7 @@
                             <CheckBox IsChecked="{x:Bind Vm.RecordAntiCheatGames, Mode=TwoWay}" AutomationProperties.Name="Allow the recorder in games with anti-cheat (at your own risk)">
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="Allow the recorder in games with anti-cheat (at your own risk)" TextWrapping="Wrap" />
-                                    <TextBlock Text="Some games contain anti-cheat that can ban accounts using the recorder. Turn this on to enable it per game, at your own risk. SCSKiller isn't responsible for bans."
+                                    <TextBlock Text="Enabling the recorder in games with anti-cheat is at your own risk. SCSKiller isn't responsible for bans."
                                                Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>

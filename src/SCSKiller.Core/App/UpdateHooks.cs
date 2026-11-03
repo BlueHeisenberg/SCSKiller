@@ -44,7 +44,11 @@ public static class UpdateHooks
             // Kept: the data dir (recordings, settings).
             .OnBeforeUninstallFastCallback(_ => HookSteps.Uninstall(new AppStore(DataDir), Log, ScheduledTask.Unregister,
                 () => { if (Environment.ProcessPath is { } app) WindowsStartup.Set(false, app, WindowsStartup.ReadRegistry, WindowsStartup.WriteRegistry); },
-                () => ToastRegistration.Remove(VelopackLocator.IsCurrentSet ? VelopackLocator.Current.AppUserModelId : null, Environment.ProcessPath,
-                    ToastRegistration.ReadRegistry, ToastRegistration.DeleteRegistry, File.Delete, Log)));
+                () =>
+                {
+                    ToastRegistration.Remove(VelopackLocator.IsCurrentSet ? VelopackLocator.Current.AppUserModelId : null, Environment.ProcessPath,
+                        ToastRegistration.ReadRegistry, ToastRegistration.DeleteRegistry, File.Delete, Log);
+                    ScsKiller.RemoveTraces(Environment.ProcessPath, Log);
+                }));
     }
 }

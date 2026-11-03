@@ -1045,8 +1045,9 @@ static void launch(char **f, int nf, int *held)
     int lib = resolve(p.compatdata, compat) ? library_of(compat, "compatdata", &rest) : -1;
     if (lib < 0 || !digits(rest, 10)) REFUSE("compatdata: not an app's folder in a library's steamapps/compatdata");
     const char *app = rest;
-    if (!resolve(p.install, install) || library_of(install, "common", &rest) != lib || strchr(rest, '/'))
-        REFUSE("install: not a folder of steamapps/common in the prefix's library");
+    // Steam may make the prefix in another library than the game's
+    if (!resolve(p.install, install) || library_of(install, "common", &rest) < 0 || strchr(rest, '/'))
+        REFUSE("install: not a folder of a library's steamapps/common");
 
     // a tool in a library's steamapps/common or in a compatibilitytools.d folder, its script in there too
     int nroots = 0;

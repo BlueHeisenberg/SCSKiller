@@ -34,7 +34,7 @@ public static class OfflineEac
     /// it is the listed id, or a copy added by hand whose EasyAntiCheat settings name the entry's product.
     /// <paramref name="unsupported"/>: an engine SCSKiller doesn't support qualifies too (Settings.RecordAntiCheatGames on).</summary>
     public static OfflineEacGame? Of(Game g, AntiCheat antiCheat, EngineInfo? engine, bool unsupported = false) =>
-        antiCheat == AntiCheat.EasyAntiCheat && !Vac.Is(g) && engine != null && (unsupported || engine.Unsupported == null) && engine.GraphicsApi.Contains("D3D12")
+        antiCheat == AntiCheat.EasyAntiCheat && engine != null && (unsupported || engine.Unsupported == null) && engine.GraphicsApi.Contains("D3D12")
         && Current.FirstOrDefault(e => Path.GetFileName(g.ExePath).Equals(e.Exe, StringComparison.OrdinalIgnoreCase)
-            && (e.Id == g.Id || g.Store == Store.Manual && e.EacProduct != null && GameFiles.EacProduct(g.ExePath) == e.EacProduct)) is { } entry ? entry : null;
+            && (e.Id == g.Id || g.Store == Store.Manual && e.EacProduct != null && GameFiles.EacProduct(g.ExePath) == e.EacProduct)) is { } entry && !Vac.Is(g) ? entry : null;
 }

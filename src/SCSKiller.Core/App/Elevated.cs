@@ -26,6 +26,7 @@ public static partial class Elevated
     /// <summary>Runs <c>scskiller &lt;args&gt; --yes --result &lt;file&gt;</c> elevated and waits for it. Null = UAC cancelled.</summary>
     public static Result? Run(params string[] args)
     {
+        if (AppStore.Moved != null) return new(false, AppStore.MovedRefusal);   // an elevated process doesn't get this one's environment
         var cli = CliExe() ?? throw new FileNotFoundException(@"the command-line tool (cli\scskiller.exe) is not next to the app");
         var file = Path.Combine(Path.GetTempPath(), $"scskiller-elevated-{Guid.NewGuid():N}.json");
         var psi = new ProcessStartInfo(cli, CommandLine([.. args, YesArg, ResultArg, file]))

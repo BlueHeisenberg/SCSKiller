@@ -40,6 +40,32 @@ public static class HashOnly
     /// its draws entry (<see cref="DrawsKey"/>) nothing else (<see cref="CheckDraws"/>).</summary>
     public const string Tags = "BGCSRANLD";
 
+    /// <summary>The target of the 'N' record that carries how the game started NVIDIA Aftermath in a session (<see cref="AftermathOn"/>):
+    /// SHA-1 of "scskiller-aftermath-v1". A record key is the SHA-1 of a tag and a payload, and no tag is 's', so no record
+    /// has it: every 'N' reader looks its record up by key and passes this one by. Same value in records.rs.</summary>
+    public static readonly string AftermathTarget = Hex(SHA1.HashData("scskiller-aftermath-v1"u8));
+
+    public static bool IsAftermath(Rec r) => r.Tag == 'N' && r.Payload.Length == NvState.Size && Hex(r.Payload.AsSpan(0, 20)) == AftermathTarget;
+
+    /// <summary>An <see cref="IsAftermath"/> record's payload after its target: u32 API version, feature flags, crash dump APIs,
+    /// crash dump flags (<see cref="Vendors.AftermathInit"/>). True: an init that changes the driver's key (API 2.x, shader
+    /// debug info, known flags only); false: all zero, the session ran without one; null: anything else (refused).</summary>
+    public static bool? AftermathOn(Rec r)
+    {
+        uint V(int i) => System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(r.Payload.AsSpan(20 + 4 * i));
+        var (version, features, apis, dumps) = (V(0), V(1), V(2), V(3));
+        if (version == 0 && features == 0 && apis == 0 && dumps == 0) return false;
+        return version is >= 0x200 and <= 0x2ff && (features & 8) != 0 && (features & ~AftermathFeatures) == 0 && apis is >= 1 and <= 3 && dumps <= 1 ? true : null;
+    }
+
+    /// <summary>GFSDK_Aftermath_FeatureFlags: markers, resource tracking, shader debug info, shader error reporting, call stacks.</summary>
+    const uint AftermathFeatures = 0x4000001b;
+
+    static void CheckAftermath(Rec r)
+    {
+        if (IsAftermath(r) && AftermathOn(r) == null) throw new InvalidDataException("a malformed NVIDIA Aftermath record");
+    }
+
     public sealed record Counts(int Psos, int GraphicsPsos, int DistinctVs);
 
     /// <summary>What <see cref="Canonical"/> dropped from a full local recording. <paramref name="StateObjects"/>: ray tracing
@@ -87,6 +113,8 @@ public static class HashOnly
                     break;
                 case 'N':
                     NvState.Parse(r);
+                    if (local && IsAftermath(r) && AftermathOn(r) == null) break;   // this PC's own: the rest still shares
+                    CheckAftermath(r);
                     if (!nv.TryAdd(r.Key, r)) dups++;
                     break;
                 case 'L':
@@ -160,7 +188,7 @@ public static class HashOnly
         var keep = blobs.Where(b => used.Contains(b.Key)).Select(b => b.Value).ToList();
         dropped = new Dropped(shaders, states.Count - ordered.Count, blobs.Count - keep.Count, dups);
         var kept = psos.Keys.Concat(ordered.Select(r => r.Key)).ToHashSet();
-        return [.. keep, .. psos.Values, .. ordered, .. nv.Values.Where(r => kept.Contains(Target(r))), .. flags.Values.Where(r => kept.Contains(Target(r)))];
+        return [.. keep, .. psos.Values, .. ordered, .. nv.Values.Where(r => kept.Contains(Target(r)) || IsAftermath(r)), .. flags.Values.Where(r => kept.Contains(Target(r)))];
     }
 
     /// <summary>A 'B' record under its own SHA-1: true when it holds shader bytes (an error unless <paramref name="local"/>),
@@ -182,7 +210,8 @@ public static class HashOnly
     /// someone else's recording, holding keys instead of records: its PSO count and its raw length, or the same refusals
     /// (InvalidDataException). An 'N' or 'L' about a record it lacks is let through, as Canonical drops it.
     /// <paramref name="flagsApart"/>: 'L' records count apart, up to <paramref name="maxRecords"/> and one per PSO or state object.</summary>
-    public static (int Psos, long Raw) Verify(IEnumerable<Rec> records, int maxRefs, int maxRecords, bool flagsApart = false)
+    /// <paramref name="aftermath"/>: gets the valid <see cref="IsAftermath"/> records.
+    public static (int Psos, long Raw) Verify(IEnumerable<Rec> records, int maxRefs, int maxRecords, bool flagsApart = false, List<Rec>? aftermath = null)
     {
         var blobs = new HashSet<Sha>();
         var psos = new HashSet<Sha>();
@@ -212,7 +241,10 @@ public static class HashOnly
                     if (states.TryAdd(KeyOf(r), so) && (refs += so.Libraries.Count + so.RootSignatures.Count + so.Depends.Count) > maxRefs)
                         throw new InvalidDataException($"{TooManyReferences}{maxRefs} root signatures, libraries and collections");
                     break;
-                case 'N': NvState.Parse(r); break;
+                case 'N':
+                    NvState.Parse(r);
+                    if (IsAftermath(r) && AftermathOn(r) != null) aftermath?.Add(r);   // a hint: a malformed one never costs the download
+                    break;
                 case 'L':
                     if (r.Payload.Length != 20) throw new InvalidDataException($"'L' record of {r.Payload.Length} bytes");
                     if (!flagsApart) break;
@@ -416,6 +448,8 @@ public static class HashOnly
             chunkRs.UnionWith(add.SelectMany(Named));
         }
         Flush();
+        // no record to go with: the first upload carries it, and only one (two merged recordings may hold more: none goes)
+        if (chunks.Count > 0 && canonical.Where(IsAftermath).ToList() is [var am]) chunks[0] = Canonical([.. chunks[0], am], local: false, out _);
         return chunks;
     }
 

@@ -36,6 +36,7 @@ public sealed class GameRecord
     public bool PlanPerStage { get; set; }                  // the plan has each stage unit once, not every pairing (per-stage cache, not Maximum)
     public bool? PlanMaximumCapped { get; set; }            // the plan was built with Maximum's per-game cap (PlanBuilder.MaximumExtras); null = before it
     public long? PlanCacheBudget { get; set; }              // VendorCaps.WarmCacheBudget the plan was built with (ScsKiller.PlanCaps); null = none, or before it was kept
+    public long? PlanPsoBytes { get; set; }                 // VendorCaps.PsoBytes the plan was built with (ScsKiller.PlanCaps); null = PlanBuilder.PsoBytes
     public bool PlanD3DSCacheCharged { get; set; }          // under that budget each pipeline counted the Windows shader cache too (ScsKiller.D3DSCachePsoBytes)
     public bool WarmedPerStage { get; set; }                // PlanPerStage of the plan the last complete warm replayed
     public string? WarmedDelivery { get; set; }             // the game's Advanced Shader Delivery the last complete warm left out (D3DSCache.Delivery.Stamp); null = none
@@ -62,6 +63,8 @@ public sealed class GameRecord
     public IdentityStamp? D3DSCacheStamp { get; set; }      // the identity the last fold that put dbs in stamped, and why (outcome reports)
     public DateTimeOffset? D3DSCacheStampAt { get; set; }   // ...when
     public string? D3DSCacheStampFolder { get; set; }       // ...in which D3DSCache folder (a made one before the game named it)
+    public Dictionary<string, D3DSCacheFill>? D3DSCacheFilled { get; set; }   // D3DSCache folders a fold of ours put dbs into (ScsKiller.FilledD3DSCache)
+    public bool D3DSCacheFilledSeeded { get; set; }         // ...and those an earlier version's record and app.log name, looked for once
     public IdentityReport? D3DSCacheLaunch { get; set; }    // that stamp and the game's adapter db identity at the exit of the first run after the warm's fold
     public DateTimeOffset? D3DSCacheLaunchAt { get; set; }  // ...the D3DSCacheStampAt it was read for
     public FoldKeys? D3DSCacheFoldKeys { get; set; }       // NVIDIA: the game's adapter db right after the fold that put the last complete warm's dbs in
@@ -84,13 +87,19 @@ public sealed class GameRecord
     public string? ResumeDelivery { get; set; }              // ...leaving out what this Advanced Shader Delivery served (D3DSCache.Delivery.Stamp); null = none
     public bool ResumeAftermath { get; set; }                // ...starting NVIDIA Aftermath as the game does (its shader debug info is another key)
     public bool ResumeLeftOut { get; set; }                  // ...leaving out what earlier warms compiled (CompiledItems): its item numbers count in that set
+    public bool ResumeUnnamed { get; set; }                  // ...a process of its segments died and was retried (WarmResult.DiedUnnamed): only the last segment goes on record
     public long ResumeSkipEnd { get; set; }                  // where the window the last give-up skipped ends (ScsKiller.GiveUpSkip)...
     public long ResumeSkipWidth { get; set; }                // ...and its items
+    public long? UncleanAt { get; set; }                     // the first unfinished item of the last warm that ended uncleanly naming no culprit (WarmResult.DiedAt): a second such end there skips past it; any other end clears it
     public string? WarmedDriverVersion { get; set; }         // shown; earlier builds also compared it
     public string? WarmedDriverId { get; set; }              // what staleness compares (ScsKiller.DriverId); null = an earlier build's warm
     public DateTimeOffset? WarmedAt { get; set; }
     public TimeSpan? LastWarmTime { get; set; }
     public long? LastCacheGrowthBytes { get; set; }
+    public long? OldPlansBytes { get; set; }                 // the last complete warm's plan changed a lot (ScsKiller.OldPlansAsk): about the bytes earlier plans' pipelines hold, until answered
+    public long OldPlansItems { get; set; }                  // ...those pipelines
+    public long? OldPlansKept { get; set; }                  // ...the count the user chose to keep: a later plan asks only for what it leaves out on top
+    public List<string>? OldPlansFoldersKept { get; set; }   // ...the earlier game versions' D3DSCache folders the user chose to keep (ScsKiller.OrphanedD3DSCache)
     public long? LastWarmFailed { get; set; }                // the last complete warm: PSOs the driver rejected
     public long? LastWarmSkipped { get; set; }               // ...and PSOs skipped: a shader not in this install (never replayed)
     public long? LastWarmNeedsRecording { get; set; }        // ...of those, flagged by the community recording: only a recording here has them
@@ -117,6 +126,7 @@ public sealed class GameRecord
     public double? PsoPerSecond { get; set; }               // ...and this, or a stopped one's until a warm completes
     public string? PsoPerSecondDriver { get; set; }         // the driver it was measured on (GpuSnapshot.Id); null = WarmedDriverId
     public DateTimeOffset? RecordingImportedAt { get; set; }  // when an import last added records
+    public long? RecordedPipelines { get; set; }            // this copy's recording at its last import: pipelines and state objects (Vulkan: the archive's pipelines); null = not counted yet
     public string? RecordingInbox { get; set; }             // the game folder's scskiller.db (size:write ticks) when last imported
     public string? RecordingIndexHash { get; set; }         // the index build whose shaders the recording names by hash only; null: not checked since an import
     public Dictionary<string, string> RecorderFiles { get; set; } = [];   // file name in the exe folder -> SHA-256 we installed (scskiller.ini: AppStore.LoadInis)
@@ -157,6 +167,10 @@ public sealed class GameRecord
     public Dictionary<string, string> GameKeyDrivers { get; set; } = [];   // ...each one's driver when last held: "<DriverId>|<driver version>"; none = unknown (an earlier build's)
     public string? HeldKeys { get; set; }                    // AMD: the D3D12 ones its process held at the last sighting that held any, comma-separated (a string: arrays merge as sets); null = none seen since this was kept
     public HashSet<string>? WarmedKeys { get; set; }         // ...the ones the last complete warm held open; null = not recorded
+    public HashSet<string>? WarmedParts { get; set; }        // AMD: the D3D12 file sets the last complete warm held open (Vendors.AmdAppCache.Part); null = not recorded
+    public Dictionary<string, string> GameParts { get; set; } = [];   // AMD: sets of its keys a launch after the warm used instead of the warm's, with the driver as in GameKeyDrivers
+    public bool KeysByPath { get; set; }                     // its keys shared with a game of the same exe name were sorted out (ScsKiller.SortTwinKeys)
+    public HashSet<string> DisputedKeys { get; set; } = [];  // ...the ones it dropped then: still another game's claim until its own process shows (ScsKiller.LearnKeys)
     public HashSet<string>? WarmedFiles { get; set; }        // names of those keys' cache files after that warm (AMD: D3D12 ones); null = not recorded
     public Dictionary<string, long>? WarmedFileBytes { get; set; }   // ...and the length of each then; null = not recorded
     public Dictionary<string, long>? WarmedFileUsed { get; set; }    // ...and NVIDIA: the bytes each held then (NvidiaAppCache.UsedBytes), where readable; null = not recorded
@@ -173,13 +187,20 @@ public sealed class GameRecord
     public string? AftermathRetry { get; set; }             // NVIDIA: "<driver id>|<exe>" of the last complete warm that tried Aftermath after a miss (NvAftermath.Retry): once per driver and exe, a guessed one (0xa) "<build>|<exe>": once per build
     public long? AftermathPlainHits { get; set; }           // ...a guessed one: the hits of the plain compile's first launch, which its own first launch must beat; null once judged
     public bool AftermathLost { get; set; }                 // ...it didn't: the next compile is plain (until a complete one)
+    public Vendors.NvAftermath.LogFacts? SessionAftermath { get; set; }   // NVIDIA: the Aftermath the newest recorder session showed (its log), kept when the log goes
+    public DateTime? SessionAftermathAt { get; set; }       // ...that log's write time (UTC): an older one never replaces it (SaveGame)
     public string? WarmedAgsApp { get; set; }               // AMD: the AGS app name the last complete warm registered; null = a plain device
     public bool AgsMissed { get; set; }                     // a launch after such a warm showed it missed the game: warms stay plain until the game is seen holding a D3D12 key
     public string? AgsSeenApp { get; set; }                 // AMD: the AGS app name the game's own process registered (the recorder's #ags line); null = none seen
     public string? AgsSeenEngine { get; set; }              // ...and its engine name
     public uint? AgsSeenAppVersion { get; set; }            // ...and its app and engine versions; null = unspecified (seen by an earlier build)
     public uint? AgsSeenEngineVersion { get; set; }
+    public string? AgsProbedKey { get; set; }               // AMD, AGS linked into the exe: the held D3D12 keys the last candidate probe looked for (ScsKiller.ProbeAgs)
+    public string? AgsProbedDriver { get; set; }            // ...on this driver ("id|version", as GameKeyDrivers)
+    public string? AgsProbedApp { get; set; }               // ...the exe string whose AGS registration opened them; null = none did
+    public string? AgsProbedEngine { get; set; }
     public bool AgsIneligible { get; set; }                 // AMD: anti-cheat was seen in this game; never on the AGS hook path again (unless a risk session)
+    public bool AgsAntiCheatSeen { get; set; }              // ...set with it by a build that latches on anti-cheat alone; false with it = an earlier build's latch, which a VAC Steam's data couldn't confirm also set
     public bool Careful { get; set; }                       // AMD: compile in passes on few threads (ScsKiller.CarefulThreads)
     public NewShadersMode? NewShaders { get; set; }         // the game page's override of Settings.OnNewShaders; null = the global setting
     public bool? Maximum { get; set; }                      // Maximum mode for this game alone (ScsKiller.SetGameMaximum); null = Settings.MaximumPlans
@@ -210,6 +231,7 @@ public sealed class GameRecord
     public string? PlanEngine { get; set; }                  // ScsKiller.EngineKey of the engine the plan was built for; null = a plan from before it was kept
     public int? PlanFiltering { get; set; }                  // the player's texture filtering the plan was built at (ScsKiller.Filtering, Maximum mode aside): another re-plans
     public string? CompileFailedBuild { get; set; }          // Game.Version ("" without one) whose last compile failed or was refused; null = none since the last complete one
+    public string? CompileFailedWhy { get; set; }            // that compile's error without its log path (ScsKiller.WithoutLog), the home folder masked; null = none kept
     public BeforeAfterRecord? BeforeAfter { get; set; }      // a before and after recording in progress, or the last one done; null = none
 }
 
@@ -251,6 +273,9 @@ public sealed record PlayWindow(DateTimeOffset From, DateTimeOffset To);
 
 /// <summary>A launch's driver creates from the recorder's csv (<see cref="SessionLog"/>): cache hits and compiles, started at
 /// <paramref name="At"/>.</summary>
+/// <summary>A D3DSCache folder a fold of ours put dbs into: the exe path they name, and when (a folder made later isn't the one filled).</summary>
+public sealed record D3DSCacheFill(string Exe, DateTimeOffset At);
+
 /// <summary>What stopped or failed compiles' created PSOs (<see cref="ScsKiller.StoppedFile"/>) went into: the driver (ScsKiller.DriverId),
 /// the game's shaders (ShaderIndex.ContentHash), and the staged exe name, layer (ReShadeInstall.Fingerprint) and AGS app ("" = none),
 /// each in the cache's key. Only compiles without NVIDIA Aftermath or Advanced Shader Delivery keep one. <paramref name="Bytes"/>:
@@ -261,9 +286,13 @@ public sealed record StoppedCreated(string Driver, string Index, string Exe, str
 
 /// <param name="Warmed">NVIDIA: the warm's own pipelines the launch created (ScsKiller.WarmedCreates' Seen); null = not judged</param>
 /// <param name="WarmedCold">...and of them, the ones created cold (at least ScsKiller.UnreachedMedianMs)</param>
-public sealed record LaunchCheck(DateTimeOffset At, long Hits, long Compiles, long? Warmed = null, long? WarmedCold = null)
+/// <param name="TupleKnown">of the compiles, the ones whose shaders and root signature the last compile had (the csv's tuple_known); null = not read</param>
+public sealed record LaunchCheck(DateTimeOffset At, long Hits, long Compiles, long? Warmed = null, long? WarmedCold = null, long? TupleKnown = null)
 {
     public double Compiled => Hits + Compiles > 0 ? (double)Compiles / (Hits + Compiles) : 0;
+
+    /// <summary>"12 with a shader set already known, 3 new"; null = not read.</summary>
+    [JsonIgnore] public string? ShaderSets => TupleKnown is { } k ? $"{k} with a shader set already known, {Compiles - k} new" : null;
 }
 
 /// <summary>A mod's d3d12.dll renamed to <paramref name="Name"/> in the exe folder, with the SHA-256 of its bytes.</summary>
@@ -272,8 +301,10 @@ public sealed record ChainedDll(string Name, string Sha256);
 /// <summary>Whose a folder's scskiller.ini is (recorder-inis.json, by the folder's full path). <paramref name="Tracked"/>:
 /// the SHA-256 of SCSKiller's own ("a|b": either; "": not judged yet, it couldn't be read); <paramref name="Users"/>: the one
 /// there is the user's, until SCSKiller writes its own there; <paramref name="Remove"/>: SCSKiller's is to be taken out; <paramref name="Chain"/> and
-/// <paramref name="Install"/>: the next= and the install root= its writer gave it.</summary>
-public sealed record IniOwner(string Dir, string? Tracked = null, bool Users = false, bool Remove = false, string? Chain = null, string? Install = null);
+/// <paramref name="Install"/>: the next= and the install root= its writer gave it; <paramref name="Wrote"/>: the SHA-256 of each ini
+/// SCSKiller wrote there ("a|b"), which the user's mark keeps: one of them put back is SCSKiller's to remove.</summary>
+public sealed record IniOwner(string Dir, string? Tracked = null, bool Users = false, bool Remove = false, string? Chain = null, string? Install = null,
+    string? Wrote = null);
 
 /// <summary>An offline session SCSKiller started without EasyAntiCheat: the game, its exe and install, the process it started
 /// (its pid and creation FILETIME; 0 = none yet), and whether it was resumed (else it is still suspended, or was). The files
@@ -307,6 +338,7 @@ public sealed record Evaluation(string Key, EngineInfo? Engine, AntiCheat AntiCh
     string? Found = null, string? FoundAt = null)   // an anti-cheat verdict's ScsKiller.FolderStamp and the marker it found; null: not known
 {
     public bool Vac { get; init; }   // made while Steam's data named it VAC (Games.Vac): evaluated again once it no longer does
+    [JsonIgnore] public bool Unfinished { get; init; }   // its anti-cheat is Other because the check didn't finish (ScsKiller.AntiCheatFound)
 }
 
 /// <summary>%LOCALAPPDATA%\SCSKiller, or the portable build's data\: settings.json, scan.json, dismissed.json + games\&lt;id&gt;\state.json.</summary>
@@ -321,6 +353,11 @@ public sealed class AppStore(string dataDir)
 
     /// <summary>SCSKILLER_DATA_DIR's folder; null = the default.</summary>
     public static string? Moved => Environment.GetEnvironmentVariable("SCSKILLER_DATA_DIR") is { Length: > 0 } d ? Path.GetFullPath(d) : null;
+
+    /// <summary>Why a copy on a moved data folder leaves alone what starts SCSKiller later (the sign-in entry, the
+    /// driver-update task or service, the menu entry): those start it without SCSKILLER_DATA_DIR, on the default folder,
+    /// and the copy on that folder shares them.</summary>
+    public const string MovedRefusal = "Not available while the data folder is moved.";
 
     static readonly Lazy<string> _defaultDir = new(() =>
         Resolve(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SCSKiller"), PortableRoot(AppContext.BaseDirectory), out _onOldFolder));
@@ -401,7 +438,7 @@ public sealed class AppStore(string dataDir)
                     {
                         var rel = Path.GetRelativePath(local, f);
                         // the recorder's files aren't read from here, and a staged update, an apply marker and the locks belong to that folder's own app
-                        if (rel.StartsWith("armed" + Path.DirectorySeparatorChar) || rel.StartsWith("refused" + Path.DirectorySeparatorChar)
+                        if (rel.StartsWith("armed" + Path.DirectorySeparatorChar) || rel.StartsWith("refused" + Path.DirectorySeparatorChar) || rel.StartsWith("recorder" + Path.DirectorySeparatorChar)
                             || rel is "recorder.key" or "recorder.revoked" or "update-staged.json" or "applying" || rel.EndsWith(".lock")) continue;
                         var to = Path.Combine(partial, rel);
                         Directory.CreateDirectory(Path.GetDirectoryName(to)!);
@@ -620,7 +657,12 @@ public sealed class AppStore(string dataDir)
         var now = JsonSerializer.SerializeToNode(r, Json)!.AsObject();
         Locked(path, () =>
         {
-            var stored = _held.TryGetValue(r, out var was) && Load<JsonObject>(path) is { } latest ? Merge(latest, was, now) : now;
+            var latest = _held.TryGetValue(r, out var was) ? Load<JsonObject>(path) : null;
+            var (am, amAt) = (latest?[nameof(GameRecord.SessionAftermath)]?.DeepClone(), latest?[nameof(GameRecord.SessionAftermathAt)]?.GetValue<DateTime>());
+            var stored = latest != null ? Merge(latest, was!, now) : now;
+            // a writer that read an older session's log keeps the newer session's facts another one saved
+            if (amAt is { } kept && !(now[nameof(GameRecord.SessionAftermathAt)]?.GetValue<DateTime>() >= kept))
+                (stored[nameof(GameRecord.SessionAftermath)], stored[nameof(GameRecord.SessionAftermathAt)]) = (am, kept);
             // a key one writer pruned while another learned it: what the game or a warm held stays learned
             if (stored[nameof(GameRecord.CacheKeys)] is JsonArray cache)
                 foreach (var k in new[] { nameof(GameRecord.GameKeys), nameof(GameRecord.WarmedKeys) }.SelectMany(n => stored[n] as JsonArray ?? [])

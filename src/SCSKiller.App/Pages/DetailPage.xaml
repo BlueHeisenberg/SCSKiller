@@ -136,6 +136,8 @@
                         </Grid>
                         <Button Content="Max compile" Click="OnMaxCompile" Visibility="{x:Bind Vm.ShowMaxCompile, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanAdd, Mode=OneWay}"
                                 ToolTipService.ToolTip="Compiles every combination of this game's shaders, once" />
+                        <Button Content="Ray tracing only" Click="OnRtOnlyCompile" Visibility="{x:Bind Vm.ShowRtOnly, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanAdd, Mode=OneWay}"
+                                ToolTipService.ToolTip="Compiles only this game's ray tracing pipelines, the rest at its next compile" />
                         <Grid Background="Transparent" ToolTipService.ToolTip="{x:Bind Vm.CompileTip, Mode=OneWay}" Visibility="{x:Bind Vm.CanCompile, Mode=OneWay}">
                             <Button Style="{x:Bind Vm.CompileStyle, Mode=OneWay}" Click="OnCompile" IsEnabled="{x:Bind Vm.CanAdd, Mode=OneWay}" AutomationProperties.Name="{x:Bind Vm.AddText, Mode=OneWay}">
                                 <StackPanel Orientation="Horizontal" Spacing="8">

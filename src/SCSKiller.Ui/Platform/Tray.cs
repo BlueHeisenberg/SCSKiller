@@ -98,7 +98,7 @@ public partial class App
         if (tray == null) return;
         var q = QuitFlow.Running(Host.Core);
         tray.Tip = "SCSKiller: " + (q == null && !quit.Quitting && Fmt.FoldingLine is { } fold ? fold
-            : Format.TrayStatus(q, q == null ? null : Host.Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId, quit.Quitting).Line);
+            : Format.TrayStatus(q, q == null ? null : Host.Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId, quit.Quitting, Fmt.ScanProgress).Line);
     }
 
     static void DisposeTray()

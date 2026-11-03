@@ -16,6 +16,7 @@ public static class Program
     [STAThread]
     static int Main(string[] args)
     {
+        if (Core.App.LaunchArgs.Handled(args) is { } printed) return printed;
         if (IsDesignRun(args)) Core.App.UpdateHooks.DesignDir = Path.Combine(Path.GetTempPath(), $"SCSKiller-fake-{Environment.ProcessId}");
         Core.App.Format.PlainGroupSeparator();
         // logged, not handled: the app still ends as it would have

@@ -50,6 +50,7 @@ public sealed partial class QueuePage : Page
     void OnStart(object _, RoutedEventArgs __) => Act(App.CompileQueue);
     void OnPause(object _, RoutedEventArgs __) => Act(Vm.PauseOrResume);
     void OnStop(object _, RoutedEventArgs __) => Act(App.Core.StopQueue);
+    void OnCheckNow(object _, RoutedEventArgs __) => Act(App.Core.CheckPlansNow);
     void OnRemove(object sender, RoutedEventArgs _) => Act(() => App.Core.Remove(RowOf(sender).Id));
     void OnRemoveCurrent(object _, RoutedEventArgs __) => Act(() => App.Core.Remove(Vm.Current.Id));
     void OnClearFinished(object _, RoutedEventArgs __) => Act(() => { foreach (var r in Vm.Finished.ToList()) App.Core.Remove(r.Id); });

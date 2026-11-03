@@ -11,6 +11,22 @@ public sealed record CacheFolder(string Label, string Path, bool Exists, string?
 /// <summary>In the order the Cache page shows them, which is also the order a key claimed twice goes by.</summary>
 public enum CacheGroupKind { Installed, Uninstalled, OldDriver, OldBuild, OtherVendor, Unattributed }
 
+/// <summary>A Cache page group's title and caption, and an item's name, as the app and the CLI show them.</summary>
+public static class CacheNames
+{
+    public static string Item(CacheGroupKind kind, CacheItem i) => kind == CacheGroupKind.Unattributed && i.Name.Length == 8 && i.Name.All(char.IsAsciiHexDigit) ? $"Unknown app {i.Name}" : i.Name;
+
+    public static (string Title, string Caption) Texts(CacheGroupKind kind, DateTime? installed) => kind switch
+    {
+        CacheGroupKind.Installed => ("Installed games", "Games in your library, by the cache keys SCSKiller learned for them."),
+        CacheGroupKind.Uninstalled => ("Uninstalled games", "Games SCSKiller compiled or saw running that aren't in your library now. Named by their exe."),
+        CacheGroupKind.OldDriver => ("Old driver", $"Written before the current driver was installed on {installed?.ToLocalTime():d}. It hasn't used them since."),
+        CacheGroupKind.OldBuild => ("Earlier SCSKiller compiles", "Left by earlier compiles. The games don't read them."),
+        CacheGroupKind.OtherVendor => ("Other GPU vendor", "Caches for another brand of GPU than the one SCSKiller compiles for."),
+        _ => (ScsKiller.OtherApps, "Desktop apps, and games SCSKiller hasn't compiled or seen running. A game moves to its group once SCSKiller sees it running."),
+    };
+}
+
 /// <summary>A cache file as the page read it: a delete takes it only while it is still the same. Used: NVIDIA, what it holds
 /// (<see cref="NvidiaAppCache.UsedBytes"/>); null = not read.</summary>
 public sealed record CacheFile(string Path, long Length, DateTime WrittenUtc, long? Used = null);
@@ -169,6 +185,16 @@ public sealed partial class ScsKiller
                 ? D3DSCache.Made(Path.Combine(LocalAppData, "D3DSCache"), WorkDirs(Store.GameDir(s.Game.Id)), since).SelectMany(D3DSCache.CacheFiles) : [];
             Add(CacheGroupKind.Installed, s.Game.Name, GameD3DSCacheAll(s.Game, rec).Concat(unfolded).Where(f => gameD3ds.Add(f.FullName)).ToList(), [s.Game.Id]);
         }
+        // its earlier versions' folders our fold filled: no game's compile, so a delete leaves every game's compile as it is. Named
+        // apart from the game's earlier compiles' driver files, which go by other rules
+        var oldVersions = new HashSet<(CacheGroupKind, string)>();
+        foreach (var s in Games)
+            if (OrphanedD3DSCache(s.Game).SelectMany(D3DSCache.CacheFiles).Where(f => gameD3ds.Add(f.FullName)).ToList() is { Count: > 0 } old
+                && (CacheGroupKind.OldBuild, $"{s.Game.Name}, earlier versions") is var item)
+            {
+                Add(item.Item1, item.Item2, old);
+                oldVersions.Add(item);
+            }
 
         var gamesDir = Path.Combine(Store.DataDir, "games");
         // a compile deletes the folders its staged exes made: these are an earlier build's. None predates the games folder.
@@ -242,7 +268,8 @@ public sealed partial class ScsKiller
             .Select(g => new CacheGroup(g.Key,
                 g.Select(i => new CacheItem(i.Key.Name, g.Key, i.Value.Files.Select(f => new CacheFile(f.FullName, f.Length, f.LastWriteTimeUtc,
                         own == GpuVendor.Nvidia && NvidiaAppCache.Key(f.Name) != null ? NvidiaAppCache.UsedBytes(f.FullName) : null)).ToList(),
-                        i.Value.Ids.Order().ToList(), Seen(i.Value.Files), kept.Contains(i.Key) ? MesaKept : g.Key == CacheGroupKind.Uninstalled ? notes.GetValueOrDefault(i.Key.Name) : null,
+                        i.Value.Ids.Order().ToList(), Seen(i.Value.Files), kept.Contains(i.Key) ? MesaKept : g.Key == CacheGroupKind.Uninstalled ? notes.GetValueOrDefault(i.Key.Name)
+                            : oldVersions.Contains(i.Key) ? OldVersionsNote : null,
                         kept.Contains(i.Key)))
                     .OrderByDescending(p => p.Bytes).ToList(),
                 g.Key == CacheGroupKind.OtherVendor ? note : null))
@@ -280,6 +307,7 @@ public sealed partial class ScsKiller
             // opened only by an earlier compile, neither by the game's own process nor by the last compile: the game doesn't read it
             var unused = rec.CacheKeys.Except(LiveKeys(rec)).ToHashSet();
             var keys = rec.CacheKeys.Select(k => (k, unused.Contains(k) ? CacheGroupKind.OldBuild : kind)).ToList();
+            keys.AddRange(rec.DisputedKeys.Where(k => !rec.CacheKeys.Contains(k)).Select(k => (k, kind)));   // SortTwinKeys' drops: still a claim
             if (own == GpuVendor.Amd)   // the name hash is the key of an exe without an app profile; a learned key's place stands
                 keys.AddRange(exeNames.OfType<string>().Select(AmdAppCache.HintKey).Where(h => !rec.CacheKeys.Contains(h)).Select(h => (h, kind)));
             foreach (var (k, claimed) in keys)
@@ -452,8 +480,11 @@ public sealed partial class ScsKiller
         var own = AppCache switch { NvidiaAppCache => GpuVendor.Nvidia, AmdAppCache => GpuVendor.Amd, IntelAppCache => GpuVendor.Intel, _ => GpuVendor.Unknown };
         var claims = Claims(own);   // who claims each key now: a game seen running since the page read may have learned one
         var held = new Dictionary<string, FileStream?>();   // one lock per game: an id in two items is the same lock
-        var gameD3ds = Games.Select(s => s.Game).Concat(HiddenGames).SelectMany(g => GameD3DSCacheDirs(g, Store.LoadGame(g.Id)).Select(d => (Dir: d, g.Id)))
+        var gameD3ds = Games.Select(s => s.Game).Concat(HiddenGames).SelectMany(g => Store.LoadGame(g.Id) is var r ? GameD3DSCacheDirs(g, r).Where(d => !LeftByOldExe(g, r, d)).Select(d => (Dir: d, g.Id)) : [])
             .ToLookup(x => Path.GetFullPath(x.Dir), x => x.Id, StringComparer.OrdinalIgnoreCase);
+        // an earlier version's folder goes only while it still is one, checked again under its game's compile lock
+        var oldVersionOf = Games.SelectMany(s => OrphanedD3DSCache(s.Game).Select(d => (Dir: Path.GetFullPath(d), s.Game)))
+            .GroupBy(x => x.Dir, StringComparer.OrdinalIgnoreCase).ToDictionary(x => x.Key, x => x.First().Game, StringComparer.OrdinalIgnoreCase);
         var cleared = new HashSet<string>();
         try
         {
@@ -474,7 +505,7 @@ public sealed partial class ScsKiller
                     try
                     {
                         if (PairHoldsCache(only) is { } why) throw new InvalidOperationException(why);
-                        ClearCache(only, gamePrecache: false, steam: true, locked: true, out var freed);
+                        ClearCache(only, gamePrecache: false, steam: true, locked: true, out var freed, keepShared: true, oldVersions: true);
                         (bytes, count) = (bytes + freed.Bytes, count + freed.Files);
                     }
                     catch (Exception e) when (e is InvalidOperationException or IOException or UnauthorizedAccessException) { skipped.Add($"{item.Name}: {e.Message}"); }
@@ -492,6 +523,7 @@ public sealed partial class ScsKiller
                 var oldNow = item.Kind == CacheGroupKind.OldDriver ? OldDriverFiles(fresh: true) : null;
                 string? Refusal(string dir, string? key, List<CacheFile> unit)
                 {
+                    if (item.Note == OldVersionsNote && OldVersionRefusal(dir) is { } notOld) return notOld;
                     var fileKey = OwnKey(unit[0].Path);
                     var owner = fileKey != null && item.Kind != CacheGroupKind.OldDriver ? Owner(claims, fileKey) : default;
                     if (item.Kind == CacheGroupKind.OldDriver && !unit.All(f => oldNow!.Contains(Path.GetFullPath(f.Path)))) return "the current driver uses these files";
@@ -500,6 +532,14 @@ public sealed partial class ScsKiller
                         return "it is a game's own Windows shader cache";
                     return Unsafe(unit, roots) ?? Incomplete(dir, key, item.Seen.Concat(unit.Select(f => f.Path)))
                         ?? (owner.Ids is { } ids && (owner.Kind != item.Kind || ids.Except(item.GameIds).Any()) ? $"these files are now {owner.Name}'s" : null);
+                }
+                string? OldVersionRefusal(string dir)
+                {
+                    if (!oldVersionOf.TryGetValue(Path.GetFullPath(dir), out var of)) return "it is no longer an earlier game version's cache";
+                    if (!held.ContainsKey(of.Id)) held[of.Id] = CompileLock(of.Id);
+                    if (held[of.Id] == null) return $"a compile of {of.Name} is in progress";
+                    return NamedByOthers(of.Id) is not { } others ? "another game's record can't be read"
+                        : NotOrphaned(of, Store.LoadGame(of.Id), dir, FilledD3DSCache(of), others, deleting: true);
                 }
                 var game = item.Kind is CacheGroupKind.Installed or CacheGroupKind.Uninstalled;
                 var units = item.Files.GroupBy(f => (Dir: Path.GetDirectoryName(f.Path)!, Key: UnitKey(f.Path))).ToList();
@@ -536,7 +576,8 @@ public sealed partial class ScsKiller
                         continue;
                     }
                     (bytes, count, deleted) = (bytes + unit.Sum(f => f.Length), count + unit.Count(), true);
-                    if (GameFiles.Inside(Path.Combine(LocalAppData, "D3DSCache"), unit.Key.Dir))
+                    if (item.Note == OldVersionsNote && oldVersionOf.TryGetValue(Path.GetFullPath(unit.Key.Dir), out var of)) DeletedOldVersion(of.Id, unit.Key.Dir);
+                    else if (GameFiles.Inside(Path.Combine(LocalAppData, "D3DSCache"), unit.Key.Dir))
                         try { Directory.Delete(unit.Key.Dir); }
                         catch (IOException) { }   // not empty: the runtime made a file meanwhile, left alone
                 }
@@ -609,7 +650,8 @@ public sealed partial class ScsKiller
                 return $"{info.Name} is outside the driver's cache folders";
             // the cache folder itself may be a link (moved to another drive); nothing below it may be
             if ((info.Attributes & FileAttributes.ReparsePoint) != 0
-                || !string.Equals(GameFiles.Identity(path)?.Final, Path.Combine(final, Path.GetRelativePath(root, path)), StringComparison.OrdinalIgnoreCase))
+                // an AMD file an elevated process wrote may refuse even an attribute handle: a no-access handle still names it
+                || !string.Equals(GameFiles.Identity(path)?.Final ?? GameFiles.FinalPath(path), Path.Combine(final, Path.GetRelativePath(root, path)), StringComparison.OrdinalIgnoreCase))
                 return $"{info.Name} is reached through a link inside the cache folder";
         }
         return null;

@@ -10,7 +10,8 @@ namespace SCSKiller.Core.Games;
 /// even over a newer public one, so an entry only in the public copy reaches only stable.
 /// "no-stutter": the game prepares its shaders itself, so SCSKiller never suggests compiling it (no bulk add, no
 /// driver-update rebuild, no recorder by default) but still allows it. "unsupported-yet" and "unsupported": the game is
-/// Unsupported ("Not supported yet", "Not supported"). Each entry names a reason code the app has its own line for
+/// Unsupported ("Not supported yet", "Not supported"). "no-anti-cheat": a WeGame game confirmed to carry no anti-cheat,
+/// the only kind whose clean folder lets a recorder in (<see cref="GameFiles.WeGameId"/>). Each entry names a reason code the app has its own line for
 /// (<see cref="Reasons"/>); an unknown code shows the entry's note, else a line for its verdict. Matched by store id, and
 /// only within the entry's engines and builds when it lists them. Read leniently, so later versions can add to the format:
 /// unknown top-level members are ignored, and an entry with an unknown member or verdict, or one this version finds
@@ -19,9 +20,10 @@ public sealed class GameVerdicts
 {
     public const string Name = "game-verdicts", FileName = Name + ".json";
     public const string NoStutterVerdict = "no-stutter", UnsupportedYetVerdict = "unsupported-yet", UnsupportedVerdict = "unsupported";
+    public const string NoAntiCheatVerdict = "no-anti-cheat";
     public const string OtherReason = "other";
     public const int MaxGames = 500;
-    static readonly string[] Verdicts = [NoStutterVerdict, UnsupportedYetVerdict, UnsupportedVerdict];
+    static readonly string[] Verdicts = [NoStutterVerdict, UnsupportedYetVerdict, UnsupportedVerdict, NoAntiCheatVerdict];
     static readonly string[] Members = ["name", "ids", "verdict", "reason", "note", "source", "date", "engines", "builds"];
 
     /// <summary>The reason codes this version shows in its own words. Codes are [a-z0-9-]; "other" takes the entry's note.</summary>
@@ -29,7 +31,7 @@ public sealed class GameVerdicts
     {
         ["engine-precompiles"] = "Its engine prepares shaders at startup",
         ["driver-cache-ignored"] = "The driver doesn't use a compile's cache for this game",
-        ["anti-cheat"] = "Its anti-cheat doesn't allow it",
+        ["anti-cheat"] = "The game contains anti-cheat",
         ["crashes"] = "Compiling crashes this game or the driver",
         ["engine-unreadable"] = "SCSKiller can't read this game's shaders yet",
     };
@@ -103,6 +105,9 @@ public sealed class GameVerdicts
 
     /// <summary>The unsupported or unsupported-yet verdict on the game; null when there is none.</summary>
     public Verdict? Unsupported(Game game, EngineInfo? engine) => Find(game, engine, UnsupportedVerdict) ?? Find(game, engine, UnsupportedYetVerdict);
+
+    /// <summary>A "no-anti-cheat" entry names the id; one limited to engines or builds never counts: the anti-cheat check knows neither.</summary>
+    public bool NoAntiCheat(string id) => byId.GetValueOrDefault(id)?.Any(e => e.Verdict == NoAntiCheatVerdict && e.Engines == null && e.Builds == null) == true;
 
     Verdict? Find(Game game, EngineInfo? engine, string verdict) =>
         byId.GetValueOrDefault(game.Id)?.FirstOrDefault(e => e.Verdict == verdict && InScope(e.Engines, e.Builds, game, () => engine)) is { } hit

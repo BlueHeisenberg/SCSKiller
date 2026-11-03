@@ -24,6 +24,7 @@ public partial class App
     static async Task ApplyStartWithWindows(bool byUser)
     {
         if (!Host.Platform.StartAtSignIn) return;   // macOS: no XDG autostart or systemd
+        if (AppStore.Moved != null) { if (byUser) throw new InvalidOperationException(AppStore.MovedRefusal); return; }
         var on = Host.Core.Settings.StartWithWindows;
         if (LinuxStartup.InFlatpak)
         {

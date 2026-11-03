@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using SCSKiller.Core.App;
 using SCSKiller.Ui.Controls;
@@ -63,7 +64,7 @@ static class BeforeAfterDialogs
             Title = mode == Intro.StartOver ? $"Start over with {game}?" : "Before and after recording",
             Content = new StackPanel
             {
-                Spacing = 16, MaxWidth = 560,
+                Spacing = 16, [!Layoutable.MaxWidthProperty] = new DynamicResourceExtension("TextFit.560"),
                 Children =
                 {
                     new InfoBar

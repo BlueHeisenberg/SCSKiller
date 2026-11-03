@@ -23,16 +23,20 @@ namespace SCSKiller.Core.Warming;
 /// Flatpak Steam's runs its warm in that Steam's sandbox (<see cref="ProtonLaunch.FlatpakCommand"/>), each process in a
 /// folder of its own (<see cref="FlatpakExchange"/>) that holds the protocol's files, copies of its inputs and its cache: what
 /// it leaves comes out into the work and cache folders before anything reads it, its scopes' priority is lowered
-/// (<see cref="FlatpakScopes"/>), and its sandbox is ended once it ignores a stop (<see cref="FlatpakSandbox"/>).</summary>
+/// (<see cref="FlatpakScopes"/>), and its sandbox is ended once it ignores a stop (<see cref="FlatpakSandbox"/>). A Flatpak
+/// launcher's Proton game on Mesa runs in that launcher's sandbox the same way, on the sandbox's Mesa build, which the game's
+/// cache entries are keyed on: that cache is the game's own and stays there, only the warm's outputs come out.</summary>
 sealed class ProtonWarmHost : IWarmHost
 {
     readonly ProtonContext? _ctx;
     readonly LauncherPrefix? _wine;
+    bool Native => _ctx == null && _wine == null;   // the native Vulkan warm
     readonly ProtonPaths? _paths;
     readonly ProtonTools _tools;
     readonly string _work, _dataDir, _gameDir, _stop, _alive, _launcherLog, _exeName, _appName;
     readonly List<(string Name, string Value)> _cache;
     readonly string? _gpuName;
+    readonly IReadOnlyList<(string Name, string Value)> _launchGpu;
     readonly bool _mesa;
     readonly string? _mesaKey;
     readonly Timer _touch;
@@ -48,7 +52,9 @@ sealed class ProtonWarmHost : IWarmHost
     Dictionary<string, (long Length, ulong Inode)> _before = [];   // the warm's .bin files as the last process started
     int _started;
     volatile bool _disposed;
-    readonly string? _flatpak;          // the flatpak command a Flatpak Steam game's warm runs through
+    readonly string? _flatpak;          // the flatpak command a Flatpak game's warm runs through
+    readonly string _flatpakApp;        // the app whose sandbox it runs in
+    readonly bool _flatpakRuntime;      // under the context's runtime, else Proton's script alone
     readonly long _cacheCap;
     string _next = FlatpakExchange.NewName();   // the exchange the next process gets, which WarmPath names
     FlatpakExchange? _exchange;         // the running or last process's; under _stopGate
@@ -95,34 +101,42 @@ sealed class ProtonWarmHost : IWarmHost
     /// <param name="limit">the .bin length a process is stopped at (default: <see cref="NvidiaLinux.SegmentLimit"/>, a Vulkan
     /// warm's <see cref="NvidiaLinux.VulkanLimit"/>)</param>
     /// <param name="wine">a launcher's prefix the warm runs in on its Wine build (<see cref="ProtonLaunch.WineEnvironment"/>), in place of a Proton context</param>
-    /// <param name="cache">the cache variables the warm runs with in place of SCSKiller's own folder's: a game that reads its
-    /// driver's default cache gets none (or its Flatpak's XDG_CACHE_HOME), and no file of it is rewritten, watched or keyed</param>
+    /// <param name="cache">on Mesa, the cache variables the warm runs with in place of SCSKiller's own folder's: a launcher's game
+    /// that reads Mesa's default cache gets none (or its Flatpak's XDG_CACHE_HOME), and no file of it is rewritten, watched or keyed</param>
     /// <param name="cacheCap">what NVIDIA's cache folder may hold (default: <see cref="NvidiaLinux.CacheSize"/>), the warm's
     /// files <see cref="NvidiaLinux.BudgetOf"/> it. Throws <see cref="CacheFullException"/> when it has no room for a process.</param>
     /// <param name="mesa">the backend is Mesa's: Mesa's cache variables (<see cref="MesaLinux.CacheEnvironment"/>) and the native
     /// warm Mesa's settings; else NVIDIA's (<see cref="Wine.CacheEnvironment"/>). Null: by the GPU's vendor, AMD and Intel.</param>
-    /// <param name="flatpak">the flatpak command: the game is the Flatpak Steam's, on NVIDIA under Proton, and its warm runs in
-    /// that Steam's sandbox, each process in an exchange of its own</param>
+    /// <param name="flatpak">the flatpak command: the game is the Flatpak Steam's, on NVIDIA under Proton, or a Flatpak
+    /// launcher's (<paramref name="flatpakApp"/>, with its <paramref name="cache"/>) on Mesa under Proton, and its warm runs in
+    /// that app's sandbox, each process in an exchange of its own</param>
+    /// <param name="flatpakRuntime">false: the launcher runs Proton's script without a runtime, and so does the warm</param>
+    /// <param name="launchGpu">the GPU variables and VKD3D_CONFIG of the game's own launch (<see cref="LaunchGpu.Of"/>,
+    /// <see cref="LaunchGpu.Vkd3dConfig"/>), set as they are: the warm loads the drivers the game does, picks the GPU it does
+    /// and compiles in its vkd3d-proton mode</param>
     public ProtonWarmHost(ProtonContext? ctx, Game game, string workDir, string gameDir, string dataDir, GpuInfo gpu, ProtonTools tools, TimeSpan? touchEvery = null,
         IProgress<string>? log = null, long? limit = null, long? cacheCap = null, LauncherPrefix? wine = null, IReadOnlyList<(string Name, string Value)>? cache = null, bool? mesa = null,
-        string? flatpak = null)
+        string? flatpak = null, string flatpakApp = ProtonLaunch.FlatpakApp, bool flatpakRuntime = true, IReadOnlyList<(string Name, string Value)>? launchGpu = null)
     {
         (_ctx, _wine) = (ctx, wine);
-        if (flatpak != null && (ctx == null || wine != null || cache != null || mesa == true)) throw new ArgumentException("only a Proton warm on NVIDIA runs in the Flatpak Steam's sandbox", nameof(flatpak));
-        (_flatpak, _gameDir, _exeName, _cacheCap) = (flatpak, Path.GetFullPath(gameDir), Path.GetFileName(game.ExePath), cacheCap ?? NvidiaLinux.CacheSize);
+        if (flatpak != null && (ctx == null || wine != null || (cache != null) != (mesa == true)))
+            throw new ArgumentException("only a Proton warm runs in a Flatpak's sandbox: on NVIDIA the Flatpak Steam's, on Mesa a launcher's", nameof(flatpak));
+        _flatpakRuntime = flatpakRuntime;
+        (_flatpak, _flatpakApp, _gameDir, _exeName, _cacheCap) = (flatpak, flatpakApp, Path.GetFullPath(gameDir), Path.GetFileName(game.ExePath), cacheCap ?? NvidiaLinux.CacheSize);
         _appName = Wine.WarmAppName(_exeName);
-        _paths = ctx != null ? new ProtonPaths(ctx.Prefix) : wine != null ? new ProtonPaths(wine.WineDir) : null;
+        _paths = ctx != null ? new ProtonPaths(ctx.Prefix, proton: true) : wine != null ? new ProtonPaths(wine.WineDir) : null;
         _tools = tools;
         _work = Path.GetFullPath(workDir);
         _dataDir = Path.GetFullPath(dataDir);
         Job = new WarmJob(_work) { Log = log == null ? null : m => log.Report($"{game.Name}: {m}") };
         _gpuName = gpu.Name;
+        _launchGpu = launchGpu ?? [];
         _mesa = mesa ?? gpu.Vendor is GpuVendor.Amd or GpuVendor.Intel;
         _cache = cache?.ToList() ?? (_mesa
             ? MesaLinux.CacheEnvironment(gameDir, game, steamRoot: ctx?.SteamRoot)
             : Wine.CacheEnvironment(Wine.CacheRoot(gameDir), Path.GetFileName(game.ExePath), cacheCap ?? NvidiaLinux.CacheSize).Warm);
         _mesaKey = _mesa && cache == null ? (SteamSource.AppId(game.Id) ?? SteamShortcuts.AppId(game.Id))?.ToString(CultureInfo.InvariantCulture) : null;
-        _limit = limit ?? (ctx == null ? NvidiaLinux.VulkanLimit : NvidiaLinux.SegmentLimit);
+        _limit = limit ?? (ctx == null && wine == null ? NvidiaLinux.VulkanLimit : NvidiaLinux.SegmentLimit);
         if (!_mesa && cache == null)
         {
             _noDict = cacheCap is { } cap ? new GlCacheNoDict(gameDir, Wine.WarmAppName(Path.GetFileName(game.ExePath))) { Log = Job.Log, Cap = cap, Budget = NvidiaLinux.BudgetOf(cap) }
@@ -185,6 +199,20 @@ sealed class ProtonWarmHost : IWarmHost
     // under Proton the GPU goes by name in the environment, the native warm takes its PCI address
     public IReadOnlyList<string> AdapterArgs(GpuInfo gpu) => _ctx == null && _wine == null ? ["--adapter-luid", gpu.AdapterLuid.ToString("X16")] : [];
 
+    /// <summary>The warm's "no GPU adapter" with a DXVK device filter the prefix's registry sets named: Wine's registry
+    /// environment overrides the one the warm starts with, and DXVK's DXGI lists no device that fails it.
+    /// VKD3D_FILTER_DEVICE_NAME can't cause it: vkd3d-proton takes its first device when none matches.</summary>
+    public string? Explain(string? error)
+    {
+        if (error?.StartsWith("no GPU adapter", StringComparison.Ordinal) != true || (_ctx?.Prefix ?? _wine?.WineDir) is not { } dir) return error;
+        var prefix = new WinePrefix(dir);
+        return (from name in (string[])["DXVK_FILTER_DEVICE_NAME", "DXVK_FILTER_DEVICE_UUID"]
+                from key in (string[])[@"HKEY_CURRENT_USER\Environment", @"HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Session Manager\Environment"]
+                let value = prefix.Registry(key, name)
+                where !string.IsNullOrEmpty(value)
+                select $"{WarmHost.PrefixGpuFilter}{name}={value}, which matches no GPU").FirstOrDefault() ?? error;
+    }
+
     public void Stop()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -234,16 +262,19 @@ sealed class ProtonWarmHost : IWarmHost
         lock (_stopGate)
         {
             (reached, _reached) = (_reached, null);
-            if (reached != null && _ctx != null && !_runStopped && _flatpak == null) File.Delete(_stop);   // the next process goes on, unless the run was stopped
+            if (reached != null && !Native && !_runStopped && _flatpak == null) File.Delete(_stop);   // the next process goes on, unless the run was stopped
         }
         var grown = Grown(_before, pass.Bins());   // before the pass: its own files are never among them
         _halt ??= await Task.Run(() => NoDict(() => pass.Run(note)));
         _halt ??= reached?.Unmeasured;
         if (_halt == null)
-            (_halt, _full) = reached is { } r && _ctx == null
+            (_halt, _full) = reached is { } r && Native
                 ? r.Room ? NoRoom(always: true) : (string.Format(CultureInfo.InvariantCulture, VulkanFull, Path.GetFileNameWithoutExtension(r.Bin), Format.Bytes(_limit)), true)
                 : await Task.Run(() => Full(grown) is { } full ? (full, false) : NoRoom());
-        return new([.. pass.Added], reached != null && _ctx != null, _halt, _full);
+        // the native warm's replayer isn't named like the game, so Core never sees it hold its files: every set of the driver
+        // folders it wrote to is the game's, as a process holds each set of its folder
+        var wrote = Native ? grown.Keys.Select(b => Path.GetDirectoryName(b)!).ToHashSet(StringComparer.Ordinal) : [];
+        return new([.. pass.Added, .. pass.Keys(wrote)], reached != null && !Native, _halt, _full);
     }
 
     /// <summary>A Flatpak Steam game's process has exited: what it left in its exchange comes out (<see cref="FlatpakExchange"/>),
@@ -260,7 +291,7 @@ sealed class ProtonWarmHost : IWarmHost
         {
             if (!copy) return;
             x.CopyOutputs(_work, Left);
-            var pass = _noDict!;
+            if (_noDict is not { } pass) return;   // Mesa: the cache stays in the sandbox, the game's own
             long used;
             try { used = pass.NvidiaBytes(); }
             catch (DirectoryNotFoundException) when (!Directory.Exists(pass.NvidiaDir)) { used = 0; }
@@ -388,7 +419,7 @@ sealed class ProtonWarmHost : IWarmHost
             }
             Job.Log?.Invoke(unstopped ?? (bin != null ? $"{Path.GetFileNameWithoutExtension(bin)} reached {Format.Bytes(length)}"
                     : room.Unmeasured ?? $"NVIDIA's cache folder holds {Format.Bytes(room.Used)}, all the room its rewrite leaves")
-                + ": stopping the compile's process" + (_ctx != null && bin != null && room.Unmeasured == null ? ", the next one goes on in a fresh file" : ""));
+                + ": stopping the compile's process" + (!Native && bin != null && room.Unmeasured == null ? ", the next one goes on in a fresh file" : ""));
             return;
         }
     }
@@ -446,21 +477,26 @@ sealed class ProtonWarmHost : IWarmHost
             }
             List<string> all = [.. args, "--out", WarmPath(outFile), "--err", WarmPath(errFile), "--alive-file", WarmPath(x?.AlivePath ?? _alive), "--alive-turns", AliveTurns.ToString()];
             var unit = $"scskiller-warm-{Guid.NewGuid():N}";
-            var argv = x != null ? ProtonLaunch.FlatpakCommand(_flatpak!, priority, Libc.Nice(), x.LauncherLogPath, x.Path, _ctx!.Runtime, _ctx.Proton, WarmPath(copy), all)
+            var argv = x != null ? ProtonLaunch.FlatpakCommand(_flatpak!, _flatpakApp, priority, Libc.Nice(), x.LauncherLogPath, x.Path, _flatpakRuntime ? _ctx!.Runtime : null, _ctx!.Proton, WarmPath(copy), all,
+                    _mesa ? _cache.LastOrDefault(v => v.Name == "XDG_CACHE_HOME").Value : null)
                 : _wine != null ? ProtonLaunch.NativeCommand(_tools, priority, Libc.Nice(), unit, _launcherLog, _wine.Bin, [WarmPath(copy), .. all])
                 : _ctx == null ? ProtonLaunch.NativeCommand(_tools, priority, Libc.Nice(), unit, _launcherLog, copy, all)
                 : ProtonLaunch.Command(_tools, priority, Libc.Nice(), unit, _launcherLog, _ctx.Runtime, _ctx.Proton, WarmPath(copy), all);
             var psi = new ProcessStartInfo(argv[0]) { UseShellExecute = false, WorkingDirectory = x?.WorkPath ?? _work };
+            Job.Log?.Invoke("warm runs: " + ProtonLaunch.ShellLine(argv));
             foreach (var a in argv.Skip(1)) psi.ArgumentList.Add(a);
             var inherited = Inherited ?? System.Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
                 .ToDictionary(e => (string)e.Key, e => (string?)e.Value ?? "", StringComparer.Ordinal);
+            // the game's own GPU choice replaces Core's whole: Core's other GPU variables could pick another device
+            if (_launchGpu.Any(v => LaunchGpu.Is(v.Name))) inherited = inherited.Where(e => !LaunchGpu.Is(e.Key)).ToDictionary(StringComparer.Ordinal);
             psi.Environment.Clear();
             var home = System.Environment.GetEnvironmentVariable("HOME");
-            foreach (var (k, v) in x != null ? ProtonLaunch.Environment(inherited.Where(e => ProtonLaunch.FlatpakKept(e.Key)), _ctx!, Wine.CacheEnvironment(x.CachePath, _exeName, _cacheCap).Warm,
+            foreach (var (k, v) in x != null ? ProtonLaunch.Environment(inherited.Where(e => ProtonLaunch.FlatpakKept(e.Key, _mesa)), _ctx!,
+                             [.. _mesa ? _cache.Where(v => v.Name != "XDG_CACHE_HOME") : Wine.CacheEnvironment(x.CachePath, _exeName, _cacheCap).Warm, .. _launchGpu],
                              _gpuName, Job.Token, env, home, [x.Path], x.WorkPath)
-                         : _wine != null ? ProtonLaunch.WineEnvironment(inherited, _wine.WineDir, _cache, _gpuName, Job.Token, env)
-                         : _ctx == null ? ProtonLaunch.NativeEnvironment(inherited, _cache, _mesa, Job.Token, env, AlsoInherited)
-                         : ProtonLaunch.Environment(inherited, _ctx, _cache, _gpuName, Job.Token, env, home, [_dataDir], _work))
+                         : _wine != null ? ProtonLaunch.WineEnvironment(inherited, _wine.WineDir, [.. _cache, .. _launchGpu], _gpuName, Job.Token, env)
+                         : _ctx == null ? ProtonLaunch.NativeEnvironment(inherited, [.. _cache, .. _launchGpu], _mesa, Job.Token, env, AlsoInherited)
+                         : ProtonLaunch.Environment(inherited, _ctx, [.. _cache, .. _launchGpu], _gpuName, Job.Token, env, home, [_dataDir], _work))
                 psi.Environment[k] = v;
             var logFrom = x == null && File.Exists(_launcherLog) ? new FileInfo(_launcherLog).Length : 0;
             var before = _noDict?.Bins(strict: true) ?? [];
@@ -484,9 +520,9 @@ sealed class ProtonWarmHost : IWarmHost
                 }
                 Job.Within = sandbox.Holds;
                 if (_tools.SystemdRun is { } run)
-                    _scopes = new FlatpakScopes(Path.Combine(Path.GetDirectoryName(run)!, "systemctl"), _tools.SystemdVersion, priority, sandbox, Job.Log);
+                    _scopes = new FlatpakScopes(Path.Combine(Path.GetDirectoryName(run)!, "systemctl"), _tools.SystemdVersion, priority, sandbox, Job.Log, _flatpakApp);
             }
-            var proc = new ProtonProcess(this, p, outFile, errFile, logFrom, errorLine, x, _sandbox);
+            var proc = new ProtonProcess(this, p, outFile, errFile, logFrom, errorLine, x, _sandbox, EnvLines(psi.Environment));
             if (x != null)
                 lock (_stopGate)
                 {
@@ -531,8 +567,11 @@ sealed class ProtonWarmHost : IWarmHost
             foreach (var f in inputs)
                 if (File.Exists(Path.Combine(_work, f))) x.CopyIn(Path.Combine(_work, f), $"{FlatpakExchange.Work}/{f}");
                 else if (Directory.Exists(Path.Combine(_work, f))) x.CopyTreeIn(Path.Combine(_work, f), $"{FlatpakExchange.Work}/{f}");
-            x.CopySetsIn(NvidiaLinuxAppCache.CacheDir(_gameDir), _appName);
-            x.CopyVkd3dIn(Path.Combine(Wine.CacheRoot(_gameDir), "vkd3d"), _exeName);
+            if (!_mesa)
+            {
+                x.CopySetsIn(NvidiaLinuxAppCache.CacheDir(_gameDir), _appName);
+                x.CopyVkd3dIn(Path.Combine(Wine.CacheRoot(_gameDir), "vkd3d"), _exeName);
+            }
             _exchangeIn = x.NvidiaBytes();
             Job.Stage(x.WorkPath);
             copy = Path.Combine(x.Path, FlatpakExchange.Bin, rel);
@@ -566,8 +605,9 @@ sealed class ProtonWarmHost : IWarmHost
         var dir = Path.GetDirectoryName(full)!;
         var root = Path.GetFileName(dir) == "segheap" ? Path.GetDirectoryName(dir)! : dir;
         var rel = Path.GetRelativePath(root, full);
+        byte[]? Gui(string f) => Path.GetFileName(f) == "scskiller_warm.exe" ? AsGui(File.ReadAllBytes(Path.Combine(root, f))) : null;
         var copied = (files ?? NativeFiles).Append(rel).Distinct().Where(f => File.Exists(Path.Combine(root, f))).Order(StringComparer.Ordinal)
-            .Select(f => (Name: f, Hash: Hash(Path.Combine(root, f)))).ToList();
+            .Select(f => (Name: f, Hash: Gui(f) is { } b ? Convert.ToHexStringLower(SHA256.HashData(b)) : Hash(Path.Combine(root, f)))).ToList();
         var key = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', copied.Select(f => $"{f.Name}\0{f.Hash}")))))[..16];
         var target = Path.Combine(dataDir, "native", key);
         bool Copied() => copied.All(f => File.Exists(Path.Combine(target, f.Name)) && Hash(Path.Combine(target, f.Name)) == f.Hash);
@@ -579,7 +619,8 @@ sealed class ProtonWarmHost : IWarmHost
             {
                 var to = Path.Combine(temp, name);
                 Directory.CreateDirectory(Path.GetDirectoryName(to)!);
-                File.Copy(Path.Combine(root, name), to);
+                if (Gui(name) is { } b) File.WriteAllBytes(to, b);
+                else File.Copy(Path.Combine(root, name), to);
             }
             if (Directory.Exists(target)) Directory.Delete(target, true);   // its content isn't its key's
             Directory.Move(temp, target);
@@ -590,6 +631,18 @@ sealed class ProtonWarmHost : IWarmHost
             if (Directory.Exists(temp)) Directory.Delete(temp, true);
         }
         return Path.Combine(target, rel);
+    }
+
+    /// <summary><paramref name="pe"/> with a console exe's subsystem made GUI's (e_lfanew + 24 + 68, as build/publish.ps1 sets
+    /// it): under Wine, Proton's steam.exe (a GUI exe without a console) starting a console exe gives it a console window. The
+    /// warm opens its own --out and --err. Anything else comes back as it is.</summary>
+    static byte[] AsGui(byte[] pe)
+    {
+        if (pe.Length < 0x40 || pe[0] != 'M' || pe[1] != 'Z') return pe;
+        var at = BitConverter.ToInt32(pe, 0x3C);
+        if (at < 0x40 || at > pe.Length - 24 - 70 || BitConverter.ToUInt32(pe, at) != 0x4550 || BitConverter.ToUInt16(pe, at + 24 + 68) != 3) return pe;
+        pe[at + 24 + 68] = 2;
+        return pe;
     }
 
     static string Hash(string file)
@@ -613,14 +666,16 @@ sealed class ProtonWarmHost : IWarmHost
         bool _suspended, _watching, _killing;
         volatile bool _seen, _stopAsked, _ending, _killed, _unended;
         readonly Microsoft.Win32.SafeHandles.SafeFileHandle? _launcherLog;   // an exchange's, Core's own file whatever its name now
+        readonly IReadOnlyList<string> _env;
 
         /// <param name="x">a Flatpak Steam game's exchange: its out, err and launcher log are read through Core's own handles
         /// on them, each up to <see cref="FlatpakOutputMax"/></param>
         /// <param name="sandbox">a Flatpak Steam game's sandbox, ended once the warm ignores its stop (<see cref="Bound"/>)</param>
+        /// <param name="env">the warm's <see cref="EnvLines"/>, which a failure reports</param>
         public ProtonProcess(ProtonWarmHost host, Process launcher, string outFile, string errFile, long logFrom, Action<string> errorLine, FlatpakExchange? x = null,
-            FlatpakSandbox? sandbox = null)
+            FlatpakSandbox? sandbox = null, IReadOnlyList<string>? env = null)
         {
-            (_host, _launcher) = (host, launcher);
+            (_host, _launcher, _env) = (host, launcher, env ?? []);
             var (outHandle, errHandle) = x == null ? (null, null) : (FlatpakExchange.Reopen(x.Out), FlatpakExchange.Reopen(x.Err));
             _launcherLog = x == null ? null : FlatpakExchange.Reopen(x.LauncherLog);
             var max = x == null ? long.MaxValue : FlatpakOutputMax;
@@ -756,9 +811,19 @@ sealed class ProtonWarmHost : IWarmHost
             while (!_launcherExited.IsCompleted && !_warmGone.Task.IsCompleted && !_unended && !(linger.IsCompleted && _host.Job.Members().Count == 0))
                 await Task.WhenAny(_launcherExited, linger.IsCompleted ? Task.Delay(500) : linger);
             await _errDone;
-            // no line of the warm's to go by: the launcher's own say why it ended
-            if (_code == null && Volatile.Read(ref _errLines) == 0)
-                foreach (var l in (_launcherLog != null ? LauncherLines(_launcherLog, FlatpakOutputMax) : LauncherLines(_host._launcherLog, logFrom)).TakeLast(3)) errorLine(l);
+            // a warm that failed (code 1) or died, not by our stop or kill: DXVK's device lines and its environment, which the
+            // failure's message leaves out. With no line of the warm's to go by, the launcher's last ones say why it ended.
+            var silent = _code == null && Volatile.Read(ref _errLines) == 0;
+            if (_code is null or 1)
+            {
+                var lines = (_launcherLog != null ? LauncherLines(_launcherLog, FlatpakOutputMax) : LauncherLines(_host._launcherLog, logFrom)).ToList();
+                if (_code == 1 || !_killed && !_stopAsked)
+                {
+                    foreach (var l in lines.Take(silent ? lines.Count - 3 : lines.Count).Where(Warmer.DxvkDeviceLine).TakeLast(MaxDxvkLines)) errorLine(l);
+                    foreach (var l in _env) errorLine(l);
+                }
+                if (silent) foreach (var l in lines.TakeLast(3)) errorLine(l);
+            }
             _launcherLog?.Dispose();
             return _code;
         }
@@ -854,6 +919,24 @@ sealed class ProtonWarmHost : IWarmHost
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
         }
     }
+
+    // with the launcher's last 3, what a failed warm's report keeps of its stderr (20 lines)
+    const int MaxDxvkLines = 8, MaxEnvLines = 9;
+
+    /// <summary>For a failed warm's report, the variables it got that choose its Vulkan driver, device and layers, its Steam
+    /// runtime's setup or a preload: these names alone, never the rest of the environment. A path keeps its last part only
+    /// (its folders can name the user where no mask finds it), a value holding a URL with a query is left out.</summary>
+    internal static List<string> EnvLines(IEnumerable<KeyValuePair<string, string?>> env) =>
+        [.. env.Where(e => e.Value != null && Diagnosed(e.Key)).OrderBy(e => e.Key, StringComparer.Ordinal).Take(MaxEnvLines)
+            .Select(e => UrlQuery.IsMatch(e.Value!) ? $"{Warmer.EnvPrefix}{e.Key} (a URL, left out)"
+                : $"{Warmer.EnvPrefix}{e.Key}={string.Join(':', e.Value!.Split(':').Select(p => p.Contains('/') ? ".../" + p.TrimEnd('/').Split('/')[^1] : p))}")];
+
+    static bool Diagnosed(string name) =>
+        name.StartsWith("VK_", StringComparison.Ordinal) || name.StartsWith("MESA_VK", StringComparison.Ordinal)
+        || name.StartsWith("PRESSURE_VESSEL_", StringComparison.Ordinal) || name.StartsWith("STEAM_RUNTIME", StringComparison.Ordinal)
+        || name is "LD_PRELOAD" or "LD_LIBRARY_PATH";
+
+    static readonly System.Text.RegularExpressions.Regex UrlQuery = new(@"://\S*\?", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>The exit line's code, the warm's last line in --out ({"event":"exit","code":N}); null for any other line.</summary>
     internal static int? ExitCode(string line)

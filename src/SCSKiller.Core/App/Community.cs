@@ -26,7 +26,9 @@ public sealed record CommunityDownload(string Object, string ContentHash, int Ps
     OfficialVisibility? Visibility = null,   // an official recording's, as downloaded; null for a community one
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Full = false,
     // the index content hash of an install that has none of its shaders: not used there, kept for a later build
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? MatchesNothingIn = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? MatchesNothingIn = null,
+    // its uploaders' NVIDIA Aftermath (HashOnly.AftermathOn): true when every one started it so it changes the key, false when one didn't
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool? Aftermath = null);
 
 /// <summary>The manifest: fixed 80-byte little-endian records, replayed in file order. Record 0 is the
 /// 'M' header (format 1, the epoch); 'E' entry: content hash -> object (the last one wins); 'P' the same for a middleware
@@ -175,8 +177,9 @@ public sealed class Community
 
     /// <summary>The manifest: the local copy while it was checked less than <see cref="ManifestMaxAge"/> ago (its file's write
     /// time) and not <see cref="Expire"/>d, else brought up to date first (3 s per route). A failed check keeps the copy (null when there's none);
-    /// after a 429 or 503 none is made until its Retry-After (1 h without one, a day at most), offline for 5 minutes.</summary>
-    public async Task<CommunityManifest?> ManifestAsync(CancellationToken ct = default)
+    /// after a 429 or 503 none is made until its Retry-After (1 h without one, a day at most), offline for 5 minutes.
+    /// <paramref name="wanted"/> false right before a send (any route): the copy, with no request and no <see cref="Problem"/>.</summary>
+    public async Task<CommunityManifest?> ManifestAsync(CancellationToken ct = default, Func<bool>? wanted = null)
     {
         await manifestGate.WaitAsync(ct);
         try
@@ -186,12 +189,12 @@ public sealed class Community
                 try { manifest = CommunityManifest.Parse(File.ReadAllBytes(file)); }
                 catch (InvalidDataException) { }   // damaged: fetched whole
             if (manifest != null && !expired && clock.GetUtcNow() - File.GetLastWriteTimeUtc(file) < ManifestMaxAge) return manifest;
-            if (clock.GetElapsedTime(manifestFailedAt) < manifestWait) return manifest;
+            if (clock.GetElapsedTime(manifestFailedAt) < manifestWait || wanted?.Invoke() == false) return manifest;
             expired = false;
             var have = manifest != null && File.Exists(file) ? File.ReadAllBytes(file) : null;
             try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(routes.Primary, $"v1/manifest/{manifest?.Epoch ?? 0}"));
+                using var request = Wanted(new HttpRequestMessage(HttpMethod.Get, new Uri(routes.Primary, $"v1/manifest/{manifest?.Epoch ?? 0}")), wanted);
                 request.Options.Set(RouteFailover.AttemptTimeout, TimeSpan.FromSeconds(3));
                 if (have != null) request.Headers.Range = new(have.Length, null);
                 using var r = await http.SendAsync(request, ct);
@@ -216,6 +219,7 @@ public sealed class Community
                     (manifest, Problem) = (parsed, null);
                 }
             }
+            catch (RequestWithdrawnException) { }
             catch (Exception e) when (!ct.IsCancellationRequested)
             {
                 Problem = Plain(e);
@@ -233,19 +237,20 @@ public sealed class Community
     /// <summary>Downloads <paramref name="e"/> into <paramref name="gameDir"/>\community.db (a compact recording, + community.json) when an access
     /// token with "db" is at hand. Null when not entitled, while backing off after a 429/503, or on any failure
     /// (<see cref="Problem"/>); what was downloaded before stays. <paramref name="hold"/>(replace): true when the caller keeps the
-    /// replace of the files to run later under the game's recording lock.</summary>
-    public Task<CommunityDownload?> DownloadAsync(CommunityEntry e, string gameDir, CancellationToken ct = default, Func<Action, bool>? hold = null) =>
-        Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "community", null, ct, hold, e.Full);
+    /// replace of the files to run later under the game's recording lock. <paramref name="wanted"/>: asked right before every
+    /// request (a token renewal, the retry after a 401, another route) and before the files are written; false stops quietly.</summary>
+    public Task<CommunityDownload?> DownloadAsync(CommunityEntry e, string gameDir, CancellationToken ct = default, Func<Action, bool>? hold = null, Func<bool>? wanted = null) =>
+        Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "community", null, ct, hold, wanted, e.Full);
 
     /// <summary>Downloads the D3D11 draws entry <paramref name="e"/> into <paramref name="gameDir"/>\draws.db (+ draws.json), as
     /// <see cref="DownloadAsync"/>.</summary>
-    public Task<CommunityDownload?> DownloadDrawsAsync(CommunityEntry e, string gameDir, CancellationToken ct = default, Func<Action, bool>? hold = null) =>
-        Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "draws", null, ct, hold);
+    public Task<CommunityDownload?> DownloadDrawsAsync(CommunityEntry e, string gameDir, CancellationToken ct = default, Func<Action, bool>? hold = null, Func<bool>? wanted = null) =>
+        Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "draws", null, ct, hold, wanted);
 
     /// <summary>Downloads the Vulkan entry <paramref name="e"/> into <paramref name="gameDir"/>\<see cref="VulkanFile"/> (+ vulkan.json),
     /// as <see cref="DownloadAsync"/>.</summary>
-    public Task<CommunityDownload?> DownloadVulkanAsync(CommunityEntry e, string gameDir, CancellationToken ct = default, Func<Action, bool>? hold = null) =>
-        Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "vulkan", null, ct, hold);
+    public Task<CommunityDownload?> DownloadVulkanAsync(CommunityEntry e, string gameDir, CancellationToken ct = default, Func<Action, bool>? hold = null, Func<bool>? wanted = null) =>
+        Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "vulkan", null, ct, hold, wanted);
 
     /// <summary>A Vulkan entry's download in a game's folder: a Fossilize archive (<see cref="Vulkan.Foz.FromShared"/>).</summary>
     public const string VulkanFile = "vulkan.foz";
@@ -254,31 +259,46 @@ public sealed class Community
 
     /// <summary>Downloads the official recording <paramref name="e"/> into <paramref name="gameDir"/>\official.db (+ official.json)
     /// when this install may: everyone with no token at all, patreon with "db", prio with "prio"; else as <see cref="DownloadAsync"/>.</summary>
-    public Task<CommunityDownload?> DownloadOfficialAsync(OfficialEntry e, string gameDir, CancellationToken ct = default, Func<Action, bool>? hold = null) => e.Visibility switch
+    public Task<CommunityDownload?> DownloadOfficialAsync(OfficialEntry e, string gameDir, CancellationToken ct = default, Func<Action, bool>? hold = null, Func<bool>? wanted = null) => e.Visibility switch
     {
         // a server that gates every object on "db" refuses it: not asked again until the manifest changes
         OfficialVisibility.Everyone when freeRefusedAt == (manifest?.Length ?? 0) => Task.FromResult<CommunityDownload?>(null),
-        OfficialVisibility.Everyone => Download(e.Object, e.Size, e.ContentHash, null, gameDir, "official", e.Visibility, ct, hold),
-        OfficialVisibility.Patreon => Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "official", e.Visibility, ct, hold),
+        OfficialVisibility.Everyone => Download(e.Object, e.Size, e.ContentHash, null, gameDir, "official", e.Visibility, ct, hold, wanted),
+        OfficialVisibility.Patreon => Download(e.Object, e.Size, e.ContentHash, dbToken, gameDir, "official", e.Visibility, ct, hold, wanted),
         OfficialVisibility.Prio when TokenWith is { } with =>
-            Download(e.Object, e.Size, e.ContentHash, (fresh, c) => with("prio", fresh, c), gameDir, "official", e.Visibility, ct, hold),
+            Download(e.Object, e.Size, e.ContentHash, (fresh, c) => with("prio", fresh, c), gameDir, "official", e.Visibility, ct, hold, wanted),
         _ => Task.FromResult<CommunityDownload?>(null),
     };
 
     async Task<CommunityDownload?> Download(string obj, long size, string contentHash, Func<bool, CancellationToken, Task<string?>>? token,
-        string gameDir, string name, OfficialVisibility? visibility, CancellationToken ct, Func<Action, bool>? hold, bool full = false)
+        string gameDir, string name, OfficialVisibility? visibility, CancellationToken ct, Func<Action, bool>? hold, Func<bool>? wanted, bool full = false)
     {
-        if (clock.GetUtcNow() < backoffUntil) return null;
+        bool Off() => wanted?.Invoke() == false;
+        if (clock.GetUtcNow() < backoffUntil || Off()) return null;
         try
         {
             if (size > (full ? MaxFullRaw : MaxRaw)) return null;
             string? bearer = null;
-            if (token != null && (bearer = await token(false, ct)) == null) return null;
-            var r = await GetObject(obj, bearer, ct);
-            if (r.StatusCode == HttpStatusCode.Unauthorized && token != null && await token(true, ct) is { } fresh)   // expired or revoked: once with a new one
+            if (token != null && (bearer = await token(false, ct)) == null)
             {
-                r.Dispose();
-                r = await GetObject(obj, fresh, ct);
+                Problem = null;   // not a failure: the caller asks the account why
+                return null;
+            }
+            if (Off()) return null;
+            var r = await GetObject(obj, bearer, wanted, ct);
+            if (r.StatusCode == HttpStatusCode.Unauthorized && token != null)   // expired or revoked: once with a new one
+            {
+                var fresh = Off() ? null : await token(true, ct);
+                if (Off())
+                {
+                    r.Dispose();
+                    return null;
+                }
+                if (fresh != null)
+                {
+                    r.Dispose();
+                    r = await GetObject(obj, fresh, wanted, ct);
+                }
             }
             using (r)
             {
@@ -302,6 +322,7 @@ public sealed class Community
                 }
                 byte[]? file;
                 int? checkedPsos;
+                List<PsoDb.Rec> aftermath = [];
                 if (name == "draws")   // draws.db stays a proxy db: DrawsInUse checks its bytes again
                 {
                     file = await Bounded(new BrotliStream(new MemoryStream(packed), CompressionMode.Decompress), MaxRaw, ct);
@@ -317,13 +338,14 @@ public sealed class Community
                     }
                     catch (InvalidDataException) { }
                 }
-                else checkedPsos = CheckPacked(packed, out file, full);
+                else checkedPsos = CheckPacked(packed, out file, full, aftermath);
                 if (checkedPsos is not { } psos)
                 {
                     Problem = "A community recording this version can't read was ignored. An update of SCSKiller may fix it.";
                     return null;
                 }
-                var got = new CommunityDownload(obj, contentHash, psos, clock.GetUtcNow(), visibility, full);
+                var got = new CommunityDownload(obj, contentHash, psos, clock.GetUtcNow(), visibility, full,
+                    Aftermath: aftermath.Count > 0 ? aftermath.All(r => HashOnly.AftermathOn(r) == true) : null);
                 void Replace()
                 {
                     // a db left without its json is never used: an 'X' must not stay labelled as the 'E' it replaced
@@ -332,11 +354,15 @@ public sealed class Community
                     Write(Path.Combine(gameDir, name + ".json"), got);
                 }
                 using (Recordings.Lock(Path.Combine(gameDir, "recording.db"), ct: ct))   // not while a compile (any process's) reads the recordings it prepares
+                {
+                    if (Off()) return null;
                     if (hold?.Invoke(Replace) != true) Replace();   // asked under the lock a compile reads the downloads under
+                }
                 Problem = null;
                 return got;
             }
         }
+        catch (RequestWithdrawnException) { return null; }
         catch (Exception x) when (!ct.IsCancellationRequested)
         {
             if (x is HttpRequestException or OperationCanceledException) backoffUntil = clock.GetUtcNow() + TimeSpan.FromMinutes(5);   // offline: not once per game
@@ -348,13 +374,14 @@ public sealed class Community
     /// <summary>Downloads the shared pack <paramref name="e"/> (GET /v1/p/, no token: free for every install, signed in or
     /// not) for this install's <paramref name="dll"/> and writes it into <paramref name="shared"/>: only the PSOs that copy of
     /// the DLL can give (<see cref="MiddlewarePacks.FromShared"/>). The PSO count kept, or null on any failure
-    /// (<see cref="Problem"/>) or while backing off; a pack downloaded before stays.</summary>
-    public async Task<int?> DownloadPackAsync(CommunityEntry e, MiddlewareDll dll, MiddlewareImage image, MiddlewarePacks shared, bool amd, CancellationToken ct = default)
+    /// (<see cref="Problem"/>) or while backing off; a pack downloaded before stays. <paramref name="wanted"/> as <see cref="DownloadAsync"/>.</summary>
+    public async Task<int?> DownloadPackAsync(CommunityEntry e, MiddlewareDll dll, MiddlewareImage image, MiddlewarePacks shared, bool amd, CancellationToken ct = default, Func<bool>? wanted = null)
     {
-        if (clock.GetUtcNow() < packBackoffUntil || e.Size > MaxRaw) return null;
+        if (clock.GetUtcNow() < packBackoffUntil || e.Size > MaxRaw || wanted?.Invoke() == false) return null;
         try
         {
-            using var r = await http.GetAsync(new Uri(routes.Primary, "v1/p/" + e.Object), HttpCompletionOption.ResponseHeadersRead, ct);
+            using var request = Wanted(new HttpRequestMessage(HttpMethod.Get, new Uri(routes.Primary, "v1/p/" + e.Object)), wanted);
+            using var r = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
             if (!r.IsSuccessStatusCode)
             {
                 if (r.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
@@ -375,10 +402,12 @@ public sealed class Community
                 Problem = "An upscaler pack this version can't read was ignored. An update of SCSKiller may fix it.";
                 return null;
             }
+            if (wanted?.Invoke() == false) return null;
             pack.Write(shared.PathOf(dll.Vendor, dll.Name, image.ContentHash));
             Problem = null;
             return pack.Entries.Count;
         }
+        catch (RequestWithdrawnException) { return null; }
         catch (Exception x) when (!ct.IsCancellationRequested)
         {
             if (x is HttpRequestException or OperationCanceledException) packBackoffUntil = clock.GetUtcNow() + TimeSpan.FromMinutes(5);
@@ -387,11 +416,17 @@ public sealed class Community
         }
     }
 
-    Task<HttpResponseMessage> GetObject(string obj, string? token, CancellationToken ct)
+    Task<HttpResponseMessage> GetObject(string obj, string? token, Func<bool>? wanted, CancellationToken ct)
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, new Uri(routes.Primary, "v1/o/" + obj));
+        var request = Wanted(new HttpRequestMessage(HttpMethod.Get, new Uri(routes.Primary, "v1/o/" + obj)), wanted);
         if (token != null) request.Headers.Authorization = new("Bearer", token);
         return http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+    }
+
+    static HttpRequestMessage Wanted(HttpRequestMessage request, Func<bool>? wanted)
+    {
+        if (wanted != null) request.Options.Set(RouteFailover.StillWanted, wanted);
+        return request;
     }
 
     /// <summary>What <see cref="DownloadAsync"/> left in a game's folder; null when nothing (or it's unreadable).</summary>
@@ -441,16 +476,17 @@ public sealed class Community
 
     /// <summary><see cref="Check"/> of a downloaded game build's entry or official recording (Brotli), as it decodes: keys are
     /// held, not records. <paramref name="compact"/>: what to keep, the object as it came in a compact recording.
-    /// <paramref name="full"/>: an 'X' entry's caps, <see cref="MaxFullRaw"/> and <see cref="HashOnly.MaxFullRecords"/> with 'L' apart.</summary>
-    internal static int? CheckPacked(byte[] packed, out byte[]? compact, bool full = false)
+    /// <paramref name="full"/>: an 'X' entry's caps, <see cref="MaxFullRaw"/> and <see cref="HashOnly.MaxFullRecords"/> with 'L' apart.
+    /// <paramref name="aftermath"/>: gets its <see cref="HashOnly.IsAftermath"/> records.</summary>
+    internal static int? CheckPacked(byte[] packed, out byte[]? compact, bool full = false, List<PsoDb.Rec>? aftermath = null)
     {
         compact = null;
         try
         {
             using var b = new BrotliStream(new MemoryStream(packed), CompressionMode.Decompress);
             var (psos, raw) = full
-                ? HashOnly.Verify(HashOnly.Records(new BufferedStream(b, 1 << 16), MaxFullRaw), HashOnly.MaxEntryStateObjectRefs, HashOnly.MaxFullRecords, flagsApart: true)
-                : HashOnly.Verify(HashOnly.Records(new BufferedStream(b, 1 << 16), MaxRaw), HashOnly.MaxEntryStateObjectRefs, HashOnly.MaxEntryRecords);
+                ? HashOnly.Verify(HashOnly.Records(new BufferedStream(b, 1 << 16), MaxFullRaw), HashOnly.MaxEntryStateObjectRefs, HashOnly.MaxFullRecords, flagsApart: true, aftermath)
+                : HashOnly.Verify(HashOnly.Records(new BufferedStream(b, 1 << 16), MaxRaw), HashOnly.MaxEntryStateObjectRefs, HashOnly.MaxEntryRecords, aftermath: aftermath);
             compact = PsoDb.Compact(raw, packed);
             return psos;
         }
@@ -461,7 +497,9 @@ public sealed class Community
     /// records of each of <paramref name="more"/> that the ones before lack (by Rec.Key) and <paramref name="leaveOut"/>
     /// doesn't name, every 'B' first, as a proxy db. An 'N' of <paramref name="more"/> about a PSO <paramref name="first"/>
     /// has an 'N' for is left out (<see cref="OwnNv"/>): the replay applies a record's last one, and this PC's game creates it
-    /// with its own. A state object's stays: a download's options repair an older recorder's missing ones (RtCollections.OptionFixes). A 'B' of <paramref name="more"/> whose bytes don't hash to its SHA-1 is
+    /// with its own. A state object's too when <paramref name="first"/>'s has its options (Phantom Blade Zero: the downloads' came
+    /// after 4,910 of 5,078 recorded ones, half without the slot); else it stays: a download's options repair an older recorder's
+    /// missing ones (RtCollections.OptionFixes). A 'B' of <paramref name="more"/> whose bytes don't hash to its SHA-1 is
     /// left out: it would take the place of <paramref name="first"/>'s copy. Returns how many were.</summary>
     public static int Union(string first, IReadOnlyList<string> more, string output, IReadOnlySet<string>? leaveOut = null)
     {
@@ -488,15 +526,24 @@ public sealed class Community
     /// <summary>The record an 'N' is about; null for any other record.</summary>
     internal static string? NvTarget(PsoDb.Rec r) => r.Tag == 'N' && r.Payload.Length == PsoDb.NvState.Size ? PsoDb.Hex(r.Payload.AsSpan(0, 20)) : null;
 
-    /// <summary>The PSOs ('G' 'C' 'S') of a recording that have an 'N' there; <paramref name="keys"/> gets every record's key.</summary>
+    /// <summary>The PSOs ('G' 'C' 'S') of a recording that have an 'N' there, and its state objects whose 'N' has
+    /// <see cref="PsoDb.NvState.GlobalOptions"/> (their options as the driver had them: nothing for a download to repair);
+    /// <paramref name="keys"/> gets every record's key.</summary>
     internal static HashSet<string> OwnNv(IEnumerable<PsoDb.Rec> recording, HashSet<string>? keys = null)
     {
-        var (psos, nv) = (new HashSet<string>(), new HashSet<string>());
+        var (psos, nv, states) = (new HashSet<string>(), new HashSet<string>(), new HashSet<string>());
+        var global = new Dictionary<string, bool>();   // by the last 'N', the one the replay applies
         foreach (var r in recording)
             if (keys?.Add(r.Key) is false) continue;
             else if (r.Tag is 'G' or 'C' or 'S') psos.Add(r.Key);
-            else if (NvTarget(r) is { } t) nv.Add(t);
+            else if (PsoDb.IsStateObject(r.Tag)) states.Add(r.Key);
+            else if (NvTarget(r) is { } t)
+            {
+                nv.Add(t);
+                global[t] = (PsoDb.NvState.Parse(r).Scope & PsoDb.NvState.GlobalOptions) != 0;
+            }
         nv.IntersectWith(psos);
+        nv.UnionWith(states.Where(s => global.GetValueOrDefault(s)));
         return nv;
     }
 

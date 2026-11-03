@@ -7,6 +7,12 @@ public sealed partial class SteamSource
 {
     public static partial string Root() => Root(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
 
+    public static partial string Root(out string? from)
+    {
+        from = null;
+        return Root();
+    }
+
     /// <summary>Steam's folder for the home folder <paramref name="home"/>: ~/.steam/root resolved (Steam links it to the
     /// folder it runs from), else the Flatpak Steam's, else the Snap Steam's (each keeps its own ~ in its sandbox folder),
     /// else ~/.local/share/Steam.</summary>

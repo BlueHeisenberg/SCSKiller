@@ -211,6 +211,32 @@
             <Thickness x:Key="TextControlBorderThemeThicknessFocused">1,1,1,2</Thickness>
             <x:Double x:Key="TextControlPlaceholderOpacity">1</x:Double>
             <CornerRadius x:Key="OverlayCornerRadius">8</CornerRadius>
+            <!-- text sizes and boxes sized to their text: TextScale multiplies them by Windows' Text size -->
+            <x:Double x:Key="ControlContentThemeFontSize">14</x:Double>
+            <x:Double x:Key="ToolTipContentThemeFontSize">12</x:Double>
+            <x:Double x:Key="ToolTipContentMaxWidth">320</x:Double>
+            <x:Double x:Key="TextSize.11">11</x:Double>
+            <x:Double x:Key="TextSize.12">12</x:Double>
+            <x:Double x:Key="TextSize.13">13</x:Double>
+            <x:Double x:Key="TextSize.14">14</x:Double>
+            <x:Double x:Key="TextSize.16">16</x:Double>
+            <x:Double x:Key="TextSize.20">20</x:Double>
+            <x:Double x:Key="TextSize.22">22</x:Double>
+            <x:Double x:Key="TextSize.28">28</x:Double>
+            <x:Double x:Key="TextFit.22">22</x:Double>
+            <x:Double x:Key="TextFit.170">170</x:Double>
+            <x:Double x:Key="TextFit.300">300</x:Double>
+            <x:Double x:Key="TextFit.320">320</x:Double>
+            <x:Double x:Key="TextFit.340">340</x:Double>
+            <x:Double x:Key="TextFit.360">360</x:Double>
+            <x:Double x:Key="TextFit.380">380</x:Double>
+            <x:Double x:Key="TextFit.412">412</x:Double>
+            <x:Double x:Key="TextFit.440">440</x:Double>
+            <x:Double x:Key="TextFit.520">520</x:Double>
+            <x:Double x:Key="TextFit.548">548</x:Double>
+            <x:Double x:Key="TextFit.560">560</x:Double>
+            <x:Double x:Key="TextFit.620">620</x:Double>
+            <x:Double x:Key="TextFit.880">880</x:Double>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

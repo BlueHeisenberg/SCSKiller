@@ -4,9 +4,11 @@ namespace SCSKiller.Core.Games;
 
 /// <summary>Installed Epic games from the launcher's %LOCALAPPDATA%\com.epicgames.eglv2\installations.jsonl, then from the
 /// classic launcher's %ProgramData%\Epic\EpicGamesLauncher\Data\Manifests\*.item.</summary>
-public sealed class EpicSource(string? manifestsDir = null, string? launcherDir = null) : IGameSource
+public sealed class EpicSource(string? manifestsDir = null, string? launcherDir = null) : IGameSource, ILeavesOut
 {
     public Store Store => Store.Epic;
+
+    public Func<string, bool> LeftOut { get; set; } = _ => false;
 
     public static string DefaultManifestsDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "Epic", "EpicGamesLauncher", "Data", "Manifests");
@@ -18,7 +20,7 @@ public sealed class EpicSource(string? manifestsDir = null, string? launcherDir 
         var games = new List<Game>();
         var installs = Installs(launcherDir ?? (manifestsDir == null ? DefaultLauncherDir : null));
         foreach (var i in installs)
-            try { if (i.Complete && GameFiles.FindExe(i.Dir, i.Exe) is { } exe) games.Add(new Game($"epic:{i.App}", i.Title, Store.Epic, i.Dir, exe, i.Version)); }
+            try { if (i.Complete && !LeftOut(i.Dir) && GameFiles.FindExe(i.Dir, i.Exe) is { } exe) games.Add(new Game($"epic:{i.App}", i.Title, Store.Epic, i.Dir, exe, i.Version)); }
             catch (Exception e) when (e is not OperationCanceledException) { GameFiles.Skip("Epic", $"epic:{i.App}", e); }
         var current = installs.Select(i => i.App).ToHashSet();   // the launcher leaves the classic one's manifests behind
         var dir = manifestsDir ?? DefaultManifestsDir;
@@ -31,7 +33,7 @@ public sealed class EpicSource(string? manifestsDir = null, string? launcherDir 
                     var r = doc.RootElement;
                     string? S(string k) => r.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
                     if (r.TryGetProperty("bIsIncompleteInstall", out var inc) && inc.ValueKind == JsonValueKind.True) continue;
-                    if (S("AppName") is not { } app || S("InstallLocation") is not { } install || current.Contains(app)) continue;
+                    if (S("AppName") is not { } app || S("InstallLocation") is not { } install || current.Contains(app) || LeftOut(install)) continue;
                     if (S("MainGameAppName") is { Length: > 0 } main && main != app) continue;   // add-on sharing the main game's install (Legendary names a base game's own)
                     if (GameFiles.FindExe(install, string.IsNullOrEmpty(S("LaunchExecutable")) ? null : S("LaunchExecutable")) is not { } exe) continue;
                     games.Add(new Game($"epic:{app}", S("DisplayName") ?? app, Store.Epic, install, exe, S("AppVersionString")));

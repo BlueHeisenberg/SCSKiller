@@ -27,7 +27,7 @@ static class Fmt
 {
     public static string RecorderDll(GameState s) => s.AgsHost ? ScsKiller.AgsName : s.Records11 ? ScsKiller.Dll11 : ScsKiller.Records9(s.Engine) ? ScsKiller.Dll9 : ScsKiller.Dll12;
     /// <summary>What the recorder adds next to the game: its dll, and the preloader that loads it before DLSS.</summary>
-    public static string RecorderFiles(GameState s) => s.Preload is { } p ? $"{RecorderDll(s)} and {p}" : RecorderDll(s);
+    public static string RecorderFiles(GameState s) => ScsKiller.RecorderFile(s, RecorderDll(s)) is var dll && s.Preload is { } p ? $"{dll} and {p}" : dll;
     public static string N(long? n) => n?.ToString("N0") ?? Format.Dash;
     /// <summary>"today at 20:14", "yesterday at 20:14", else "on 26/09/2026" (the culture's short date).</summary>
     public static string When(DateTimeOffset at)
@@ -46,14 +46,10 @@ static class Fmt
     /// <summary>"Severe shader-compilation stutter: reason", then the source and when it was checked; null when not listed.</summary>
     public static string? StutterTip(GameState s) => s.KnownStutter is { } k
         ? $"{(k.Severity == StutterSeverity.Severe ? "Severe" : "Moderate")} shader-compilation stutter: {k.Reason}.\nSource: {k.Source} (checked {k.Date})" : null;
-    /// <summary>Library sections, in list order. GOG, Ubisoft, Battle.net, PURPLE, HoYoPlay, Gaijin and Riot Client games are Store.Other: told apart by their id prefix.</summary>
-    public static readonly string[] Stores = ["Steam", "Epic Games", "Xbox / Game Pass", "EA app", "GOG", "Ubisoft Connect", "Battle.net", "PURPLE", "HoYoPlay", "Gaijin", "Riot Client", "Other", AddedByYou];
-    public const string AddedByYou = "Added by you";
-    public static string StoreName(Game g) => g.Store switch
-    {
-        Store.Steam => "Steam", Store.Epic => "Epic Games", Store.Xbox => "Xbox / Game Pass", Store.EA => "EA app", Store.Manual => AddedByYou,
-        _ => g.Id[..Math.Max(0, g.Id.IndexOf(':'))] switch { "gog" => "GOG", "ubisoft" => "Ubisoft Connect", "battlenet" => "Battle.net", "purple" => "PURPLE", "hoyoplay" => "HoYoPlay", "gryphline" => "GRYPHLINK", "gaijin" => "Gaijin", "riot" => "Riot Client", _ => "Other" },
-    };
+    /// <summary>Library sections, in list order (<see cref="StoreNames.Sections"/>).</summary>
+    public static readonly string[] Stores = StoreNames.Sections;
+    public const string AddedByYou = StoreNames.AddedByYou;
+    public static string StoreName(Game g) => StoreNames.Of(g);
     /// <summary>Measured driver cache when known, else the estimate.</summary>
     public static string Cache(GameState s) => s.DiskBytes is { } c ? Format.Bytes(c) : s.EstimatedCacheBytes is { } b ? "≈ " + Format.Bytes(b) : Format.Dash;
     /// <summary>The last compile's measured time, else the estimate: the estimate's rate is measured on a cold cache only.</summary>
@@ -366,6 +362,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.Warmed when s.Plan?.RecordedOnly == true => "Warmed (recorded pipelines only)",
         GameStatus.Warmed => "Warmed",
         GameStatus.Ready => "Ready to compile",
+        _ when ScsKiller.CheckingAntiCheat(s) => ScsKiller.AntiCheatHeld(s) ? ScsKiller.HeldAntiCheatTitle : ScsKiller.CheckingAntiCheatTitle,
         _ when ScsKiller.NeedsOfflineSession(s) => "Needs an offline session",
         _ when ScsKiller.NeedsSteamStart(s) => "Start it once from Steam",
         GameStatus.NeedsRecording when ScsKiller.NeverRecorded(s) => ScsKiller.NothingRecordedTitle,
@@ -374,6 +371,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         _ when s.StatusReason == ScsKiller.CheckingReason => "Checking…",
         _ when s.StatusReason == ScsKiller.NotCheckedReason => "Not checked",
         _ when s.StatusReason == ScsKiller.CantReachReason => "Not compatible",
+        _ when s.StartFirst => "Start it once first",
         _ => s.ShaderModBlocks ? "Not compiled" : s.Engine?.Encrypted == true ? "Encrypted game files" : s.NotPlanned ? "Not supported" : "Not supported yet",
     };
     /// <summary>The whole reason: the row's tooltip and the game page's status text.</summary>
@@ -384,7 +382,8 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.Warmed => $"driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? " · a recording compiles the rest"
             : ScsKiller.RtAfterRecording(s) ? " · " + ScsKiller.RtAfterRecordingNote : "") + Format.KeyNote(s),
         _ when ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsSteamStart(s) => s.StatusReason,
-        GameStatus.NeedsRecording when s.AnyAntiCheat && !s.RiskEligible => $"{ScsKiller.AntiCheatName(s)} blocks recording",
+        _ when ScsKiller.CheckingAntiCheat(s) => ScsKiller.AntiCheatHeld(s) ? ScsKiller.HeldAntiCheatNote : ScsKiller.CheckingAntiCheatNote,
+        GameStatus.NeedsRecording when s.AnyAntiCheat && !s.RiskEligible => "Contains anti-cheat",
         GameStatus.NeedsRecording when s.RecordingPaused => ScsKiller.PausedNote(App.Core.Settings),
         GameStatus.NeedsRecording when ScsKiller.NeverRecorded(s) => s.RecorderRefused!,
         GameStatus.NeedsRecording when s.RecorderInstalled && !ScsKiller.RecordedEnough(s) => Format.RecorderOnNote(s),
@@ -413,11 +412,12 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     public bool IsAdd => s.Status is GameStatus.Ready or GameStatus.Stale && !s.CompileUnreached;
     public string AddText => queued ? "In queue" : "Add to queue";
     public bool CanAdd => !queued;
-    public bool IsRecord => s.Status == GameStatus.NeedsRecording && !s.RecorderInstalled && s.NoStutter == null && !ScsKiller.NeedsOfflineSession(s) && !ScsKiller.NeedsSteamStart(s) && !s.RiskEligible && !Shared;
+    public bool IsRecord => s.Status == GameStatus.NeedsRecording && !s.RecorderInstalled && s.NoStutter == null && !ScsKiller.NeedsOfflineSession(s) && !ScsKiller.NeedsSteamStart(s) && !s.RiskEligible && !Shared && !ScsKiller.CheckingAntiCheat(s) && !AmdVkAntiCheat;
+    bool AmdVkAntiCheat => s.StatusReason == ScsKiller.AmdVkAntiCheatReason;   // its page, where an own-risk session is offered
     bool Shared => Collections.RecordedBy(s.Game.Id) != null;   // recorded by its collection's first game's recorder, switched on that game's page
     public bool CanRecord => !s.AnyAntiCheat;
-    public bool IsDetails => s.Status == GameStatus.Warmed || ScsKiller.IsUnchecked(s) || s.CompileUnreached || ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsSteamStart(s) || (s.Status == GameStatus.NeedsRecording && (s.RecorderInstalled || s.NoStutter != null || s.RiskEligible || Shared));
-    public bool IsWhy => s.Status == GameStatus.Unsupported && !ScsKiller.IsUnchecked(s);
+    public bool IsDetails => s.Status == GameStatus.Warmed || ScsKiller.IsUnchecked(s) || s.CompileUnreached || ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsSteamStart(s) || ScsKiller.CheckingAntiCheat(s) || (s.Status == GameStatus.NeedsRecording && (s.RecorderInstalled || s.NoStutter != null || s.RiskEligible || Shared || AmdVkAntiCheat));
+    public bool IsWhy => s.Status == GameStatus.Unsupported && !ScsKiller.IsUnchecked(s) && !ScsKiller.CheckingAntiCheat(s);
     public string Reason => s.StatusReason;
 
     // Play goes through the store (a game the user added: its exe); never for an anti-cheat game (SCSKiller never launches them)
@@ -574,7 +574,7 @@ public sealed class LibraryVm : Bindable
     bool slowScan, forced;
     public bool ScanEmpty => slowScan && Games.Count == 0;
     public bool ScanBusy => slowScan && Games.Count > 0;
-    public string ScanEmptyNote => Fmt.AfterUpdateLine ?? "Checking Steam, Epic, Xbox, EA, GOG, Ubisoft Connect, Battle.net, PURPLE, HoYoPlay, Gaijin and Riot Client, then which engine each game uses. "
+    public string ScanEmptyNote => Fmt.AfterUpdateLine ?? "Checking Steam, Epic, Xbox, EA, GOG, Ubisoft Connect, Battle.net, PURPLE, HoYoPlay, GRYPHLINK, Gaijin and Riot Client, then which engine each game uses. "
         + "The first scan reads every game's files, so it can take a minute.";
     public string ScanTitle => Fmt.ScanProgress ?? "Checking for changed games…";
     public string ScanEmptyTitle => Fmt.ScanProgress ?? "Looking for your games…";
@@ -630,9 +630,10 @@ public sealed class LibraryVm : Bindable
         WaitingCount = queue.Count(q => q.Stage == QueueStage.Waiting);
         var stores = Fmt.Stores.Where(n => n != Fmt.AddedByYou && Games.Any(r => r.StoreName == n)).ToList();
         var storeText = stores.Count > 2 ? $"{stores.Count} stores" : string.Join(" and ", stores);
+        int added = list.Count(g => Fmt.StoreName(g.Game) == Fmt.AddedByYou), found = list.Count - added;
         bool allUnreal = list.Count > 0 && list.All(g => g.Engine?.Family == "Unreal");
         Summary = Scanning && list.Count == 0 ? "Looking for games…"
-            : $"{list.Count} {(allUnreal ? "Unreal Engine " : "")}game{(list.Count == 1 ? "" : "s")} found{(storeText.Length > 0 ? " in " + storeText : "")} · {ready} ready to compile";
+            : $"{(found > 0 ? $"{found} {(allUnreal ? "Unreal Engine " : "")}game{(found == 1 ? "" : "s")} found{(storeText.Length > 0 ? " in " + storeText : "")} · " : "")}{(added > 0 ? $"{added} added by you · " : "")}{ready} ready to compile";
 
         cache.Request();
 
@@ -776,11 +777,12 @@ public sealed class DetailVm(string id) : Bindable
     public double Percent => Fmt.Percent(Running);
     public bool Indeterminate => Fmt.Indeterminate(Running);
 
-    public string StatusTitle => Running is { } r ? Fmt.Stage(r) : place.Item != null ? $"In queue (position {place.Number})" : Row.StatusText;
+    public string StatusTitle => Running is { } r ? Fmt.Stage(r) : place.Item != null ? $"In queue (position {place.Number})"
+        : (App.Core is ScsKiller k ? k.FoldingGames.Contains(id) : (App.Core as Design.FakeScsKiller)?.Folding == id) ? Format.MergingStage : Row.StatusText;
     public string StatusReason => Running is { } r && (Fmt.ProgressText(r) is { } p
             ? p + (r.Progress is { PerSecond: > 0 } && Fmt.Left(r, s) is { } t ? $" · {Format.Duration(t)} left" : "") + (Fmt.Started(r) is { } at ? " · " + at : "")
             : Fmt.Started(r)) is { } line
-        ? Sentence(line)
+        ? Sentence(line) + (Format.ProcessLine(r, s.Game) is { } shown ? "\n" + shown : "")
         : place.Item is { Stage: QueueStage.Waiting, Note: { } n } ? Sentence(n)
         : Fmt.FoldLine(id) ?? GameReason;
     string GameReason => Sentence(s.Status switch
@@ -792,10 +794,12 @@ public sealed class DetailVm(string id) : Bindable
         GameStatus.Warmed => (Partial || RtAfter || KeyMissing ? "" : "cache complete, ") + $"compiled for {(ScsKiller.BothApis(s.Plan) ? "DirectX 11 and DirectX 12, for " : "")}driver {s.WarmedDriverVersion}" + (s.WarmedAt is { } t ? $" on {t.LocalDateTime:g}" : "")
             + (RtAfter ? ". " + Sentence(ScsKiller.RtAfterRecordingNote) : "") + (KeyMissing ? ". " + Sentence(ScsKiller.KeyForFullCoverage) : ""),
         // a cache here: played since a clear or a stopped compile; then the planner's note when the row has one to say
-        GameStatus.Ready => (s.CacheOnDisk > 0 ? $"not fully compiled yet: {Format.Bytes(s.CacheOnDisk)} of it is in the driver cache"
+        GameStatus.Ready => (s.CompileFailed ? "the last compile failed" + (s.CompileFailedWhy is { } why ? ". " + Sentence(why.TrimEnd('.')) : "")
+            : s.CacheOnDisk > 0 ? $"not fully compiled yet: {Format.Bytes(s.CacheOnDisk)} of it is in the driver cache"
             : s.LastWarmTime == null ? "not compiled yet" : "its shader cache is empty: compile it again")
             + (Row.Note != null ? ". " + Sentence(s.StatusReason) : ""),
         GameStatus.NeedsRecording => HasDbTeaser ? NoDbNote(Row.FullNote) : Row.FullNote,   // the teaser says it
+        _ when ScsKiller.AntiCheatHeld(s) => ScsKiller.HeldAntiCheatNote,
         _ when s.Engine?.Encrypted == true => "needs the game's AES key",   // the title: "Encrypted game files"
         _ => HasDbTeaser ? NoDbNote(s.StatusReason) : s.StatusReason,
     })
@@ -817,11 +821,12 @@ public sealed class DetailVm(string id) : Bindable
     // The manifest is public: a PC without "db" sees that the community database covers the game, and where to get it.
     // Shown, it is the page's only mention of the database.
     public bool HasDbTeaser => s is { InCommunityDb: true, Community: null } && !App.Account.HasDb
-        && (s.Status == GameStatus.NeedsRecording || RtAfter || s.Status == GameStatus.Unsupported && !NoAntiCheat && s.StatusReason.StartsWith("needs a recording, which", StringComparison.Ordinal));
+        && (s.Status == GameStatus.NeedsRecording || RtAfter || s.Status == GameStatus.Unsupported && !NoAntiCheat && (s.StatusReason.StartsWith("needs a recording, which", StringComparison.Ordinal) || ScsKiller.AntiCheatHeld(s) || s.StatusReason.StartsWith(ScsKiller.AntiCheatNoRecordingStart, StringComparison.Ordinal)));
     public string DbTeaser => $"In the community database: {s.CommunityDbPsos:N0} pipeline{(s.CommunityDbPsos == 1 ? "" : "s")} recorded by other players. Patreon supporters compile them without recording.";
     public string DbTeaserLink => App.Account.SignedIn ? "Patreon membership" : "Sign in with Patreon";
     public bool CanCompile => s.Status is GameStatus.Ready or GameStatus.Warmed or GameStatus.Stale || RtPartial;
     public bool ShowMaxCompile => CanCompile && ScsKiller.MaxCompileAdds(App.Core.Vendor.Caps, s.Engine);
+    public bool ShowRtOnly => CanCompile && !RtPartial && ScsKiller.RtOnlyAdds(s);
     public const string MaxCompileWhy = "Compiles every combination of this game's shaders, not just each one once. It takes longer and uses more disk space, but potentially fewer shaders compile while you play. Seems to help most on AMD.";
     public string? GuessNote => s.Engine is { } e && s.Status is GameStatus.Ready or GameStatus.Warmed or GameStatus.Stale ? ScsKiller.GuessNote(e) : null;
     public bool HasGuessNote => GuessNote != null;
@@ -989,7 +994,8 @@ public sealed class DetailVm(string id) : Bindable
     public bool HasCache => s.DiskBytes != null || otherBytes > 0 || s.Status is GameStatus.Warmed or GameStatus.Stale;
     // compiled before a verdict changed: the cache stays until the user clears it
     public string? KeptCacheNote => (s.Status == GameStatus.Unsupported || s.NoStutter != null) && s.WarmedAt != null && s.CacheOnDisk > 0
-        ? $"SCSKiller compiled {DiskValue} of cache for this game before it was marked {(s.NoStutter != null ? "as having no shader stutter" : "not supported")}."
+        ? s.StartFirst ? $"SCSKiller compiled {DiskValue} of cache for this game earlier."
+        : $"SCSKiller compiled {DiskValue} of cache for this game before it was marked {(s.NoStutter != null ? "as having no shader stutter" : "not supported")}."
         : null;
     public bool HasKeptCache => KeptCacheNote != null;
 
@@ -1068,10 +1074,12 @@ public sealed class DetailVm(string id) : Bindable
     public bool HasApiOverruled => ApiOverruled != null;
     public string? ApiKept => ScsKiller.KeptApisNote(s);
     public bool HasApiKept => ApiKept != null;
-    public string AntiCheatChip => NoAntiCheat ? "No anti-cheat" : ScsKiller.AntiCheatName(s);
+    public string AntiCheatChip => NoAntiCheat ? "No anti-cheat" : ScsKiller.AntiCheatHeld(s) ? ScsKiller.HeldAntiCheatTitle : ScsKiller.AntiCheatOpen(s) ? ScsKiller.CheckingAntiCheatTitle : ScsKiller.AntiCheatName(s);
     public string AntiCheatTip => NoAntiCheat ? "No anti-cheat found: this game can be recorded"
+        : ScsKiller.AntiCheatHeld(s) ? ScsKiller.HeldAntiCheatNote
+        : ScsKiller.AntiCheatOpen(s) ? ScsKiller.CheckingAntiCheatNote
         : s.RiskEligible ? $"This game contains {ScsKiller.AntiCheatName(s)}. The recorder runs only in a session you confirm, at your own risk."
-        : $"{ScsKiller.AntiCheatName(s)} treats an extra {RecorderDll} as tampering: this game is never recorded";
+        : "This game contains anti-cheat: it isn't recorded";
     public bool HasMiddleware => s.Middleware is { Count: > 0 };
     public bool HasModChip => GameRow.ModChip(s) != null;
     public string ModChip => GameRow.ModChip(s)?.Text ?? "";
@@ -1122,7 +1130,7 @@ public sealed class DetailVm(string id) : Bindable
         : Dx11Only && Pct is null or 100 ? (Compiled ? "Covers" : "Will cover") + " every DirectX 11 shader in the game files" + (SCSKiller.Core.Planning.Planner.D3D11CoversVs(App.Core.Vendor.Caps) || P.D3D11Draws > 0 ? "" : " but the vertex shaders")
         : Pct is not { } pct ? "Measured again on the next compile"
         : (Compiled || s.NewOnly ? "Covers" : s.WarmedAt != null ? "Its last compile covered" : "Will cover")
-          + ScsKiller.CoverageWhat(s, pct);
+          + ScsKiller.CoverageWhat(s, pct, RecordOn);
     // the headline's own words under the ring while no recording has confirmed the engine rule
     public bool HasRuleNote => Pct == 100 && !Dx11Only && ScsKiller.RuleUnconfirmed(s);
     bool Rt => ScsKiller.NeedsRtRecording(s);
@@ -1155,6 +1163,8 @@ public sealed class DetailVm(string id) : Bindable
     bool Vk => s.Engine is { } e && Core.Vulkan.VulkanPlan.IsVulkan(e);
     long FromPlay => P is { } p ? p.Recorded - (p.FromDownload ?? 0) - (p.FromCommunity ?? 0) : 0;
     string FromPlayLabel => P?.FromDownload == null ? "Recorded pipelines" : "From your play";   // a plan from before the split was counted
+    // the recording as of its last import, which a plan built before that session doesn't count yet
+    long Recorded => s.RecordedPipelines ?? FromPlay;
 
     /// <summary>The recorded row's label: whose recordings the plan's recorded pipelines come from.</summary>
     string RecordingSource
@@ -1191,11 +1201,13 @@ public sealed class DetailVm(string id) : Bindable
     string LeftSentences(bool tipAsks) => string.Join(" ", new string?[]
     {
         RtUnseen ? Sentence(ScsKiller.RtUnseenNote) + "." : RtInline ? Sentence(ScsKiller.RtInlineNote) + "." : !Rt || tipAsks ? null : CanRecord ? (HasDbTeaser ? ScsKiller.RtNeedsRecording : ScsKiller.RtNote(s.InCommunityDb, App.Account.HasDb)) + "."
-            : $"Ray-traced effects aren't compiled: they need a recording, {(s.RiskEligible ? ScsKiller.RiskNoRecording : !NoAntiCheat ? $"which {ScsKiller.AntiCheatName(s)} blocks" : s.RootUnconfirmed ? ScsKiller.ManualNoRecording : s.PreloadHeld is { } held ? ScsKiller.PreloadHeldNoRecording(held, s.PreloadHeldByOptions) : ScsKiller.StreamlineNoRecording)}.",
+            : $"Ray-traced effects aren't compiled: they need a recording{(s.RiskEligible ? ", " + ScsKiller.RiskNoRecording : !NoAntiCheat ? ScsKiller.AntiCheatHeld(s) ? ", and this game couldn't be fully checked for anti-cheat" : ScsKiller.AntiCheatOpen(s) ? ", " + ScsKiller.AntiCheatCheckNoRecording : ". The game contains anti-cheat" : ", " + (s.RootUnconfirmed ? ScsKiller.ManualNoRecording : s.PreloadHeld is { } held ? ScsKiller.PreloadHeldNoRecording(held, s.PreloadHeldByOptions) : ScsKiller.StreamlineNoRecording))}.",
         LeftCase switch
         {
             Left.AntiCheat => s.RiskEligible ? "Anything else compiles while you play: a session on this page can record it, at your own risk."
-                : !NoAntiCheat ? $"Anything else compiles while you play: {ScsKiller.AntiCheatName(s)} blocks the recording that would find it."
+                : ScsKiller.AntiCheatHeld(s) ? "Anything else compiles while you play. " + ScsKiller.HeldAntiCheatNote
+                : ScsKiller.AntiCheatOpen(s) ? "Anything else compiles while you play: its anti-cheat check didn't finish, so recording waits until it does."
+                : !NoAntiCheat ? "Anything else compiles while you play. The game contains anti-cheat."
                 : s.RootUnconfirmed ? "Anything else compiles while you play: confirm the game's folder (Game folder… above) to record what's missing."
                 : s.PreloadHeld != null ? "Anything else compiles while you play."
                 : "Anything else compiles while you play: DLSS on NVIDIA blocks the recording that would find it.",
@@ -1267,24 +1279,24 @@ public sealed class DetailVm(string id) : Bindable
         P is { StageSets: > 0 } ? new("Shader combinations found", Fmt.N(P.StageSets)) : null,
         P is { LeftOut: > 0 } ? new("Left out", ScsKiller.LeftOutValue(P)) : null,
         P is { StageSets: 0, Uncovered: > 0 } ? new("Left out for shader slots SCSKiller can't rebuild", Fmt.N(P.Uncovered)) : null,
-        P != null && !Vk ? new("Recorded pipelines", Fmt.N(P.Recorded)) : null,
+        P != null && !Vk ? new("Recorded pipelines", Fmt.N(Recorded)) : null,
         Vk && P is { FromDownload: { } dl } ? new("From Steam's shader download", Fmt.N(dl)) : null,
         Vk && P is { FromCommunity: { } fc } ? new("From the community database", Fmt.N(fc)) : null,
-        Vk && P != null ? new(FromPlayLabel, Fmt.N(FromPlay)) : null,
+        Vk && P != null ? new(FromPlayLabel, Fmt.N(Recorded)) : null,
         P != null && !Vk ? new("Built from the game files", Fmt.N(P.Generated)) : null,
         P is { MiddlewareItems: > 0 } ? new("Upscaler pipelines", Fmt.N(P.MiddlewareItems)) : null,
         P is { Variants: > 0 } ? new("At other texture filtering settings", Fmt.N(P.Variants)) : null,
         P is { D3D11Shaders: > 0 } ? new("DirectX 11 shaders", Fmt.N(P.D3D11Shaders)) : null,
         P is { RtLibraries: > 0 } ? new("Ray tracing shader libraries", $"{P.RtLibraries:N0}" + (s.Engine?.NoRtPipelines == true ? " (not used by the game)" : s.RtSkipped ? " (skipped, your setting)" : P.RtUncovered > 0 ? $" ({P.RtUncovered:N0} not compiled)" : "")) : null,
         P is { RtInline: > 0 } ? new("Shaders that trace rays inline", Fmt.N(P.RtInline)) : null,
-        s.Status != GameStatus.Unsupported && s.InCommunityDb is { } db && !HasDbTeaser ? new("Community data for your version", db ? $"{s.CommunityDbPsos:N0} pipelines" : "none yet") : null,
+        s.Status != GameStatus.Unsupported && s.InCommunityDb != null && !HasDbTeaser ? new("Community data for your version", ScsKiller.CommunityDbValue(s, App.Account.DbEntitled)) : null,
         s.Community is { } c ? new("Downloaded community recording", c.OtherVersion ? "doesn't match your game's files" : $"{c.Psos:N0} pipelines") : null,
         s.Official is { } o ? new("Official recording", $"{o.Psos:N0} pipelines") : null,
         P != null && !Vk ? new("Synthesized pipeline templates", Fmt.N(P.SynthesizedTemplates)) : null,
         P != null && !Vk ? new("Shader layouts", $"{P.RootSignatures:N0} · {RootSigSource(P)}") : null,
         P is { } u && u.ExactUnits + u.InferredUnits + u.GuessedUnits > 0 ? new("Stage units exact / inferred / guessed", $"{u.ExactUnits:N0} / {u.InferredUnits:N0} / {u.GuessedUnits:N0}") : null,
         P is { LayoutCoverage: > 0 } ? new("Vertex layouts from a recording", $"{P.LayoutCoverage:P1}") : null,
-        s.CacheOnDisk is { } disk ? new("Driver cache", Format.Bytes(disk) + " measured") : s.EstimatedCacheBytes is { } est ? new("Driver cache", "≈ " + Format.Bytes(est) + " estimated") : null,
+        s.CacheOnDisk is { } disk ? new("Driver cache", Format.Bytes(disk) + " measured" + (Format.InUseShown(disk, s.CacheInUse) ? $", {Format.Bytes(s.CacheInUse)} in use" : "")) : s.EstimatedCacheBytes is { } est ? new("Driver cache", "≈ " + Format.Bytes(est) + " estimated") : null,
         s.WindowsCache is { } w ? new(ScsKiller.WindowsPart, Format.Bytes(w)) : null,
         s.DeliveredShaders is { } asd ? new("Shaders delivered by Advanced Shader Delivery", Format.Bytes(asd)) : null,
     }.OfType<DetailRow>().ToList();
@@ -1330,7 +1342,7 @@ public sealed class DetailVm(string id) : Bindable
             NotInGame > 0 && P is { FromDownload: > 0 } ? $"{NotInGame:N0} skipped: {ScsKiller.DownloadSkipped}. Playing with the recorder on adds them."
             : NotInGame > 0 ? $"{NotInGame:N0} {(NotInGame == 1 ? "was" : "were")} skipped: {(NotInGame == 1 ? "its shader isn't" : "their shaders aren't")} in this version of the game. Nothing to do." : null,
             Crashed - CrashedBefore is > 0 and var crashedNow ? $"{crashedNow:N0} {(crashedNow == 1 ? "was" : "were")} skipped: {(crashedNow == 1 ? "it crashes" : "they crash")} the GPU driver. If the game uses {(crashedNow == 1 ? "it" : "them")}, it compiles {(crashedNow == 1 ? "it" : "them")} itself." : null,
-            DriverSkipped - Known is > 0 and var now ? $"{now:N0} {(now == 1 ? "was" : "were")} skipped: the GPU driver crashed or hung on {(now == 1 ? "it or on what it builds" : "them or on what they build")} on, or {(now == 1 ? "it wasn't" : "they weren't")} tried past a spot where it kept failing." : null,
+            DriverSkipped - Known is > 0 and var now ? $"{now:N0} {(now == 1 ? "was" : "were")} skipped: the GPU driver crashed, hung or ran out of memory on {(now == 1 ? "it or on what it builds" : "them or on what they build")} on, or {(now == 1 ? "it wasn't" : "they weren't")} tried past a spot where it kept failing." : null,
             Known + CrashedBefore > 0 ? ScsKiller.KnownNote(Known + CrashedBefore) + "." : null,
             Unbuilt > 0 ? $"{Unbuilt:N0} {(Unbuilt == 1 ? "was" : "were")} skipped: SCSKiller can't build {(Unbuilt == 1 ? "it" : "them")} yet." : null,
             Invalid > 0 ? $"{Invalid:N0} skipped, {(Invalid == 1 ? "its shaders fail" : "their shaders fail")} Vulkan validation (Steam skips {(Invalid == 1 ? "it" : "them")} too)." : null,
@@ -1436,16 +1448,19 @@ public sealed class DetailVm(string id) : Bindable
     public string UseDefaultText => $"Use default ({(ScsKiller.RecordsByDefault(App.Core.Settings, s) ? "on" : "off")})";
     string RecorderDll => Fmt.RecorderDll(s);
     string Kept => ScsKiller.SessionKeptNote(s) is { } kept ? " " + kept : "";
-    // another copy's recorder in the folder is said on every line the switch shows: a skip's line has no room for the reconcile's note
-    public string RecordNote => RecordNoteText is var t && s.RecorderForeign && !t.Contains(Sentence(ScsKiller.ForeignNote)) ? $"{t} {ScsKiller.ForeignHereNote}" : t;
+    // another copy's recorder is said from the folder on every line the switch shows: the reconcile's note may not be there yet
+    public string RecordNote => RecordNoteText is var t && s.RecorderForeign
+        ? $"{t} {ScsKiller.ForeignHereNote}{(!ShowOffline && CanToggleRecord && !RecordOn ? $" {ScsKiller.TakeOverNote}." : "")}" : t;
     string RecordNoteText => ScsKiller.CrashNote(s.Game) is { } crash ? crash
         : Risk
         ? (s.AlwaysRecord ? "Every launch is recorded." : "Each session is confirmed before it starts.") + Kept
+        : ScsKiller.AntiCheatHeld(s) ? ScsKiller.HeldRecordNote
+        : ScsKiller.AntiCheatOpen(s) ? ScsKiller.AntiCheatOpenRecordNote
         : ShowOffline
-        ? $"{ScsKiller.AntiCheatName(s)} blocks the recorder, but you can enable it at your own risk with an offline session." + Kept
+        ? ScsKiller.OfflineSessionNote + Kept
         : s.RiskNoLaunch ? ScsKiller.NoLaunchNote(Fmt.StoreName(s.Game))
         : !NoAntiCheat
-        ? $"Not available: {ScsKiller.AntiCheatName(s)} treats an extra {RecorderDll} as tampering, so this game is compiled from its files only."
+        ? "Not available: the game contains anti-cheat, so it is compiled from its files only."
         : PairFramesOnly ? "Frame times only, for the before and after recording."
         : s.RecorderSkip == ScsKiller.SkipManual ? "Not available until you confirm the game's folder (Game folder… above): SCSKiller checks all of it for anti-cheat before it records."
         : s.RecorderSkip == ScsKiller.SkipModNotChainable ? $"Not available: {ScsKiller.NotChainableReason(s.RecorderMod, RecorderDll)}."
@@ -1455,13 +1470,14 @@ public sealed class DetailVm(string id) : Bindable
             : FramesOnly ? $"Adds a small {Fmt.RecorderFiles(s)} next to the game that times each frame for the graph above and records nothing else."
             : $"Adds a small {Fmt.RecorderFiles(s)} next to the game to catch anything the plan missed and time each frame, so this page shows what stuttered.")
           + " Remove any time. If a game has anti-cheat SCSKiller didn't detect, don't turn this on."
-          + (s.RecorderNote is { } note && note != s.RecorderFailure ? $" ({Sentence(note)})" : "")
+          + (s.RecorderNote is { } note && note != s.RecorderFailure && note != ScsKiller.ForeignNote ? $" ({Sentence(note)})" : "")
           + (s.RecorderRefused is { } why && !(s.Status == GameStatus.NeedsRecording && ScsKiller.NeverRecorded(s)) ? " " + why : "");   // else the status says it
 
     // A mod's d3d12.dll where the recorder goes (ReShade, a wrapper): off = the game isn't recorded; on = the recorder chains to it
     public bool HasMod => s.RecorderMod != null && s.RecorderSkip is not (ScsKiller.SkipAntiCheat or ScsKiller.SkipShaderMod or ScsKiller.SkipManual or ScsKiller.SkipUnsupported or ScsKiller.SkipNotDx12 or ScsKiller.SkipStreamline or ScsKiller.SkipCrashes);
     public string AlongsideTitle => $"Record alongside {s.RecorderMod}";
-    public string AlongsideNote => $"{s.RecorderMod}'s d3d12.dll is renamed while the recorder is in, and restored exactly as it was when it's removed.";
+    public string AlongsideNote => ScsKiller.IsOptiScaler(s.RecorderMod) ? ScsKiller.OptiAlongsideNote
+        : $"{s.RecorderMod}'s d3d12.dll is renamed while the recorder is in, and restored exactly as it was when it's removed.";
     public bool? AlongsidePending { get; set; }
     public bool AlongsideOn => AlongsidePending ?? s.RecordAlongsideMod;
     public bool CanToggleAlongside => AlongsidePending == null && RecordPending == null;
@@ -1486,8 +1502,8 @@ public sealed class DetailVm(string id) : Bindable
         : s.OfflineRunning ? "Offline session running…" : "Record offline without EasyAntiCheat (at your own risk)";
     public string OfflineRiskText => Risk ? RiskText(s) : OfflineRisk;
     public const string OfflineRisk = "Starts the game offline without EasyAntiCheat. SCSKiller removes its files when the game exits (after a crash: "
-        + "at the next logon). If any are left when you play online, you could be banned. Steam must be running. Don't uninstall SCSKiller mid-session.";
-    public static string RiskText(GameState g) => $"This game contains {ScsKiller.AntiCheatName(g)}. If you enable the recorder, it's at your own risk. "
+        + "at the next logon). Play online only once the button below reads \"Record offline without EasyAntiCheat\" again, at your own risk before that. Steam must be running. Don't uninstall SCSKiller mid-session.";
+    public static string RiskText(GameState g) => $"{(ScsKiller.AntiCheatOpen(g) ? "Its anti-cheat check didn't finish" : $"This game contains {ScsKiller.AntiCheatName(g)}")}. If you enable the recorder, it's at your own risk. "
         + "SCSKiller isn't responsible if your account gets banned.";
     public string? SessionNote => s.SessionNote;
     public bool HasSessionNote => s.SessionNote != null;
@@ -1573,6 +1589,7 @@ public sealed class QueueVm : Bindable
     public string Summary { get; private set; } = "";
     public string? PlanChecks { get; private set; }   // ScsKiller.PlanCheckLine
     public bool HasPlanChecks => PlanChecks != null;
+    public bool CanCheckNow => !App.Core.Compiling && App.Core.Queue.Any(q => q is { PlanCheck: true, Note: ScsKiller.WhenIdleNote });
 
     public string CurrentDetail => cur is null ? "" : Fmt.Stage(cur) + (Fmt.ProgressText(cur) is { } p ? " · " + p : "") + (Fmt.Started(cur) is { } at ? " · " + at : "");
     public bool Indeterminate => Fmt.Indeterminate(cur);
@@ -1814,7 +1831,7 @@ public sealed class SettingsVm : Bindable
             var games = App.Core.Games;
             var skipped = games.Where(g => g.RecorderSkip is ScsKiller.SkipAntiCheat or ScsKiller.SkipShaderMod or ScsKiller.SkipForeignDll or ScsKiller.SkipModNotChainable
                     or ScsKiller.SkipVulkanMod or ScsKiller.SkipNeedsAdmin or ScsKiller.SkipPackageD3D12 or ScsKiller.SkipStreamline or ScsKiller.SkipShaderInjector or ScsKiller.SkipAgsMod)
-                .GroupBy(g => g.RecorderSkip).OrderByDescending(x => x.Count()).Select(x => $" · {x.Count()} skipped: {x.Key}");
+                .GroupBy(g => g.RecorderSkip == ScsKiller.SkipAntiCheat && ScsKiller.AntiCheatOpen(g) ? ScsKiller.AntiCheatHeld(g) ? ScsKiller.HeldSkipped : "anti-cheat check unfinished" : g.RecorderSkip).OrderByDescending(x => x.Count()).Select(x => $" · {x.Count()} skipped: {x.Key}");
             int n = games.Count(g => g.RecorderInstalled);
             return $"Recording in {n} game{(n == 1 ? "" : "s")}" + string.Concat(skipped);
         }
@@ -2050,7 +2067,7 @@ public sealed class CacheVm : Bindable
             r =>
             {
                 read = r.Inventory;
-                split = Format.CacheSplit(r.Usage, r.Limit, r.Capped, App.Core.WindowsCacheBytes);
+                split = Format.CacheSplit(r.Usage, r.Limit, r.Capped, App.Core.WindowsCacheBytes, r.Inventory.Groups.Sum(g => g.Bytes));
                 Changed();
             });
         Refresh();
@@ -2115,8 +2132,8 @@ public sealed class CacheVm : Bindable
 
     public IReadOnlyList<CacheGroupRow> Groups => read?.Groups.Select(g =>
     {
-        var (title, caption) = Texts(g.Kind, read.DriverInstalled);
-        var items = g.Items.Select(i => new CacheItemRow(ItemName(g.Kind, i), Format.OnDisk(i.Bytes, i.InUse), read.FoldersOf(i), i.Note, i, g.Kind, CanDelete && !i.Kept, g.Kind == CacheGroupKind.Installed ? GameIcon(i) : null)).ToList();
+        var (title, caption) = CacheNames.Texts(g.Kind, read.DriverInstalled);
+        var items = g.Items.Select(i => new CacheItemRow(CacheNames.Item(g.Kind, i), Format.OnDisk(i.Bytes, i.InUse), read.FoldersOf(i), i.Note, i, g.Kind, CanDelete && !i.Kept, g.Kind == CacheGroupKind.Installed ? GameIcon(i) : null)).ToList();
         return new CacheGroupRow(title, Format.OnDisk(g.Bytes, g.InUse), caption, g.Note, items, g.Kind != CacheGroupKind.Unattributed, g, CanDelete);
     }).ToList() ?? [];
 
@@ -2126,18 +2143,6 @@ public sealed class CacheVm : Bindable
 
     /// <summary>An icon failed after its row was built: the rows read again.</summary>
     public void IconsChanged() => Changed();
-
-    static string ItemName(CacheGroupKind kind, CacheItem i) => kind == CacheGroupKind.Unattributed && i.Name.Length == 8 && i.Name.All(char.IsAsciiHexDigit) ? $"Unknown app {i.Name}" : i.Name;
-
-    public static (string Title, string Caption) Texts(CacheGroupKind kind, DateTime? installed) => kind switch
-    {
-        CacheGroupKind.Installed => ("Installed games", "Games in your library, by the cache keys SCSKiller learned for them."),
-        CacheGroupKind.Uninstalled => ("Uninstalled games", "Games SCSKiller compiled or saw running that aren't in your library now. Named by their exe."),
-        CacheGroupKind.OldDriver => ("Old driver", $"Written before the current driver was installed on {installed?.ToLocalTime():d}. It hasn't used them since."),
-        CacheGroupKind.OldBuild => ("Earlier SCSKiller compiles", "Left by earlier compiles. The games don't read them."),
-        CacheGroupKind.OtherVendor => ("Other GPU vendor", "Caches for another brand of GPU than the one SCSKiller compiles for."),
-        _ => ("Other apps and games", "Desktop apps, and games SCSKiller hasn't compiled or seen running. A game moves to its group once SCSKiller sees it running."),
-    };
 
     /// <summary>The confirm's text for deleting <paramref name="items"/> of one group: what happens after.</summary>
     public static string Consequence(CacheGroupKind kind, IReadOnlyList<CacheItem> items) => kind switch

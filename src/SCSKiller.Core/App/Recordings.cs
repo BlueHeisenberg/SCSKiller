@@ -149,11 +149,16 @@ public static class Recordings
     /// order, as a compact recording at <paramref name="store"/>. A shader blob that a record names and <paramref name="shipped"/>
     /// has is left out: the install gives it back (<see cref="Rehydrate"/>); root signatures and every other blob stay. Returns
     /// the keys of the pipeline and state object records it added.</summary>
-    public static HashSet<string> Merge(string store, string? inbox, Func<string, bool>? shipped) => Merge(store, inbox, shipped, out _);
+    public static HashSet<string> Merge(string store, string? inbox, Func<string, bool>? shipped) => Merge(store, inbox, shipped, out _, out _);
+
+    /// <summary>A record the page counts as recorded: a pipeline, a state object or an addition to one.</summary>
+    public static bool Counted(char tag) => tag is 'G' or 'C' or 'S' or 'R' or 'A';
 
     /// <param name="nvAdded">an 'N' record the store lacked was added: the plan may take another NVAPI state for the PSOs it
     /// synthesizes (<see cref="PlanBuilder.RasterNv"/>)</param>
-    public static HashSet<string> Merge(string store, string? inbox, Func<string, bool>? shipped, out bool nvAdded)
+    /// <param name="pipelines">the pipelines and state objects the store holds after the merge</param>
+    /// <param name="aftermath">takes the place of the store's <see cref="HashOnly.IsAftermath"/> records (none: they stay)</param>
+    public static HashSet<string> Merge(string store, string? inbox, Func<string, bool>? shipped, out bool nvAdded, out int pipelines, Rec[]? aftermath = null)
     {
         var hasStore = File.Exists(store);
         var hasInbox = inbox != null && File.Exists(inbox);
@@ -162,23 +167,27 @@ public static class Recordings
         var named = shipped == null ? [] : Rehydrate.References(Sources().Where(r => r.Tag != 'B'));
         var seen = new HashSet<string>();
         var added = new HashSet<string>();
+        var count = 0;
         IEnumerable<Rec> Union()
         {
-            if (hasStore) foreach (var r in Read(store)) if (seen.Add(Id(r))) yield return r;
+            if (hasStore) foreach (var r in Read(store)) if (!(aftermath != null && HashOnly.IsAftermath(r)) && seen.Add(Id(r))) { if (Counted(r.Tag)) count++; yield return r; }
             if (hasInbox)
                 foreach (var r in Read(inbox!))
-                    if (Id(r) is var id && seen.Add(id))
+                    if (!(aftermath != null && HashOnly.IsAftermath(r)) && Id(r) is var id && seen.Add(id))
                     {
+                        if (Counted(r.Tag)) count++;
                         if (r.Tag == 'N') nv = true;
                         else if (r.Tag is not ('B' or 'W')) added.Add(id);   // its key: one string for both sets
                         yield return r;
                     }
+            foreach (var r in aftermath ?? []) yield return r;
         }
         bool Dropped(Rec r) => r.Tag == 'B' && shipped != null && Hex(r.Payload.AsSpan(0, 20)) is var h && named.Contains(h) && shipped(h)
                                && !Dxbc.IsRootSignatureOnly(r.Payload.AsSpan(20));
         WriteCompact(store, Union().Where(r => !Dropped(r)));
         KeyFiles.Forget(store);
         nvAdded = nv;
+        pipelines = count;
         return added;
     }
 

@@ -18,7 +18,7 @@ public sealed record AddedLibrary(List<string>? Folders = null, List<string>? Re
 /// <summary>Games the user added (manual-games.json in the data folder). Id "manual:" + a hash of the exe's full path, so
 /// the same exe added again is the same game. No build id: a changed exe (size, write time) is what marks a patch, as for
 /// the stores that give none. An entry whose exe is missing (a drive unplugged) is kept and listed again once it's back.</summary>
-public sealed class ManualSource(AppStore store) : IGameSource
+public sealed class ManualSource(AppStore store) : IGameSource, ILeavesOut
 {
     // the app, the CLI and the scheduled task may change the list at once: one read-modify-write at a time per data folder
     readonly string _mutex = MutexName(store.DataDir);
@@ -34,6 +34,9 @@ public sealed class ManualSource(AppStore store) : IGameSource
     /// <summary>The last discovery's games, by id: a folder's game is looked for again only when its exe is gone.</summary>
     public IReadOnlyDictionary<string, Game>? Known { get; set; }
 
+    /// <summary>The folders' scan skips these. A game added by its exe is listed wherever it is.</summary>
+    public Func<string, bool> LeftOut { get; set; } = _ => false;
+
     /// <summary>The entries, then a game in each of the folders' game folders (<see cref="GameRoots"/>) that holds no entry's
     /// exe, isn't a store's install (as the last discovery listed them) and that the user didn't remove; each with the name
     /// the user gave it.</summary>
@@ -48,7 +51,7 @@ public sealed class ManualSource(AppStore store) : IGameSource
         var stores = (Known?.Values ?? []).Where(g => g.Store != Store.Manual && g.InstallDir.Length > 0).Select(g => GameFiles.DirKey(g.InstallDir)).ToList();
         bool Overlaps(string a, string b) => a.Equals(b, StringComparison.OrdinalIgnoreCase) || GameFiles.Inside(a, b) || GameFiles.Inside(b, a);
         var found = new HashSet<string>();
-        foreach (var root in (added.Folders ?? []).SelectMany(GameRoots).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var root in (added.Folders ?? []).Where(f => !LeftOut(f)).SelectMany(f => GameRoots(f, LeftOut)).Distinct(StringComparer.OrdinalIgnoreCase))
             if (!entries.Any(e => GameFiles.Inside(root, e.Exe)) && !stores.Any(s => Overlaps(s, root))
                 && (known.GetValueOrDefault(root) is { } k && File.Exists(k.ExePath) ? k : Found(root)) is { } g && listed.Add(g.Id))
             {
@@ -69,18 +72,19 @@ public sealed class ManualSource(AppStore store) : IGameSource
     /// <summary>A folder's game folders: the folder itself when it holds a game (Unreal's Engine folder, or an exe and at most one
     /// folder with programs in it), else each folder in it, a store's or Windows' folder of many aside (<see cref="IsLibrary"/>);
     /// an Xbox app game's is its Content folder. None while the folder can't be read (a drive unplugged: its games come back with it).</summary>
-    internal static List<string> GameRoots(string folder)
+    internal static List<string> GameRoots(string folder, Func<string, bool> leftOut)
     {
         try
         {
             var dir = GameFiles.DirKey(folder);
             var children = GameFiles.EnumerateDirectories(dir, "*", new EnumerationOptions { AttributesToSkip = 0 }).Select(GameFiles.DirKey)
                 .Where(d => !IsLibrary(d) && !GameFiles.WindowsFolder(Path.GetFileName(d))).ToList();
-            bool Programs(string d) => !NotAGame.Any(n => Path.GetFileName(d).Contains(n, StringComparison.OrdinalIgnoreCase))
+            // a left-out folder counts as one with programs, unread
+            bool Programs(string d) => leftOut(d) || !NotAGame.Any(n => Path.GetFileName(d).Contains(n, StringComparison.OrdinalIgnoreCase))
                 && GameFiles.EnumerateFiles(d, "*.exe", new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 2, AttributesToSkip = 0 }).Any();
             if (Directory.Exists(GameFiles.Find(dir, "Engine"))
                 || GameFiles.EnumerateFiles(dir, "*.exe").Any() && children.Where(Programs).Take(2).Count() < 2) return [dir];
-            return children.Select(d => File.Exists(GameFiles.Find(d, @"Content\MicrosoftGame.config")) ? GameFiles.Find(d, "Content") : d).ToList();
+            return children.Where(d => !leftOut(d) && !leftOut(GameFiles.Find(d, "Content"))).Select(d => File.Exists(GameFiles.Find(d, @"Content\MicrosoftGame.config")) ? GameFiles.Find(d, "Content") : d).ToList();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return []; }
     }
@@ -152,7 +156,7 @@ public sealed class ManualSource(AppStore store) : IGameSource
     });
 
     /// <summary>The game's folder is the one the user confirmed (as the list was last read): the recorder may go in.</summary>
-    public bool Confirmed(Game g) => _roots.TryGetValue(g.Id, out var r) && r.Confirmed && Same(r.Root, GameFiles.DirKey(g.InstallDir));
+    public bool Confirmed(Game g) => _roots.TryGetValue(g.Id, out var r) && r.Confirmed && Same(r.Root, GameFiles.DirKey(g.InstallDir)) && GameFiles.Inside(r.Root, g.ExePath);
 
     /// <summary>Tests: runs between reading the list and publishing its folders.</summary>
     internal Action? Read { get; set; }
@@ -180,6 +184,7 @@ public sealed class ManualSource(AppStore store) : IGameSource
     /// <summary>The game and whether it was already added. A confirmed folder replaces the one an entry had.</summary>
     public (Game Game, bool Existed) Add(ManualEntry entry) => Locked(() =>
     {
+        if (entry.Confirmed && !GameFiles.Inside(entry.InstallDir, entry.Exe)) throw new ArgumentException($"{entry.InstallDir} doesn't hold {Path.GetFileName(entry.Exe)}.");
         var list = Entries();
         var id = IdOf(entry.Exe);
         var i = list.FindIndex(e => IdOf(e.Exe) == id);
@@ -324,31 +329,46 @@ public sealed class ManualSource(AppStore store) : IGameSource
 
     // stores' and launchers' folders of games, and Windows' own: never one game's folder
     static readonly string[] Libraries = ["steamapps", "SteamLibrary", "XboxGames", "WindowsApps", "ModifiableWindowsApps", "Epic Games",
-        "EpicGames", "GOG Games", "GOG Galaxy", "EA Games", "Origin Games", "Ubisoft Game Launcher", "Battle.net", "Program Files", "Program Files (x86)",
+        "EpicGames", "GOG Games", "GOG Galaxy", "EA Games", "Origin Games", "Ubisoft Game Launcher", "Battle.net", "WeGameApps", "rail_apps", "Program Files", "Program Files (x86)",
         "ProgramData", "Windows", "Users", "Desktop", "Downloads", "Documents", "OneDrive"];
 
     /// <summary>Why <paramref name="root"/> can't be confirmed as the game's folder; null = it can. Refused: a missing folder, a
     /// drive or share root, a store's or Windows' folder of many (<see cref="Libraries"/>, steamapps\common, the user's own
     /// folder), a folder that holds another game SCSKiller lists (<paramref name="listed"/>), or one whose subfolders look like
-    /// several games (two or more with a program directly in them, not counting one with a program named like <paramref name="exe"/>).</summary>
+    /// several games (two or more with a program directly in them, not counting one with a program named like <paramref name="exe"/>,
+    /// nor, when <paramref name="exe"/> is directly in the root, one whose programs show no sign of a game: <see cref="GameSign"/>),
+    /// or one that doesn't hold <paramref name="exe"/>.</summary>
     public static string? RootProblem(string root, string exe, IEnumerable<Game> listed)
     {
         string full;
         try { full = GameFiles.DirKey(root); }
         catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { return $"{root} isn't a folder."; }
         if (!Directory.Exists(full)) return $"{full} doesn't exist.";
-        if (Path.GetPathRoot(full) is { } drive && GameFiles.DirKey(drive).Equals(full, StringComparison.OrdinalIgnoreCase))
+        var mine = GameFiles.Spellings(full);
+        if (mine.Any(d => Path.GetPathRoot(d) is { } drive && GameFiles.DirKey(drive).Equals(d, StringComparison.OrdinalIgnoreCase)))
             return $"{full} is a whole drive: pick the game's own folder.";
-        if (IsLibrary(full)) return $"{full} holds many programs or games: pick the game's own folder.";
-        if (listed.FirstOrDefault(g => !Same(g.ExePath, exe) && (GameFiles.DirKey(g.InstallDir).Equals(full, StringComparison.OrdinalIgnoreCase)
-                || GameFiles.Inside(full, g.InstallDir))) is { } other)
-            return $"{full} holds {other.Name} too: pick this game's own folder.";
+        if (mine.Any(IsLibrary)) return $"{full} holds many programs or games: pick the game's own folder.";
+        if (!GameFiles.Inside(full, exe)) return $"{full} doesn't hold {Path.GetFileName(exe)}: pick the folder it's in.";
+        List<(string Dir, bool Self)> above;
+        try { above = [.. GameFiles.LinkedAncestors(full)]; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return $"Couldn't read {full}: {e.Message}"; }
+        var names = mine.Concat(above.Where(a => a.Self).Select(a => a.Dir)).ToList();
+        foreach (var g in listed)
+        {
+            if (Same(g.ExePath, exe) || g.InstallDir.Length == 0) continue;
+            var theirs = GameFiles.Spellings(g.InstallDir);
+            if (theirs.Any(t => names.Any(m => Same(m, t) || GameFiles.Inside(m, t)))) return $"{full} holds {g.Name} too: pick this game's own folder.";
+            if (theirs.Any(t => above.Any(a => GameFiles.Inside(t, a.Dir) || !a.Self && Same(a.Dir, t))))
+                return $"{full} is inside {g.Name}'s folder: pick this game's own folder.";
+        }
         try
         {
             // a folder holding a program named like the game's is another build of it (DCS World's bin and bin-mt), not another game
             var name = Path.GetFileName(exe);
+            // beside the game's own exe, a folder of programs is a mod tool's (Fluffy Mod Manager) unless it looks like a game
+            var own = Same(GameFiles.DirKey(Path.GetDirectoryName(exe)!), full);
             var games = GameFiles.EnumerateDirectories(full).Where(d => !NotAGame.Any(n => Path.GetFileName(d).Contains(n, StringComparison.OrdinalIgnoreCase))
-                && GameFiles.EnumerateFiles(d, "*.exe").Any() && !File.Exists(GameFiles.Find(d, name))).Take(2).Count();
+                && GameFiles.EnumerateFiles(d, "*.exe").Any(f => !own || GameSign(f) != null) && !File.Exists(GameFiles.Find(d, name))).Take(2).Count();
             if (games >= 2) return $"{full} looks like a folder of several games: pick this game's own folder.";
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return $"Couldn't read {full}: {e.Message}"; }

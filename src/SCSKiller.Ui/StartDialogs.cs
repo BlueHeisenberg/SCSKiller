@@ -114,6 +114,37 @@ static class StartDialogs
         };
     }
 
+    static bool askingOldPlans;
+
+    /// <summary>A game with a lot of cache its version and plan don't use (<see cref="ScsKiller.OldPlansNotice"/>), asked once:
+    /// Delete and compile clears it as Clear cache does, then compiles, Delete takes only its earlier versions' folders. Keep it or
+    /// Esc keeps it.</summary>
+    public static async Task AskOldPlansAsync(ScsKiller k)
+    {
+        if (askingOldPlans) return;
+        askingOldPlans = true;
+        try
+        {
+            var (id, notice) = await Task.Run(() => k.Games.Select(s => (s.Game.Id, k.OldPlansNotice(s.Game.Id))).FirstOrDefault(a => a.Item2 != null));
+            if (notice is not { } n || await TryShowAsync(OldPlansDialog(n)) is not { } result) return;   // another dialog is open: asked again later
+            var clear = result == ContentDialogResult.Primary;
+            await Task.Run(() => k.OldPlansAnswered(id, keep: !clear));
+            if (!clear) return;
+            string? error;
+            try { error = n.Compile ? await Task.Run(() => k.ClearGameCache(id)) ? null : "No shader-cache files of this game were found." : await Task.Run(() => k.DeleteOrphanedD3DSCache(id)) > 0 ? null : "No earlier versions' shader cache could be deleted."; }
+            catch (Exception e) { error = e.Message; }
+            if (error != null) await TryShowAsync(new ContentDialog { Title = "Couldn't clear the cache", Content = error, CloseButtonText = "OK" });
+            else if (n.Compile) k.Compile(id);
+        }
+        finally { askingOldPlans = false; }
+    }
+
+    public static ContentDialog OldPlansDialog((string Title, string Text, bool Compile) n) => new()
+    {
+        Title = n.Title, Content = new TextBlock { Text = n.Text, TextWrapping = TextWrapping.Wrap },
+        PrimaryButtonText = n.Compile ? ScsKiller.OldPlansClear : ScsKiller.OldVersionsClear, CloseButtonText = ScsKiller.OldPlansKeep, DefaultButton = ContentDialogButton.Close,
+    };
+
     static async Task<bool?> AskDiagnosticsAsync() => await TryShowAsync(new ContentDialog
     {
         Title = "Share diagnostics to help fix problems?",

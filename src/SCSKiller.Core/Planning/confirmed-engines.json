@@ -48,6 +48,11 @@
       "version": "5.6",
       "game": "SILENT HILL: Townfall",
       "evidence": "Its recording: 10,932 of 10,932 root signatures rebuilt byte for byte."
+    },
+    {
+      "version": "5.7",
+      "game": "STAR WARS Galactic Racer",
+      "evidence": "Its recording: 15,065 of 15,065 root signatures rebuilt byte for byte."
     }
   ]
 }

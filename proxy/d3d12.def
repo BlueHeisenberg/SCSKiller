@@ -95,3 +95,4 @@ EXPORTS
     SCSKiller_WarmKnown                              @222
     SCSKiller_Known                                  @223
     SCSKiller_MemoryStop                             @224
+    SCSKiller_Unbuilt                                @225

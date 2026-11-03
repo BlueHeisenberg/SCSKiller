@@ -46,8 +46,11 @@ static partial class Screenshots
         Directory.CreateDirectory(dir);
         var main = App.Start(screenshots: true);
         var fake = (FakeScsKiller)Host.Core;
+        // SCSKILLER_SHOTS=aes skips everything but the AES key dialogs
+        var aesOnly = Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") == "aes";
         // built, never shown and nothing registered
-        foreach (var (file, xml) in Notifications.Samples(fake)) File.WriteAllText(Path.Combine(dir, file), xml);
+        if (!aesOnly)
+            foreach (var (file, xml) in Notifications.Samples(fake)) File.WriteAllText(Path.Combine(dir, file), xml);
         ThemeVariant[] themes = [ThemeVariant.Dark, ThemeVariant.Light];
         string Tag(ThemeVariant t) => t == ThemeVariant.Light ? "light" : "dark";
         LibraryPage Library() => (LibraryPage)main.Page!;
@@ -71,21 +74,24 @@ static partial class Screenshots
             await Task.Delay(300);
         }
 
-        // An alpha build's gate, started on an empty data folder as a first run, then each refusal.
-        var empty = Path.Combine(Path.GetTempPath(), $"SCSKiller-gate-{Environment.ProcessId}");
-        var gate = new GateWindow(new Account(empty), empty, () => throw new InvalidOperationException("an empty data folder opened the gate"));
-        gate.Show();
-        await gate.StartAsync();
-        if (Directory.Exists(empty)) throw new InvalidOperationException("the gate wrote to an empty data folder");
-        foreach (var (name, line) in new[] { ("alpha-gate", ""), ("alpha-gate-not-backer", AlphaGate.NotBacker), ("alpha-gate-supporter", AlphaGate.SupporterOnly), ("alpha-gate-too-old", AlphaGate.TooOld) })
-            foreach (var theme in themes)
-            {
-                gate.RequestedThemeVariant = theme;
-                gate.ShowLine(line);
-                await Task.Delay(400);
-                SaveFrame(gate, Path.Combine(dir, $"{name}-{Tag(theme)}.png"));
-            }
-        gate.Close();
+        if (!aesOnly)
+        {
+            // An alpha build's gate, started on an empty data folder as a first run, then each refusal.
+            var empty = Path.Combine(Path.GetTempPath(), $"SCSKiller-gate-{Environment.ProcessId}");
+            var gate = new GateWindow(new Account(empty), empty, () => throw new InvalidOperationException("an empty data folder opened the gate"));
+            gate.Show();
+            await gate.StartAsync();
+            if (Directory.Exists(empty)) throw new InvalidOperationException("the gate wrote to an empty data folder");
+            foreach (var (name, line) in new[] { ("alpha-gate", ""), ("alpha-gate-not-backer", AlphaGate.NotBacker), ("alpha-gate-supporter", AlphaGate.SupporterOnly), ("alpha-gate-too-old", AlphaGate.TooOld) })
+                foreach (var theme in themes)
+                {
+                    gate.RequestedThemeVariant = theme;
+                    gate.ShowLine(line);
+                    await Task.Delay(400);
+                    SaveFrame(gate, Path.Combine(dir, $"{name}-{Tag(theme)}.png"));
+                }
+            gate.Close();
+        }
 
         // "Report a problem" on the first game: the dialog with a message typed, then its thanks. The window shows on the
         // game's page, so the Library isn't loaded yet.
@@ -94,7 +100,7 @@ static partial class Screenshots
         Resize(Width);
         main.Navigate(typeof(DetailPage), ff7);
         main.Show();
-        foreach (var theme in themes)
+        foreach (var theme in aesOnly ? [] : themes)
         {
             main.RequestedThemeVariant = theme;
             await Task.Delay(800);
@@ -103,10 +109,79 @@ static partial class Screenshots
             await Dialog(StartDialogs.Welcome(WelcomeContent.Default).Dialog, "welcome");   // the bundled text
         }
 
+        // The Library's summary as cards and with Compact UI, at both widths, and the option in Settings, dark only.
+        // SCSKILLER_SHOTS=compact takes only these.
+        if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") == "compact")
+        {
+            main.RequestedThemeVariant = ThemeVariant.Dark;
+            var compactWas = fake.Settings;
+            foreach (var compact in new[] { false, true })
+            {
+                fake.Settings = compactWas with { CompactUi = compact };
+                main.Navigate(typeof(SettingsPage));   // the kept Library page reads the setting again only when it loads, as after Settings
+                foreach (var (width, size) in new[] { (Width, ""), (MinWidth, "-min") })
+                {
+                    Resize(width);
+                    main.Navigate(typeof(LibraryPage));
+                    await Shot((compact ? "library-compact" : "library-cards") + size, 2000);
+                }
+            }
+            Resize(Width);
+            main.Navigate(typeof(SettingsPage));
+            await Task.Delay(800);
+            ((SettingsPage)main.Page!).ScrollToCompactUi();
+            await Shot("settings-compact-ui", 600);
+            fake.Settings = compactWas;
+            return;
+        }
+
+        if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") is null or "oldplans")
+        {
+            // a compile whose plan changed a lot: the popup asking to clear the old cache
+            foreach (var theme in themes)
+            {
+                main.RequestedThemeVariant = theme;
+                await Dialog(StartDialogs.OldPlansDialog(ScsKiller.OldPlansText("Phantom Blade Zero", 31L << 30, 15L << 30)), "oldplans-popup");
+                await Dialog(StartDialogs.OldPlansDialog(ScsKiller.OldPlansText("Gears of War: E-Day", 0, 15L << 30)), "oldversions-popup");
+            }
+            if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") == "oldplans") return;
+        }
+
+        // The AES key dialog empty and with keys pasted (made-up hex), then a paste with refused lines, dark only.
+        // SCSKILLER_SHOTS=aes takes only these.
+        main.RequestedThemeVariant = ThemeVariant.Dark;
+        if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") is null or "aes")
+        {
+            foreach (var (name, text) in new[] { ("aes-key", ""), ("aes-key-several", $"0x{new string('0', 64)}\n00000000000000000000000000000000:0x{new string('1', 64)}\n0x{new string('2', 64)}") })
+            {
+                var (dialog, box) = AesKeyDialog.Dialog("Set the AES key for Fortnite", null, aes: true);
+                box.Text = text;
+                await Dialog(dialog, name);
+            }
+            await Dialog(AesKeyDialog.Refused(true, ["line 2: not a key (0x and 64 hex digits)", "line 4: " + ScsKiller.KeyRefused]), "aes-key-refused");
+            if (aesOnly) return;
+        }
+
+        // Anti-cheat games' Library rows and game pages, dark only. SCSKILLER_SHOTS=anticheat stops after these.
+        if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") == "anticheat")
+        {
+            fake.ShowGames();
+            foreach (var (name, id) in new[] { ("anticheat", "hoyoplay:nap_global"), ("anticheat-offline", "steam:1245620"), ("wegame-held", "wegame:2009999") })
+            {
+                main.Navigate(typeof(LibraryPage));
+                await Task.Delay(800);
+                Library().ScrollTo(id);
+                await Shot("library-" + name);
+                main.Navigate(typeof(DetailPage), id);
+                await Task.Delay(1000);
+                await Shot("detail-" + name);
+            }
+            return;
+        }
+
         // "Use shared shader hashes" on the game page against Settings' "Download shared shader hashes", dark only.
         // SCSKILLER_SHOTS=shared takes only these.
         var sharedWas = fake.Settings;
-        main.RequestedThemeVariant = ThemeVariant.Dark;
         foreach (var (name, global, choice) in new (string, bool, bool?)[] { ("shared-follow-global-on", true, null), ("shared-follow-global-off", false, null),
                      ("shared-on-global-off", false, true), ("shared-off-global-on", true, false) })
         {
@@ -221,6 +296,13 @@ static partial class Screenshots
             main.RequestedThemeVariant = theme;
             await Shot("library-asd");
         }
+        Library().ScrollTo("steam:3900062");   // an anti-cheat check that didn't finish, dark only
+        main.RequestedThemeVariant = ThemeVariant.Dark;
+        await Shot("library-checking-anticheat");
+        main.Navigate(typeof(DetailPage), "steam:3900062");
+        await Shot("detail-checking-anticheat");
+        main.Navigate(typeof(LibraryPage));
+        await Task.Delay(800);
         Library().ScrollToTop();   // the kept page would carry this scroll into the later library shots, which WinUI takes at the top
         main.RequestedThemeVariant = ThemeVariant.Dark;
         main.Navigate(typeof(QueuePage));
@@ -339,7 +421,7 @@ static partial class Screenshots
             await Shot("queue-folding");
             main.Navigate(typeof(DetailPage), ff7);
             await Shot("detail-folding");
-            (fake.FoldWriting, fake.AfterUpdateLine) = (true, ScsKiller.FoldText(fake.Games[0].Game.Name + "'s", 42, true));
+            (fake.FoldWriting, fake.AfterUpdateLine) = (true, ScsKiller.FoldText(fake.Games[0].Game.Name + "'s", 42, true, TimeSpan.FromSeconds(754)));
             main.Navigate(typeof(LibraryPage));
             await Shot("library-folding-writing");
             main.Navigate(typeof(DetailPage), ff7);
@@ -372,14 +454,14 @@ static partial class Screenshots
                                                    ("guess-both", "xbox:CoffeeStainStudios.DeepRockGalactic"),
                                                    ("guess-version", "steam:3900010"), ("guess-dx", "steam:3900020"), ("rebound", "steam:1292630"), ("no-launch", "hoyoplay:nap_global"),
                                                    ("ran-other-exe", "ubisoft:13504"), ("game-changed", "steam:3900030"), ("never-loaded", "steam:3900040"), ("other-exe", "steam:3900050"),
-                                                   ("foreign", "steam:3900060"), ("foreign-on", "steam:3900060"), ("foreign-off", "steam:3900060"),
+                                                   ("foreign", "steam:3900060"), ("foreign-on", "steam:3900060"), ("foreign-off", "steam:3900060"), ("optiscaler", "steam:3900400"), ("optiscaler-on", "steam:3900400"),
                                                    ("guess-picked", "xbox:CoffeeStainStudios.DeepRockGalactic"), ("guess-overruled", "steam:3900020"), ("sure-picked", "steam:1139900"),
-                                                   ("vulkan-pick", "steam:3900170"), ("dx11-frames", "steam:3900300"),
+                                                   ("vulkan-pick", "steam:3900170"), ("dx11-frames", "steam:3900300"), ("risk-checking", "steam:3900063"),
                                                    ("learned", "steam:4115450") })
                 {
                     if (name is "guess-both" or "guess-dx" or "ghostrunner") { fake.ProveApi(id, null); fake.SetApiOverride(id, null); }
                     if (name == "guess-picked") fake.SetApiOverride(id, DxApi.D3D12);
-                    if (name == "foreign") fake.MakeForeign(id);
+                    if (name == "foreign") fake.MakeForeign(id); if (name == "optiscaler-on") fake.SetRecordAlongsideMod(id, true);
                     if (name == "foreign-on") fake.SetRecorderOverride(id, RecorderOverride.On);   // what the switch's one click calls
                     if (name == "foreign-off") fake.SetRecorderOverride(id, RecorderOverride.Off);
                     if (name == "sure-picked") fake.SetApiOverride(id, DxApi.D3D11);
@@ -391,6 +473,7 @@ static partial class Screenshots
                     if (name == "dx11-frames" && Detail().ScrollToFrames()) await Shot(file, 400, "-frames");   // the frames-only recorder's graph
                     if (name == "tekken") await Dialog(Detail().PartlyWhyDialog(), $"d-tekken-why-{size}");
                     if (name == "vulkan-pick") await Dialog(Detail().RiskDialog(Detail().Vm, Detail().Vm.Row.State), $"d-vulkan-pick-confirm-{size}");
+                    if (name == "risk-checking") await Dialog(Detail().RiskDialog(Detail().Vm, Detail().Vm.Row.State), $"d-risk-checking-confirm-{size}");
                     if (name == "ff7")   // every count, under Details
                     {
                         var open = Detail();
@@ -398,6 +481,8 @@ static partial class Screenshots
                         await Task.Delay(600);
                         open.ScrollToEnd();
                         await Shot(file, 400, "-details");
+                        open.ScrollToDetails();
+                        await Shot(file, 400, "-counts");
                         if (open.ScrollToFrames()) await Shot(file, 400, "-frames");
                     }
                 }
@@ -405,6 +490,20 @@ static partial class Screenshots
         }
         foreach (var id in new[] { "xbox:CoffeeStainStudios.DeepRockGalactic", "steam:3900020", "steam:1139900" }) { fake.ProveApi(id, null); fake.SetApiOverride(id, null); }   // the library shots: as detected again
         Resize(Width);
+
+        // Details of a Warmed game the community database covers, nothing downloaded: signed out, then signed in with "db"
+        main.RequestedThemeVariant = ThemeVariant.Dark;
+        foreach (var (name, ent) in new[] { ("community-out", (string[]?)null), ("community-db", ["db"]) })
+        {
+            if (ent != null) { FakeAccount.Ent = ent; await App.Account.SignInAsync(); }
+            main.Navigate(typeof(DetailPage), "xbox:Sample.AtomicHeart");
+            await Task.Delay(600);
+            Detail().ShowDetails();
+            await Task.Delay(600);
+            Detail().ScrollToEnd();
+            await Shot($"d-{name}", 400);
+        }
+        await App.Account.SignOutAsync();
 
         // Library search ("life": one game on Steam, one on EA) and the store sections at the end of the list.
         foreach (var theme in themes)
@@ -500,6 +599,13 @@ static partial class Screenshots
             main.Navigate(typeof(LibraryPage));
             Library().Vm.Refresh();
             await Shot("library-intel");
+            // no cache size setting: the cache card's message hides, the driver-update and sign-in cards show their own
+            main.Navigate(typeof(SettingsPage));
+            if (AppStore.Moved != null) Shown(main).Vm.DriverModeMessage = AppStore.MovedRefusal;   // what a moved data folder's choice gets
+            Shown(main).Vm.Refresh();
+            await Shot("settings-intel");
+            Shown(main).ScrollToEnd();
+            await Shot("settings-intel-end");
         }
         await PlatformShots(main, fake, sampleGpu, name => Shot(name));
 

@@ -1,5 +1,7 @@
 ﻿using System.IO.Compression;
 using System.Numerics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using SCSKiller.Core.Carved;
 using static SCSKiller.Core.Planning.PsoDb;
@@ -57,7 +59,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     /// <summary>Bump when the plan for the same game and inputs changes (new pipeline kinds, root-signature rules, D3D11):
     /// the app then rebuilds plans (warmed games' when idle, ScsKiller.CheckPlans) and offers a re-warm only where the new
     /// plan has records the warm didn't replay.</summary>
-    public const int Version = 53;
+    public const int Version = 58;
 
     /// <summary>The vendor's D3D11 driver cache persists across processes, is keyed on the exe file name and caches per
     /// shader, whatever the state or the other stages (measured on NVIDIA and Intel, proxy/probe11.cpp): a staged warm
@@ -153,11 +155,10 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
             // a device-keyed cache: the launch that unlocks Steam's download must also record the device
             if (check.Reason == Vulkan.VulkanPlan.StartOnce && caps.VulkanKey == Vulkan.VulkanPlan.DeviceKey && recording!.VulkanDevice == null)
                 check = new(Readiness.NeedsRecording, Vulkan.VulkanPlan.DeviceNeeded);
-            // the warm reaches the game's cache only with its device (VulkanPlan.DeviceKey): a Steam game's in the file Steam's
-            // variables name, any other's in the driver's own cache, which the replayer staged as the game's exe reaches
-            if (check.Readiness == Readiness.Ready && caps.VulkanKey == Vulkan.VulkanPlan.DeviceKey)
-                check = recording!.VulkanDevice == null ? new(Readiness.NeedsRecording, Vulkan.VulkanPlan.DeviceNeeded)
-                    : !recording.VulkanSteamCache && game.Store == Store.Steam ? new(Readiness.NeedsRecording, Vulkan.VulkanPlan.SteamCacheNeeded) : check;
+            // the warm reaches the game's cache only with its device (VulkanPlan.DeviceKey): in the file Steam's variables name,
+            // or without them the game's own file in the driver's cache (ScsKiller.AmdVkFile)
+            if (check.Readiness == Readiness.Ready && caps.VulkanKey == Vulkan.VulkanPlan.DeviceKey && recording!.VulkanDevice == null)
+                check = new(Readiness.NeedsRecording, Vulkan.VulkanPlan.DeviceNeeded);
             // a game without a layer key (off Windows, not Steam's) can't be recorded: a recording can't be asked for
             return check.Readiness == Readiness.NeedsRecording && Vulkan.VulkanLayer.Key(game) == null ? new(Readiness.Unsupported, App.ScsKiller.SkipVulkanSteamOnly) : check;
         }
@@ -476,31 +477,44 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         // first, so one pass drops the dependents of a dropped one too
         long mainCount = 0, flagCount = 0, keptCount = 0, movedCount = 0, needsRecording = 0;
         var keptKeys = new HashSet<string>();
-        var recordedPayloads = new List<uint>();
+        var recordedPayloads = new Dictionary<string, SortedSet<uint>>();   // per library
+        var payloadCounts = new Dictionary<uint, int>();                    // recorded collections per payload
         var nvOfMain = new List<Rec>();   // its state objects and 'N' records: what the option fixes learn from (RtCollections.OptionFixes)
         foreach (var r in Read(mainDb))
         {
-            if (RtCollections.Read(r) is { } c) recordedPayloads.Add(c.Payload);
+            if (RtCollections.Read(r) is { Payload: > 0 } c)
+            {
+                (recordedPayloads.TryGetValue(c.Library, out var ps) ? ps : recordedPayloads[c.Library] = []).Add(c.Payload);
+                payloadCounts[c.Payload] = payloadCounts.GetValueOrDefault(c.Payload) + 1;
+            }
             if (r.Tag == 'N' || IsStateObject(r.Tag)) nvOfMain.Add(r);
         }
         var rtOptions = RtCollections.RecordedOptions(nvOfMain);
         // a ray tracing collection per library ('Y'), its exports read from the library: an 'R' record the warm creates like a
         // recorded one; a library not in this install, or without a ray tracing entry point, is skipped. With rule payload 0 a
-        // ray generation library gets one per payload the other libraries have (RtCollections.Payloads), the recorded ones'
-        // (no 'Y': their collections replay from the recording) included
+        // ray generation library gets one per payload (RtCollections.Payloads): those its recorded collections have, else those
+        // at least 10% of the recorded collections have, else those the other libraries have. The game creates one per pipeline
+        // payload, not per library payload (Phantom Blade Zero: 533 of 550 recorded ray generation libraries at 64 bytes only, of
+        // 11 library payloads, and 545 of 546 created with one payload; each a heavy compile)
         var own = rt.Select(y => y.Library).Distinct().Where(rtBytes.ContainsKey).ToDictionary(h => h, h => RtCollections.OwnPayload(rtBytes[h]));
-        var pipelinePayloads = rt.Where(y => y.Payload == 0).Select(y => own.GetValueOrDefault(y.Library))
-            .Concat(recordedPayloads).Where(p => p > 0).Distinct().Order().ToList();
+        var recordedCount = payloadCounts.Values.Sum();
+        IReadOnlyCollection<uint> pipelinePayloads = recordedPayloads.Count > 0
+            ? new SortedSet<uint>(payloadCounts.Where(p => p.Value >= 0.1 * recordedCount).Select(p => p.Key).DefaultIfEmpty(payloadCounts.MaxBy(p => p.Value).Key))
+            : rt.Where(y => y.Payload == 0).Select(y => own.GetValueOrDefault(y.Library)).Where(p => p > 0).Distinct().Order().ToList();
         var synthesized = new List<(byte[] So, RtCollections.Nv? Nv)>();
         var covered = new HashSet<string>();   // libraries a synthesized collection compiles
         foreach (var y in rt)
         {
             var n = 0;
+            // a library's 'Y' under another NVAPI state: other export names, which NVIDIA's key leaves out (selftest dxr), give
+            // it its own record key and so its own 'N'
+            var names = covered.Contains(y.Library) ? Hex(SHA1.HashData(Encoding.UTF8.GetBytes($"{y.Library}|{y.Nv}")).AsSpan(0, 8)) : null;
             if (rtBytes.TryGetValue(y.Library, out var lib))
-                foreach (var p in RtCollections.Payloads(y.Payload, own[y.Library], pipelinePayloads))
-                    if (RtCollections.Collection(lib, y.Library, y.Global, y.LocalRayGen, y.LocalOther, p, y.Attributes, y.Depth, y.Flags) is { } so)
+                foreach (var p in RtCollections.Payloads(y.Payload, own[y.Library], recordedPayloads.GetValueOrDefault(y.Library) ?? pipelinePayloads))
+                    if (RtCollections.Collection(lib, y.Library, y.Global, y.LocalRayGen, y.LocalOther, p, y.Attributes, y.Depth, y.Flags, names) is { } so)
                     {
-                        synthesized.Add((so, RtCollections.WithOptions(y.Nv, rtOptions)));
+                        // a 'Y' state is the plan's, its options too (PlanBuilder.RtPlan); one without any takes the recording's
+                        synthesized.Add((so, y.Nv ?? RtCollections.WithOptions(null, rtOptions)));
                         n++;
                     }
             if (n == 0) skipped++;
@@ -527,6 +541,8 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         bool Stays(Rec r)
         {
             if (r.Tag is 'B' or 'W') return true;
+            // a left-out state object's 'N' would apply to the plan's collection of the same key
+            if (r.Tag == 'N' && r.Payload.Length == NvState.Size && leftOut.Contains(NvState.Parse(r).Target)) return false;
             if (r.Tag == 'L' || Moved(r) || !Keep(r) || IsStateObject(r.Tag) && !ParseStateObject(r).Depends.All(keptKeys.Contains)) return false;
             keptKeys.Add(r.Key);
             return true;
@@ -535,7 +551,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         {
             mainCount++;
             if (Stays(r)) keptCount++;
-            else if (r.Tag == 'L') flagCount++;
+            else if (r.Tag is 'L' or 'N') flagCount++;   // not pipelines: never counted as skipped
             else if (Moved(r))
             {
                 movedCount++;
@@ -631,6 +647,29 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
 
     const int StencilRef = 69;   // D3D_NAME_STENCIL_REF
 
+    /// <summary>The recorded pipelines another player's RenoDX made (<see cref="PlanBuilder.RenoDx"/>): the game here creates them
+    /// only through its own RenoDX layer. Null when it has one, or when no root signature in <paramref name="db"/> is RenoDX's.</summary>
+    internal static Func<Rec, bool>? AddonMade(Game game, EngineInfo engine, ShaderIndex index, string db)
+    {
+        if (PlanBuilder.LayerInjects(game, engine)) return null;
+        var blobs = new Dictionary<string, byte[]>();
+        foreach (var r in Read(db).Where(r => r.Tag == 'B' && r.Payload.Length > 20))
+            try
+            {
+                if (r.Payload.AsSpan(20).StartsWith("DXBC"u8) && Dxbc.Part(r.Payload.AsSpan(20), "RTS0"u8).IsEmpty) continue;   // a shader
+                if (RootSig.LastRootValue(r.Payload[20..]) is (_, _, 50)) blobs.TryAdd(Hex(r.Payload.AsSpan(0, 20)), r.Payload[20..]);
+            }
+            catch (Exception e) when (e is ArgumentException or InvalidDataException or IndexOutOfRangeException) { }   // not a root signature
+        if (blobs.Count == 0) return null;
+        return r =>
+        {
+            if (r.Tag is not ('G' or 'C' or 'S')) return false;
+            var p = Parse(r);
+            return blobs.TryGetValue(p.Rs, out var blob) && p.Stages.Values.All(index.Shaders.ContainsKey)
+                && PlanBuilder.RenoDx(p.Rs, blob, p.Stages.ToDictionary(x => (Stage)x.Key, x => index.Shaders[x.Value]));
+        };
+    }
+
     /// <summary>The recorded pipelines another GPU vendor's game made: the root signature is the engine rule's construction for
     /// the other vendor (<see cref="ReRule.OtherCbvBase"/>) and not this one's, so the game here never creates them (RE Requiem
     /// demo: a shared recording of 15,758 pipelines in the layout off NVIDIA). Null when the rule builds the same everywhere.</summary>
@@ -683,6 +722,8 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         var outs = new Dictionary<(string, int), SigElement>();
         foreach (var o in src.Outputs) outs[(o.Semantic.ToUpperInvariant(), o.Index)] = o;
         var dxbc = dst.ShaderModel.Split('_') is [_, "4" or "5", ..];
+        if (src.ShaderModel.Split('_') is [_, ("4" or "5" or "6") and var major, ..] && dst.ShaderModel.Split('_') is [_, ("4" or "5" or "6") and var dmajor, ..]
+            && (major == "6") != (dmajor == "6")) return false;   // a PSO can't mix DXBC and DXIL stages (E_INVALIDARG)
         var controlPoints = dst.Stage is Stage.Hull or Stage.Domain;
         foreach (var i in dst.Inputs)
         {
@@ -693,6 +734,11 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         }
         return true;
     }
+
+    /// <summary>Each non-system input of <paramref name="dst"/> sits in the register <paramref name="src"/> writes it in, of the same type: a source
+    /// with more outputs than <paramref name="dst"/> reads still links when its extra outputs don't move the others.</summary>
+    internal static bool SameRegisters(ShaderInfo src, ShaderInfo dst) => dst.Inputs.Where(i => i.SysValue == 0).All(i =>
+        src.Outputs.Any(o => o.Register == i.Register && o.Index == i.Index && o.CompType == i.CompType && string.Equals(o.Semantic, i.Semantic, StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>A DXIL PS's non-system inputs sit in the rows the stage feeding it (GS, DS or VS) writes them in. A pipeline table
     /// can list pairs that don't (RE Village: 18 VS+PS pairs, PS VEL0 in row 0, VS in row 5 or 8, E_INVALIDARG on AMD; 0 of

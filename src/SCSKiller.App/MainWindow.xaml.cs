@@ -431,13 +431,26 @@ public sealed partial class MainWindow : Window
             }
         }
 
+        // A WeGame game held out of recording: its Library row and game page, dark only. SCSKILLER_SHOTS=wegame takes only these.
+        async Task WeGame()
+        {
+            const string id = "wegame:2009999";
+            Root.RequestedTheme = ElementTheme.Dark;
+            Navigate(typeof(LibraryPage));
+            await Task.Delay(800);
+            ((LibraryPage)ContentFrame.Content).ScrollTo(id);
+            await Shot("library-wegame-held", 600);
+            Navigate(typeof(DetailPage), id);
+            await Shot("detail-wegame-held");
+        }
+
         // A D3DSCache fold after a game's exit: the Library's line and the game page's. SCSKILLER_SHOTS=folding takes only these.
         async Task Folding()
         {
             var g = fake.Games[0].Game;
             foreach (var writing in new[] { false, true })
             {
-                (fake.Folding, fake.FoldWriting, fake.AfterUpdateLine) = (g.Id, writing, ScsKiller.FoldText(g.Name + "'s", 42, writing));
+                (fake.Folding, fake.FoldWriting, fake.AfterUpdateLine) = (g.Id, writing, ScsKiller.FoldText(g.Name + "'s", 42, writing, TimeSpan.FromSeconds(754)));
                 foreach (var theme in themes)
                 {
                     Root.RequestedTheme = theme;
@@ -489,21 +502,48 @@ public sealed partial class MainWindow : Window
             ShowGpu();
         }
 
+        // A compile whose plan changed a lot: the popup asking to clear the old cache. SCSKILLER_SHOTS=oldplans takes only these.
+        async Task OldPlans()
+        {
+            Navigate(typeof(DetailPage), fake.Games[0].Game.Id);
+            foreach (var theme in themes)
+            {
+                Root.RequestedTheme = theme;
+                await Task.Delay(800);
+                foreach (var (shot, notice) in new[] { ("oldplans-popup", ScsKiller.OldPlansText("Phantom Blade Zero", 31L << 30, 15L << 30)),
+                             ("oldversions-popup", ScsKiller.OldPlansText("Gears of War: E-Day", 0, 15L << 30)) })
+                {
+                    var ask = App.OldPlansDialog(Root.XamlRoot, notice);
+                    ask.RequestedTheme = theme;
+                    _ = App.ShowAsync(ask);
+                    await Task.Delay(800);
+                    await SavePngAsync(ask, Path.Combine(dir, $"{shot}-{theme.ToString().ToLowerInvariant()}.png"));
+                    ask.Hide();
+                    await Task.Delay(300);
+                }
+            }
+            Root.RequestedTheme = ElementTheme.Dark;
+        }
+
         switch (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS"))
         {
             case "folding": await Folding(); Application.Current.Exit(); return;
             case "traversal": await Traversal(); Application.Current.Exit(); return;
             case "asd": await Asd(); Application.Current.Exit(); return;
             case "dlss": await Dlss(); Application.Current.Exit(); return;
+            case "wegame": await WeGame(); Application.Current.Exit(); return;
             case "amd-profiles": await AmdProfiles(); Application.Current.Exit(); return;
             case "problem": await Problem(); Application.Current.Exit(); return;
             case "alpha-gate": await Gate(); Application.Current.Exit(); return;
+            case "oldplans": await OldPlans(); Application.Current.Exit(); return;
         }
+        await OldPlans();
         await Gate();
         await AmdProfiles();
         await Problem();
         await Folding();
         await Traversal();
+        await WeGame();
 
         // A scan in progress: first run (nothing listed yet), its games listed before they're read, then a rescan.
         fake.HideGames = true;
@@ -737,13 +777,13 @@ public sealed partial class MainWindow : Window
                                                    ("guess-both", "xbox:CoffeeStainStudios.DeepRockGalactic"),
                                                    ("guess-version", "steam:3900010"), ("guess-dx", "steam:3900020"), ("rebound", "steam:1292630"), ("no-launch", "hoyoplay:nap_global"),
                                                    ("ran-other-exe", "ubisoft:13504"), ("game-changed", "steam:3900030"), ("never-loaded", "steam:3900040"), ("other-exe", "steam:3900050"),
-                                                   ("foreign", "steam:3900060"), ("foreign-on", "steam:3900060"), ("foreign-off", "steam:3900060"),
+                                                   ("foreign", "steam:3900060"), ("foreign-on", "steam:3900060"), ("foreign-off", "steam:3900060"), ("optiscaler", "steam:3900400"), ("optiscaler-on", "steam:3900400"),
                                                    ("guess-picked", "xbox:CoffeeStainStudios.DeepRockGalactic"), ("guess-overruled", "steam:3900020"), ("sure-picked", "steam:1139900"),
                                                    ("dx11-frames", "steam:3900300"), ("learned", "steam:4115450") })
                 {
                     if (name is "guess-both" or "guess-dx" or "ghostrunner") { fake.ProveApi(id, null); fake.SetApiOverride(id, null); }
                     if (name == "guess-picked") fake.SetApiOverride(id, DxApi.D3D12);
-                    if (name == "foreign") fake.MakeForeign(id);
+                    if (name == "foreign") fake.MakeForeign(id); if (name == "optiscaler-on") fake.SetRecordAlongsideMod(id, true);
                     if (name == "foreign-on") fake.SetRecorderOverride(id, RecorderOverride.On);   // what the switch's one click calls
                     if (name == "foreign-off") fake.SetRecorderOverride(id, RecorderOverride.Off);
                     if (name == "sure-picked") fake.SetApiOverride(id, DxApi.D3D11);

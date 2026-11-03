@@ -25,6 +25,19 @@
             <Setter Property="MinHeight" Value="32" />
             <Setter Property="Margin" Value="0,7,0,8" />
         </Style>
+        <Style Selector="StackPanel.Radios > RadioButton TextBlock">
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <!-- a text and its button: the button goes under the text when the cards stack -->
+        <Style Selector="Grid.Split > :is(Control).Side">
+            <Setter Property="Grid.Column" Value="1" />
+        </Style>
+        <Style Selector=".Narrow Grid.Split > :is(Control).Side">
+            <Setter Property="Grid.Column" Value="0" />
+            <Setter Property="Grid.Row" Value="1" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="Margin" Value="0,8,0,0" />
+        </Style>
         <!-- WinUI's ComboBox Header -->
         <Style Selector="TextBlock.Header">
             <Setter Property="Margin" Value="0,0,0,8" />
@@ -44,15 +57,15 @@
                     <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
                         <StackPanel Spacing="2">
                             <TextBlock Text="Current limit" Classes="Caption" />
-                            <TextBlock Text="{Binding CurrentLimit}" Classes="Section" />
+                            <TextBlock Text="{Binding CurrentLimit}" Classes="Section" TextWrapping="Wrap" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Spacing="2">
                             <TextBlock Text="Used now" Classes="Caption" />
-                            <TextBlock Text="{Binding Used}" Classes="Section" />
+                            <TextBlock Text="{Binding Used}" Classes="Section" TextWrapping="Wrap" />
                         </StackPanel>
                         <StackPanel Grid.Column="2" Spacing="2">
                             <TextBlock Text="{Binding FreeLabel}" Classes="Caption" />
-                            <TextBlock Text="{Binding Free}" Classes="Section" />
+                            <TextBlock Text="{Binding Free}" Classes="Section" TextWrapping="Wrap" />
                         </StackPanel>
                     </Grid>
                     <StackPanel Spacing="14" IsVisible="{Binding Configurable, Mode=OneTime}">
@@ -80,20 +93,20 @@
                         <StackPanel Spacing="2">
                             <TextBlock Text="Keep compiled caches aside" Classes="BodyStrong" />
                             <TextBlock Text="Puts a game's compiled cache back after the driver removes it." Classes="Secondary" TextWrapping="Wrap" />
-                            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,4,0,0" IsVisible="{Binding HasKept}">
+                            <WrapPanel ItemSpacing="12" Margin="0,4,0,0" IsVisible="{Binding HasKept}">
                                 <TextBlock Text="{Binding KeptSummary}" VerticalAlignment="Center" TextWrapping="Wrap" />
                                 <Button Content="Manage…" Click="OnManageKept" />
-                            </StackPanel>
+                            </WrapPanel>
                         </StackPanel>
                         <ToggleSwitch Grid.Column="1" IsChecked="{Binding KeepCachesAside, Mode=TwoWay}" AutomationProperties.Name="Keep compiled caches aside" />
                     </Grid>
                     <StackPanel Spacing="8" IsVisible="{Binding ShowsShaderCleanup, Mode=OneTime}">
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <Grid Classes="Split" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12">
                             <StackPanel Spacing="2" VerticalAlignment="Center">
-                                <TextBlock Text="Windows' automatic disk cleanup" Classes="BodyStrong" />
-                                <TextBlock Text="Storage Sense can delete the DirectX shader cache." Classes="Secondary" TextWrapping="Wrap" />
+                                <TextBlock Text="Windows' automatic disk cleanup" Classes="BodyStrong" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding ShaderCleanupLine}" Classes="Secondary" TextWrapping="Wrap" />
                             </StackPanel>
-                            <Button Grid.Column="1" Click="OnShaderCleanup" VerticalAlignment="Center" AutomationProperties.Name="{Binding ShaderCleanupAction}" IsEnabled="{Binding CanApplyShaderCleanup}">
+                            <Button Classes="Side" Click="OnShaderCleanup" VerticalAlignment="Center" AutomationProperties.Name="{Binding ShaderCleanupAction}" IsEnabled="{Binding CanApplyShaderCleanup}">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Shield}" FontSize="14" VerticalAlignment="Center" />
                                     <TextBlock Text="{Binding ShaderCleanupAction}" />
@@ -105,7 +118,7 @@
                 </StackPanel>
             </Border>
 
-            <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="12">
+            <Grid x:Name="Cards" ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="12">
 
                 <Border Classes="Card" Padding="20">
                     <StackPanel Spacing="12">
@@ -143,6 +156,7 @@
                             </RadioButton>
                         </StackPanel>
                         <TextBlock Text="{Binding DriverModesNote, Mode=OneTime}" IsVisible="{Binding HasDriverModesNote, Mode=OneTime}" TextWrapping="Wrap" />
+                        <c:InfoBar IsVisible="{Binding HasDriverModeMessage}" Message="{Binding DriverModeMessage}" Severity="Error" IsClosable="False" />
                         <TextBlock Text="{Binding LastRebuilt}" Classes="Caption" IsVisible="{Binding HasLastRebuilt}" />
                         <Rectangle Classes="Divider" />
                         <TextBlock x:Name="NewShadersHeader" Text="When games have new shaders" Classes="Section" />
@@ -194,9 +208,9 @@
                         </CheckBox>
                         <Rectangle Classes="Divider" />
                         <CheckBox Content="Pause background compiling while another game is running" IsChecked="{Binding PauseWhileGaming, Mode=TwoWay}" />
-                        <Grid>
-                            <TextBlock Text="Threads for background rebuilds" />
-                            <TextBlock Text="{Binding BackgroundThreadsText}" HorizontalAlignment="Right" />
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                            <TextBlock Text="Threads for background rebuilds" TextWrapping="Wrap" />
+                            <TextBlock Grid.Column="1" Text="{Binding BackgroundThreadsText}" />
                         </Grid>
                         <Slider Minimum="1" Maximum="{Binding MaxThreads, Mode=OneTime}" TickFrequency="1" IsSnapToTickEnabled="True"
                                 Value="{Binding BackgroundThreads, Mode=TwoWay}" AutomationProperties.Name="Threads for background rebuilds" />
@@ -319,16 +333,16 @@
                                     <TextBlock Text="Only measured on Intel Arc. Applies after a restart." Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
-                            <Grid>
-                                <TextBlock Text="Compile threads" />
-                                <TextBlock Text="{Binding ThreadsText}" HorizontalAlignment="Right" />
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <TextBlock Text="Compile threads" TextWrapping="Wrap" />
+                                <TextBlock Grid.Column="1" Text="{Binding ThreadsText}" />
                             </Grid>
                             <Slider Minimum="1" Maximum="{Binding MaxThreads, Mode=OneTime}" TickFrequency="1" IsSnapToTickEnabled="True"
                                     Value="{Binding Threads, Mode=TwoWay}" AutomationProperties.Name="Compile threads" />
                             <TextBlock Text="{Binding PriorityNote}" Classes="Caption" />
-                            <Grid>
-                                <TextBlock Text="Maximum memory for compiling" />
-                                <TextBlock Text="{Binding MaxCompileMemoryText}" HorizontalAlignment="Right" />
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <TextBlock Text="Maximum memory for compiling" TextWrapping="Wrap" />
+                                <TextBlock Grid.Column="1" Text="{Binding MaxCompileMemoryText}" />
                             </Grid>
                             <Slider Minimum="0" Maximum="{Binding MaxCompileMemoryMax, Mode=OneTime}" TickFrequency="1" IsSnapToTickEnabled="True"
                                     Value="{Binding MaxCompileMemory, Mode=TwoWay}" AutomationProperties.Name="Maximum memory for compiling (0 = Auto)" />
@@ -356,12 +370,13 @@
                     <StackPanel Spacing="12">
                         <TextBlock Text="General" Classes="Section" />
                         <CheckBox IsChecked="{Binding StartWithWindows, Mode=TwoWay}" IsVisible="{Binding ShowsStartAtSignIn, Mode=OneTime}"
-                                  AutomationProperties.Name="{x:Static m:SettingsVm.StartText}">
+                                  IsEnabled="{Binding CanChangeStart, Mode=OneTime}" AutomationProperties.Name="{x:Static m:SettingsVm.StartText}">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="{x:Static m:SettingsVm.StartText}" TextWrapping="Wrap" />
                                 <TextBlock Text="{x:Static m:SettingsVm.StartNote}" Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
+                        <c:InfoBar IsVisible="{Binding HasStartMessage}" Message="{Binding StartMessage}" Severity="Informational" IsClosable="False" />
                         <CheckBox IsChecked="{Binding CloseQuits, Mode=TwoWay}" IsVisible="{Binding ShowsCloseQuits, Mode=OneTime}"
                                   AutomationProperties.Name="Closing the window quits SCSKiller">
                             <StackPanel Spacing="2">
@@ -406,6 +421,12 @@
                                            Classes="Caption" TextWrapping="Wrap" />
                             </StackPanel>
                         </CheckBox>
+                        <CheckBox x:Name="CompactUiBox" IsChecked="{Binding CompactUi, Mode=TwoWay}" AutomationProperties.Name="Compact UI">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Compact UI" TextWrapping="Wrap" />
+                                <TextBlock Text="Shows the Library's summary as two slim tiles." Classes="Caption" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </CheckBox>
                         <StackPanel>
                             <TextBlock Text="Theme" Classes="Header" />
                             <ComboBox ItemsSource="{Binding Themes, Mode=OneTime}" SelectedIndex="{Binding ThemeIndex, Mode=TwoWay}" MinWidth="220"
@@ -428,7 +449,7 @@
                             <CheckBox IsChecked="{Binding RecordAntiCheatGames, Mode=TwoWay}" AutomationProperties.Name="Allow the recorder in games with anti-cheat (at your own risk)">
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="Allow the recorder in games with anti-cheat (at your own risk)" TextWrapping="Wrap" />
-                                    <TextBlock Text="Some games contain anti-cheat that can ban accounts using the recorder. Turn this on to enable it per game, at your own risk. SCSKiller isn't responsible for bans."
+                                    <TextBlock Text="Enabling the recorder in games with anti-cheat is at your own risk. SCSKiller isn't responsible for bans."
                                                Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
@@ -446,7 +467,7 @@
                         </StackPanel>
                         <Rectangle Classes="Divider" Margin="0,6" />
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                            <TextBlock x:Name="RecordingLimitLabel" Text="Recording limit per game" VerticalAlignment="Center" />
+                            <TextBlock x:Name="RecordingLimitLabel" Text="Recording limit per game" VerticalAlignment="Center" TextWrapping="Wrap" />
                             <ComboBox Grid.Column="1" ItemsSource="{x:Static m:SettingsVm.RecordingLimitLabels}" MinWidth="140"
                                       SelectedIndex="{Binding RecordingLimitIndex, Mode=TwoWay}" AutomationProperties.LabeledBy="{Binding #RecordingLimitLabel}" />
                         </Grid>
@@ -475,10 +496,10 @@
                         </Expander>
                         <StackPanel x:Name="RemoveRecordersPart" Spacing="8">
                             <Rectangle Classes="Divider" Margin="0,6" />
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                                <TextBlock Text="Removes the recorder from every game and quits. Use it before deleting the AppImage."
+                            <Grid Classes="Split" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12">
+                                <TextBlock Text="{x:Static m:SettingsVm.RemoveRecordersNote}"
                                            Classes="Caption" TextWrapping="Wrap" VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Content="Remove recorders" Click="OnRemoveRecorders" />
+                                <Button Classes="Side" Content="Remove recorders" Click="OnRemoveRecorders" />
                             </Grid>
                         </StackPanel>
                     </StackPanel>

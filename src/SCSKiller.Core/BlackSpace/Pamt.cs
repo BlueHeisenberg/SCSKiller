@@ -40,9 +40,11 @@ public sealed class Pamt
     public IReadOnlyDictionary<uint, uint> PazSizes { get; }
     public IReadOnlyList<string> Folders { get; }
     public IReadOnlyList<Entry> Files { get; }
+    /// <summary>Entries past <see cref="MaxEntry"/>, left out of <see cref="Files"/>.</summary>
+    public int Oversized { get; }
 
-    Pamt(uint hash, byte keyByte, IReadOnlyDictionary<uint, uint> paz, IReadOnlyList<string> folders, IReadOnlyList<Entry> files) =>
-        (Hash, KeyByte, PazSizes, Folders, Files) = (hash, keyByte, paz, folders, files);
+    Pamt(uint hash, byte keyByte, IReadOnlyDictionary<uint, uint> paz, IReadOnlyList<string> folders, IReadOnlyList<Entry> files, int oversized) =>
+        (Hash, KeyByte, PazSizes, Folders, Files, Oversized) = (hash, keyByte, paz, folders, files, oversized);
 
     public static Pamt Read(string path) => Parse(Bytes(path));
 
@@ -106,7 +108,10 @@ public sealed class Pamt
         var extensions = compact ? Extensions(r.Bytes(r.U32())) : [];
         if (!r.AtEnd) throw new InvalidDataException("bytes after the file table");
         var files = new List<Entry>(rows.Length);
+        var oversized = new List<(int Paz, uint Offset, uint Stored)>();
         var listed = new bool[rows.Length];
+        // a folder named FFFFFFFF is the root: its files' paths have no folder
+        folderNames[uint.MaxValue] = "";
         foreach (var (name, first, count) in folders)
         {
             if (!folderNames.TryGetValue(name, out var dir) || first > rows.Length || count > rows.Length - first) throw new InvalidDataException("a folder outside the tables");
@@ -115,18 +120,19 @@ public sealed class Pamt
             for (var i = first; i < first + count; i++)
             {
                 var f = rows[i];
-                if (!fileNames.TryGetValue(f.Name, out var file) || !paz.TryGetValue(f.Paz, out var pazSize) || f.Size > MaxEntry || f.Stored > MaxEntry
+                if (!fileNames.TryGetValue(f.Name, out var file) || !paz.TryGetValue(f.Paz, out var pazSize)
                         || (ulong)f.Offset + f.Stored > pazSize || (f.Flags & 0xF) == 2 && f.Size > MaxRatio * f.Stored + 16
                         || compact && f.Flags >> 8 >= extensions.Length)
                     throw new InvalidDataException("a file outside the tables");
+                if (f.Size > MaxEntry || f.Stored > MaxEntry) { oversized.Add((f.Paz, f.Offset, f.Stored)); continue; }
                 var flags = f.Flags;
                 if (compact) (file, flags) = (file + extensions[f.Flags >> 8], (ushort)(f.Flags & 0xFF));
                 if (file.Length > MaxPath || (budget -= dir.Length + 1 + file.Length) < 0) throw new InvalidDataException("names longer than the index holds");
-                files.Add(new Entry(dir + "/" + file, f.Paz, f.Offset, f.Stored, f.Size, flags));
+                files.Add(new Entry(name == uint.MaxValue ? file : dir + "/" + file, f.Paz, f.Offset, f.Stored, f.Size, flags));
             }
         }
         // the game's entries never share bytes: rows that would make a read cost more than the archive holds
-        foreach (var g in files.Where(f => f.Stored > 0).GroupBy(f => f.Paz))
+        foreach (var g in files.Select(f => (f.Paz, f.Offset, f.Stored)).Concat(oversized).Where(f => f.Stored > 0).GroupBy(f => f.Paz))
         {
             long end = 0;
             foreach (var f in g.OrderBy(f => f.Offset))
@@ -135,7 +141,7 @@ public sealed class Pamt
                 end = (long)f.Offset + f.Stored;
             }
         }
-        return new(hash, keyByte, paz, [.. folders.Select(f => folderNames[f.Name])], files);
+        return new(hash, keyByte, paz, [.. folders.Select(f => folderNames[f.Name])], files, oversized.Count);
     }
 
     /// <summary>A trie starts with a node without a parent: FFFFFFFF in the old layout, a 0 distance in the compact one.</summary>

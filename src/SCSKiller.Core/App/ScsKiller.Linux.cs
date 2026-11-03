@@ -11,19 +11,23 @@ public sealed partial class ScsKiller
 {
     /// <summary>Steam's games and the non-Steam games added to it (ready once it runs them through Proton), the native Steam's
     /// or else the Flatpak or Snap Steam's, warmed in their Proton prefixes (<see cref="WarmHost.For"/>; the Flatpak Steam's
-    /// listed only), and Heroic's and Lutris's Windows games, warmed in their launcher's prefix: no game added by hand, no
+    /// listed only), and Heroic's, Lutris's and Faugus's Windows games, warmed in their launcher's prefix, and the games added by hand in a Proton prefix: no
     /// recorder for a sandboxed Steam's games (<see cref="SteamSandboxSkip"/>), and no compile for the Flatpak Steam's where
     /// none of them can be (<see cref="SteamSandboxCompile"/>).</summary>
-    public static partial ScsKiller CreateDefault()
+    public static partial ScsKiller CreateDefault(Func<Game, bool>? only)
     {
         var vendor = DetectGpu();
         var steam = SteamSource.Root();
         SteamSandboxCompile = WarmHost.FlatpakSteamGames(steam, MesaLinux.Is(vendor.Caps));
         SteamSandboxSkip = SteamSource.Sandbox(steam) switch { "Flatpak" => LinuxStartup.InFlatpak ? WarmHost.InFlatpakError : SkipFlatpak, "Snap" => SkipSandboxed, _ => null };
+        var grant = GrantFolder(AppStore.DefaultDir);
+        FlatpakSkip = (g, vulkan) => FlatpakGrant.AppOf(g) is { } a && !FlatpakSees(a.App, grant, vulkan)
+            ? FlatpakGrant.CantGrant(grant) == null ? vulkan ? FlatpakVulkanSkipLine(a.Launcher) : FlatpakSkipLine(a.Launcher)
+                : vulkan ? FlatpakVulkanManualLine(grant, a.App, a.Launcher) : FlatpakManualLine(grant, a.App, a.Launcher) : null;
         // macOS: no game until its stores and a compile there exist
-        var k = new ScsKiller(OperatingSystem.IsMacOS() ? [] : [new SteamSource(steam), new SteamShortcutSource(steam), .. HeroicSource.Runners.Select(r => new HeroicSource(r, steamRoot: steam)), new LutrisSource(steamRoot: steam)],
+        var k = new ScsKiller(OperatingSystem.IsMacOS() ? [] : [new SteamSource(steam), new SteamShortcutSource(steam), .. HeroicSource.Runners.Select(r => new HeroicSource(r, steamRoot: steam)), new LutrisSource(steamRoot: steam), new FaugusSource(steamRoot: steam), new ManualSource(new AppStore(AppStore.DefaultDir))],
             vendor, DefaultReaders(), new Planner(Path.Combine(AppStore.DefaultDir, "packs"), SharedPackDir(AppStore.DefaultDir, vendor.Vendor)), new Warmer(vendor) { SteamRoot = steam },
-            AppStore.DefaultDir, NativeTools.Find("d3d12.dll")) { Adapters = GpuBackends.Adapters, AgsDll = NativeTools.Find("scskiller_ags.dll"), SteamRoot = steam };
+            AppStore.DefaultDir, NativeTools.Find("d3d12.dll"), only) { Adapters = GpuBackends.Adapters, AgsDll = NativeTools.Find("scskiller_ags.dll"), SteamRoot = steam };
         k.RedetectGpu();   // DriverId from Vulkan before anything compares it
         SessionIdle.Log = line => k.Log?.Report(line);
         return k;
@@ -32,27 +36,33 @@ public sealed partial class ScsKiller
     partial void WineBuiltinFirst(Game g, ref IReadOnlySet<string>? dlls) =>
         dlls = SteamLaunchOptions.BuiltinFirst(SCSKiller.Core.Unreal.UnrealRhi.LaunchOptions(g, (_warmer as Warmer)?.SteamRoot ?? SteamSource.Root()));
 
-    /// <summary><see cref="CacheEnvironment"/> as Steam's launch options carry it, for a game that reads SCSKiller's cache only
-    /// through them, on a GPU SCSKiller compiles for: a Steam game or a non-Steam game added to Steam that Proton runs (a
-    /// Windows exe), or a Steam game on the Vulkan route, unless it is Unsupported. None for a game whose cache goes in
-    /// Steam's own folder (<see cref="SteamPlaceScope"/>). Its folders made only with <paramref name="make"/>. Refused for a
-    /// game whose cache environment can't be told.</summary>
-    public LaunchLine? LaunchLineOf(string gameId, bool make = false)
+    partial void GameGpu(Game g, ref GpuInfo? gpu, ref IReadOnlyList<(string Name, string Value)>? env)
     {
-        if (Games.FirstOrDefault(x => x.Game.Id == gameId) is not { } s || Vendor is UnsupportedVendor || s.Status == GameStatus.Unsupported
-            || !(s.Game.ExePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || VulkanRoute(s.Game, s.Engine)) || SteamPlaceScope(s) != null) return null;
-        var root = (_warmer as Warmer)?.SteamRoot ?? SteamSource.Root();
-        string? options;
-        if (SteamSource.AppId(gameId) is { } app) options = SteamSource.LaunchOptions(root, app);
-        else if (SteamShortcuts.AppId(gameId) is { } shortcut) options = SteamShortcuts.Find(root, shortcut)?.LaunchOptions;
-        else return null;
-        List<(string Name, string Value)> vars;
-        try { vars = CacheEnvironment(s.Game, make: make); }
-        catch (InvalidOperationException e) { return new("", false, e.Message); }   // on Mesa, a game outside the Steam libraries
-        // Steam puts the game's command in place of each %command% before the shell reads the options
-        if (vars.Select(v => v.Value).FirstOrDefault(v => v.Contains("%command%", StringComparison.Ordinal)) is { } value)
-            return new(SteamLaunchOptions.Line(vars), false, $"Steam would replace the %command% in {value}");
-        return new(SteamLaunchOptions.Line(vars), SteamLaunchOptions.Hold(options, vars));
+        if (LaunchGpu.Vkd3dConfig(g, PlaceSteamRoot) is { } vkd3d) env = [vkd3d];
+        if (LaunchGpu.Of(g, PlaceSteamRoot) is not { Count: > 0 } vars || Adapters?.Invoke() is not { Count: > 0 } all) return;
+        // the devices listed are SCSKiller's, which its own environment may have cut short of the game's
+        string? why;
+        var (picked, software) = ((DxgiAdapter?)null, false);
+        if (LaunchGpu.Hides(Environment.GetEnvironmentVariable, vars)) why = "SCSKiller's own environment hides GPUs";
+        else picked = LaunchGpu.Pick(vars, all, out why, out software);
+        if (why != null)
+        {
+            if (software) throw new NotReadyException(why);
+            // not told, not refused: the Settings GPU as without the variables, which could pick another device than it
+            Log?.Report($"{g.Name}: SCSKiller can't tell which GPU its launch options run it on ({why}), the compile runs on {Vendor.Gpu.Name}");
+            return;
+        }
+        if (env is { } vkd3dEnv) vars = [.. vars, .. vkd3dEnv];
+        env = vars;
+        if (picked == null) return;
+        var backend = GpuBackends.For(picked, Settings.ExperimentalIntel);
+        if (backend is UnsupportedVendor u) throw new NotReadyException(u.Why ?? $"SCSKiller doesn't compile on {picked.Gpu.Name}.");
+        // the backend is the process's: a game on the other kind of driver isn't compiled by it
+        if (MesaLinux.Is(backend.Caps) != MesaLinux.Is(Vendor.Caps))
+            throw new NotReadyException($"{g.Name}'s launch options run it on {picked.Gpu.Name}. Pick {picked.Gpu.Name} in Settings to compile it.");
+        if ((picked.Gpu.AdapterLuid, picked.Gpu.Name) == (Vendor.Gpu.AdapterLuid, Vendor.Gpu.Name)) return;
+        Log?.Report($"{g.Name}: its launch options run it on {picked.Gpu.Name}, so the compile runs there");
+        gpu = picked.Gpu;
     }
 
     /// <summary>Steam's launches in progress, of its games and of the non-Steam games added to it: its reaper
@@ -139,6 +149,124 @@ public sealed partial class ScsKiller
                     next.Enqueue(c.Pid);
                 }
         return found;
+    }
+
+    /// <summary>The folder a Flatpak launcher is let read: the recorder's files alone, never the data folder's others.</summary>
+    static string GrantFolder(string dataDir) => Path.Combine(Path.GetFullPath(dataDir), FlatpakGrant.Folder);
+
+    /// <summary>The app's sandbox sees the recorder folder <paramref name="grant"/>, and for a Vulkan game may write in its
+    /// vulkan and refused folders and read the data folder's vulkan-layer folder (<see cref="FlatpakGrant.VulkanEntries"/>).</summary>
+    static bool FlatpakSees(string app, string grant, bool vulkan) =>
+        FlatpakGrant.Visible(app, grant) && (!vulkan || FlatpakGrant.VulkanEntries(grant).All(e => e.Write ? FlatpakGrant.Writable(app, e.Folder) : FlatpakGrant.Visible(app, e.Folder)));
+
+    public string? FlatpakGrantLauncher(string gameId) =>
+        Games.FirstOrDefault(g => g.Game.Id == gameId) is { } s && FlatpakGrant.AppOf(s.Game) is { } a
+        && (s.RecorderSkip == FlatpakSkipLine(a.Launcher) || s.RecorderSkip == FlatpakVulkanSkipLine(a.Launcher)) ? a.Launcher : null;
+
+    /// <summary>The grant the game needs lets its launcher write in the recorder folder too: it records on Vulkan.</summary>
+    public bool FlatpakGrantWrites(string gameId) =>
+        Games.FirstOrDefault(g => g.Game.Id == gameId) is { } s && FlatpakGrant.AppOf(s.Game) is { } a && s.RecorderSkip == FlatpakVulkanSkipLine(a.Launcher);
+
+    public string? GrantFlatpak(string gameId)
+    {
+        var s = Find(gameId);
+        if (FlatpakGrant.AppOf(s.Game) is not { } a) return $"{s.Game.Name} isn't a game of a Flatpak launcher";
+        var vulkan = s.Engine is { } e && VulkanPlan.IsVulkan(e);
+        if (FlatpakGrant.Grant(a.App, GrantFolder(Store.DataDir), vulkan, m => RecorderLog(m)) is { } why) return why;
+        RecorderLog($"{s.Game.Name}: {a.Launcher}'s Flatpak ({a.App}) may read the recorder folder" + (vulkan ? ", write Vulkan recordings in it and read the Vulkan recorder's folder" : ""));
+        ReconcileRecorders(gameId);
+        return null;
+    }
+
+    static partial void SettleRecorderFolder(string dataDir, Action<string> log)
+    {
+        if (!MovesRecorder(dataDir)) return;
+        var data = Path.GetFullPath(dataDir);
+        var to = Path.Combine(data, RecorderFolderName);
+        static bool There(string p) => Path.Exists(p) || new FileInfo(p).LinkTarget != null;
+        string key = Path.Combine(data, "recorder.key"), toKey = Path.Combine(to, "recorder.key");
+        string revoked = Path.Combine(data, "recorder.revoked"), toRevoked = Path.Combine(to, "recorder.revoked");
+        string[] folders = ["refused", "vulkan", "stamps", "arms"];
+        if (!There(key) && !(There(toKey) && folders.Any(f => There(Path.Combine(data, f)) && !There(Path.Combine(to, f))))) return;
+        using var mutex = NamedMutex.Open(RevokedMutex);   // a Revoke of another SCSKiller process
+        bool owned;
+        try { owned = mutex.WaitOne(TimeSpan.FromSeconds(10)); }
+        catch (AbandonedMutexException) { owned = true; }
+        if (!owned) { log($"the recorder's files stay in {data}: another SCSKiller process holds the revocation list"); return; }
+        try
+        {
+            try
+            {
+                if (new DirectoryInfo(to).LinkTarget != null) throw new IOException($"{to} is a link");
+                if (There(key) && There(toKey))
+                {
+                    Union(revoked, toRevoked);
+                    Union(toRevoked, revoked);
+                    log($"recorder.key is in both {data} and {to}: the one in {data} stays in use");
+                    return;
+                }
+                if (There(key))
+                {
+                    Directory.CreateDirectory(to);
+                    if (Libc.Stat(data) is not { } d || Libc.Stat(to) is not { } t || (d.DevMajor, d.DevMinor) != (t.DevMajor, t.DevMinor))
+                        throw new IOException($"{to} isn't on the data folder's file system");
+                    Union(toRevoked, revoked);
+                    File.Move(key, toKey);
+                    log($"recorder.key and the revocation list moved into {to}");
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                log($"the recorder's files stay in {data}: {e.Message}");
+                return;
+            }
+            var moved = new List<string>();
+            foreach (var name in folders)
+            {
+                string from = Path.Combine(data, name), into = Path.Combine(to, name);
+                if (!There(from) || There(into)) continue;
+                try
+                {
+                    if (Directory.Exists(from) && new DirectoryInfo(from).LinkTarget == null) Directory.Move(from, into);
+                    else File.Move(from, into);
+                    moved.Add(name);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { log($"{name} stays in {data} until the next start: {e.Message}"); }
+            }
+            if (moved.Count > 0) log($"{string.Join(", ", moved)} moved into {to}");
+        }
+        finally { mutex.ReleaseMutex(); }
+    }
+
+    /// <summary>Adds the lines of <paramref name="from"/> missing in <paramref name="into"/>, written whole by a rename: a
+    /// revocation list only grows here.</summary>
+    static void Union(string into, string from)
+    {
+        if (!File.Exists(from)) return;
+        var have = File.Exists(into) ? File.ReadAllLines(into).Where(l => l.Length > 0).ToList() : [];
+        var add = File.ReadAllLines(from).Where(l => l.Length > 0).Except(have).ToList();
+        if (add.Count == 0) return;
+        var temp = $"{into}.{Guid.NewGuid():N}";
+        File.WriteAllLines(temp, have.Concat(add));
+        File.Move(temp, into, overwrite: true);
+    }
+
+    static partial void RemoveFlatpakGrants(string dataDir, Action<string> log) => FlatpakGrant.Remove(GrantFolder(dataDir), log);
+
+    partial void RemoveUnusedFlatpakGrants()
+    {
+        // only by a scan that finished and read every source this run: before it, or after a failed one, fewer games are listed than are armed
+        if (!Volatile.Read(ref _wholeScan) || !ListWhole()) return;
+        // a game this scan didn't list (a card not mounted, a library gone) may still hold its recorder
+        if (UninstalledRecords(Games).Any(r => r.Rec.RecorderExe != null)) return;
+        // a record's recorder counts too: an unchecked game's state doesn't show the recorder its folder still holds
+        var armed = Games.Where(s => s.RecorderInstalled).Select(s => s.Game)
+            .Concat(Games.Select(s => s.Game).Concat(HiddenGames).Where(g => Store.LoadGame(g.Id).RecorderExe != null))
+            .Where(LauncherPrefix.Is).DistinctBy(g => g.Id).ToList();
+        var apps = armed.Select(g => FlatpakGrant.AppOf(g)?.App).ToList();
+        // a launcher whose files can't be read now may be a Flatpak with an armed game: nothing is taken out this time
+        if (apps.Any(a => a == null) && armed.Any(g => LauncherPrefix.Of(g, out _) == null)) return;
+        FlatpakGrant.Remove(GrantFolder(Store.DataDir), m => RecorderLog(m), keep: apps.OfType<string>().ToHashSet(StringComparer.Ordinal));
     }
 
     partial void CarriesOurToken(int pid, ref bool ours) => ours = WarmJob.Current.In(Store.DataDir).Contains(pid);
@@ -285,6 +413,8 @@ public sealed partial class ScsKiller
 
     private static partial string? CpuModel() => CpuModel("/proc/cpuinfo");
 
+    private static partial int? SmartAppControlState() => null;
+
     /// <summary>The first processor's model name in <paramref name="cpuinfo"/>, laid out as /proc/cpuinfo (the CPU's brand
     /// string, as Windows shows it); null when it has none (ARM's) or can't be read.</summary>
     internal static string? CpuModel(string cpuinfo)
@@ -301,11 +431,14 @@ public sealed partial class ScsKiller
     private static partial string? ThisAppProgram() => AppImage.Program(Environment.ProcessPath, Environment.GetEnvironmentVariable, Libc.RealPath);
 
     // a child would stay in the service's cgroup, which systemd kills once the CLI exits: the app runs as a unit of its own
-    public static partial string? StartDriverUpdated()
+    public static partial string? StartApp(params string[] args)
     {
         if (DriverUpdatedApp(Environment.ProcessPath, AppContext.BaseDirectory, Environment.GetEnvironmentVariable, File.Exists) is not { } app) return null;
         var psi = new ProcessStartInfo("systemd-run") { UseShellExecute = false };   // its errors go to the CLI's output
-        foreach (var a in new[] { "--user", "--collect", "--quiet", "--", app, ScheduledTask.DriverUpdatedArg }) psi.ArgumentList.Add(a);
+        // the unit gets the user manager's environment: the data folder and test switches go along, as a child inherits them on Windows
+        var carried = Environment.GetEnvironmentVariables().Keys.Cast<string>().Where(k => k.StartsWith("SCSKILLER_", StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal).Select(k => $"--setenv={k}={(k == "SCSKILLER_DATA_DIR" ? AppStore.Moved : Environment.GetEnvironmentVariable(k))}");   // the unit runs in the home folder: the data folder as this process resolved it
+        foreach (var a in new[] { "--user", "--collect", "--quiet" }.Concat(carried).Concat(["--", app, .. args])) psi.ArgumentList.Add(a);
         try
         {
             using var p = Process.Start(psi)!;

@@ -46,7 +46,7 @@ public static class WarmInputs
         {
             var blobs = new HashSet<string>();
             // NVIDIA keys on the NVAPI state a record is created with (selftest nvext). The replay's: the last 'N' per record
-            // in the recordings' union, which drops an 'N' an earlier recording has and one about a PSO the first has an 'N' for
+            // in the recordings' union, which drops an 'N' an earlier recording has and one about a PSO or state object the first has an 'N' for
             // (Community.Union, proxy.cpp g_nvext), then the union's option fixes, as Planner.Materialize writes them
             var nv = new Dictionary<string, NvState>();
             var union = new HashSet<string>();

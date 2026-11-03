@@ -939,6 +939,12 @@
       "ags": {"profiles": {"Phoenix": "d32786a7", "OakGame": "f2f80824", "Griffin": "38810766", "Split": "eed2a692", "GoWR": "b7653b10"}, "proven": ["Townfall", "Griffin"]}
     },
     {
+      "id": "amd-ags-registrations",
+      "requires": ["amd.ags.v2"],
+      "match": {"family": "Any"},
+      "ags": {"registrations": {"steam:2947440": {"engine": "SCSKiller"}}}
+    },
+    {
       "id": "nv-aftermath",
       "requires": ["nv.aftermath.v1"],
       "match": {"family": "Any"},
@@ -946,7 +952,8 @@
         "steam:1941540": {"version": 535, "features": 10, "apis": 3, "dumpFlags": 1},
         "xbox:Microsoft.Avowed_8wekyb3d8bbwe": {"version": 536, "features": 8, "apis": 3, "dumpFlags": 1},
         "xbox:Microsoft.Fairlightbasegame_8wekyb3d8bbwe": {"version": 539, "features": 8, "apis": 3, "dumpFlags": 1},
-        "steam:3010850": {"version": 539, "features": 8, "apis": 3, "dumpFlags": 1}
+        "steam:3010850": {"version": 539, "features": 8, "apis": 3, "dumpFlags": 1},
+        "steam:4078430": {"version": 535, "features": 10, "apis": 3, "dumpFlags": 1}
       }
     }
   ]

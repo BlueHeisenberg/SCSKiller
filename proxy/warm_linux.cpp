@@ -21,6 +21,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cinttypes>
 #include <cstdarg>
@@ -40,6 +41,7 @@ struct Opts {
     uint64_t luid = 0;
     std::string stop_file, alive_file;
     int alive_turns = 0;
+    std::set<std::string> skip_keys;  // 20 bytes each: pipelines that crashed or hung this driver in an earlier compile
 };
 
 static bool parse(int argc, char** argv, int i, Opts& o) {
@@ -51,9 +53,31 @@ static bool parse(int argc, char** argv, int i, Opts& o) {
         else if (k == "--stop-file") o.stop_file = v;
         else if (k == "--alive-file") o.alive_file = v;
         else if (k == "--alive-turns") o.alive_turns = (int)strtol(v.c_str(), &end, 10);
+        else if (k == "--skip-keys") {
+            if (v.size() > 1 && v[0] == '@') {  // @<file>: the same list, too long for a command line
+                FILE* f = fopen(v.c_str() + 1, "rbe");
+                if (!f) return false;
+                std::string s;
+                char buf[4096];
+                for (size_t n; (n = fread(buf, 1, sizeof buf, f)) > 0;) s.append(buf, n);
+                fclose(f);
+                while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back();
+                v = s;
+            }
+            for (size_t b = 0; b < v.size(); b += 41) {
+                if (v.size() - b < 40 || (b + 40 < v.size() && v[b + 40] != ',')) return false;
+                std::string key;
+                for (size_t c = b; c < b + 40; c += 2) {
+                    if (!isxdigit((unsigned char)v[c]) || !isxdigit((unsigned char)v[c + 1])) return false;
+                    auto nib = [](char x) { return x <= '9' ? x - '0' : (x | 0x20) - 'a' + 10; };
+                    key += (char)(nib(v[c]) << 4 | nib(v[c + 1]));
+                }
+                o.skip_keys.insert(key);
+            }
+        }
         else if (k == "--out" || k == "--err") continue;  // opened by main, before anything prints
         else if (k == "--priority" || k == "--start" || k == "--memory-mb" || k == "--rt-threads" || k == "--skip" || k == "--stage-path" ||
-                 k == "--skip-keys" || k == "--isolate" || k == "--pass")
+                 k == "--isolate" || k == "--pass")
             continue;  // Core's launcher sets the priority of the whole tree, and the replayer has no items of the D3D plan
         else return false;
         if (end && (*end || v.empty())) return false;
@@ -105,6 +129,15 @@ static void sha1(const char* data, size_t len, uint8_t out[20]) {
         h[0] += a, h[1] += b, h[2] += cc, h[3] += d, h[4] += e;
     }
     for (int i = 0; i < 20; ++i) out[i] = (uint8_t)(h[i / 4] >> (24 - 8 * (i % 4)));
+}
+
+// the plan item's key (VulkanPlan.Key): SHA-1 of 'V' and the archive entry's 40-character name
+static std::string pipeline_key(unsigned tag, uint64_t hash) {
+    char rec[42];
+    snprintf(rec, sizeof rec, "V%024x%016" PRIx64, tag, hash);
+    uint8_t sha[20];
+    sha1(rec, 41, sha);
+    return std::string((const char*)sha, 20);
 }
 
 // fossilize-replay's --device-index of the device at this PCI address, counted as its instance counts them (the same
@@ -259,12 +292,20 @@ static int vulkan_warm(const Opts& o, const std::string& work, const std::string
     unstage.files.push_back(stop_path);
     setenv("SCSKILLER_REPLAY_STOP", stop_path.c_str(), 1);
     setenv("SCSKILLER_REPLAY_CREATED", flat.substr(0, flat.size() - 1).c_str(), 1);
+    // a later pass's faulty pipelines, so a pipeline whose library is one of them isn't listed invalid
+    const std::string faulty_path = flat + "scskiller_faulty.txt";
+    unstage.files.push_back(faulty_path);
+    unsetenv("SCSKILLER_REPLAY_FAULTY");
     if (!o.luid) return fail("no adapter given (--adapter-luid)");
     std::string driver;
     const int device = vk_device_index(o.luid, &driver);
     if (device < 0) return fail("no Vulkan device is at the adapter's PCI address");
 
     using Ids = std::set<std::pair<unsigned, Hash>>;
+    Ids known;  // --skip-keys: never replayed, named again in the done event's crashed
+    for (int k = 0; k < 3; ++k)
+        for (Hash h : all[k])
+            if (o.skip_keys.count(pipeline_key((unsigned)kinds[k], (uint64_t)h))) known.insert({(unsigned)kinds[k], h});
     auto lists = [&](const char* what, bool remove) {  // the patch's <what>.<pid>.txt files of the stage
         Ids got;
         const std::string head = std::string(what) + ".";
@@ -350,16 +391,24 @@ static int vulkan_warm(const Opts& o, const std::string& work, const std::string
     int code = 0;
     for (int pass = 1;; ++pass) {
         std::string archive = foz;
-        if (pass > 1) {
+        if (pass > 1 || !known.empty()) {
             archive = flat + "pass" + std::to_string(pass) + ".foz";
             unstage.files.push_back(archive);
             Ids out = confirmed;
+            out.insert(known.begin(), known.end());
             out.insert(suspects.begin(), suspects.end());
             out.insert(refused.begin(), refused.end());
             out.insert(invalid.begin(), invalid.end());
             out.insert(unsupported.begin(), unsupported.end());
             if (alone) out.erase(trying);
             if (!foz_without(foz, archive, out)) return fail("writing " + archive + " failed");
+            FILE* f = fopen(faulty_path.c_str(), "we");
+            bool ok = f != nullptr;
+            for (const auto& id : out)
+                if (ok && (confirmed.count(id) || suspects.count(id) || known.count(id))) ok = fprintf(f, "%u %016" PRIx64 "\n", id.first, (uint64_t)id.second) > 0;
+            if (f && fclose(f)) ok = false;
+            if (!ok) return fail("writing " + faulty_path + " failed");
+            setenv("SCSKILLER_REPLAY_FAULTY", faulty_path.c_str(), 1);
         }
         lists("failed", true), lists("unparsed", true), lists("invalid", true), lists("unsupported", true);  // this pass's own
 
@@ -379,6 +428,10 @@ static int vulkan_warm(const Opts& o, const std::string& work, const std::string
         ro.disable_rate_limiter = true;  // else it sets nice 19 and idle IO over the priority Core chose, and stops the worker on IO stalls
         ro.timeout_seconds = hang_s;  // no pipeline done for this long: the worker is hung, ended and started again past it
         ro.quiet = log < 0 || out < 0 || err < 0;
+        if (log >= 0)
+            dprintf(log, "scskiller_warm: fossilize-replay (%s) %s --num-threads %u --device-index %u --spirv-val%s%s --disable-rate-limiter --timeout-seconds %u\n",
+                    SCSK_REPLAYER_BUILD, archive.c_str(), ro.num_threads, ro.device_index, whitelist.empty() ? "" : " --on-disk-validation-whitelist ",
+                    whitelist.c_str(), ro.timeout_seconds);
         if (!ro.quiet) dup2(log, 1), dup2(log, 2);
         const bool started = r.start(ro);
         if (!ro.quiet) dup2(out, 1), dup2(err, 2);
@@ -459,7 +512,7 @@ static int vulkan_warm(const Opts& o, const std::string& work, const std::string
             for (Hash h : all[k]) {
                 const std::pair<unsigned, Hash> id{(unsigned)kinds[k], h};
                 if (!created.count(id) && !confirmed.count(id) && !suspects.count(id) && !refused.count(id) && !invalid.count(id) &&
-                    !unsupported.count(id)) {
+                    !unsupported.count(id) && !known.count(id)) {
                     left = true;
                     break;
                 }
@@ -476,13 +529,13 @@ static int vulkan_warm(const Opts& o, const std::string& work, const std::string
     Ids faulty = confirmed;
     faulty.insert(suspects.begin(), suspects.end());
 
-    // Not created: refused by the driver, or unparsable in a replay without any fault, is failed (deterministic), a faulty
-    // one is skipped by the driver, naming a module that failed validation is invalid, needing a feature the device lacks
-    // is unsupported, and every other one is skipped by the driver. On a stop only the faulty ones count as skipped: the
-    // rest is what the stop left. Faulty before invalid: a thread's current pipeline outlives a skip, so a fault right after
-    // one names the skipped pipeline.
-    uint64_t made = 0, failed = 0, skipped = 0, invalids = 0, unsupporteds = 0;
-    std::string keys;
+    // Not created: refused by the driver, or unparsable in a replay without any fault, is failed (deterministic). A confirmed
+    // or known one crashed or hung the driver (crashed, its key kept for later compiles), a suspect is skipped by the driver,
+    // naming a module that failed validation is invalid, needing a feature the device lacks is unsupported, and every other
+    // one is skipped by the driver. On a stop only the faulty ones count as skipped: the rest is what the stop left. Faulty
+    // before invalid: a thread's current pipeline outlives a skip, so a fault right after one names the skipped pipeline.
+    uint64_t made = 0, failed = 0, skipped = 0, invalids = 0, unsupporteds = 0, crashes = 0;
+    std::string keys, crashed;
     for (int k = 0; k < 3; ++k)
         for (Hash h : all[k]) {
             const std::pair<unsigned, Hash> id{(unsigned)kinds[k], h};
@@ -490,17 +543,18 @@ static int vulkan_warm(const Opts& o, const std::string& work, const std::string
                 ++made;
                 continue;
             }
+            const std::string key = pipeline_key((unsigned)kinds[k], (uint64_t)h);
             if (refused.count(id) || (faulty.empty() && unparsed.count(id))) ++failed;
-            else if (faulty.count(id)) ++skipped;
+            else if (confirmed.count(id) || known.count(id)) {
+                ++crashes;
+                crashed += crashed.empty() ? "\"" : ",\"";
+                for (unsigned char c : key) crashed += "0123456789abcdef"[c >> 4], crashed += "0123456789abcdef"[c & 15];
+                crashed += '"';
+            } else if (suspects.count(id)) ++skipped;
             else if (invalid.count(id)) ++invalids;
             else if (unsupported.count(id)) ++unsupporteds;
             else if (!stopped) ++skipped;
-            // the plan item's key (VulkanPlan.Key): SHA-1 of 'V' and the archive entry's 40-character name
-            char rec[42];
-            snprintf(rec, sizeof rec, "V%024x%016" PRIx64, (unsigned)kinds[k], (uint64_t)h);
-            uint8_t sha[20];
-            sha1(rec, 41, sha);
-            keys.append((const char*)sha, 20);
+            keys += key;
         }
     if (!keys.empty()) {
         FILE* f = fopen((flat + "scskiller_failed.keys").c_str(), "wbe");
@@ -508,11 +562,11 @@ static int vulkan_warm(const Opts& o, const std::string& work, const std::string
         if (f && fclose(f)) return fail("writing scskiller_failed.keys failed");
         if (!ok) return fail("writing scskiller_failed.keys failed");
     }
-    if (total && !made && faulty.empty() && refused.empty() && invalid.empty() && unsupported.empty() && !stopped)
+    if (total && !made && faulty.empty() && known.empty() && refused.empty() && invalid.empty() && unsupported.empty() && !stopped)
         return fail("fossilize-replay created no pipeline, see stage/scskiller.log");
     emit("{\"event\":\"done\",\"done\":%" PRIu64 ",\"total\":%" PRIu64 ",\"failed\":%" PRIu64 ",\"driverSkipped\":%" PRIu64 ",\"invalid\":%" PRIu64
-         ",\"unsupported\":%" PRIu64 ",\"seconds\":%.1f,\"stopped\":%s,\"crashed\":[]}", stopped ? made + failed + skipped + invalids + unsupporteds : total,
-         total, failed, skipped, invalids, unsupporteds, seconds(), stopped ? "true" : "false");
+         ",\"unsupported\":%" PRIu64 ",\"seconds\":%.1f,\"stopped\":%s,\"crashed\":[%s]}", stopped ? made + failed + skipped + invalids + unsupporteds + crashes : total,
+         total, failed, skipped, invalids, unsupporteds, seconds(), stopped ? "true" : "false", crashed.c_str());
     return 0;
 }
 

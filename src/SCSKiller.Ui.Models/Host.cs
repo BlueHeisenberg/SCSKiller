@@ -32,7 +32,6 @@ public static class Host
     public static Func<bool?> StartsAtSignIn { get; set; } = () => null;
     /// <summary>Settings' new-shaders choice changed: the games it now compiles or no longer compiles are queued or withdrawn.</summary>
     public static Action NewShadersChanged { get; set; } = () => { };
-    public static Func<string, Task> CopyText { get; set; } = _ => Task.CompletedTask;
 
     sealed class NoIcons : IGameIcons
     {

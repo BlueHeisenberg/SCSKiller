@@ -39,9 +39,12 @@ public partial class App : Application
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
+        TextScale.Follow();
         // Windows spaces Segoe UI's and Selawik's lines by their win metrics, Avalonia by hhea (1.2 em). A FontIcon is as tall as its glyph.
+        // Loose: 22 px lines at 14 px. Natural: the font's own spacing.
         TextBlock.FontSizeProperty.Changed.AddClassHandler<TextBlock>((text, _) =>
-            text.LineHeight = text.Classes.Contains("Icon") ? text.FontSize : Math.Round(text.FontSize * 1.33, 2));
+            text.LineHeight = text.Classes.Contains("Icon") ? text.FontSize : text.Classes.Contains("Natural") ? double.NaN
+                : Math.Round(text.FontSize * (text.Classes.Contains("Loose") ? 22.0 / 14 : 1.33), 2));
         foreach (var theme in Resources.ThemeDictionaries.Values.OfType<IResourceDictionary>())
             foreach (var (key, from) in ControlBrushes) theme[key] = theme[from];
     }
@@ -117,7 +120,6 @@ public partial class App : Application
         Main = new MainWindow();
         Main.ApplyTheme(Host.Core.Settings.Theme);
         Host.ApplyTheme = Main.ApplyTheme;
-        Host.CopyText = CopyText;
         if (!screenshots) WatchBeforeAfter();
         return Main;
     }
@@ -136,14 +138,6 @@ public partial class App : Application
 
     /// <summary>A start that failed before Avalonia was set up (Linux): the app starts for its message alone.</summary>
     public static StartFailure? Failed { get; set; }
-
-    // flushed: kept after the app quits where the system can (X11 drops it unless a clipboard manager takes it)
-    static async Task CopyText(string text)
-    {
-        var clipboard = Main.Clipboard ?? throw new InvalidOperationException("No clipboard");
-        await clipboard.SetTextAsync(text);
-        await clipboard.FlushAsync();
-    }
 
     public override void OnFrameworkInitializationCompleted()
     {
@@ -173,7 +167,7 @@ public partial class App : Application
         // before the core exists: a refused alpha scans nothing and places nothing
         var account = new Account(AppStore.DefaultDir, keyring: Keyring.System());
         // someone is at the PC: the window shows whatever started it, and a toast's activation expires meanwhile
-        args = args.Where(a => a != WindowsStartup.TrayArg && !Activation.DriverUpdated([a]) && !a.StartsWith(InstanceIdentity.ToastRelaunchArg, StringComparison.Ordinal)).ToArray();
+        args = args.TakeWhile(a => a != ScsKiller.NoticeArg).Where(a => a != WindowsStartup.TrayArg && !Activation.DriverUpdated([a]) && !a.StartsWith(InstanceIdentity.ToastRelaunchArg, StringComparison.Ordinal)).ToArray();
         var gate = new GateWindow(account, AppStore.DefaultDir, () =>
         {
             var main = StartCore(desktop, args, account) ?? Main;
@@ -199,7 +193,8 @@ public partial class App : Application
         // together, before the window: it and AboutVm read the updater once Host.Core is set
         (Updater.Host.Core, Updater.Host.Account, Updater.Host.Quitting) = (real, Account, () => quit.Quitting);
         real.Community = new Community(AppStore.DefaultDir, Account.GetDbTokenAsync) { TokenWith = Account.GetTokenAsync };
-        real.DbEntitled = () => Account.SignedIn && (Account.Status == null || Account.HasDb);
+        real.DbEntitled = () => Account.DbEntitled;
+        real.DbMissing = () => Account.DbMissing;
         real.Sharing = new Sharing(AppStore.DefaultDir, () => real.Settings.ShareRecordings, keyring: keyring, log: real.Log);   // anonymous: never the Patreon sign-in
         _ = Task.Run(async () => { await Account.SweepAsync(); if (real.Sharing is { } s) await s.SweepAsync(); });   // keyring items an earlier run couldn't delete
         real.Diagnostics = new Diagnostics(() => real.Settings.ShareDiagnostics);   // no token at all
@@ -209,7 +204,7 @@ public partial class App : Application
         real.UserFetch = async () => { await Account.RefreshAsync(); await Updater.CheckAsync(); };
         real.ActiveCheck = new ActiveCheck(AppStore.DefaultDir, () => ActiveCheck.Allowed(real.Settings), real.Vendor.Vendor);
         // only the data folder's one instance writes game folders, and not in the unattended --driver-updated start until the window shows
-        real.ManageRecorders = Activation.ManagesRecorders && !Activation.DriverUpdated(args);
+        real.ManageRecorders = Activation.ManagesRecorders && !Activation.Unattended(args);
         real.CleanupHelper = ScsKiller.AppProgram;
         RefreshMenuEntry(real);
         real.CheckPlans = true;
@@ -221,12 +216,11 @@ public partial class App : Application
         Channels();
         watcher = real.WatchGames(stopWatching.Token);
         real.QueueChanged += q => { if (real.EndedNotice(q) is { } n) Host.Ui.TryEnqueue(() => Notifications.Show(Toasts.Ended(q.GameId, n))); };
-        real.Notice += (id, n) => Host.Ui.TryEnqueue(() => Notifications.Show(Toasts.Ended(id, n)));
+        real.Notice += (id, n, _) => Host.Ui.TryEnqueue(() => Notifications.Show(Toasts.Ended(id, n)));
 
         Main = new MainWindow();
         Main.ApplyTheme(real.Settings.Theme);
         Host.ApplyTheme = Main.ApplyTheme;
-        Host.CopyText = CopyText;
         WatchBeforeAfter();
         StartDialogs.WhenShown(Main);
         // read on the watcher's thread, and Avalonia's properties are UI thread only
@@ -237,11 +231,13 @@ public partial class App : Application
         };
         // a game played while the window was away changed its cache size
         var lastSizes = DateTime.MinValue;
+        real.QueueChanged += q => { if (q.Stage == QueueStage.Done) Host.Ui.TryEnqueue(() => { if (!unseen) _ = StartDialogs.AskOldPlansAsync(real); }); };
         Main.Activated += (_, _) =>
         {
             if (DateTime.UtcNow - lastSizes < TimeSpan.FromSeconds(10)) return;
             lastSizes = DateTime.UtcNow;
             Task.Run(real.RefreshCacheSizes);
+            _ = StartDialogs.AskOldPlansAsync(real);   // a compile that ended while the window was away, the CLI's too
         };
         real.GpuChanged += () => Host.Ui.TryEnqueue(() => { Main.ShowGpu(); Activation.GpuChanged(); });
         void WatchNewShaders()
@@ -254,7 +250,7 @@ public partial class App : Application
             check.Request();
         }
         // the unattended --driver-updated start queues nothing until someone opens the window
-        if (!Activation.DriverUpdated(args)) WatchNewShaders();
+        if (!Activation.Unattended(args)) WatchNewShaders();
         else
         {
             void Once(object? _, EventArgs __)

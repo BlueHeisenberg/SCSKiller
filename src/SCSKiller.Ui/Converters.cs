@@ -25,6 +25,12 @@ public static class Converters
     {
         QueueStage.Done => Glyphs.Checkmark, QueueStage.Failed => Glyphs.Warning, _ => Glyphs.Stop,
     });
+    /// <summary>A width measured for 11 px text (first value), grown with the text's font size (second value).</summary>
+    public static readonly IMultiValueConverter At11 = new FuncMultiValueConverter<double, double>(v => v.Aggregate((width, size) => width * size / 11));
+    /// <summary>A caption's MaxLines (parameter) at its 12 px base size, no limit once a larger Text size grows it.</summary>
+    public static readonly IValueConverter CaptionLines = new FuncValueConverter<double, string, int>((size, lines) => size > 12 ? 0 : int.Parse(lines!));
+    /// <summary>A caption or chip that trims on one line at its base size (12 px or less) and wraps once a larger Text size grows it.</summary>
+    public static readonly IValueConverter CaptionWrap = new FuncValueConverter<double, TextWrapping>(size => size > 12 ? TextWrapping.Wrap : TextWrapping.NoWrap);
     /// <summary>A radio button of a group bound to one index: checked when the index is the parameter, and checking it sets it.</summary>
     public static readonly IValueConverter Index = new IndexConverter();
 

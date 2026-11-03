@@ -14,7 +14,7 @@ public sealed class StutterList
     /// <summary>The source of an entry SCSKiller measured itself; any other source is an https URL.</summary>
     public const string OwnMeasurement = "SCSKiller measurement";
     public const int MaxBytes = ContentFile.MaxBytes, MaxGames = 200;
-    static readonly string[] Stores = ["steam", "xbox", "epic", "ea", "gog", "ubisoft", "battlenet", "purple", "hoyoplay", "gaijin", "riot"];
+    static readonly string[] Stores = ["steam", "xbox", "epic", "ea", "gog", "ubisoft", "battlenet", "purple", "hoyoplay", "gaijin", "riot", "wegame"];
 
     sealed record Entry(string Name, string[] Ids, string Severity, string Reason, string Source, string Date);
     sealed record ListFile(Entry[] Games, string? About = null);

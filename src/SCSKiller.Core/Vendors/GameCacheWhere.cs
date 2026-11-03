@@ -10,13 +10,23 @@ namespace SCSKiller.Core.Vendors;
 /// none of them (measured on NVIDIA: only __GL_SHADER_DISK_CACHE_SIZE and SKIP_CLEANUP), and the driver keeps the cache in
 /// its default folder. <see cref="Steam"/>: Steam's folder. <see cref="Set"/>: on NVIDIA, the file set the game's process
 /// writes and reads whole, its real path without .toc or .bin, under the cap <see cref="Size"/>. <see cref="Off"/>: why the
-/// compile can't be put where the game reads.</summary>
-public sealed record GameCacheWhere(bool Steam = false, string? Set = null, long Size = 0, bool SkipCleanup = false, string? Off = null)
+/// compile can't be put where the game reads. <see cref="OwnProcess"/>: a non-Steam game's, seen in its own process (by its
+/// game id or prefix), never another game's of the same exe name.</summary>
+public sealed record GameCacheWhere(bool Steam = false, string? Set = null, long Size = 0, bool SkipCleanup = false, string? Off = null, bool Shared = false,
+    bool OwnProcess = false)
 {
     public static string FileOf(string gameDir) => Path.Combine(gameDir, "cache-where.json");
 
-    /// <summary>The driver's cap without __GL_SHADER_DISK_CACHE_SIZE (NVIDIA's default, about 1 GiB, assumed).</summary>
+    /// <summary>The driver's cap without __GL_SHADER_DISK_CACHE_SIZE, on the whole GLCache folder, every leaf of it (measured on
+    /// 615.71.09, Vulkan and GL alike).</summary>
     public const long NvidiaDefaultSize = 1L << 30;
+
+    /// <summary>What one session of a launcher's game may add to its own file in the shared default folder (<see cref="Shared"/>):
+    /// past the cap, a later program start deletes the folder's oldest sets until it is under, another app's or the game's own.</summary>
+    public const long Headroom = 256L << 20;   // about 2 h of fully cold growth at the measured 1.74 MB per 45 s
+
+    public const string NvidiaOff = "the game's NVIDIA shader cache is turned off",
+        NvidiaElsewhere = "the game's NVIDIA shader cache isn't in the driver's default folder";
 
     const string SteamAppName = "steamapp_shader_cache";
 
@@ -26,7 +36,7 @@ public sealed record GameCacheWhere(bool Steam = false, string? Set = null, long
     /// driver opens its files once the game renders.</summary>
     public static GameCacheWhere? Nvidia(IReadOnlyDictionary<string, string> env, IEnumerable<string> open, string steamNvidia, Func<string, string?> real)
     {
-        if (env.GetValueOrDefault("__GL_SHADER_DISK_CACHE") is "0" or "false") return new(Off: "the game's NVIDIA shader cache is turned off");
+        if (env.GetValueOrDefault("__GL_SHADER_DISK_CACHE") is "0" or "false") return new(Off: NvidiaOff);
         var path = env.GetValueOrDefault("__GL_SHADER_DISK_CACHE_PATH") is { Length: > 0 } p ? real(p) : null;
         var app = env.GetValueOrDefault("__GL_SHADER_DISK_CACHE_APP_NAME") is { Length: > 0 } a ? a : null;
         if (path != null && app == SteamAppName && path == real(steamNvidia)) return new(Steam: true);

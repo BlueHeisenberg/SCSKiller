@@ -6,7 +6,11 @@ namespace SCSKiller.Core.App;
 /// (its CustomActivator names the COM server), CLSID\{guid}\LocalServer32 starting the exe, and the icon it copied.</summary>
 public static class ToastRegistration
 {
-    public const string AumidKeys = @"Software\Classes\AppUserModelId\", ClsidKeys = @"Software\Classes\CLSID\";
+    /// <summary>HKCU's Software\Classes\, a test run's key in SCSKILLER_TEST_TOAST_KEYS.</summary>
+    static string Classes => Environment.GetEnvironmentVariable("SCSKILLER_TEST_TOAST_KEYS") is { Length: > 0 } test ? test.TrimEnd('\\') + @"\" : @"Software\Classes\";
+
+    public static string AumidKeys => Classes + @"AppUserModelId\";
+    public static string ClsidKeys => Classes + @"CLSID\";
 
     /// <summary>The uninstall's step: removes <paramref name="aumid"/>'s key, its icon when it is the SDK's copy for that
     /// AUMID, and its COM server only when that starts <paramref name="appExe"/>. Other identities' keys are never read.
@@ -30,7 +34,9 @@ public static class ToastRegistration
             else log($"Kept toast COM server {server}: it starts another exe");
         }
         // the SDK copies the icon to %LOCALAPPDATA%\Microsoft\WindowsAppSDK\<aumid>.png
-        if (icon != null && string.Equals(icon, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsAppSDK", aumid + ".png"), StringComparison.OrdinalIgnoreCase))
+        var local = Environment.GetEnvironmentVariable("SCSKILLER_TEST_APPDATA") is { Length: > 0 } test ? Path.Combine(test, "Local")
+            : Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (icon != null && string.Equals(icon, Path.Combine(local, "Microsoft", "WindowsAppSDK", aumid + ".png"), StringComparison.OrdinalIgnoreCase))
             Try(() => deleteFile(icon), null);
 
         void Try(Action step, string? done)
@@ -38,6 +44,25 @@ public static class ToastRegistration
             try { step(); if (done != null) log(done); }
             catch (Exception e) { log($"Toast registration of {aumid}: {e.GetType().Name}: {e.Message}"); }
         }
+    }
+
+    /// <summary><see cref="Remove"/> for an exe started without an AUMID: the Windows App SDK names its registration by the GUID
+    /// it keeps in NotificationGUID under the exe's path (its '\' as '.'), which goes too. Kept whole unless its COM server
+    /// starts <paramref name="appExe"/>: another path can map to the same key ("a.b\x.exe", "a\b\x.exe").</summary>
+    public static void RemoveForExe(string appExe, Func<string, string, string?> read, Action<string> deleteKey, Action<string> deleteFile, Action<string> log)
+    {
+        var pathKey = AumidKeys + appExe.Replace('\\', '.');
+        if (read(pathKey, "NotificationGUID") is not { } guid || !Guid.TryParse(guid, out _)) return;
+        var command = Guid.TryParse(read(AumidKeys + guid, "CustomActivator"), out var clsid)
+            ? read(ClsidKeys + clsid.ToString("B").ToUpperInvariant() + @"\LocalServer32", "")?.TrimStart() : null;
+        if (command == null || !command.StartsWith('"') || !WindowsStartup.PointsAt(command, appExe))
+        {
+            log($"Kept toast registration {guid}: it doesn't start {appExe}");
+            return;
+        }
+        Remove(guid, appExe, read, deleteKey, deleteFile, log);
+        try { deleteKey(pathKey); }
+        catch (Exception e) { log($"Toast registration of {appExe}: {e.GetType().Name}: {e.Message}"); }
     }
 
     public static string? ReadRegistry(string key, string name)

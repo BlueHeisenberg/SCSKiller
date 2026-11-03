@@ -32,6 +32,27 @@ public static partial class GameFiles
     internal static partial string? SystemFolder(Game game) =>
         SteamSource.PrefixFolder(game) is { } pfx ? Path.Combine(pfx, "drive_c", "windows", "system32") : null;
 
+    internal static partial string? PrefixOf(Game game) =>
+        SteamShortcuts.AppId(game.Id) is { } app ? Path.Combine(ProtonContext.ShortcutData(SteamSource.Root(), app), "pfx")
+        : LauncherPrefix.Is(game) ? LauncherPrefix.Of(game, out _)?.WineDir
+        : SteamSource.PrefixFolder(game);
+
+    internal static partial LauncherPrefix? AddedPrefix(Game game, out string? why)
+    {
+        why = null;
+        if (WinePrefix.Holding(game.ExePath) is not { } dir)
+        {
+            why = "it isn't in a Wine prefix";
+            return null;
+        }
+        // a Proton prefix is its compat data's pfx, or under umu the compat data itself with pfx linking back to it
+        var parent = Path.GetDirectoryName(dir);
+        foreach (var data in new[] { Path.GetFileName(dir) == "pfx" ? parent : null, FinalPath(Path.Combine(dir, "pfx")) is { } pfx && pfx == FinalPath(dir) ? dir : null })
+            if (data != null && SteamSource.LastProtonFolder(data) is { } proton) return new LauncherPrefix("its launcher", data, proton, true, null);
+        why = $"its Wine prefix {dir} names no Proton that runs it: add it to Steam as a non-Steam game";
+        return null;
+    }
+
     // the game's prefix, a shortcut's, ~/.wine or truckersmp-cli's: no search covers every prefix TruckersMP can run from
     internal static partial bool TruckersMpHere() => true;
 }

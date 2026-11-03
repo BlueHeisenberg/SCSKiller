@@ -16,7 +16,7 @@ namespace SCSKiller.Core.Unreal;
 ///      [/Script/WinGDKPlatformEditor.WinGDKTargetSettings] over the WinGDK hierarchy instead (<see cref="WinGdkEngineIni"/>):
 ///      the engine's BaseWinGDKEngine.ini sets DX12 there. Without it the game's last log decides, else UE5's DX12 is a
 ///      guess and UE4 offers both.
-/// A fork whose own WindowsDynamicRHI.cpp starts DX12 unless -dx11/-d3d11 is given (<see cref="Dx12Forks"/>) skips 2 and 3.
+/// A fork whose own WindowsDynamicRHI.cpp starts DX12 unless -dx11/-d3d11 is given (<see cref="Dx12Forks"/>) skips 2 and 3. A fork without DX12 (<see cref="Dx11Forks"/>) is D3D11 before 1.
 /// Values: "D3D12" / "D3D11" / "Vulkan", suffixed " (launch option)", " (user setting)" or " (last run)" when that decided
 /// it rather than the project default; "D3D11 or D3D12" when it can't be decided: the project defaults to DX11 but ships
 /// DX12-only (SM6) shaders or ray tracing (DX12 is then a launch or in-game choice) and the game's last log doesn't say, the Steam launch menu offers
@@ -29,6 +29,9 @@ public static class UnrealRhi
     /// <summary>Forks whose engine starts DX12 unless the command line forces another RHI; their config takes no part.
     /// FF7 Remake (4.18): read from its exe's PlatformCreateDynamicRHI.</summary>
     static readonly string[] Dx12Forks = ["GAME_FinalFantasy7Remake"];
+
+    /// <summary>Forks whose engine has no DX12 to start: Days Gone (4.11).</summary>
+    static readonly string[] Dx11Forks = ["GAME_DaysGone"];
 
     /// <summary>Config files inside the paks that take part, lowest priority first ({P} = the project folder).</summary>
     static readonly string[] EngineIni = ["Engine/Config/BaseEngine.ini", "Engine/Config/Windows/BaseWindowsEngine.ini", "Engine/Platforms/Windows/Config/BaseWindowsEngine.ini",
@@ -231,18 +234,18 @@ public static class UnrealRhi
     /// else [SystemSettings], else any [/Script/...] section, of the Engine ini hierarchy (<paramref name="configs"/>, which
     /// may hold the install's loose files, <see cref="WithLoose"/>) and the user's Engine.ini and GameUserSettings.ini.
     /// ponytail: a device profile that turns it off isn't read.</summary>
-    public static bool AftermathShaderDebug(IReadOnlyDictionary<string, string> configs, string project, string launch = "", string? userDir = null) =>
-        Aftermath(configs, project, launch, userDir).ShaderDebug;
+    public static bool AftermathShaderDebug(IReadOnlyDictionary<string, string> configs, string project, string launch = "", string? userDir = null, bool winGdk = false) =>
+        Aftermath(configs, project, launch, userDir, winGdk).ShaderDebug;
 
     /// <summary>The config or the launch options turn NVIDIA Aftermath off (<see cref="AftermathShaderDebug"/>'s sources).</summary>
-    public static bool AftermathOff(IReadOnlyDictionary<string, string> configs, string project, string launch = "", string? userDir = null) =>
-        !Aftermath(configs, project, launch, userDir).On;
+    public static bool AftermathOff(IReadOnlyDictionary<string, string> configs, string project, string launch = "", string? userDir = null, bool winGdk = false) =>
+        !Aftermath(configs, project, launch, userDir, winGdk).On;
 
-    static (bool On, bool ShaderDebug) Aftermath(IReadOnlyDictionary<string, string> configs, string project, string launch, string? userDir)
+    static (bool On, bool ShaderDebug) Aftermath(IReadOnlyDictionary<string, string> configs, string project, string launch, string? userDir, bool winGdk)
     {
-        var user = UserConfig(userDir);
+        var user = UserConfig(userDir, winGdk);
         string User(string file) => user != null && File.Exists(Path.Combine(user, file)) ? File.ReadAllText(Path.Combine(user, file)).TrimStart('﻿') : "";
-        var engine = Ordered(EngineIni, configs, project).Append(User("Engine.ini")).Append(User("GameUserSettings.ini")).ToList();
+        var engine = Ordered(winGdk ? WinGdkEngineIni : EngineIni, configs, project).Append(User("Engine.ini")).Append(User("GameUserSettings.ini")).ToList();
         string? CVar(string key) => Last(engine, "ConsoleVariables", key) ?? Last(engine, "SystemSettings", key)
             ?? Last(engine, s => s.StartsWith("/Script/", StringComparison.OrdinalIgnoreCase), key);
         bool On(string key) => CVar(key) is { } v && IsOn(v);
@@ -256,10 +259,10 @@ public static class UnrealRhi
 
     /// <summary><paramref name="configs"/> with the Engine ini hierarchy's files the paks don't hold read from the install
     /// under <paramref name="root"/> (the folder above the project's): the engine reads a loose file the paks lack.</summary>
-    internal static IReadOnlyDictionary<string, string> WithLoose(IReadOnlyDictionary<string, string> configs, string root, string project)
+    internal static IReadOnlyDictionary<string, string> WithLoose(IReadOnlyDictionary<string, string> configs, string root, string project, bool winGdk = false)
     {
         Dictionary<string, string>? all = null;
-        foreach (var rel in EngineIni.Select(p => p.Replace("{P}", project)).Where(p => !configs.Keys.Any(k => k.Equals(p, StringComparison.OrdinalIgnoreCase))))
+        foreach (var rel in LooseFiles(configs, project, winGdk))
             try
             {
                 var file = GameFiles.Find(root, rel);
@@ -268,6 +271,18 @@ public static class UnrealRhi
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { }
         return all ?? configs;
     }
+
+    /// <summary>The Engine ini hierarchy's loose files present under <paramref name="root"/> by length and write time, those
+    /// the paks hold too: what <see cref="WithLoose"/> may read, for the detection stamp. Empty when there are none.</summary>
+    internal static string LooseStamp(string root, string project, bool winGdk = false) =>
+        string.Join('>', LooseFiles(new Dictionary<string, string>(), project, winGdk).Select(rel =>
+        {
+            try { return new FileInfo(GameFiles.Find(root, rel)) is { Exists: true } f ? $"{rel}:{f.Length}:{f.LastWriteTimeUtc.Ticks}" : null; }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return $"{rel}:?"; }
+        }).OfType<string>());
+
+    static IEnumerable<string> LooseFiles(IReadOnlyDictionary<string, string> configs, string project, bool winGdk) =>
+        (winGdk ? WinGdkEngineIni : EngineIni).Select(p => p.Replace("{P}", project)).Where(p => !configs.Keys.Any(k => k.Equals(p, StringComparison.OrdinalIgnoreCase)));
 
     static bool IsOn(string v) => v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase);
 
@@ -295,6 +310,7 @@ public static class UnrealRhi
         engineDefault = false;
         bool sm5 = platforms.Contains("PCD3D_SM5"), sm6 = platforms.Contains("PCD3D_SM6");
         if (sm6 && !sm5) return ("D3D12", "only SM6 shaders, which run on DX12 only");
+        if (fork != null && Dx11Forks.Contains(fork)) return ("D3D11", $"{fork} runs DX11 only, whatever the launch options or menu say");
         if (Regex.Match(launch, @"(?:^|\s)-(dx11|d3d11|dx12|d3d12|vulkan)\b", RegexOptions.IgnoreCase) is { Success: true } cmd)
             return ($"{Api(cmd.Groups[1].Value)} (launch option)", $"launch option -{cmd.Groups[1].Value}");
         if (menu?.Any(e => MenuApi(e) != null) == true)
@@ -368,6 +384,61 @@ public static class UnrealRhi
         engineDefault = !explicitDefault && honoured == null;
         return (byProject, why + (pref.Item1 != null ? $"; user {pref.Item2} agrees or is ignored" : ""));
     }
+
+    /// <summary>(<see cref="EngineInfo.FeatureLevel"/>, the evidence) for a game that ships PCD3D_ES3_1 shaders, which the
+    /// engine runs on DX11 or DX12 when the user picks feature level ES3_1 (Fortnite's Performance mode;
+    /// WindowsDynamicRHI.cpp): "ES3_1" from -featureleveles31/-es31 or the user's GameUserSettings.ini [D3DRHIPreference]
+    /// PreferredFeatureLevel=es31 or bPreferFeatureLevelES31=True; null when -sm5/-sm6 or that section names another;
+    /// "?" when no GameUserSettings.ini has the section. Null without PCD3D_ES3_1.</summary>
+    public static (string? Level, string Why) FeatureLevel(IReadOnlyCollection<string> platforms, IReadOnlyDictionary<string, string> configs,
+        string project, string? userDir, string launch, bool winGdk = false)
+    {
+        if (!platforms.Contains("PCD3D_ES3_1")) return (null, "");
+        if (Regex.Match(launch, @"(?:^|\s)-(featureleveles31|es31|sm5|sm6)\b", RegexOptions.IgnoreCase) is { Success: true } cmd)
+            return (cmd.Groups[1].Value.StartsWith("sm", StringComparison.OrdinalIgnoreCase) ? null : "ES3_1", $"launch option -{cmd.Groups[1].Value}");
+        var userConfig = UserConfig(userDir, winGdk);
+        var user = userConfig != null && File.Exists(Path.Combine(userConfig, "GameUserSettings.ini")) ? File.ReadAllText(Path.Combine(userConfig, "GameUserSettings.ini")) : "";
+        var settings = Ordered(UserSettingsIni, configs, project).Append(user.TrimStart('﻿')).ToList();
+        if (Last(settings, "D3DRHIPreference", "PreferredFeatureLevel") is { } f)
+            return (f.Equals("es31", StringComparison.OrdinalIgnoreCase) || f.Equals("es3_1", StringComparison.OrdinalIgnoreCase) ? "ES3_1" : null, $"PreferredFeatureLevel={f}");
+        if (Last(settings, "D3DRHIPreference", "bPreferFeatureLevelES31") is { } b) return (IsOn(b) ? "ES3_1" : null, $"bPreferFeatureLevelES31={b}");
+        return settings.Any(t => Regex.IsMatch(t, @"^\s*\[D3DRHIPreference\]", RegexOptions.Multiline | RegexOptions.IgnoreCase))
+            ? (null, "[D3DRHIPreference] names no ES3_1 feature level") : ("?", "no [D3DRHIPreference] in GameUserSettings.ini");
+    }
+
+    /// <summary>The user's GameUserSettings.ini [D3DRHIPreference] entries the engine reads (WindowsDynamicRHI.cpp) as
+    /// "key=value, …", a value other than an RHI, feature level or boolean as "…", other keys only counted; "none"
+    /// without the file or those entries, "unreadable" when the folder or file can't be read.</summary>
+    public static string RhiPreference(string? userDir, bool winGdk = false)
+    {
+        string[] lines;
+        try
+        {
+            var config = UserConfig(userDir, winGdk);
+            var path = config == null ? null : Path.Combine(config, "GameUserSettings.ini");
+            if (path == null || !File.Exists(path)) return "none";
+            lines = File.ReadAllLines(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return "unreadable"; }
+        var (entries, others) = (new List<string>(), 0);
+        string? cur = null;
+        foreach (var raw in lines)
+        {
+            var line = raw.Trim().TrimStart('﻿');
+            if (line.StartsWith('[')) { cur = line.Trim('[', ']'); continue; }
+            var eq = line.IndexOf('=');
+            if (eq <= 0 || !"D3DRHIPreference".Equals(cur, StringComparison.OrdinalIgnoreCase)) continue;
+            var (key, value) = (line[..eq].Trim(), line[(eq + 1)..].Trim().Trim('"'));
+            if (RhiKeys.FirstOrDefault(k => k.Equals(key, StringComparison.OrdinalIgnoreCase)) is { } known)
+                entries.Add($"{known}={RhiValues.FirstOrDefault(v => v.Equals(value, StringComparison.OrdinalIgnoreCase))?.ToLowerInvariant() ?? "…"}");
+            else others++;
+        }
+        if (others > 0) entries.Add($"{others} other entr{(others == 1 ? "y" : "ies")}");
+        return entries.Count > 0 ? string.Join(", ", entries) : "none";
+    }
+
+    static readonly string[] RhiKeys = ["PreferredRHI", "PreferredFeatureLevel", "bPreferFeatureLevelES31", "bUseD3D12InGame"];
+    static readonly string[] RhiValues = ["dx11", "d3d11", "dx12", "d3d12", "vulkan", "default", "sm5", "sm6", "es31", "es3_1", "true", "false", "0", "1", ""];
 
     /// <summary>The API a launch-menu entry picks: a flag in its arguments, else "DirectX 12" or "DX12" in its description.</summary>
     static string? MenuApi(string entry) =>
@@ -451,15 +522,23 @@ public static class UnrealRhi
 
     /// <summary>The user's Saved folder (…\Saved\Config\Windows*\, a WinGDK build's …\WinGDK\, holds Engine.ini and GameUserSettings.ini): under
     /// %LOCALAPPDATA%, Documents\My Games or Saved Games, named after the project, the exe, the install folder or the game,
-    /// possibly under a company folder, "Saved" or "Saved_&lt;store&gt;_&lt;user&gt;". Newest wins. Read-only.</summary>
+    /// possibly under a company folder, "Saved" or "Saved_&lt;store&gt;_&lt;user&gt;", also each of the Wine prefix's users'
+    /// (<see cref="GameFiles.PrefixOf"/>). Newest wins. Read-only.</summary>
     public static string? UserDir(Game game, string project)
     {
         var names = new[] { project, ExeStem(game), Path.GetFileName(game.InstallDir.TrimEnd('\\', '/')), game.Name }
             .Where(n => n.Length > 0 && n.IndexOfAny(Path.GetInvalidFileNameChars()) < 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var roots = new[] { Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "My Games"), Path.Combine(home, "Saved Games") }
-            .Where(Directory.Exists).ToList();
         var flat = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 };
+        // a prefix's folder linked to the host's home (Wine's Documents) is read as the host's, once
+        static bool Linked(string d) => new DirectoryInfo(d).LinkTarget != null;
+        var users = GameFiles.PrefixOf(game) is { } pfx && Path.Combine(pfx, "drive_c", "users") is var u && Directory.Exists(u)
+            ? Directory.EnumerateDirectories(u, "*", flat).Where(d => Path.GetFileName(d) != "Public" && !Linked(d)) : [];
+        var roots = new[] { Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "My Games"), Path.Combine(home, "Saved Games") }
+            .Where(Directory.Exists)
+            .Concat(users.SelectMany(d => new[] { Path.Combine(d, "AppData", "Local"), Path.Combine(d, "Documents", "My Games"), Path.Combine(d, "Saved Games") })
+                .Where(r => Directory.Exists(r) && !Linked(r) && !Linked(Path.GetDirectoryName(r)!)))
+            .ToList();
         var folders = ConfigFolders(IsWinGdk(game.ExePath));
         return roots.SelectMany(r => names.Select(n => Path.Combine(r, n)).Concat(Directory.EnumerateDirectories(r, "*", flat).SelectMany(c => names.Select(n => Path.Combine(c, n)))))
             .Where(Directory.Exists).SelectMany(d => Directory.EnumerateDirectories(d, "Saved*", flat))
@@ -470,12 +549,14 @@ public static class UnrealRhi
     static string ExeStem(Game game) => Regex.Replace(Path.GetFileNameWithoutExtension(game.ExePath), @"-Win(64|GDK)-Shipping$", "", RegexOptions.IgnoreCase);
 
     /// <summary>The Steam launch options the user set for the game ("" if none, or not a Steam game): the newest
-    /// userdata\*\config\localconfig.vdf, the app's block; a non-Steam game's from Steam's shortcuts (<see cref="SteamShortcuts"/>).</summary>
+    /// userdata\*\config\localconfig.vdf, the app's block; a non-Steam game's from Steam's shortcuts (<see cref="SteamShortcuts"/>);
+    /// a Heroic, Lutris or Faugus game's, the arguments its launcher gives it (<see cref="LauncherPrefix.Args"/>).</summary>
     public static string LaunchOptions(Game game) => LaunchOptions(game, SteamRoot);
 
     internal static string LaunchOptions(Game game, string steamRoot)
     {
         if (SteamShortcuts.AppId(game.Id) is { } shortcut) return SteamShortcuts.Find(steamRoot, shortcut)?.LaunchOptions ?? "";
+        if (LauncherPrefix.Is(game) && game.Store != Store.Manual) return LauncherPrefix.Of(game, out _)?.Args ?? "";
         if (SteamSource.AppId(game.Id) is not { } app) return "";
         var userdata = Path.Combine(steamRoot, "userdata");
         var vdf = Directory.Exists(userdata)

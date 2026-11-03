@@ -14,7 +14,7 @@ public sealed partial class ScsKiller
         nameof(GameRecord.PlanReaderVersion), nameof(GameRecord.WarmedReaderVersion), nameof(GameRecord.PlanRules), nameof(GameRecord.WarmedPlanRules),
         nameof(GameRecord.IdleHeldBack), nameof(GameRecord.PlanItems), nameof(GameRecord.WarmedPlanItems), nameof(GameRecord.PlanKeysFile),
         nameof(GameRecord.WarmKeysFile), nameof(GameRecord.Pending), nameof(GameRecord.PlanPerStage), nameof(GameRecord.PlanMaximumCapped),
-        nameof(GameRecord.PlanCacheBudget), nameof(GameRecord.PlanD3DSCacheCharged), nameof(GameRecord.WarmedPerStage), nameof(GameRecord.WarmedDelivery), nameof(GameRecord.PlanMiddleware), nameof(GameRecord.PlanCommunity),
+        nameof(GameRecord.PlanCacheBudget), nameof(GameRecord.PlanPsoBytes), nameof(GameRecord.PlanD3DSCacheCharged), nameof(GameRecord.WarmedPerStage), nameof(GameRecord.WarmedDelivery), nameof(GameRecord.PlanMiddleware), nameof(GameRecord.PlanCommunity),
         nameof(GameRecord.PlanOfficial), nameof(GameRecord.PlanSteam), nameof(GameRecord.PlanMaps), nameof(GameRecord.PlanEngine),
         nameof(GameRecord.PlanFiltering), nameof(GameRecord.PlanRayTracing), nameof(GameRecord.PlanCacheCapGB),
         nameof(GameRecord.WarmedD3DSCache), nameof(GameRecord.WarmedD3DSCacheBytes), nameof(GameRecord.WarmedD3DSCacheAt), nameof(GameRecord.D3DSCacheDamaged),
@@ -22,15 +22,15 @@ public sealed partial class ScsKiller
         nameof(GameRecord.D3DSCacheLaunchAt), nameof(GameRecord.D3DSCacheFoldKeys), nameof(GameRecord.HitCheck), nameof(GameRecord.HitCheckAt),
         nameof(GameRecord.HitCheckRun),
         nameof(GameRecord.WarmedDriverVersion), nameof(GameRecord.WarmedDriverId), nameof(GameRecord.WarmedAt), nameof(GameRecord.LastWarmTime),
-        nameof(GameRecord.LastCacheGrowthBytes), nameof(GameRecord.LastWarmFailed), nameof(GameRecord.LastWarmSkipped), nameof(GameRecord.LastWarmNeedsRecording),
+        nameof(GameRecord.LastCacheGrowthBytes), nameof(GameRecord.OldPlansBytes), nameof(GameRecord.OldPlansItems), nameof(GameRecord.OldPlansKept), nameof(GameRecord.LastWarmFailed), nameof(GameRecord.LastWarmSkipped), nameof(GameRecord.LastWarmNeedsRecording),
         nameof(GameRecord.LastWarmCrashed), nameof(GameRecord.LastWarmCrashedBefore), nameof(GameRecord.LastWarmDriverSkipped), nameof(GameRecord.LastWarmKnown), nameof(GameRecord.LastWarmUnbuilt), nameof(GameRecord.LastWarmInvalid),
         nameof(GameRecord.LastWarmUnsupported), nameof(GameRecord.LastWarmTried), nameof(GameRecord.LastWarmFailedBy), nameof(GameRecord.WarmedRoomLeft), nameof(GameRecord.WarmedIndexHash), nameof(GameRecord.WarmedExeStamp),
         nameof(GameRecord.WarmedGameVersion), nameof(GameRecord.WarmedLayer), nameof(GameRecord.WarmedIndexStamp), nameof(GameRecord.BytesPerPso),
-        nameof(GameRecord.PsoPerSecond), nameof(GameRecord.PsoPerSecondDriver), nameof(GameRecord.WarmedKeys), nameof(GameRecord.WarmedFiles),
+        nameof(GameRecord.PsoPerSecond), nameof(GameRecord.PsoPerSecondDriver), nameof(GameRecord.WarmedKeys), nameof(GameRecord.WarmedParts), nameof(GameRecord.WarmedFiles),
         nameof(GameRecord.WarmedFileBytes), nameof(GameRecord.WarmedFileUsed), nameof(GameRecord.WarmedFileIds), nameof(GameRecord.WarmedSteamParcId), nameof(GameRecord.WarmedSteamParcBytes), nameof(GameRecord.WarmedExeName),
         nameof(GameRecord.WarmedAftermath), nameof(GameRecord.AftermathRetry), nameof(GameRecord.AftermathPlainHits), nameof(GameRecord.AftermathLost),
         nameof(GameRecord.WarmedAgsApp), nameof(GameRecord.WarmedRayTracing), nameof(GameRecord.WarmedCareful), nameof(GameRecord.FirstLaunch),
-        nameof(GameRecord.UnreachedWarm), nameof(GameRecord.UnreachedRecheckedAt), nameof(GameRecord.UnreachedLifted), nameof(GameRecord.CompileFailedBuild),
+        nameof(GameRecord.UnreachedWarm), nameof(GameRecord.UnreachedRecheckedAt), nameof(GameRecord.UnreachedLifted), nameof(GameRecord.CompileFailedBuild), nameof(GameRecord.CompileFailedWhy),
     ];
 
     static readonly JsonObject EmptyFields = JsonSerializer.SerializeToNode(new GameRecord(), AppStore.Json)!.AsObject();

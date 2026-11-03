@@ -142,6 +142,9 @@ public static class Updater
     {
         string PathOf(VelopackAsset a) => Path.Combine(Locator.PackagesDir ?? "", a.FileName);
 
+        /// <summary>Update.exe, UpdateNix or UpdateMac.</summary>
+        public string UpdaterName => Path.GetFileName(Locator.UpdateExePath) ?? "the updater";
+
         /// <summary>The asset's file, its size and Velopack's own checksum.</summary>
         public async Task<bool> OnDisk(VelopackAsset asset)
         {
@@ -198,14 +201,14 @@ public static class Updater
             if (Usable(ready) is null) return Undo("The update channel changed meanwhile. Restart to update again once it is ready.");
             if (still?.Invoke(d) == false) return Undo(null);
             if (OfflineBlocks()) return Undo(OfflineRunning);
-            Log($"Handing the update to {r.Version} to Update.exe");
+            Log($"Handing the update to {r.Version} to {m.UpdaterName}");
             apply(m, r);   // its preparation too (the resume file): a failure anywhere is undone below
             return true;
         }
         catch (Exception e)
         {
             var undone = Undo("Couldn't hand the update to the installer: " + e.Message);   // the marker first, whatever the log does
-            Log($"Handing the update to Update.exe failed: {e}");
+            Log($"Handing the update over failed: {e}");
             return undone;
         }
         finally
@@ -231,7 +234,7 @@ public static class Updater
         }
     }
 
-    const string OfflineRunning = "A recording session's game or cleanup is running. The update installs once it has ended.";
+    const string OfflineRunning = "A recording session's game is running, or its files are still in the game folder. The update installs once it has ended.";
 
     /// <summary>Who updates this copy. Read on first use, after UpdateHooks.Run unless it is a Flatpak or a package; a
     /// failure isn't kept, the next use tries again.</summary>
@@ -312,7 +315,7 @@ public static class Updater
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
 
-    static string? HeldBack(string channel) => AutoInstall.HeldBack(Host.Core.Settings, channel, Busy.IsHeld() || Host.Core.Compiling, OfflineBlocks(), GameRunning());
+    static string? HeldBack(string channel) => AutoInstall.HeldBack(Host.Core.Settings, channel, Busy.IsHeld() || Host.Core.Compiling, OfflineBlocks(), GameRunning(), Busy.Untrusted());
 
     static bool GameRunning() => Host.Core is ScsKiller k ? k.GameRunning() : Host.Core.Games.Any(g => g.Playing);
 
@@ -479,7 +482,7 @@ public static class Updater
             for (var i = 0; i < 20 && Busy.IsHeld(); i++) await Task.Delay(100);   // our worker lets go just after the item ends
             if (Busy.IsHeld())
             {
-                Problem = "The background rebuild after a driver update is compiling. The update installs when SCSKiller quits after it has finished.";
+                Problem = Busy.Untrusted() ?? "The background rebuild after a driver update is compiling. The update installs when SCSKiller quits after it has finished.";
                 Log($"Restart to update: {Problem}");
                 return false;
             }

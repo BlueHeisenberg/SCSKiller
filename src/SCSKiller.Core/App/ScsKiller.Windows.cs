@@ -8,14 +8,14 @@ namespace SCSKiller.Core.App;
 
 public sealed partial class ScsKiller
 {
-    public static partial ScsKiller CreateDefault()
+    public static partial ScsKiller CreateDefault(Func<Game, bool>? only)
     {
         var vendor = DetectGpu();
         var steam = SteamSource.Root();
-        var k = new ScsKiller([new SteamSource(), new EpicSource(), new XboxSource(), new GogSource(), new UbisoftSource(), new BattleNetSource(), new PurpleSource(), new HoYoPlaySource(), new GryphlineSource(), new EaSource(), new GaijinSource(), new RiotSource(),
+        var k = new ScsKiller([new SteamSource(), new EpicSource(), new XboxSource(), new GogSource(), new UbisoftSource(), new BattleNetSource(), new PurpleSource(), new HoYoPlaySource(), new GryphlineSource(), new WeGameSource(), new EaSource(), new GaijinSource(), new RiotSource(),
                 new ManualSource(new AppStore(AppStore.DefaultDir))],
             vendor, DefaultReaders(), new Planner(Path.Combine(AppStore.DefaultDir, "packs"), SharedPackDir(AppStore.DefaultDir, vendor.Vendor)), new Warmer(vendor),
-            AppStore.DefaultDir, NativeTools.Find("d3d12.dll")) { Adapters = GpuBackends.Adapters, AgsDll = NativeTools.Find("scskiller_ags.dll"), SteamRoot = steam };
+            AppStore.DefaultDir, NativeTools.Find("d3d12.dll"), only) { Adapters = GpuBackends.Adapters, AgsDll = NativeTools.Find("scskiller_ags.dll"), SteamRoot = steam };
         k.RedetectGpu();   // DriverId from DXGI before anything compares it
         return k;
     }
@@ -98,6 +98,17 @@ public sealed partial class ScsKiller
         return CpuName(key?.GetValue("ProcessorNameString") as string);
     }
 
+    // https://learn.microsoft.com/windows/apps/develop/smart-app-control/test-your-app-with-smart-app-control
+    private static partial int? SmartAppControlState()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\CI\Policy");
+            return key?.GetValue("VerifiedAndReputablePolicyState") as int?;
+        }
+        catch (Exception e) when (e is System.Security.SecurityException or IOException or UnauthorizedAccessException) { return null; }
+    }
+
     private static partial TimeSpan UserIdleTime()
     {
         var info = new LastInputInfo { Size = 8 };
@@ -110,10 +121,11 @@ public sealed partial class ScsKiller
 
     private static partial string? ThisAppProgram() => Environment.ProcessPath;
 
-    public static partial string? StartDriverUpdated()
+    public static partial string? StartApp(params string[] args)
     {
         if (ScheduledTask.AppExe() is not { } app) return null;
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(app, ScheduledTask.DriverUpdatedArg) { UseShellExecute = false })?.Dispose();
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(app, args) { UseShellExecute = false })?.Dispose(); }
+        catch (System.ComponentModel.Win32Exception) { return null; }
         return app;
     }
 }

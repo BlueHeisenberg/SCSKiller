@@ -10,9 +10,11 @@ namespace SCSKiller.Core.Games;
 /// DisplayName, InstallLocation, UninstallString "...\PurpleLauncher.exe" --uninstall &lt;code&gt;). The launcher's own entry
 /// uninstalls with Uninstall.exe, so it doesn't match. PURPLE's local game list is a per-account cache, so the code's
 /// VersionInfo_&lt;code&gt;.xml in the game folder is what says the download finished; its &lt;Version&gt; is the build.</summary>
-public sealed class PurpleSource(IEnumerable<(string Code, string Name, string InstallDir)>? entries = null) : IGameSource
+public sealed class PurpleSource(IEnumerable<(string Code, string Name, string InstallDir)>? entries = null) : IGameSource, ILeavesOut
 {
     public Store Store => Store.Other;
+
+    public Func<string, bool> LeftOut { get; set; } = _ => false;
 
     public IReadOnlyList<Game> Discover()
     {
@@ -20,7 +22,7 @@ public sealed class PurpleSource(IEnumerable<(string Code, string Name, string I
         foreach (var (code, name, install) in entries ?? (OperatingSystem.IsWindows() ? Entries() : []))
             try
             {
-                if (!Directory.Exists(install)) continue;
+                if (LeftOut(install) || !Directory.Exists(install)) continue;
                 var info = Path.Combine(install, $"VersionInfo_{code}.xml");
                 if (!File.Exists(info)) continue;
                 string? version;

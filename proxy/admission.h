@@ -76,12 +76,13 @@ inline const char* with_path(const char* why, const std::string& p) {
     return b;
 }
 
-// The stamp lines sig= covers, as ScsKiller.Signed writes them: exe_size=, exe_time=, then pid= and pid_time= when pid= is
-// there, then risk= when it is there, then the others and the traversal_ lines (traversal_lines).
+// The stamp lines sig= covers, as ScsKiller.Signed writes them: exe_size=, exe_time=, arm= when it is there, then pid= and
+// pid_time= when pid= is there, then risk= when it is there, then the others and the traversal_ lines (traversal_lines).
 inline std::wstring signed_stamp(const std::wstring& size, const std::wstring& time, const std::wstring& pid, const std::wstring& pid_time, const std::wstring& risk,
                                  const std::wstring& vendor = L"", const std::wstring& overlay = L"", const std::wstring& play_s = L"", const std::wstring& tag = L"",
-                                 const std::wstring& traversal = L"") {
+                                 const std::wstring& traversal = L"", const std::wstring& arm = L"") {
     std::wstring s = L"exe_size=" + size + L"\r\nexe_time=" + time + L"\r\n";
+    if (!arm.empty()) s += L"arm=" + arm + L"\r\n";
     if (!pid.empty()) s += L"pid=" + pid + L"\r\npid_time=" + pid_time + L"\r\n";
     if (!risk.empty()) s += L"risk=" + risk + L"\r\n";
     if (!vendor.empty()) s += L"vendor=" + vendor + L"\r\n";
@@ -103,6 +104,25 @@ template <class Get> std::wstring traversal_lines(Get get) {
         if (!v.empty()) s += key + L"=" + v + L"\r\n";
     }
     return s;
+}
+
+// arm=: 32 lower-case hex characters (ScsKiller.Arm), the nonce the recorder folder's arms\<folder key> holds while
+// SCSKiller keeps the recorder in that folder. A removal deletes that file, so an ini put back after it no longer matches.
+inline bool arm_well_formed(const std::wstring& arm) {
+    if (arm.size() != 32) return false;
+    for (wchar_t c : arm)
+        if (!(c >= L'0' && c <= L'9') && !(c >= L'a' && c <= L'f')) return false;
+    return true;
+}
+
+// The first line of an arms\ file's bytes.
+inline std::wstring arm_line(const std::string& bytes) {
+    std::wstring w;
+    for (char c : bytes) {
+        if (c == '\r' || c == '\n') break;
+        w += (wchar_t)(unsigned char)c;
+    }
+    return w;
 }
 
 // risk= is either missing, or 1 together with pid=.
@@ -269,9 +289,11 @@ static const char kVacNoSteam[] = "VAC: Steam's folder is unknown";
 static const char kVacNoAppinfo[] = "VAC: Steam has no appinfo.vdf";
 static const char kVacNotListed[] = "VAC: the game isn't in Steam's appinfo.vdf";
 static const char kVacNoInfo[] = "VAC: Steam has no info about the game";
-// A steam_appid.txt naming an app Steam has no info about (Games.Vac.Named): refused, but a risk session may record it.
+// A steam_appid.txt naming an app Steam doesn't know (Games.Vac.Named): no Steam data names the game as VAC, it records. One
+// appinfo.vdf lists without its info is refused, but a risk session may record it.
 static const char* named_vac(const char* why) {
-    return why == kVacNoSteam || why == kVacNoAppinfo || why == kVacNotListed || why == kVacNoInfo ? "VAC (Steam has no info about the app steam_appid.txt names)" : why;
+    if (why == kVacNoSteam || why == kVacNoAppinfo || why == kVacNotListed) return nullptr;
+    return why == kVacNoInfo ? "VAC (Steam has no info about the app steam_appid.txt names)" : why;
 }
 
 // A binary KeyValues object (appinfo.vdf's app entries), walked with every read bounded: keys are inline names (v28) or

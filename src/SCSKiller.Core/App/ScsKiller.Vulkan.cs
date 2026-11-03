@@ -10,7 +10,7 @@ namespace SCSKiller.Core.App;
 // it is in the game's folder, but a risk session's copy of the layer (StartRisk).
 public sealed partial class ScsKiller
 {
-    public const string SkipVulkanSteamOnly = "Vulkan games are recorded only from Steam for now";
+    public const string SkipVulkanSteamOnly = "Vulkan games are recorded only from Steam, Heroic, Lutris and Faugus for now";
 
     /// <summary>The game page's recorder line for a game the layer records: nothing goes in its folder but the ini.</summary>
     public const string VulkanRecorderNote = "Adds a Vulkan layer for this game and a small scskiller.ini next to it to catch anything the plan missed.";
@@ -65,10 +65,45 @@ public sealed partial class ScsKiller
         && VulkanLayer.Key(s.Game) != null && Vendor.Caps.VulkanKey != null;
 
     /// <summary>Why this copy's layer can't be registered for the game: another copy's registration for it, another
-    /// program's loader settings file, or a loader too old for one. Null: it can.</summary>
-    static string? VulkanBlocked(Game g, string key, string manifest) =>
-        VulkanLayer.Others(key, manifest).Count > 0 ? VulkanLayer.AppId(g) != null ? VulkanOtherNote : VulkanSettingsNote
+    /// program's loader settings file, a loader too old for one, or a launcher game's variable that can't be told or isn't
+    /// its own (<see cref="LauncherEnable"/>). Null: it can.</summary>
+    string? VulkanBlocked(Game g, string key, string manifest) =>
+        VulkanLayer.Others(key, manifest).Count > 0 ? VulkanLayer.AppId(g) != null || VulkanLayer.Launched(g) ? VulkanOtherNote : VulkanSettingsNote
+        : VulkanLayer.Launched(g) && LauncherEnable(g, out var why) == null ? why
         : VulkanLayer.AppId(g) == null ? VulkanLayer.LoaderProblem(g.ExePath) : null;
+
+    /// <summary>The variable a launcher game's layer is enabled by (<see cref="VulkanLayer.Launcher"/>), when no other game
+    /// Heroic, Lutris or Faugus has would start with it too, of any runner, hidden, left out or not installed (read from the
+    /// launchers' files, not the list): the layer would load in both, also in one refused for its anti-cheat, and each layer
+    /// copy record the other's sessions. Null with the reason otherwise, and with none for a game of no launcher.</summary>
+    static (string Name, string Value)? LauncherEnable(Game g, out string? why)
+    {
+        why = null;
+        if (!VulkanLayer.Launched(g) || VulkanLayer.Launcher(g, out why) is not { } v) return null;
+        bool lutris = false, faugus = false;
+        var twin = HeroicSource.Twin(g, v, out var heroic);
+        twin ??= LutrisSource.Twin(g, v, out lutris);
+        twin ??= FaugusSource.Twin(g, v, out faugus);
+        if (twin != null) why = $"{twin} starts with the same {v.Name} as this game, so the Vulkan recorder can't tell the two apart";
+        else if ((heroic ? "Heroic" : lutris ? "Lutris" : faugus ? "Faugus" : null) is { } unread)
+            why = $"{unread}'s game list couldn't be read, so the Vulkan recorder can't tell whether another game starts with the same {v.Name}";
+        else return v;
+        return null;
+    }
+
+    /// <summary>The manifest of the game's layer at <paramref name="dll"/>: a launcher game's enabled by its launcher's
+    /// variable (<see cref="LauncherEnable"/>), any other's by <see cref="VulkanLayer.EnableVariable"/>.</summary>
+    string VulkanManifestText(Game g, string key, string dll) =>
+        VulkanLayer.Manifest(key, dll, VulkanLayer.Launched(g) ? LauncherEnable(g, out var why) ?? throw new InvalidOperationException(why) : null);
+
+    /// <summary>A launcher game's manifest names another variable than its launcher sets now (a game renamed in Lutris, a
+    /// Heroic game's exe moved): placed again.</summary>
+    bool LauncherStale(Game g, string key, string manifest)
+    {
+        if (!VulkanLayer.Launched(g) || LauncherEnable(g, out _) is not { } v) return false;
+        try { return File.ReadAllText(manifest) != VulkanLayer.Manifest(key, Path.Combine(Path.GetDirectoryName(manifest)!, VulkanLayer.Dll), v); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
 
     /// <summary>The game's Vulkan recorder is registered for its exe's folder: its scskiller.ini is the recorder's.</summary>
     static bool VulkanIn(Game g, GameRecord rec) => rec.VulkanLayer != null && rec.RecorderExe is { } exe
@@ -90,7 +125,12 @@ public sealed partial class ScsKiller
     /// <summary>Every inbox the game's layer may have written: its exe's now and the ones the exe had while it recorded
     /// (Steam replacing the exe gives it another file key).</summary>
     static List<string> VulkanInboxDirs(Game g, GameRecord rec) =>
-        [.. rec.VulkanInboxes.Append(VulkanInboxDir(g)).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase)];
+        [.. rec.VulkanInboxes.Select(MovedInbox).Append(VulkanInboxDir(g)).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase)];
+
+    /// <summary>An inbox a record kept from before the recorder files moved into the recorder folder, where it is now.</summary>
+    static string MovedInbox(string inbox) =>
+        PreMoveLedger(LedgerDir) is { } old && Path.Combine(Path.GetDirectoryName(old)!, "vulkan") + Path.DirectorySeparatorChar is var was
+        && inbox.StartsWith(was, StringComparison.Ordinal) ? Path.Combine(RecorderDir, "vulkan", inbox[was.Length..]) : inbox;
 
     static IEnumerable<string> VulkanInboxes(Game g, GameRecord rec) =>
         VulkanInboxDirs(g, rec).Where(Directory.Exists).SelectMany(d => Directory.EnumerateFiles(d, VulkanPlan.InboxPattern));
@@ -127,15 +167,20 @@ public sealed partial class ScsKiller
         var added = new List<string>();
         if (dirs.Any(d => Directory.Exists(d) && Directory.EnumerateFiles(d, VulkanPlan.InboxPattern).Any()))
             using (Recordings.Lock(RecordingPath(g.Id), ct: ct))
+            {
                 foreach (var d in dirs)
                     added.AddRange(VulkanPlan.Import(d, FozPath(g.Id), Log));
+                if (added.Count > 0)
+                    try { rec.RecordedPipelines = Foz.List(FozPath(g.Id)).Count(e => Foz.IsPipeline(e.Tag)); }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) { }   // the last count stays
+            }
         foreach (var old in dirs.Where(d => !d.Equals(now, StringComparison.OrdinalIgnoreCase)))
             try
             {
                 if (Directory.Exists(old) && Directory.EnumerateFiles(old, VulkanPlan.InboxPattern).Any()) continue;   // still held: next time
                 if (!OperatingSystem.IsWindows() && VulkanPlan.Held(Path.Combine(old, "scskiller_creates.csv"))) continue;   // a recording that made no archive yet
                 if (Directory.Exists(old)) Directory.Delete(old, true);
-                rec.VulkanInboxes.Remove(old);
+                rec.VulkanInboxes.RemoveAll(i => MovedInbox(i).Equals(old, StringComparison.OrdinalIgnoreCase));
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         if (added.Count == 0) return false;
@@ -225,7 +270,8 @@ public sealed partial class ScsKiller
         var src = VulkanLayerSource;
         // a copy that changed, or an install cut off before its registration (or after, by a crash): done again
         var update = want && placed && (src != null && File.Exists(src) && !SameBytes(Path.Combine(Path.GetDirectoryName(manifest)!, VulkanLayer.Dll), src)
-                                        || !File.Exists(manifest) || !VulkanLayer.Registered(manifest, g) || !VulkanIn(g, rec));   // the last: the exe moved from a folder that's gone
+                                        || !File.Exists(manifest) || !VulkanLayer.Registered(manifest, g) || !VulkanIn(g, rec)   // the exe moved from a folder that's gone
+                                        || LauncherStale(g, key!, manifest));
         // the DirectX recorder of an earlier evaluation (the game was on DirectX then): out first
         var proxy = rec.RecorderFiles.Count > 0 || rec.RecorderChained != null || OurProxyIn(dir);
         if (want != placed || update || proxy || !want && rec.RecorderExe != null)
@@ -293,7 +339,7 @@ public sealed partial class ScsKiller
     {
         if (_removedFromAll) throw new RemovedFromAllException();
         if (!RecorderInstallAllowed(Store.DataDir, AppStore.Moved, Environment.GetEnvironmentVariable("SCSKILLER_TEST_RECORDER")))
-            throw new InvalidOperationException("the data folder is moved (SCSKILLER_DATA_DIR), which SCSKiller's uninstall doesn't know: set SCSKILLER_TEST_RECORDER=1 to install a recorder anyway, and take it out yourself");
+            throw new InvalidOperationException(MovedDataRefusal);
         RefuseAntiCheat(g, rec);
         if (!GameFolderWrite(g)) throw new InvalidOperationException($"{g.Name} is running");
         var src = VulkanLayerSource is { } p && File.Exists(p) ? p : throw new FileNotFoundException($"the Vulkan recorder ({VulkanLayer.Dll}) was not found next to the app");
@@ -310,16 +356,16 @@ public sealed partial class ScsKiller
         if (antiCheat == AntiCheat.None && !WriteIni(dir, IniText(g, rec), judged, null, g.InstallDir, () => GameFolderWrite(g),
                 step => { if (step == "saved") InstallStep?.Invoke("ini"); }, install: true) && !GameFolderWrite(g))
         {
-            TakeOut(g, rec, "the game started while the Vulkan recorder was installed");
+            if (!TakingOverHere(dir)) TakeOut(g, rec, "the game started while the Vulkan recorder was installed");   // a take-over puts the other copy's back instead
             throw new InvalidOperationException($"{g.Name} started while the recorder was installed");
         }
-        if (antiCheat == AntiCheat.None) antiCheat = GameFiles.DetectAntiCheat(g, late: () => late = true);
+        if (antiCheat == AntiCheat.None) antiCheat = InstallWalk(g, ref late);
         if (antiCheat != AntiCheat.None)
         {
             AntiCheatFound(g, antiCheat, installing: rec, unfinished: late);
             throw AntiCheatRefusal(g, antiCheat, late);
         }
-        lock (_scanLock) _scan?.Remove(g.Id);   // the next refresh evaluates the game again, its anti-cheat too
+        ReEvaluate(g);
     }
 
     /// <summary>The layer's copy and manifest in the data folder, on the record before they're registered.</summary>
@@ -329,7 +375,7 @@ public sealed partial class ScsKiller
         Directory.CreateDirectory(folder);
         var dll = Path.Combine(folder, VulkanLayer.Dll);
         Place(dll, CopyOf(src), replace: true);
-        Place(manifest, Text(VulkanLayer.Manifest(VulkanLayer.Key(g)!, dll)), replace: true);
+        Place(manifest, Text(VulkanManifestText(g, VulkanLayer.Key(g)!, dll)), replace: true);
         (rec.VulkanLayer, rec.VulkanLayerSha) = (manifest, Sha256(dll));
         Store.SaveGame(g.Id, rec);   // before the registration: every removal finds it
         InstallStep?.Invoke("vulkan");
@@ -403,10 +449,13 @@ public sealed partial class ScsKiller
         {
             var dll = Path.Combine(folder, VulkanLayer.Dll);
             if (File.Exists(dll) && sha != null && Sha256(dll) == sha) File.Delete(dll);
-            var appId = Path.GetFileNameWithoutExtension(manifest)["VkLayer_scskiller_".Length..];
-            if (File.Exists(manifest) && File.ReadAllText(manifest) is var text && (text == VulkanLayer.Manifest(appId, dll)
-                    || rec.RecorderExe is { } exe && text == VulkanLayer.Manifest(appId, Path.Combine(Path.GetDirectoryName(exe)!, VulkanLayer.Dll))))
+            var key = Path.GetFileNameWithoutExtension(manifest)["VkLayer_scskiller_".Length..];
+            if (File.Exists(manifest) && File.ReadAllText(manifest) is var text && (VulkanLayer.Placed(text, key, dll)
+                    || rec.RecorderExe is { } exe && VulkanLayer.Placed(text, key, Path.Combine(Path.GetDirectoryName(exe)!, VulkanLayer.Dll))))
+            {
                 File.Delete(manifest);
+                if (Path.Combine(folder, VulkanLayer.GameFile) is var named && File.Exists(named)) File.Delete(named);   // a launcher game's (Linux), only beside its manifest
+            }
             if (!Directory.EnumerateFileSystemEntries(folder).Any()) Directory.Delete(folder);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { }   // held by a running game: unregistered, it's inert
@@ -512,14 +561,47 @@ public sealed partial class ScsKiller
                 Log?.Report($"{g.Name}: made Steam's Vulkan cache folder {steam} for the compile");
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{g.Name}: Steam's Vulkan cache folder {steam} couldn't be made: {e.Message}"); }
-        if (Vendor.Caps.VulkanKey == VulkanPlan.DeviceKey && rec.VulkanDevice is { } device)   // Steam's layer is only in a Steam launch
-            return new(rec.VulkanCacheEnv ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
-                { [VulkanPlan.DeviceVariable] = g.Store == Core.Store.Steam ? VulkanPlan.UnderSteamLayer(device) : device };
+        // Steam's layer is only in a Steam launch: taken as one with Steam's cache variables. ponytail: a Steam launch with
+        // pre-caching off counts as without the layer, record the layer in #vkdevice if that one has it
+        if (Vendor.Caps.VulkanKey == VulkanPlan.DeviceKey && rec.VulkanDevice is { } device)
+        {
+            var env = new Dictionary<string, string>(rec.VulkanCacheEnv ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
+                { [VulkanPlan.DeviceVariable] = g.Store == Core.Store.Steam && VulkanPlan.CachePath(rec.VulkanCacheEnv, GpuVendor.Amd) != null ? VulkanPlan.UnderSteamLayer(device) : device };
+            if (AmdVkFile(rec) is { Length: > 0 } file && VulkanPlan.DefaultCache(GpuVendor.Amd) is { } dir)
+            {
+                (env["AMD_VK_USE_PIPELINE_CACHE"], env["AMD_VK_PIPELINE_CACHE_PATH"], env["AMD_VK_PIPELINE_CACHE_FILENAME"]) = ("1", dir, file);
+                Log?.Report($"{g.Name}: the compile writes the game's own Vulkan cache file {file}.parc");
+            }
+            return env;
+        }
         if (rec.VulkanCacheEnv != null || !OperatingSystem.IsWindows() || Vendor.Vendor != GpuVendor.Nvidia || File.Exists(FozPath(g.Id))
             || SteamGlCache(g) is not { } gl || Path.GetDirectoryName(gl) is not { } nv || !Directory.Exists(nv)) return rec.VulkanCacheEnv;
         Log?.Report($"{g.Name}: the compile writes Steam's Vulkan cache of the game in {nv}");
         return SteamCacheVars(GpuVendor.Nvidia, nv);
     }
+
+    /// <summary>AMD on Windows keys its own VkCache on the exe's full path, which the staged warm can't have (Win5 J99): outside
+    /// Steam's redirect the warm names the game's own file through AMD's cache variables, which a plain launch then reads
+    /// (J169). Its name as the game's process held it on this driver, "" while none is learned; null under Steam's redirect
+    /// or on another driver. ponytail: the largest of several held files, the last session's if that ever picks wrong.</summary>
+    string? AmdVkFile(GameRecord rec)
+    {
+        if (!OperatingSystem.IsWindows() || Vendor.Caps.VulkanKey != VulkanPlan.DeviceKey || VulkanPlan.CachePath(rec.VulkanCacheEnv, GpuVendor.Amd) != null
+            || VulkanPlan.DefaultCache(GpuVendor.Amd) is not { } dir) return null;
+        var names = HeldOnDriver(rec, Snapshot()).Where(Vendors.AppCacheFiles.IsVulkanKey).Select(k => k[Vendors.AppCacheFiles.VulkanPrefix.Length..]).Where(n => !n.Contains('/')).ToList();
+        if (names.Count == 0) return "";
+        // the name as on disk: the driver writes it upper case, the key is lower case
+        var files = names.Select(n => Directory.Exists(dir) ? new DirectoryInfo(dir).EnumerateFiles(n + ".parc").FirstOrDefault() : null).ToList();
+        return files.OfType<FileInfo>().OrderByDescending(f => f.Length).Select(f => Path.GetFileNameWithoutExtension(f.Name)).FirstOrDefault() ?? names[0];
+    }
+
+    /// <summary>A Vulkan game on AMD whose cache file isn't learned yet (<see cref="AmdVkFile"/>): its warm would fill a file of
+    /// its own that the game never reads. Before a recorded launch (no device yet) the plan asks for one.</summary>
+    bool AmdVkUnlearned(GameRecord rec, EngineInfo? engine) => engine is { } e && VulkanPlan.IsVulkan(e) && rec.VulkanDevice != null && AmdVkFile(rec) == "";
+
+    public const string AmdVkStartOnceReason = "Start the game once so SCSKiller can find its Vulkan cache.";
+    /// <summary>Its file is learned only in a session recorded at the user's own risk (<see cref="StartRiskSession"/>).</summary>
+    public const string AmdVkAntiCheatReason = "This game contains anti-cheat, so enabling the recorder there is at your own risk, and SCSKiller isn't responsible for bans.";
 
     /// <summary>The variables Steam's launches set for the app's folder <paramref name="dir"/> (<see cref="VulkanPlan.SteamCache"/>), as recorded.</summary>
     static Dictionary<string, string> SteamCacheVars(GpuVendor vendor, string dir) => vendor == GpuVendor.Nvidia
@@ -559,6 +641,13 @@ public sealed partial class ScsKiller
     long? CacheOnDiskOf(Game g, EngineInfo? engine, GameRecord rec)
     {
         long? keyed = rec.CacheKeys.Count > 0 && AppCache != null ? AppCache.SizeOf(AppCache is Vendors.NvidiaAppCache ? LiveKeys(rec) : rec.CacheKeys) : null;
+        // AMD: of the warm's keys, only the file sets the warm filled, none once the game is seen using another (PartsMissed)
+        if (keyed != null && AppCache is Vendors.AmdAppCache amd && rec.WarmedParts is { Count: > 0 } warmed)
+        {
+            var missed = PartsMissed(rec, Snapshot());
+            keyed = amd.FilesOf(rec.CacheKeys).Where(f => Vendors.AmdAppCache.Part(f.Name) is not { } p || !warmed.Any(w => Vendors.AmdAppCache.KeyOf(w) == Vendors.AmdAppCache.KeyOf(p))
+                || warmed.Contains(p) && !missed).Sum(f => f.Exists ? f.Length : 0);
+        }
         return SteamGlFiles(g, engine) is { Count: > 0 } steam ? (keyed ?? 0) + steam.Sum(f => f.Length) : keyed;
     }
 

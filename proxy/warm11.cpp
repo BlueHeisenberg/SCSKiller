@@ -458,7 +458,8 @@ bool warm11_item(Dev11* v, uint32_t stage, const void* bytes, size_t n, const ch
     if (stage == 2) {
         for (auto& e : s.out)
             if (iequal(e.name, "SV_Target") && e.index < std::size(rtvs)) rtvs[e.index] = rtv(*v, e.index, e.type), nrt = std::max(nrt, e.index + 1);
-    } else if (ps) rtvs[0] = rtv(*v, 0, 3), nrt = 1;
+    } else if (ps && std::any_of(s.uav.begin(), s.uav.end(), [](auto& u) { return u.reg == 0; })) ps = nullptr;  // UAV u0 takes RT0's OM slot: no PS, no render target
+    else if (ps) rtvs[0] = rtv(*v, 0, 3), nrt = 1;
     for (auto& u : s.uav) if (u.reg < nrt) return *why = "UAV slot overlaps a render target", false;  // graphics UAVs share the OM slots
     uav_from = nrt;
 
@@ -614,7 +615,8 @@ bool warm11_draw(Dev11* v, std::string_view it, std::string_view (*blob)(const u
     }
     const Shader& last = !code[1].empty() ? s[1] : !code[3].empty() ? s[3] : s[0];
     const bool raster = std::any_of(last.out.begin(), last.out.end(), [](auto& e) { return e.sv == SV_POSITION; });
-    ID3D11PixelShader* ps = flags & 1 && raster ? v->null_ps.Get() : nullptr;
+    const bool u0 = std::any_of(std::begin(s), std::end(s), [](auto& k) { return std::any_of(k.uav.begin(), k.uav.end(), [](auto& u) { return u.reg == 0; }); });
+    ID3D11PixelShader* ps = flags & 1 && raster && !u0 ? v->null_ps.Get() : nullptr;  // UAV u0 takes RT0's OM slot: no PS, no render target
     ID3D11RenderTargetView* rt = ps ? rtv(*v, 0, 3) : nullptr;
     const UINT nrt = rt ? 1 : 0;
     for (auto& k : s) for (auto& u : k.uav) if (u.reg < nrt) return *why = "UAV slot overlaps a render target", false;

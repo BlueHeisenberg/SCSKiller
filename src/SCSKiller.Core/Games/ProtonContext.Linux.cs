@@ -1,7 +1,7 @@
 namespace SCSKiller.Core.Games;
 
 /// <summary>Where a Steam game runs under Proton, as Steam runs it: <paramref name="CompatData"/>
-/// (steamapps/compatdata/&lt;app&gt; in the game's library) and its <paramref name="Prefix"/> (pfx), the
+/// (steamapps/compatdata/&lt;app&gt;, <see cref="SteamSource.CompatDataOf"/>) and its <paramref name="Prefix"/> (pfx), the
 /// <paramref name="Proton"/> folder, the Steam Linux Runtime folder holding its entry point (<paramref name="Runtime"/>), the
 /// app's <paramref name="Install"/> folder and Steam's <paramref name="Libraries"/>. <paramref name="Note"/>: what to log
 /// about the Proton picked, null when nothing is worth it.</summary>
@@ -33,7 +33,7 @@ public sealed record ProtonContext(uint AppId, string SteamRoot, string CompatDa
                 why = "Steam lists no app in its folder";
                 return null;
             }
-            return In(app, steamRoot, Path.Combine(apps, "compatdata", app.ToString()), Path.Combine(apps, "common", folder), Path.GetDirectoryName(apps)!,
+            return In(app, steamRoot, SteamSource.CompatDataOf(apps, app, steamRoot), Path.Combine(apps, "common", folder), Path.GetDirectoryName(apps)!,
                 SteamSource.CompatTool(steamRoot, app), toolFolders, out why);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
@@ -71,9 +71,11 @@ public sealed record ProtonContext(uint AppId, string SteamRoot, string CompatDa
 
     /// <summary>The context of a game another launcher runs on a Proton build (<paramref name="p"/>), as <see cref="For(Game, string, out string?, IEnumerable{string}?)"/>
     /// gives a Steam game's: its prefix is the launcher's compat data, its Proton the one the launcher names, which must be
-    /// the one that last ran the prefix, in the Steam Linux Runtime Steam has for it, else umu's (Heroic's and Lutris's way of
+    /// the one that last ran the prefix, in the Steam Linux Runtime Steam has for it, else umu's (Heroic's, Lutris's and Faugus's way of
     /// running Proton). App id 0, as umu runs it. The reasons say to start it from that launcher.</summary>
-    public static ProtonContext? For(LauncherPrefix p, string install, string steamRoot, out string? why, IEnumerable<string>? toolFolders = null)
+    /// <param name="sandboxed">the warm runs in the launcher's Flatpak: its prefix's Steam folder is the Flatpak's, and with
+    /// <see cref="LauncherPrefix.Umu"/> off it runs Proton's script without a runtime (none is looked for, Runtime "")</param>
+    public static ProtonContext? For(LauncherPrefix p, string install, string steamRoot, out string? why, IEnumerable<string>? toolFolders = null, bool sandboxed = false)
     {
         why = null;
         if (File.Exists(Path.Combine(p.Prefix, "pfx", "system.reg")) && SteamSource.LastProtonFolder(p.Prefix) == null)
@@ -82,7 +84,7 @@ public sealed record ProtonContext(uint AppId, string SteamRoot, string CompatDa
             return null;
         }
         ProtonContext? ctx = null;
-        try { ctx = In(0, steamRoot, p.Prefix, Path.TrimEndingDirectorySeparator(install), null, null, toolFolders, out why, umu: true); }
+        try { ctx = In(0, steamRoot, p.Prefix, Path.TrimEndingDirectorySeparator(install), null, null, toolFolders, out why, umu: true, noRuntime: sandboxed && !p.Umu, sandboxed: sandboxed); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { why = $"its prefix's files couldn't be read: {e.Message}"; }
         if (ctx != null && !Same(ctx.Proton, p.Bin)) (ctx, why) = (null, $"{p.Launcher} runs it on {p.Bin} but its prefix last ran on {ctx.Proton}");
         why = why?.Replace("from Steam", "from " + p.Launcher, StringComparison.Ordinal);
@@ -101,7 +103,8 @@ public sealed record ProtonContext(uint AppId, string SteamRoot, string CompatDa
     /// <param name="data">the app's compatdata folder</param>
     /// <param name="library">the game's library, when Steam's files may not list it</param>
     /// <param name="tool">the compatibility tool Steam maps the app to</param>
-    static ProtonContext? In(uint app, string steamRoot, string data, string install, string? library, string? tool, IEnumerable<string>? toolFolders, out string? why, bool umu = false)
+    static ProtonContext? In(uint app, string steamRoot, string data, string install, string? library, string? tool, IEnumerable<string>? toolFolders, out string? why, bool umu = false,
+        bool noRuntime = false, bool sandboxed = false)
     {
         var pfx = Path.Combine(data, "pfx");
         if (!File.Exists(Path.Combine(pfx, "system.reg")))
@@ -137,13 +140,15 @@ public sealed record ProtonContext(uint AppId, string SteamRoot, string CompatDa
             why = $"its Proton's script in {proton} couldn't be read";
             return null;
         }
-        if (script.Refreshes(data, version, ref steam) is { } refresh)
+        if (script.Refreshes(data, version, ref steam, umu, sandboxed) is { } refresh)
         {
             why = refresh;
             return null;
         }
         var note = mapped == null && tool != null ? $"Steam runs it on {tool}, which wasn't found, so the compile runs on the Proton that last ran its prefix ({proton})" : null;
-        if ((SteamSource.RuntimeOf(steamRoot, proton, out why) ?? (umu ? UmuRuntime() : null)) is not { } runtime) return null;
+        why = null;
+        var runtime = noRuntime ? "" : SteamSource.RuntimeOf(steamRoot, proton, out why) ?? (umu ? UmuRuntime() : null);
+        if (runtime == null) return null;
         why = null;
         var libraries = SteamSource.Libraries(steamRoot).Concat(library == null ? [] : [library])
             .Select(Path.TrimEndingDirectorySeparator).Distinct(StringComparer.Ordinal).ToList();
@@ -151,7 +156,7 @@ public sealed record ProtonContext(uint AppId, string SteamRoot, string CompatDa
     }
 
     /// <summary>A non-Steam game's compatdata folder: in Steam's own library, whichever library holds the game.</summary>
-    static string ShortcutData(string steamRoot, uint app) =>
+    internal static string ShortcutData(string steamRoot, uint app) =>
         Path.Combine(steamRoot, "steamapps", "compatdata", app.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
     /// <summary>The build name of the Proton that last ran <paramref name="game"/>'s prefix (<see cref="SteamSource.ProtonBuild"/>),
@@ -161,14 +166,16 @@ public sealed record ProtonContext(uint AppId, string SteamRoot, string CompatDa
     {
         try
         {
+            if (LauncherPrefix.Is(game)) return LauncherPrefix.Of(game, out _) is { Proton: true, Bin: var bin } ? SteamSource.ProtonBuild(bin) : null;
             string data;
-            if (SteamShortcuts.AppId(game.Id) is { } shortcut) data = ShortcutData(steamRoot ?? SteamSource.Root(), shortcut);
+            steamRoot ??= SteamSource.Root();
+            if (SteamShortcuts.AppId(game.Id) is { } shortcut) data = ShortcutData(steamRoot, shortcut);
             else
             {
                 var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(game.InstallDir)) + Path.DirectorySeparatorChar;
                 var at = full.IndexOf(SteamSource.CommonPart, StringComparison.OrdinalIgnoreCase);
                 if (at < 0 || SteamSource.AppId(game.Id) is not { } app) return null;
-                data = Path.Combine(full[..(at + SteamSource.AppsPart.Length)], "compatdata", app.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                data = SteamSource.CompatDataOf(full[..(at + SteamSource.AppsPart.Length)], app, steamRoot);
             }
             return SteamSource.LastProtonFolder(data) is { } proton ? SteamSource.ProtonBuild(proton) : null;
         }

@@ -62,7 +62,7 @@ SCSKiller's own licence: GPL-3.0-or-later (LICENSE), with an additional permissi
 | RapidJSON (in fossilize-replay.exe, scskiller_warm.exe, VkLayer_scskiller.dll, libVkLayer_scskiller.so) | 8f4c021f (source) | MIT | Copyright (C) 2015 THL A29 Limited, a Tencent company, and Milo Yip | https://github.com/Tencent/rapidjson | [L36](#l36) |
 | volk (in fossilize-replay.exe) | 8a2387af (source) | MIT | Copyright (c) 2018-2026 Arseny Kapoulkine | https://github.com/zeux/volk | [L37](#l37) |
 | SPIRV-Headers (in fossilize-replay.exe) | 49654312 (source) | MIT | Copyright (c) 2015-2024 The Khronos Group Inc. | https://github.com/KhronosGroup/SPIRV-Headers | [L38](#l38) |
-| SPIRV-Tools (in the Linux fossilize-replay) | 2025.1-rc1 (the Steam Runtime sniper SDK's, static) | Apache-2.0 | Copyright 2015-2017 The Khronos Group Inc., 2016-2017 Google Inc., 2017 LunarG Inc., 2016-2018 Valve Corporation, 2017-2018 Pierre Moreau | https://github.com/KhronosGroup/SPIRV-Tools | [L4](#l4) |
+| SPIRV-Tools (in the Linux fossilize-replay) | d7ca4efb (source) | Apache-2.0 | Copyright 2015-2017 The Khronos Group Inc., 2016-2017 Google Inc., 2017 LunarG Inc., 2016-2018 Valve Corporation, 2017-2018 Pierre Moreau | https://github.com/KhronosGroup/SPIRV-Tools | [L4](#l4) |
 | dirent (in fossilize-replay.exe, scskiller_warm.exe, VkLayer_scskiller.dll) | c885633e (source) | MIT | Copyright (c) 1998-2019 Toni Ronkko | https://github.com/tronkko/dirent | [L39](#l39) |
 
 ### Notes

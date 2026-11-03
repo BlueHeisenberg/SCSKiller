@@ -111,8 +111,11 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
 
     void Step(string what) => AfterStep?.Invoke(what);
 
-    /// <summary>Steam's shadercache folder of the game's app, whose nvidiav1 folder Steam points the driver at.</summary>
+    /// <summary>Steam's shadercache folder of the game's app, whose nvidiav1 folder Steam points the driver at; "" for a game
+    /// Steam doesn't run, whose targets are all <see cref="Outside"/>.</summary>
     public string SteamDir => steamDir;
+
+    string Where => steamDir == "" ? "the driver's cache folder" : "Steam's folder";
 
     /// <summary>The folder whose GLCache the game's driver reads: Steam's nvidiav1, or the one the game was seen reading
     /// outside Steam's (<see cref="Outside"/>).</summary>
@@ -156,12 +159,12 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
 
     /// <summary>Places what isn't up to date: the warm's NVIDIA sets, then vkd3d-proton's cache. Never throws for I/O: the
     /// result says why it failed.</summary>
-    public SteamPlaceResult Place(CancellationToken ct = default) => Locked(() => PlaceLocked(ct), "putting the cache in Steam's folder");
+    public SteamPlaceResult Place(CancellationToken ct = default) => Locked(() => PlaceLocked(ct), $"putting the cache in {Where}");
 
     /// <summary>Takes out what <see cref="Place"/> put there: its own files where they're still what it wrote, its entries
     /// from Steam's files, Steam's kept in order, and vkd3d-proton's files still as it wrote them. Then forgets them, except
     /// entries in a file that can't be rewritten.</summary>
-    public SteamPlaceResult Remove(CancellationToken ct = default) => Locked(() => RemoveLocked(ct), "taking the cache out of Steam's folder");
+    public SteamPlaceResult Remove(CancellationToken ct = default) => Locked(() => RemoveLocked(ct), $"taking the cache out of {Where}");
 
     SteamPlaceResult Locked(Func<SteamPlaceResult> run, string what)
     {
@@ -225,7 +228,7 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
         }
         var vk = TryPlaceVkd3d(m);
         var result = nv with { Vkd3d = vk.What, Vkd3dWaits = vk.Waits };
-        if (nv.State == SteamPlaceState.Placed || vk.Placed) Log?.Invoke(Line(result));
+        if (nv.State == SteamPlaceState.Placed || vk.Placed) Log?.Invoke(Line(result, steamDir.Length == 0));
         return result;
     }
 
@@ -566,12 +569,12 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
     {
         if (SandboxHome is { } home)
         {
-            if (!target.StartsWith(steamDir + "/", StringComparison.Ordinal)) throw new Refused(SteamPlaceState.Failed, $"{target} isn't in the Flatpak Steam's folder: nothing is placed there") { Once = true };
+            if (!InSteam(target)) throw new Refused(SteamPlaceState.Failed, $"{target} isn't in the Flatpak Steam's folder: nothing is placed there") { Once = true };
             try { return OpenUnlinked(target, home, make); }
             catch (IOException e) { throw new Refused(SteamPlaceState.Failed, $"{e.Message}: nothing is placed in that library") { Once = true }; }
         }
         // a folder outside Steam's is the real path the game was seen reading: opened from / without a link, this user's
-        if (!target.StartsWith(steamDir + "/", StringComparison.Ordinal))
+        if (!InSteam(target))
             try
             {
                 var outside = new Folder(target, Libc.OpenBelow("/", target.Split('/', StringSplitOptions.RemoveEmptyEntries), make));
@@ -592,6 +595,9 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
         catch (FileNotFoundException) when (!make) { return null; }
         catch (IOException e) { throw new Refused(SteamPlaceState.Failed, $"{e.Message}: nothing is placed in that library") { Once = true }; }
     }
+
+    /// <summary>In Steam's folder of the game: never for a game without one (<see cref="SteamDir"/> "").</summary>
+    bool InSteam(string path) => steamDir.Length > 0 && path.StartsWith(steamDir + "/", StringComparison.Ordinal);
 
     /// <summary>A folder of the game's that holds vkd3d-proton's cache, opened from <paramref name="root"/> (default:
     /// <see cref="Vkd3dRoot"/>) down.</summary>
@@ -691,19 +697,27 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
     {
         var coding = stored != null ? SteamEntryCoding.Stored : Coding;
         Check(target, leaf);
-        if (m != null && m.Target != target && m.Files.Count > 0 && Directory.Exists(m.Target))
+        // outside Steam's folder the game may take another set of the same folder: the earlier one's entries go first
+        var setMoved = m != null && m.Target == target && Outside && m.Files.Any(f => Targets.All(t => t.Name != f.Name));
+        var moved = m != null && (m.Target != target || setMoved);
+        if (moved && m!.Files.Count > 0 && Directory.Exists(m.Target))
             try
             {
-                foreach (var s in RemoveFrom(m, m.Target, ct).Stayed)
+                var stayed = RemoveFrom(m, m.Target, ct).Stayed;
+                foreach (var s in stayed)
                     Log?.Invoke(s.Line(Path.Combine(m.Target, s.File.Name)));
+                // a set of the same folder keeps its manifest until SCSKiller's entries are out of it: nothing else lists them
+                if (setMoved && stayed.Count > 0)
+                    throw new Refused(SteamPlaceState.Failed, $"SCSKiller's entries in {string.Join(", ", stayed.Select(s => s.File.Name))} can't be taken out yet", leaf);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or Refused)
             {
+                if (setMoved) throw e as Refused ?? new Refused(SteamPlaceState.Failed, $"SCSKiller's entries in the game's earlier cache file can't be taken out yet: {e.Message}", leaf);
                 if (e is not Refused { Once: true } || Tell(e.Message)) Log?.Invoke($"what was placed in {m.Target} stays there: {e.Message}");
             }
         using var dir = OpenLeaf(target, make: true)!;
         Lock(dir, leaf);
-        var same = m != null && m.Target == target;
+        var same = m != null && !moved;
         var known = new HashSet<FileId>();
         var outs = new List<Out>();
         var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -795,7 +809,7 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
             if (FreeSpace(target) is var free && free < need + Margin)
                 throw new Refused(SteamPlaceState.NoSpace, $"{Format.Bytes(need)} to write and {Format.Bytes(free)} free", leaf);
             Writing?.Invoke();
-            foreach (var (name, why) in sets.Skipped) Log?.Invoke($"{name}: not put in Steam's folder, {why}");
+            foreach (var (name, why) in sets.Skipped) Log?.Invoke($"{name}: not put in {Where}, {why}");
             DictPlaced? coded = null;
             if (coding == SteamEntryCoding.LeafDictionary) (left, coded) = PlaceEncoded(m, note, dir, leaf, outs, files, recorded, framed, sets, warm, known, ct);
             else foreach (var o in outs.Where(o => o.Write && o.Count > 0)) WriteTemp(dir.At, o, sets, known, ct);
@@ -829,9 +843,11 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
     }
 
     /// <summary>The placement's log line: the folder, what each file holds, what didn't fit.</summary>
-    internal static string Line(SteamPlaceResult r) =>
+    /// <param name="shared">a launcher game's set in the driver's default folder, whose entries before SCSKiller's are any program's</param>
+    internal static string Line(SteamPlaceResult r, bool shared = false) =>
         $"{r.Leaf}: " + string.Join(", ", (r.Files ?? []).Select(f => f.SteamOwns ? $"{f.Name} is Steam's, left as it is"
-            : $"{f.Name} {f.Pipelines:N0} pipelines ({Format.Bytes(f.Bytes)})" + (f.SteamPipelines > 0 ? $" after Steam's {f.SteamPipelines:N0} ({Format.Bytes(f.SteamBytes)})" : "")))
+            : $"{f.Name} {f.Pipelines:N0} pipelines ({Format.Bytes(f.Bytes)})" + (f.SteamPipelines == 0 ? ""
+                : shared ? $" after {f.SteamPipelines:N0} pipelines already in the file ({Format.Bytes(f.SteamBytes)})" : $" after Steam's {f.SteamPipelines:N0} ({Format.Bytes(f.SteamBytes)})")))
         + $", {r.Left:N0} pipelines ({Format.Bytes(r.LeftBytes)}) don't fit" + (r.Vkd3d != null ? $", vkd3d-proton: {r.Vkd3d}" : "");
 
     /// <summary>Writes the file's temp .bin and .toc, synced: Steam's entries then the warm's, each checked against its
@@ -1514,7 +1530,7 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
         var leaf = m.Target.Length > 0 ? LeafOf(m.Target) : null;
         var (files, stayed) = m.Files.Count > 0 && Directory.Exists(m.Target) ? RemoveFrom(m, m.Target, ct) : ([], []);
         var vkd3d = RemoveVkd3d(m);
-        var line = $"taken out of Steam's folder: " + string.Join(", ", files.Select(f => $"{f.Name} {f.Pipelines:N0} pipelines ({Format.Bytes(f.Bytes)})")
+        var line = $"taken out of {Where}: " + string.Join(", ", files.Select(f => $"{f.Name} {f.Pipelines:N0} pipelines ({Format.Bytes(f.Bytes)})")
             .DefaultIfEmpty("nothing of SCSKiller's was left there")) + (vkd3d != null ? $", vkd3d: {vkd3d}" : "");
         foreach (var f in m.Files.Where(f => Keyed(f) && !stayed.Any(s => s.File == f))) File.Delete(OursFile(f.Name));
         if (stayed.Count == 0)
@@ -1583,7 +1599,7 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
             stayed.AddRange(stays.Select(s => s.Line(Path.Combine(LeafOf(target), s.File.Name))));
             slotsOnly &= stays.All(s => s.File.Slot);
         }
-        var line = "taken out of Steam's folder by its owner note: " + string.Join(", ", gone.Select(f => $"{f.Name} {f.Pipelines:N0} pipelines ({Format.Bytes(f.Bytes)})")
+        var line = $"taken out of {Where} by its owner note: " + string.Join(", ", gone.Select(f => $"{f.Name} {f.Pipelines:N0} pipelines ({Format.Bytes(f.Bytes)})")
             .DefaultIfEmpty("nothing of SCSKiller's was left there"));
         if (stayed.Count == 0)
         {

@@ -10,7 +10,7 @@ public partial class App
 #if !DEBUG
         _ = Task.Run(() =>
         {
-            if (MenuEntry.RefreshThis() is { } line) core.Log?.Report(line);
+            if (AppStore.Moved == null && MenuEntry.RefreshThis() is { } line) core.Log?.Report(line);
         });
 #endif
     }

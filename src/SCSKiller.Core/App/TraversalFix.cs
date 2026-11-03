@@ -48,7 +48,7 @@ public static class TraversalFix
     public static int GameIndex(GameState s) => s.TraversalOverride switch { null => 0, true => 1, false => 2 };
     public static bool? OverrideAt(int index) => index switch { 1 => true, 2 => false, _ => null };
 
-    public static string AntiCheatLine(GameState s) => $"This game contains {ScsKiller.AntiCheatName(s)}. Enabling the fix is at your own risk. SCSKiller isn't responsible for bans.";
+    public static string AntiCheatLine(GameState s) => $"{(ScsKiller.AntiCheatOpen(s) ? "Its anti-cheat check didn't finish" : $"This game contains {ScsKiller.AntiCheatName(s)}")}. Enabling the fix is at your own risk. SCSKiller isn't responsible for bans.";
 
     /// <summary>The game page's description: the line, the anti-cheat line, and the VRAM line unless <see cref="LowVramWarning"/> shows instead.</summary>
     public static string GameNote(GameState s, GpuInfo gpu) =>

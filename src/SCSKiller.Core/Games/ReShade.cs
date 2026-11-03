@@ -86,22 +86,27 @@ public sealed record ReShadeInstall(string Dll, bool LoadsAddons, string? Ini, s
     /// <summary>What a warm through this layer depends on: ReShade's DLL, the add-ons that change pipelines and the
     /// <see cref="Loader"/> with its OptiScaler.ini (its sampler overrides change root signatures), each by name, size and
     /// content (not write time: reinstalling the same files rewrites it, nor ReShade.ini: ReShade rewrites it as it runs);
-    /// null = nothing to copy (not <see cref="Layered"/>).</summary>
-    public string? Fingerprint => Stamp(f => ReShade.ContentHash(f) ?? f.LastWriteTimeUtc.Ticks.ToString());
+    /// a RenoDX add-on's content without what each build of the same source differs in (<see cref="ReShade.BuildHash"/>).
+    /// Null = nothing to copy (not <see cref="Layered"/>).</summary>
+    public string? Fingerprint => Stamp((f, renoDx) => (renoDx ? ReShade.BuildHash(f) : null) ?? ReShade.ContentHash(f) ?? f.LastWriteTimeUtc.Ticks.ToString());
+
+    /// <summary><see cref="Fingerprint"/> with every file by its bytes, as compiles before the build hash kept it.</summary>
+    public string? ByteFingerprint => Stamp((f, _) => ReShade.ContentHash(f) ?? f.LastWriteTimeUtc.Ticks.ToString());
 
     /// <summary><see cref="Fingerprint"/> by write time, as compiles before the content hash kept it.</summary>
-    public string? WriteTimeFingerprint => Stamp(f => f.LastWriteTimeUtc.Ticks.ToString());
+    public string? WriteTimeFingerprint => Stamp((f, _) => f.LastWriteTimeUtc.Ticks.ToString());
 
-    /// <summary>A warm through <paramref name="kept"/> (a <see cref="Fingerprint"/>, either form) ran through this layer as it is now.</summary>
-    public bool Matches(string? kept) => kept != null && (kept == Fingerprint || kept == WriteTimeFingerprint);
+    /// <summary>A warm through <paramref name="kept"/> (a <see cref="Fingerprint"/>, any form) ran through this layer as it is now.</summary>
+    public bool Matches(string? kept) => kept != null && (kept == Fingerprint || kept == ByteFingerprint || kept == WriteTimeFingerprint);
 
-    string? Stamp(Func<FileInfo, string> of) => !Layered ? null : string.Join('|', new[] { Dll }.Concat(Addons.Where(a => a is { Disabled: false, Kind: not AddonKind.NotPipeline }).Select(a => a.Path))
-        .Concat(Loader is { } o ? [o] : []).Select(p => new FileInfo(p)).Select(f => (f.Name, File: f))
-        .Concat(Loader is { } l ? [("OptiScaler.ini", new FileInfo(GameFiles.Find(Path.GetDirectoryName(l)!, "OptiScaler.ini")))] : [])
-        .Select(x => $"{x.Name}:{x.File.Length}:{of(x.File)}"));
+    string? Stamp(Func<FileInfo, bool, string> of) => !Layered ? null : string.Join('|', new[] { (Path: Dll, RenoDx: false) }
+        .Concat(Addons.Where(a => a is { Disabled: false, Kind: not AddonKind.NotPipeline }).Select(a => (a.Path, RenoDx: a.Mod == "RenoDX")))
+        .Concat(Loader is { } o ? [(o, false)] : []).Select(p => new FileInfo(p.Path) is var f ? (f.Name, File: f, p.RenoDx) : default)
+        .Concat(Loader is { } l ? [("OptiScaler.ini", new FileInfo(GameFiles.Find(Path.GetDirectoryName(l)!, "OptiScaler.ini")), false)] : [])
+        .Select(x => $"{x.Name}:{x.File.Length}:{of(x.File, x.RenoDx)}"));
 }
 
-public static class ReShade
+public static partial class ReShade
 {
     static readonly EnumerationOptions Flat = new() { IgnoreInaccessible = true, AttributesToSkip = 0 };
 
@@ -120,11 +125,12 @@ public static class ReShade
     // HDR add-on and the devkit, in both RenoDX repos; not dlssfix, fpslimiter or DLSS-only add-ons).
     static readonly byte[][] ModMarkers = ["utils::shader attached."u8.ToArray()];
 
-    // Luma (Luma-Framework a587ac1) hooks DirectX 11 devices only and swaps its own shaders in at draw time. These builds
+    // Luma (Luma-Framework 6fce340) hooks DirectX 11 devices only and swaps its own shaders in at draw time. These builds
     // (LUMA_PATCH_BYTECODE_SYNC, "Luma-<project>.addon") also rewrite some of the game's shaders as it creates them; Heavy
     // Rain's strips every shader's debug data.
     static readonly string[] LumaPatching = ["Beyond Two Souls", "Burnout Paradise Remastered", "Deus Ex Human Revolution Director's Cut",
-        "INSIDE", "Just Cause 3", "Lego City Undercover", "NieR Replicant", "Snowbreak Containment Zone", "Thief (2014)", "Thumper"];
+        "INSIDE", "Just Cause 3", "Lego City Undercover", "NieR Replicant", "Snowbreak Containment Zone", "Thief (2014)", "Thumper",
+        "Unreal Engine", "Watch Dogs 2"];
     const string LumaEveryShader = "Heavy Rain";
     static readonly byte[][] LumaMarkers = ["Luma: trying to load a config from a newer version of the mod"u8.ToArray()];
 
@@ -215,17 +221,33 @@ public static class ReShade
         if (root != null && At(root, game, exeDir, root) is { } packaged && (packaged.SpecialK != null || ReShadeInstall.Loaded.Contains(Path.GetFileName(packaged.Dll), StringComparer.OrdinalIgnoreCase)))
             return packaged;
         foreach (var dir in new[] { exeDir, GameFiles.DirKey(game.InstallDir) }.Distinct(StringComparer.OrdinalIgnoreCase))
-            if (At(dir, game, exeDir, root) is { } r) return r;
-        // an Unreal exe outside its project's Binaries that loads DLLs from there (Phantom Blade Zero's platform\steam\PBZ.exe):
-        // only a ReShade whose log says this exe loaded it
-        if (engine is not (null or { Family: "Unreal" }) || GameFiles.InBinaries(game.ExePath)) return null;
-        string[] binaries;
-        try { binaries = [.. GameFiles.UnrealFolders(game.InstallDir).Select(GameFiles.DirKey).Where(d => !d.Equals(exeDir, StringComparison.OrdinalIgnoreCase) && !Linked(d, game.InstallDir))]; }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return null; }
-        // looked at as the exe's folder: its Special K and OptiScaler count as they would there
-        foreach (var dir in binaries)
+            if (At(dir, game, exeDir, root) is { } r) return dir.Equals(exeDir, StringComparison.OrdinalIgnoreCase) ? LoadedByBinaries(r, game, engine, exeDir, root) : r;
+        // only a ReShade whose log says this exe loaded it, looked at as the exe's folder: its Special K and OptiScaler count as they would there
+        foreach (var dir in Binaries(game, engine, exeDir))
             if (At(dir, game, exeDir, root, loaded: true) is { Log: { } log } r && LoadedInto(new FileInfo(log), r.Dll, game.ExePath)) return r;
         return null;
+    }
+
+    /// <summary>The Binaries\Win* folders an Unreal exe outside its project's Binaries loads DLLs from (Phantom Blade Zero's
+    /// platform\steam\PBZ.exe); none for any other exe.</summary>
+    static string[] Binaries(Game game, EngineInfo? engine, string exeDir)
+    {
+        if (engine is not (null or { Family: "Unreal" }) || GameFiles.InBinaries(game.ExePath)) return [];
+        try { return [.. GameFiles.UnrealFolders(game.InstallDir).Select(GameFiles.DirKey).Where(d => !d.Equals(exeDir, StringComparison.OrdinalIgnoreCase) && !Linked(d, game.InstallDir))]; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return []; }
+    }
+
+    /// <summary>ReShade64.dll beside the exe with no OptiScaler there, loaded by an OptiScaler in its <see cref="Binaries"/>
+    /// when ReShade.log says this exe loaded it: only as dxgi.dll, with none in the exe's folder or package root, which the game
+    /// searches first. As d3d12.dll the recorder's own d3d12.dll in the exe's folder would keep it from loading.</summary>
+    static ReShadeInstall LoadedByBinaries(ReShadeInstall r, Game game, EngineInfo? engine, string exeDir, string? root)
+    {
+        if (r is not { OptiScalerLoads: null, SpecialK: null, Log: { } log } || !Path.GetFileName(r.Dll).Equals("ReShade64.dll", StringComparison.OrdinalIgnoreCase)
+            || new[] { exeDir, root }.OfType<string>().Any(d => File.Exists(GameFiles.Find(d, "dxgi.dll"))) || !LoadedInto(new FileInfo(log), r.Dll, game.ExePath)) return r;
+        foreach (var dir in Binaries(game, engine, exeDir))
+            if (List(dir) is { } files && OptiScalerLoads(files, game.ExePath, n => n.Equals("dxgi.dll", StringComparison.OrdinalIgnoreCase)) is { Dll: { } opti } o)
+                return r with { OptiScalerLoads = o.Loads, OptiScaler = opti.FullName, OptiScalerIniOdd = o.Odd };
+        return r;
     }
 
     /// <summary>A folder of the install reached through a junction or symlink below <paramref name="installDir"/>.</summary>
@@ -433,11 +455,12 @@ public static class ReShade
 
     /// <summary>Whether an OptiScaler the game loads loads ReShade64.dll: its OptiScaler.ini, next to it, sets [Plugins]
     /// LoadReshade=true (absent or "auto" is false), its DLL, and whether the ini has a header that isn't a whole [name] on
-    /// its line; null = no OptiScaler the game loads.</summary>
-    static (bool? Loads, FileInfo? Dll, bool Odd) OptiScalerLoads(List<FileInfo> files, string exe)
+    /// its line; null = no OptiScaler the game loads (under a name <paramref name="loaded"/> takes, else <see cref="OptiScalerNames"/>'s).</summary>
+    static (bool? Loads, FileInfo? Dll, bool Odd) OptiScalerLoads(List<FileInfo> files, string exe, Func<string, bool>? loaded = null)
     {
-        var opti = files.FirstOrDefault(f => Array.FindIndex(OptiScalerNames, n => n.Equals(f.Name, StringComparison.OrdinalIgnoreCase)) is var i and >= 0
-            && (i < 2 || Imports(exe).Contains(f.Name, StringComparer.OrdinalIgnoreCase)) && IsOptiScaler(f));
+        loaded ??= name => Array.FindIndex(OptiScalerNames, n => n.Equals(name, StringComparison.OrdinalIgnoreCase)) is var i and >= 0
+            && (i < 2 || Imports(exe).Contains(name, StringComparer.OrdinalIgnoreCase));
+        var opti = files.FirstOrDefault(f => loaded(f.Name) && IsOptiScaler(f));
         if (opti == null) return (null, null, false);
         var ini = files.FirstOrDefault(f => f.Name.Equals("OptiScaler.ini", StringComparison.OrdinalIgnoreCase));
         return (ini != null && OptiScalerValue(ini, "Plugins", "LoadReshade")?.Equals("true", StringComparison.OrdinalIgnoreCase) == true, opti,
@@ -463,6 +486,17 @@ public static class ReShade
         var main = Inside(exeDir, OptiScalerValue(new FileInfo(GameFiles.Find(exeDir, "OptiScaler.ini")), "Libraries", "OptiDllPath")) ?? GameFiles.Find(exeDir, "OptiScaler");
         if (!Directory.Exists(main)) main = exeDir;
         return OptiScalerLibraries.Select(n => new[] { GameFiles.Find(main, n), GameFiles.Find(exeDir, n) }.FirstOrDefault(File.Exists)).OfType<string>();
+    }
+
+    /// <summary>Every folder OptiScaler as <paramref name="exeDir"/>'s d3d12.dll may load its original d3d12.dll from before
+    /// d3d12-original.dll: [Plugins] Path, else plugins\ under [Libraries] OptiDllPath, else under OptiScaler\ or the exe's
+    /// folder (dllmain.cpp). Each candidate, not only the one it picks: a wrong guess shadows nothing.</summary>
+    internal static IEnumerable<string> OptiPluginDirs(string exeDir)
+    {
+        var ini = new FileInfo(GameFiles.Find(exeDir, "OptiScaler.ini"));
+        var main = new[] { OptiScalerValue(ini, "Libraries", "OptiDllPath"), "OptiScaler", "." };
+        var dirs = main.OfType<string>().Select(m => Path.Combine(exeDir, m, "plugins"));
+        return OptiScalerValue(ini, "Plugins", "Path") is { } path ? dirs.Prepend(Path.Combine(exeDir, path)) : dirs;
     }
 
     /// <summary><paramref name="relative"/> under <paramref name="dir"/>, canonical; null = rooted (a drive, UNC), escaping
@@ -768,6 +802,79 @@ public static class ReShade
         using var s = new FileStream(f.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         return Convert.ToHexStringLower(System.Security.Cryptography.SHA1.HashData(s));
     }) as string;
+
+    /// <summary>A RenoDX add-on's sorted embedded shader containers and its bytes without its build stamps: the PE and export
+    /// times, the checksum, the debug directory's times and its CodeView GUID and age, the version resource and RenoDX's one
+    /// build-time string. Two builds of the same source hash alike (measured: nightlies of one commit 45 bytes apart, every
+    /// shader the same). A stamp that isn't where and what it should be is left in, and one that would mask code or a shader
+    /// gives null. Null = not a PE this reads, unreadable or over <see cref="MaxBytes"/>.</summary>
+    internal static string? BuildHash(FileInfo f) => Cached(f, "buildhash", () =>
+    {
+        byte[] d;
+        using (var s = new FileStream(f.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            s.ReadExactly(d = new byte[s.Length]);
+        try
+        {
+            var containers = Carved.Dxbc.Containers(d).ToList();
+            var shaders = string.Join(',', containers.Select(c => Convert.ToHexStringLower(System.Security.Cryptography.SHA1.HashData(c.Container))).Order(StringComparer.Ordinal));
+            using var pe = new System.Reflection.PortableExecutable.PEReader(System.Runtime.InteropServices.ImmutableCollectionsMarshal.AsImmutableArray(d));
+            var h = pe.PEHeaders;
+            if (h.PEHeader is not { } opt) return "";
+            var sections = h.SectionHeaders;
+            var kept = sections.Where(x => (x.SectionCharacteristics & (System.Reflection.PortableExecutable.SectionCharacteristics.MemExecute
+                    | System.Reflection.PortableExecutable.SectionCharacteristics.ContainsCode)) != 0)
+                .Select(x => ((long)x.PointerToRawData, (long)x.PointerToRawData + x.SizeOfRawData))
+                .Concat(containers.Select(c => ((long)c.Offset, (long)c.Offset + c.Container.Length))).ToList();
+            var masks = new HashSet<(long At, long N)>();
+            bool Mask(long at, long n)
+            {
+                if (masks.Contains((at, n))) return true;
+                if (masks.Count >= 64 || at < 0 || n <= 0 || at + n > d.Length || kept.Any(r => at < r.Item2 && r.Item1 < at + n)) return false;
+                masks.Add((at, n));
+                return true;
+            }
+            uint U32(long at) => at >= 0 && at + 4 <= d.Length ? System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(d.AsSpan((int)at)) : 0;
+            long Off(uint rva) => sections.FirstOrDefault(x => rva >= x.VirtualAddress && rva < x.VirtualAddress + Math.Max(x.VirtualSize, x.SizeOfRawData)) is { SizeOfRawData: > 0 } x
+                && rva - x.VirtualAddress < x.SizeOfRawData ? x.PointerToRawData + (rva - x.VirtualAddress) : -1;
+            if (!Mask(h.CoffHeaderStartOffset + 4, 4) || !Mask(h.PEHeaderStartOffset + 64, 4)) return "";
+            if (opt.ExportTableDirectory.Size >= 40 && Off((uint)opt.ExportTableDirectory.RelativeVirtualAddress) is var exp and >= 0 && !Mask(exp + 4, 4)) return "";
+            if (Off((uint)opt.DebugTableDirectory.RelativeVirtualAddress) is var dbg and >= 0)
+                for (var e = dbg; e + 28 <= dbg + Math.Min(opt.DebugTableDirectory.Size, 28 * 16); e += 28)
+                {
+                    if (!Mask(e + 4, 4)) return "";
+                    // CodeView: "RSDS", GUID, age, the PDB path; only where its own entry says it is
+                    if (U32(e + 12) == 2 && U32(e + 16) >= 24 && U32(e + 24) is var cv && Off(U32(e + 20)) == cv && U32(cv) == 0x53445352 && !Mask(cv + 4, 20)) return "";
+                }
+            // RT_VERSION's data entries, each a VS_VERSION_INFO block within its entry's size
+            var rsrc = Off((uint)opt.ResourceTableDirectory.RelativeVirtualAddress);
+            var rsize = (long)opt.ResourceTableDirectory.Size;
+            IEnumerable<uint> Entries(long dir, bool versions)
+            {
+                if (dir + 16 > rsize) yield break;
+                var n = Math.Min(64, (int)((U32(rsrc + dir + 12) & 0xFFFF) + (U32(rsrc + dir + 12) >> 16)));
+                for (var i = 0; i < n && dir + 24 + 8L * i <= rsize; i++)
+                    if (!versions || U32(rsrc + dir + 16 + 8L * i) == 16) yield return U32(rsrc + dir + 20 + 8L * i);
+            }
+            var seen = new HashSet<uint>();   // each directory and data entry once, at most 512: a version resource past them stays in
+            if (rsrc >= 0)
+                foreach (var names in Entries(0, true).Where(o => (o & 0x80000000) != 0 && seen.Count < 512 && seen.Add(o)))
+                    foreach (var langs in Entries(names & 0x7FFFFFFF, false).Where(o => (o & 0x80000000) != 0 && seen.Count < 512 && seen.Add(o)))
+                        foreach (var data in Entries(langs & 0x7FFFFFFF, false).Where(o => (o & 0x80000000) == 0 && seen.Count < 512 && seen.Add(o)))
+                            if (data + 8 <= rsize && Off(U32(rsrc + data)) is var at and >= 0 && (U32(at) & 0xFFFF) is var block and >= 40 && block <= U32(rsrc + data + 4)
+                                && at + 40 <= d.Length && d.AsSpan((int)at + 6, 30).SequenceEqual(Encoding.Unicode.GetBytes("VS_VERSION_INFO")))
+                                if (!Mask(at, block)) return "";
+            // RenoDX's build_info timestamp, the one such string, right before its "Build: " label (utils/build_info.hpp, addon.cpp)
+            if (BuildTime().Match(Encoding.Latin1.GetString(d)) is { Success: true } stamp && !stamp.NextMatch().Success
+                && d.AsSpan(stamp.Index + stamp.Length, Math.Min(16, d.Length - stamp.Index - stamp.Length)).TrimStart((byte)0).StartsWith("Build: "u8)
+                && !Mask(stamp.Index, stamp.Length)) return "";
+            foreach (var (at, n) in masks) d.AsSpan((int)at, (int)n).Clear();   // the reader shares d: nothing reads it past here
+            return $"rdx:{Convert.ToHexStringLower(System.Security.Cryptography.SHA1.HashData(Encoding.ASCII.GetBytes(shaders)))}:{Convert.ToHexStringLower(System.Security.Cryptography.SHA1.HashData(d))}";
+        }
+        catch (Exception e) when (e is not (IOException or UnauthorizedAccessException)) { return ""; }
+    }) as string is { Length: > 0 } hash ? hash : null;
+
+    [GeneratedRegex(@"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d")]
+    private static partial Regex BuildTime();
 
     static object? Cached(FileInfo f, string what, Func<object> read)
     {

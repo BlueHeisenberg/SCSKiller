@@ -89,6 +89,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.Warmed when s.Plan?.RecordedOnly == true => "Warmed (recorded pipelines only)",
         GameStatus.Warmed => "Warmed",
         GameStatus.Ready => "Ready to compile",
+        _ when ScsKiller.CheckingAntiCheat(s) => ScsKiller.AntiCheatHeld(s) ? ScsKiller.HeldAntiCheatTitle : ScsKiller.CheckingAntiCheatTitle,
         _ when ScsKiller.NeedsOfflineSession(s) => "Needs an offline session",
         _ when ScsKiller.NeedsSteamStart(s) => "Start it once from Steam",
         GameStatus.NeedsRecording when ScsKiller.NeverRecorded(s) => ScsKiller.NothingRecordedTitle,
@@ -97,6 +98,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         _ when s.StatusReason == ScsKiller.CheckingReason => "Checking…",
         _ when s.StatusReason == ScsKiller.NotCheckedReason => "Not checked",
         _ when s.StatusReason == ScsKiller.CantReachReason => "Not compatible",
+        _ when s.StartFirst => "Start it once first",
         _ when s.StatusReason == SteamShortcutSource.NotReadyReason => "Needs Proton",
         _ => s.ShaderModBlocks ? "Not compiled" : s.Engine?.Encrypted == true ? "Encrypted game files" : s.NotPlanned ? "Not supported" : "Not supported yet",
     };
@@ -108,7 +110,8 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.Warmed => $"driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? " · a recording compiles the rest"
             : ScsKiller.RtAfterRecording(s) ? " · " + ScsKiller.RtAfterRecordingNote : "") + Format.KeyNote(s),
         _ when ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsSteamStart(s) => s.StatusReason,
-        GameStatus.NeedsRecording when s.AnyAntiCheat && !s.RiskEligible => $"{ScsKiller.AntiCheatName(s)} blocks recording",
+        _ when ScsKiller.CheckingAntiCheat(s) => ScsKiller.AntiCheatHeld(s) ? ScsKiller.HeldAntiCheatNote : ScsKiller.CheckingAntiCheatNote,
+        GameStatus.NeedsRecording when s.AnyAntiCheat && !s.RiskEligible => "Contains anti-cheat",
         GameStatus.NeedsRecording when s.RecordingPaused => ScsKiller.PausedNote(Host.Core.Settings),
         GameStatus.NeedsRecording when ScsKiller.NeverRecorded(s) => s.RecorderRefused!,
         GameStatus.NeedsRecording when s.RecorderInstalled && !ScsKiller.RecordedEnough(s) => Format.RecorderOnNote(s),
@@ -141,11 +144,12 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     public bool IsAdd => s.Status is GameStatus.Ready or GameStatus.Stale && !s.CompileUnreached;
     public string AddText => queued ? "In queue" : "Add to queue";
     public bool CanAdd => !queued;
-    public bool IsRecord => s.Status == GameStatus.NeedsRecording && !s.RecorderInstalled && s.NoStutter == null && !ScsKiller.NeedsOfflineSession(s) && !ScsKiller.NeedsSteamStart(s) && !s.RiskEligible && !Shared;
+    public bool IsRecord => s.Status == GameStatus.NeedsRecording && !s.RecorderInstalled && s.NoStutter == null && !ScsKiller.NeedsOfflineSession(s) && !ScsKiller.NeedsSteamStart(s) && !s.RiskEligible && !Shared && !ScsKiller.CheckingAntiCheat(s) && !AmdVkAntiCheat;
+    bool AmdVkAntiCheat => s.StatusReason == ScsKiller.AmdVkAntiCheatReason;   // its page, where an own-risk session is offered
     bool Shared => Collections.RecordedBy(s.Game.Id) != null;   // recorded by its collection's first game's recorder, switched on that game's page
     public bool CanRecord => !s.AnyAntiCheat;
-    public bool IsDetails => s.Status == GameStatus.Warmed || ScsKiller.IsUnchecked(s) || s.CompileUnreached || ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsSteamStart(s) || (s.Status == GameStatus.NeedsRecording && (s.RecorderInstalled || s.NoStutter != null || s.RiskEligible || Shared));
-    public bool IsWhy => s.Status == GameStatus.Unsupported && !ScsKiller.IsUnchecked(s);
+    public bool IsDetails => s.Status == GameStatus.Warmed || ScsKiller.IsUnchecked(s) || s.CompileUnreached || ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsSteamStart(s) || ScsKiller.CheckingAntiCheat(s) || (s.Status == GameStatus.NeedsRecording && (s.RecorderInstalled || s.NoStutter != null || s.RiskEligible || Shared || AmdVkAntiCheat));
+    public bool IsWhy => s.Status == GameStatus.Unsupported && !ScsKiller.IsUnchecked(s) && !ScsKiller.CheckingAntiCheat(s);
     public string Reason => s.StatusReason;
 
     // Play goes through the store (a game the user added: its exe); never for an anti-cheat game (SCSKiller never launches them)
@@ -222,8 +226,7 @@ public sealed class LibraryVm : Bindable
     public bool NoGames => scanned && !Scanning && Games.Count == 0 && Host.Platform.NoGamesNote != null;
     public string NoGamesNote => NoGames ? Host.Platform.NoGamesNote!() : "";
     public bool CanAddGames => Host.Platform.AddGames;
-    public string AddGamesNote => Host.Platform.AddGamesNote ?? "";
-    public bool HasAddGamesNote => Host.Platform.AddGamesNote != null;
+    public bool CanUseGameFolders => Host.Platform.GameFolders;
     /// <summary>The games the user removed from the library, listed while <see cref="ShowHidden"/> is on.</summary>
     public IReadOnlyList<HiddenRow> Hidden { get; private set; } = [];
     public bool HasHidden => Hidden.Count > 0;
@@ -279,6 +282,12 @@ public sealed class LibraryVm : Bindable
     public string CompileQueueText => $"Compile queue ({WaitingCount})";
     public bool CanCompileQueue => WaitingCount > 0;
 
+    /// <summary>The slim summary tiles (Settings' Compact UI) instead of the cards.</summary>
+    public bool Compact => Host.Core.Settings.CompactUi;
+    public bool Cards => !Compact;
+    public string CacheUsed { get; private set; } = "";
+    public string CacheLimitText { get; private set; } = "";
+    public double CachePercent { get; private set; }
     public string CacheLine { get; private set; } = "";
     public string? CacheUpperNote { get; private set; }
     public bool CacheWarn => CacheWarnText != null;
@@ -289,8 +298,21 @@ public sealed class LibraryVm : Bindable
     public string? OldDriverNote { get; private set; }
     public bool HasOldDriver => OldDriverNote != null;
 
+    public bool CanChangeDriverMode => Host.Platform.DriverUpdateModes;
+    public string DriverMode => !CanChangeDriverMode ? "Manual" : DriverUpdateChoice.Of(Host.Core.Settings) switch
+    {
+        0 => "Ask me first", 1 => "When the PC is idle", 2 => "Right away", _ => "Off",
+    };
+    public string DriverModeNote => !CanChangeDriverMode ? "Games to rebuild show as Needs rebuilding" : DriverUpdateChoice.Of(Host.Core.Settings) switch
+    {
+        0 => "A notification offers compile now, when idle, or skip",
+        1 => Host.Platform.IdleRebuildNote,
+        2 => "Rebuilds on its own, paused while a game runs",
+        _ => "Rebuild games yourself from the Library",
+    };
     public string Threads => ScsKiller.UsedThreads(Host.Core.Settings.Threads).ToString();
     public string ThreadsOf => $"of {Environment.ProcessorCount} threads";
+    public string SpeedNote { get; private set; } = "";
 
     public void Load()
     {
@@ -361,11 +383,16 @@ public sealed class LibraryVm : Bindable
         RecommendedCount = RecommendedToAdd().Count;
         WaitingCount = queue.Count(q => q.Stage == QueueStage.Waiting);
         var storeText = Fmt.FoundIn(Games.Select(r => r.StoreName));
+        int added = list.Count(g => Fmt.StoreName(g.Game) == Fmt.AddedByYou), found = list.Count - added;
         bool allUnreal = list.Count > 0 && list.All(g => g.Engine?.Family == "Unreal");
         Summary = Scanning && list.Count == 0 ? "Looking for games…"
-            : $"{list.Count} {(allUnreal ? "Unreal Engine " : "")}game{(list.Count == 1 ? "" : "s")} found{(storeText.Length > 0 ? " in " + storeText : "")} · {ready} ready to compile";
+            : $"{(found > 0 ? $"{found} {(allUnreal ? "Unreal Engine " : "")}game{(found == 1 ? "" : "s")} found{(storeText.Length > 0 ? " in " + storeText : "")} · " : "")}{(added > 0 ? $"{added} added by you · " : "")}{ready} ready to compile";
 
         cache.Request();
+
+        var rate = ScsKiller.MeasuredRate(list);
+        SpeedNote = (core.Settings.Priority == WarmPriority.BelowNormal ? "Below-normal priority" : "Idle priority")
+                    + (rate is { } r ? $" · about {r:N0} pipelines/s measured" : "");
         Changed();
     }
 
@@ -403,6 +430,14 @@ public sealed class LibraryVm : Bindable
         var (usage, limit, capped, old, _) = c;
         var fullest = limit?.Bytes != null ? c.Fullest : null;   // with no limit the header shows the whole cache
         OldDriverNote = old >= OldDriverShown ? $"{Format.Bytes(old)} the new driver no longer uses" : null;
+        // the Cache page's total: NVIDIA from 621 keeps part of the cache in the games' D3DSCache folders
+        var windows = fullest == null ? Host.Core.WindowsCacheBytes : 0;
+        CacheUsed = fullest is { } fu ? Format.Bytes(fu) : Format.Bytes(usage.BytesOnDisk + windows);
+        // with the Windows cache the line under the bar carries the driver's size and limit
+        CacheLimitText = windows > 0 ? ""
+            : limit is null ? "limit unknown" : limit.Bytes is { } lt ? fullest != null ? $"of {Format.Bytes(lt)} in the fullest game"
+            : capped is { } cb ? $"· DirectX 12 {Format.Bytes(cb)} of {Format.Bytes(lt)} limit" : $"of {Format.Bytes(lt)} limit" : "no limit";
+        CachePercent = limit?.Bytes is { } max && max > 0 ? Math.Min(100, 100.0 * (fullest ?? capped ?? usage.BytesOnDisk) / max) : 0;
         CacheLine = fullest is { } f && limit?.Bytes is { } lb ? $"{Format.Bytes(f)} of {Format.Bytes(lb)} in the fullest game"
             : Format.CacheSplit(usage, limit, capped, Host.Core.WindowsCacheBytes);
         CacheUpperNote = Format.CacheUpperNote(usage);

@@ -5,6 +5,7 @@ using Avalonia.Controls.Shapes;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Threading;
@@ -25,6 +26,7 @@ public sealed partial class MainWindow : Window
     const double CaptionButtonsWidth = 3 * 46;
 
     readonly (Button Item, Type Page)[] pages;
+    readonly double paneWidth;
     readonly Dictionary<Type, Control> cached = [];
     Type? shown;
     readonly List<(Type Page, object? Arg)> history = [];
@@ -38,6 +40,9 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         AddHandler(PointerPressedEvent, OnMouseNav, RoutingStrategies.Tunnel);
         pages = [(LibraryItem, typeof(LibraryPage)), (QueueItem, typeof(QueuePage)), (CacheItem, typeof(CachePage)), (SettingsItem, typeof(SettingsPage)), (AboutItem, typeof(AboutPage))];
+        paneWidth = Nav.OpenPaneLength;
+        ((Panel)LibraryItem.Content!).Children.OfType<TextBlock>().Last().PropertyChanged += (_, e) => { if (e.Property == TextBlock.FontSizeProperty) FitPane(); };
+        FitPane();
         ShowGpu();
         var bell = new Coalesced(Host.Ui, () => { ShowBell(); Activation.ToastNews(); });   // targeting reads the games, the account and the news
         Host.Core.GameChanged += _ => bell.Request();
@@ -60,6 +65,15 @@ public sealed partial class MainWindow : Window
     {
         base.OnPropertyChanged(change);
         if (change.Property == IsExtendedIntoWindowDecorationsProperty) ShowCaptionInset();
+    }
+
+    /// <summary>The open pane is as wide as its widest label needs, as with a large Text size, and never narrower than set.</summary>
+    void FitPane()
+    {
+        var labels = pages.Select(p => ((Panel)p.Item.Content!).Children.OfType<TextBlock>().Last()).ToList();
+        var widest = labels.Max(l => l.Margin.Left + new FormattedText(l.Text ?? "", System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+            new Typeface(l.FontFamily, l.FontStyle, l.FontWeight), l.FontSize, null).WidthIncludingTrailingWhitespace);
+        Nav.OpenPaneLength = Math.Max(paneWidth, widest + 16);
     }
 
     /// <summary>The title row ends at the caption buttons, so the bell sits flush against them. The screenshots leave their room
@@ -231,7 +245,7 @@ public sealed partial class MainWindow : Window
         foreach (var item in shownNews) list.Children.Add(NewsCard(item, unread.Contains(item.Id)));
         BellFlyout.Content = new StackPanel
         {
-            Width = 360, Spacing = 12,
+            [!WidthProperty] = new DynamicResourceExtension("TextFit.360"), Spacing = 12,
             Children =
             {
                 new TextBlock { Text = "Notifications", Classes = { "Section" } },

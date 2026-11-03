@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 
 namespace SCSKiller.Ui.Controls;
@@ -34,12 +35,13 @@ public sealed class ContentDialog : Border
     Button? primary, preferred;
     Control? body;
     StackPanel? column;
+    ScrollViewer? scroller;
     TaskCompletionSource<ContentDialogResult>? done;
     DialogLayer? layer;
 
     public ContentDialog()
     {
-        (CornerRadius, BorderThickness, MinWidth, MaxWidth) = (new(8), new(1), 320, 548);
+        (CornerRadius, BorderThickness, MinWidth) = (new(8), new(1), 320);
         (HorizontalAlignment, VerticalAlignment, ClipToBounds) = (HorizontalAlignment.Center, VerticalAlignment.Center, true);
         BoxShadow = BoxShadows.Parse("0 8 32 0 #47000000");
         Res(BackgroundProperty, "SolidBackgroundFillColorBaseBrush");
@@ -67,10 +69,15 @@ public sealed class ContentDialog : Border
         (primary, preferred, body) = (null, null, null);
         column?.Children.Clear();   // frees the content for the new column
         column = new StackPanel();
-        if (Title != null) column.Children.Add(new TextBlock { Text = Title, FontSize = 20, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap, Margin = new(0, 0, 0, 12) });
+        if (Title != null)
+        {
+            var title = new TextBlock { Text = Title, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap, Margin = new(0, 0, 0, 12) };
+            Res(TextBlock.FontSizeProperty, "TextSize.20", title);
+            column.Children.Add(title);
+        }
         if (Content is Control c) column.Children.Add(body = c);
         else if (Content != null) column.Children.Add(new TextBlock { Text = Content.ToString(), TextWrapping = TextWrapping.Wrap });
-        var top = new Border { Padding = new(24), Child = new ScrollViewer { Content = column, MaxHeight = ContentMaxHeight } };
+        var top = new Border { Padding = new(24), Child = scroller = new ScrollViewer { Content = column, MaxHeight = ContentMaxHeight } };
         Res(BackgroundProperty, "LayerFillColorAltBrush", top);
 
         // as WinUI lays them out: equal columns, a lone button in the right half
@@ -108,6 +115,8 @@ public sealed class ContentDialog : Border
     {
         var first = body?.GetSelfAndVisualDescendants().OfType<InputElement>().FirstOrDefault(e => e.Focusable && e.IsEffectivelyEnabled && e.IsEffectivelyVisible);
         (first ?? preferred ?? (InputElement)this).Focus();
+        // focus scrolls a long content to that control: open at the title, as when it all fits
+        Dispatcher.UIThread.Post(() => scroller?.ScrollToHome(), DispatcherPriority.Loaded);
     }
 
     void OnKey(object? _, KeyEventArgs e)

@@ -267,6 +267,9 @@ void scsk_layer_admit() {
         g_exe_dir = exe.substr(0, exe.find_last_of(L'\\') + 1);  // npos + 1 = 0: none, which refuses
         std::string read;
         const bool whole = !g_exe_dir.empty() && ini_bytes(g_exe_dir + L"scskiller.ini", read);
+        // as on Linux: no scskiller.ini beside the exe is no folder the app armed, so no refusal to report
+        const DWORD gone = whole || g_exe_dir.empty() || GetFileAttributesW((g_exe_dir + L"scskiller.ini").c_str()) != INVALID_FILE_ATTRIBUTES ? 0 : GetLastError();
+        const bool unarmed = gone == ERROR_FILE_NOT_FOUND || gone == ERROR_PATH_NOT_FOUND;
         t_ini = &read;
         struct Live {
             ~Live() { t_ini = nullptr; }
@@ -294,7 +297,7 @@ void scsk_layer_admit() {
                     fprintf(log, "risk=1: recording at the user's own risk, anti-cheat seen: %s\n", seen.c_str()), fclose(log);
         }
         g_admission = why ? -1 : 1;
-        refused(why);
+        if (!unarmed) refused(why);
     });
 }
 #else
@@ -320,8 +323,14 @@ void scsk_layer_admit() {
         g_exe_dir = exe.substr(0, exe.find_last_of('/') + 1);  // npos + 1 = 0: none, which refuses
         std::string read;
         const bool whole = !g_exe_dir.empty() && ini_bytes(g_exe_dir + "scskiller.ini", read);
-        const std::string rec = recorder_dir_now(g_exe_dir);
-        t_ini = &read, t_rec = &rec;
+        // no scskiller.ini beside the exe: not a folder the app armed (a process that inherited the game's SteamAppId), so no
+        // refusal to report. An armed folder's other or renamed exe still writes one.
+        struct stat ini_st;
+        const bool unarmed = !whole && !g_exe_dir.empty() && lstat((g_exe_dir + "scskiller.ini").c_str(), &ini_st) && errno == ENOENT;
+        RecFd pinned;
+        pin_rec(recorder_dir_now(g_exe_dir), pinned);
+        const std::string& rec = pinned.real;
+        t_ini = &read, t_rec = &pinned;
         struct Live {
             ~Live() { t_ini = nullptr, t_rec = nullptr; }
         } live;
@@ -356,7 +365,7 @@ void scsk_layer_admit() {
             if (why && g_csv) fclose(g_csv), g_csv = nullptr;
         }
         g_admission = why ? -1 : 1;
-        refused(why);
+        if (!unarmed) refused(why);
     });
 }
 #endif

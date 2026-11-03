@@ -17,6 +17,11 @@ public sealed record InstanceIdentity(string Key, string? Aumid, bool GameFolder
     public const string ProductionKey = "SCSKiller";
     /// <summary>The argument Windows starts the exe with when a toast is clicked while no instance is registered.</summary>
     public const string ToastRelaunchArg = "----AppNotificationActivated:";
+    /// <summary>A test identity's toast argument naming its <see cref="Folder"/>: a click that reaches another identity, its
+    /// exe started without SCSKILLER_DATA_DIR after the test run quit, is ignored there.</summary>
+    public const string FolderArg = "folder";
+
+    public bool RefusesToast(IDictionary<string, string> args) => args.TryGetValue(FolderArg, out var f) && f != Folder;
 
     public bool Production => Aumid == null;
 

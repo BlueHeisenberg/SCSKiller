@@ -57,6 +57,8 @@ public sealed partial class ScsKiller
         return !Settings.BeforeAfter ? "Before and after recording is off in Settings"
             : s.Engine?.GraphicsApi is not { } api || !api.Contains("D3D12") && !api.StartsWith("D3D11") && !vulkan
                 ? s is { Status: GameStatus.Unsupported, Engine: { } e } && Vulkan.VulkanPlan.IsVulkan(e) ? s.StatusReason : "Only for DirectX 12 and DirectX 11 games"
+            : AntiCheatHeld(s) ? "Not available: this game couldn't be fully checked for anti-cheat"
+            : AntiCheatOpen(s) ? "Not until its anti-cheat check finishes"
             : s.AnyAntiCheat ? "Not for games with anti-cheat"
             : s.NoStutter != null ? "Not for games without shader compilation stutter"
             : !(frames11 ? RecorderWanted(s.RecorderOverride, Settings.RecordAllGames, skip, true) : s.RecorderEffective)
@@ -603,6 +605,7 @@ public sealed partial class ScsKiller
     /// the clear may have missed some of the game's.</summary>
     (HashSet<string>? Survivors, bool Gap) ClearBeforeRun(string gameId)
     {
+        RefuseShared(gameId);   // before anything is set aside
         SetAsideSteam(gameId);   // refused before anything is cleared
         // the last run's GLCache files still aside: a set-aside over the run's files would make this one warm
         if (OperatingSystem.IsWindows() && PutBackGl(gameId) is { } waits) throw new InvalidOperationException(waits.Length > 0 ? waits : AsideHeldNote);

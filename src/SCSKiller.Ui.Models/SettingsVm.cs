@@ -138,11 +138,16 @@ public sealed class SettingsVm : Bindable
         set
         {
             if (value < 0 || value == DriverMode) return;
+            var was = S;
             Save(DriverUpdateChoice.With(S, value));
             try { Host.Core.ApplyDriverUpdateMode(); }  // user action: registers or removes the sign-in check
-            catch (Exception e) { ApplyMessage = "Couldn't update the sign-in check: " + e.Message; ApplySeverity = InfoBarSeverity.Error; Changed(); }
+            catch (Exception e) when (e.Message == AppStore.MovedRefusal) { Save(was); DriverModeMessage = e.Message; Changed(); }
+            catch (Exception e) { DriverModeMessage = "Couldn't update the sign-in check: " + e.Message; Changed(); }
         }
     }
+    /// <summary>The driver-update choice's refusal or failure, in its own card: the cache card's message hides with its limit.</summary>
+    public string? DriverModeMessage { get; set; }
+    public bool HasDriverModeMessage => DriverModeMessage != null;
     public bool? PauseWhileGaming { get => S.PauseWhileGaming; set { if (value is { } v && v != S.PauseWhileGaming) Save(S with { PauseWhileGaming = v }); } }
     public double BackgroundThreads { get => UsedBackground; set { if ((int)value != UsedBackground) Save(S with { BackgroundThreads = (int)value }); } }
     static int UsedBackground => ScsKiller.UsedThreads(S.BackgroundThreads);
@@ -180,7 +185,7 @@ public sealed class SettingsVm : Bindable
             var games = Host.Core.Games;
             var skipped = games.Where(g => g.RecorderSkip is ScsKiller.SkipAntiCheat or ScsKiller.SkipShaderMod or ScsKiller.SkipForeignDll or ScsKiller.SkipModNotChainable
                     or ScsKiller.SkipVulkanMod or ScsKiller.SkipNeedsAdmin or ScsKiller.SkipPackageD3D12 or ScsKiller.SkipStreamline or ScsKiller.SkipShaderInjector or ScsKiller.SkipAgsMod)
-                .GroupBy(g => g.RecorderSkip).OrderByDescending(x => x.Count()).Select(x => $" · {x.Count()} skipped: {x.Key}");
+                .GroupBy(g => g.RecorderSkip == ScsKiller.SkipAntiCheat && ScsKiller.AntiCheatOpen(g) ? ScsKiller.AntiCheatHeld(g) ? ScsKiller.HeldSkipped : "anti-cheat check unfinished" : g.RecorderSkip).OrderByDescending(x => x.Count()).Select(x => $" · {x.Count()} skipped: {x.Key}");
             int n = games.Count(g => g.RecorderInstalled);
             return $"Recording in {n} game{(n == 1 ? "" : "s")}" + string.Concat(skipped);
         }
@@ -211,6 +216,10 @@ public sealed class SettingsVm : Bindable
     public string RecordingSpace => Host.Core.Games.Where(g => g.RecordingBytes > 0).ToList() is { Count: > 0 } r
         ? $"Recordings use {Format.Bytes(r.Sum(g => g.RecordingBytes))} in {r.Count} game{(r.Count == 1 ? "" : "s")}" : "No recordings on disk";
     public bool ShowsStartAtSignIn => Host.Platform.StartAtSignIn;
+    /// <summary>A moved data folder's copy leaves the shared sign-in entry alone, whose state the checkbox still reads back.</summary>
+    public bool CanChangeStart => AppStore.Moved == null;
+    public string? StartMessage { get; set; } = AppStore.Moved != null ? AppStore.MovedRefusal : null;
+    public bool HasStartMessage => StartMessage != null && ShowsStartAtSignIn;
     /// <summary>The entry as read back where it can be (<see cref="Host.StartsAtSignIn"/>), else the setting.</summary>
     public bool? StartWithWindows
     {
@@ -218,16 +227,25 @@ public sealed class SettingsVm : Bindable
         set
         {
             if (value is not { } v || v == StartWithWindows) return;
+            var was = S.StartWithWindows;
             S = S with { StartWithWindows = v };   // no Refresh before it applies: the read-back would undo the click
-            _ = ApplyStartAsync();
+            _ = ApplyStartAsync(was);
         }
     }
-    async Task ApplyStartAsync()
+    async Task ApplyStartAsync(bool was)
     {
         try { await Host.StartWithWindowsChanged(); }
+        catch (InvalidOperationException e) when (e.Message == AppStore.MovedRefusal)
+        {
+            S = S with { StartWithWindows = was };
+            StartMessage = e.Message;
+            Changed();
+        }
         finally { Changed(nameof(StartWithWindows)); }
     }
     public static string StartText { get; } = OperatingSystem.IsWindows() ? "Start SCSKiller when Windows starts" : "Start when you sign in";
+    public static string RemoveRecordersNote { get; } = "Removes the recorder from every game and quits. Use it before deleting "
+        + (OperatingSystem.IsWindows() ? "the portable folder." : "the AppImage.");
     public static string StartNote { get; } = OperatingSystem.IsWindows() ? "It waits in the notification area, next to the clock, to offer a rebuild after a driver update."
         : "It waits in the background to offer a rebuild after a driver update.";
     // no sign-in task on Linux: the running app notifies
@@ -267,6 +285,7 @@ public sealed class SettingsVm : Bindable
     }
     public bool ShowsCloseQuits => Host.Platform.Tray;
     public bool? CloseQuits { get => S.CloseQuits; set { if (value is { } v && v != S.CloseQuits) Save(S with { CloseQuits = v }); } }
+    public bool? CompactUi { get => S.CompactUi; set { if (value is { } v && v != S.CompactUi) Save(S with { CompactUi = v }); } }
     public string CloseQuitsNote => Host.Tray.Shown
         ? "A running compile finishes saving first, like Quit in the notification area. Off: closing the window keeps SCSKiller in the tray. Right-click its icon to quit."
         : "No tray icon on this desktop, so closing the window quits.";
@@ -348,6 +367,7 @@ public sealed class SettingsVm : Bindable
 
     public bool ShowsShaderCleanup => D3DSCache.CleanupKept() != null;
     public string ShaderCleanupAction => D3DSCache.CleanupKept() == true ? "Let Windows clear them again" : "Keep Windows from clearing compiled shaders";
+    public string ShaderCleanupLine => D3DSCache.CleanupKept() == true ? "Windows' automatic disk cleanup no longer clears compiled shaders." : "Storage Sense can delete the DirectX shader cache.";
     public bool CanApplyShaderCleanup { get; private set; } = true;
     public string? ShaderCleanupMessage { get; set; }
     public InfoBarSeverity ShaderCleanupSeverity { get; set; }
@@ -360,7 +380,8 @@ public sealed class SettingsVm : Bindable
         (ShaderCleanupMessage, ShaderCleanupSeverity) = await KeepShadersAsync(D3DSCache.CleanupKept() != true) switch
         {
             null => ("Cancelled.", InfoBarSeverity.Informational),
-            { Ok: true } r => (r.Message, InfoBarSeverity.Success),
+            { Ok: true } => ((string?)null, InfoBarSeverity.Success),   // the line beside the button shows the new state
+            { Message: AppStore.MovedRefusal } r => (r.Message, InfoBarSeverity.Error),
             var r => ("Not changed: " + r.Message, InfoBarSeverity.Error),
         };
         CanApplyShaderCleanup = true;
@@ -388,6 +409,7 @@ public sealed class SettingsVm : Bindable
         {
             null => ("Cancelled.", InfoBarSeverity.Informational),
             { Ok: true } => ($"Shader cache limit set to {label}.", InfoBarSeverity.Success),
+            { Message: AppStore.MovedRefusal } r => (r.Message, InfoBarSeverity.Error),
             var r => ("The limit was not changed: " + r.Message, InfoBarSeverity.Error),
         };
         CanApplyLimit = true;
@@ -422,6 +444,7 @@ public sealed class SettingsVm : Bindable
             {
                 null => ("Cancelled.", InfoBarSeverity.Informational),
                 { Ok: true } r => (r.Message is { Length: > 0 } m ? m : NvidiaBackend.AutoShaderOutcome(level, changed: true), InfoBarSeverity.Success),
+                { Message: AppStore.MovedRefusal } r => (r.Message, InfoBarSeverity.Error),
                 var r => ("Couldn't apply: " + r.Message.Split('\n')[0], InfoBarSeverity.Error),   // NvOSC's full output goes to the log only
             };
         }

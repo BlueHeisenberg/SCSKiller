@@ -33,13 +33,15 @@ public sealed class CacheVm : Bindable
     string split = "";
     readonly BackgroundRead<(CacheInventory Inventory, CacheUsage Usage, CacheLimit? Limit, long? Capped, long? Fullest)> cache;
 
+    public string CacheFolderNote => Host.Platform.CacheFolderNote;
+
     public CacheVm()
     {
         cache = new("Cache page", () => (Host.Core.CacheInventory(), Host.Core.Vendor.GetCacheUsage(), Host.Core.Vendor.GetCacheLimit(), (Host.Core.Vendor as AmdBackend)?.AppCache.DxcBytes(), LibraryVm.Fullest()),
             r =>
             {
                 read = r.Inventory;
-                split = Format.CacheSplit(r.Usage, r.Limit, r.Capped, Host.Core.WindowsCacheBytes);
+                split = Format.CacheSplit(r.Usage, r.Limit, r.Capped, Host.Core.WindowsCacheBytes, r.Inventory.Groups.Sum(g => g.Bytes));
                 UpperNote = Format.CacheUpperNote(r.Usage);
                 var fullest = r.Limit?.Bytes != null ? r.Fullest : null;
                 Warning = Format.CacheWarning(Host.Core.Vendor.Vendor, r.Limit, fullest ?? r.Capped ?? r.Usage.BytesOnDisk, fullest != null);
@@ -110,8 +112,8 @@ public sealed class CacheVm : Bindable
 
     public IReadOnlyList<CacheGroupRow> Groups => read?.Groups.Select(g =>
     {
-        var (title, caption) = Texts(g.Kind, read.DriverInstalled);
-        var items = g.Items.Select(i => new CacheItemRow(ItemName(g.Kind, i), Format.OnDisk(i.Bytes, i.InUse), read.FoldersOf(i), i.Note, i, g.Kind, CanDelete && !i.Kept, g.Kind == CacheGroupKind.Installed ? GameIcon(i) : null)).ToList();
+        var (title, caption) = CacheNames.Texts(g.Kind, read.DriverInstalled);
+        var items = g.Items.Select(i => new CacheItemRow(CacheNames.Item(g.Kind, i), Format.OnDisk(i.Bytes, i.InUse), read.FoldersOf(i), i.Note, i, g.Kind, CanDelete && !i.Kept, g.Kind == CacheGroupKind.Installed ? GameIcon(i) : null)).ToList();
         return new CacheGroupRow(title, Format.OnDisk(g.Bytes, g.InUse), caption, g.Note, items, g.Kind != CacheGroupKind.Unattributed, g, CanDelete && g.Items.Any(i => !i.Kept));
     }).ToList() ?? [];
 
@@ -121,18 +123,6 @@ public sealed class CacheVm : Bindable
 
     /// <summary>An icon finished loading: the rows read it again.</summary>
     public void IconsChanged() => Changed();
-
-    static string ItemName(CacheGroupKind kind, CacheItem i) => kind == CacheGroupKind.Unattributed && i.Name.Length == 8 && i.Name.All(char.IsAsciiHexDigit) ? $"Unknown app {i.Name}" : i.Name;
-
-    public static (string Title, string Caption) Texts(CacheGroupKind kind, DateTime? installed) => kind switch
-    {
-        CacheGroupKind.Installed => ("Installed games", "Games in your library, by the cache keys SCSKiller learned for them."),
-        CacheGroupKind.Uninstalled => ("Uninstalled games", "Games SCSKiller compiled or saw running that aren't in your library now. Named by their exe."),
-        CacheGroupKind.OldDriver => ("Old driver", $"Written before the current driver was installed on {installed?.ToLocalTime():d}. It hasn't used them since."),
-        CacheGroupKind.OldBuild => ("Earlier SCSKiller compiles", "Left by earlier compiles. The games don't read them."),
-        CacheGroupKind.OtherVendor => ("Other GPU vendor", "Caches for another brand of GPU than the one SCSKiller compiles for."),
-        _ => ("Other apps and games", "Desktop apps, and games SCSKiller hasn't compiled or seen running. A game moves to its group once SCSKiller sees it running."),
-    };
 
     /// <summary>The confirm's text for deleting <paramref name="items"/> of one group: what happens after.</summary>
     public static string Consequence(CacheGroupKind kind, IReadOnlyList<CacheItem> items) => kind switch

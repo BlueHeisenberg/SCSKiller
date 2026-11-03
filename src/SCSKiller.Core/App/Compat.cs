@@ -65,9 +65,11 @@ public sealed record CompatReport(string GameId, string StoreBuildKey, CompatCho
     /// <summary>"10.0.26300": Windows' major, minor and build number only.</summary>
     public static string ThisWindows => Environment.OSVersion.Version is var v ? $"{v.Major}.{v.Minor}.{v.Build}" : "";
 
-    /// <summary>The problem report's system line: "Windows: 10.0.26300", or from Linux "Linux: 7.2, Proton GE-Proton11-7".</summary>
-    public static string SystemLine(LinuxSystem? linux) =>
-        linux == null ? $"Windows: {ThisWindows}" : $"Linux: {linux.Kernel}, Proton {linux.Proton ?? "unknown"}";
+    /// <summary>The problem report's system line: "Windows: 10.0.26300", with ", Smart App Control on" or ", Smart App Control
+    /// in evaluation" (<paramref name="smartAppControl"/>, <see cref="ScsKiller.SmartAppControl"/>), or from Linux "Linux: 7.2, Proton GE-Proton11-7".</summary>
+    public static string SystemLine(LinuxSystem? linux, int? smartAppControl = null) =>
+        linux == null ? $"Windows: {ThisWindows}" + smartAppControl switch { 1 => ", Smart App Control on", 2 => ", Smart App Control in evaluation", _ => "" }
+        : $"Linux: {linux.Kernel}, Proton {linux.Proton ?? "unknown"}";
 
     public static CompatCompile CompileOf(GameState s, bool maximumPlans) => new(
         s.Status == GameStatus.Unsupported && (s.WarmedAt != null || s.CompileFailed) ? CompatStatus.NotSupported

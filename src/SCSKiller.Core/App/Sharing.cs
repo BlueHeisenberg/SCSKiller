@@ -30,14 +30,16 @@ public sealed record UploadDll(string Name, string Sha1);
 /// JSON. <see cref="GpuModel"/>: the adapter's name only. <see cref="Cold"/>: the pipeline creates the driver compiled;
 /// <see cref="Keys"/>: four base64url strings, each the record keys (20 bytes each, back to back) whose slowest create took
 /// under 10 ms, 10-50, 50-200, and 200 ms or more. <see cref="HitCheck"/>: the run's misses read from the game's adapter db,
-/// sent only to a server that takes them ("hitcheck"). A run the recorder didn't log has no cold creates and no keys:
-/// both are left out, never 0 (<see cref="HitCheckOnly"/>).</summary>
+/// sent only to a server that takes them ("hitcheck"). <see cref="ColdTupleKnown"/>: of the cold creates, the ones whose
+/// shaders and root signature the compile had (the csv's tuple_known), sent only to a server that takes it ("tuple_known").
+/// A run the recorder didn't log has no cold creates and no keys: both are left out, never 0 (<see cref="HitCheckOnly"/>).</summary>
 public sealed record OutcomeReport(string ContentHash, string Vendor, string? GpuModel, string? DriverVersion, string AppVersion, string? RsRule,
     int PlannerVersion,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Cold = 0,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string[]? Keys = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IdentityReport? Identity = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HitCheck? HitCheck = null)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HitCheck? HitCheck = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? ColdTupleKnown = null)
 {
     // A ceiling, not a sample: 100,000 keys of 20 bytes in base64url are 2.7 MB, within the edge's 4 MB with room to spare
     public const int MaxKeys = 100_000;
@@ -49,8 +51,8 @@ public sealed record OutcomeReport(string ContentHash, string Vendor, string? Gp
     /// <paramref name="after"/>, ended (a later launch, its <c>#end</c>, or the watched run <paramref name="played"/>
     /// exiting) and created at least <paramref name="minCreates"/> pipelines; null when there is none yet. Its PSO creates
     /// the driver compiled (<see cref="SessionLog.IsCompile"/>) are counted, and the <see cref="MaxKeys"/> slowest distinct
-    /// keys kept, into <paramref name="about"/>. The game's own pipeline library and ray tracing state objects are left
-    /// out: a cached state object can take 25 ms.</summary>
+    /// keys kept, into <paramref name="about"/>, and the tuple_known ones when <paramref name="about"/> has a <see cref="ColdTupleKnown"/>.
+    /// The game's own pipeline library and ray tracing state objects are left out: a cached state object can take 25 ms.</summary>
     public static OutcomeReport? Build(string csvPath, string? exeFileName, DateTimeOffset after, PlayWindow? played, IReadOnlySet<string>? rayQuery,
         OutcomeReport about, long minCreates = 1, PlayWindow? hitRun = null)
     {
@@ -63,11 +65,12 @@ public sealed record OutcomeReport(string ContentHash, string Vendor, string? Gp
             if (i == launches.Count - 1 && l.End == null && !exited) return null;
             if (l.Creates.Count(c => c.Kind is 'G' or 'C' or 'S') < minCreates) continue;   // a crash at start, a launcher-like run
             var slowest = new Dictionary<string, double>();
-            long cold = 0;
-            foreach (var (_, kind, ms, key, _, _) in l.Creates)
+            long cold = 0, tupleKnown = 0;
+            foreach (var (_, kind, ms, key, _, _, tuple) in l.Creates)
             {
                 if (kind is 'R' or 'A' || !SessionLog.IsCompile(kind, ms, key, rayQuery)) continue;
                 cold++;
+                if (tuple) tupleKnown++;
                 if (key is { Length: 40 } && key.All(char.IsAsciiHexDigit))
                     slowest[key.ToLowerInvariant()] = Math.Max(ms, slowest.GetValueOrDefault(key.ToLowerInvariant()));
             }
@@ -76,7 +79,8 @@ public sealed record OutcomeReport(string ContentHash, string Vendor, string? Gp
                 buckets[ms < 10 ? 0 : ms < 50 ? 1 : ms < 200 ? 2 : 3].AddRange(Convert.FromHexString(key));
             // the hit check goes only with the launch it was read after: a skipped short run's would describe another
             var hits = hitRun is { } w && w.From.ToUnixTimeMilliseconds() <= start && start <= w.To.ToUnixTimeMilliseconds() ? about.HitCheck : null;
-            return about with { Cold = cold, Keys = [.. buckets.Select(b => Base64Url.EncodeToString([.. b]))], HitCheck = hits };
+            return about with { Cold = cold, Keys = [.. buckets.Select(b => Base64Url.EncodeToString([.. b]))], HitCheck = hits,
+                ColdTupleKnown = about.ColdTupleKnown != null ? tupleKnown : null };
         }
         return null;
     }
@@ -147,6 +151,7 @@ public sealed class Sharing
     readonly HttpClient http;
     readonly TimeProvider clock;
     DateTimeOffset backoffUntil, reportBackoffUntil;
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> nothingSaid = new();
 
     /// <param name="enabled">Settings.ShareRecordings, read at each call: off means no work and no request at all</param>
     /// <param name="keyring">Linux: the system keyring, tried first (<see cref="TokenFile{T}"/>)</param>
@@ -207,8 +212,9 @@ public sealed class Sharing
         CancellationToken ct = default)
     {
         var db = new FileInfo(Path.Combine(gameDir, "recording.db"));
-        if (!enabled() || !db.Exists || clock.GetUtcNow() < backoffUntil) return null;
-        Problem = null;   // per game; a back-off's stays
+        if (clock.GetUtcNow() < backoffUntil) return null;   // its problem stays
+        Problem = null;   // per game
+        if (!enabled() || !db.Exists) return null;
         // "|3": re-examines stamps that marked an over-cap or a draws-only recording as done; the shader list: flags once it is there
         var list = new FileInfo(Path.Combine(gameDir, ShippedFile));
         var drawsOff = DrawsRefused();
@@ -238,7 +244,7 @@ public sealed class Sharing
             catch (InvalidDataException e) when (draws.Count == 0)   // e.g. no PSOs yet: not again until the recording changes
             {
                 Community.Write(shared, last with { Stamp = stamp, Build = BuildKey(), WaitUntil = null });
-                Problem = $"A recording has nothing to share ({e.Message}).";
+                if (nothingSaid.TryAdd($"{gameDir}|{e.Message}", 0)) Problem = $"A recording has nothing to share ({e.Message}).";   // once a session: the recording grows each run
                 return null;
             }
             catch (InvalidDataException) { }   // the draws go alone
@@ -372,8 +378,9 @@ public sealed class Sharing
     public async Task<SharedRecording?> ShareVulkanAsync(string gameDir, string storeBuildKey, Func<UploadMeta> meta, CancellationToken ct = default)
     {
         var foz = new FileInfo(Path.Combine(gameDir, VulkanPlan.RecordingFile));
-        if (!enabled() || !foz.Exists || clock.GetUtcNow() < backoffUntil) return null;
-        Problem = null;   // per game; a back-off's stays
+        if (clock.GetUtcNow() < backoffUntil) return null;   // its problem stays
+        Problem = null;   // per game
+        if (!enabled() || !foz.Exists) return null;
         var (key, stamp, shared) = (HashOnly.VulkanKey(storeBuildKey), $"{foz.Length}:{foz.LastWriteTimeUtc.Ticks}|{storeBuildKey}", Path.Combine(gameDir, VulkanSharedFile));
         var last = Community.Read<SharedRecording>(shared) ?? new("");
         if (last.Stamp == stamp || !await AcceptsAsync("vulkan", ct)) return null;
@@ -539,6 +546,7 @@ public sealed class Sharing
     {
         var done = new List<(string, int)>();
         if (!enabled() || clock.GetUtcNow() < backoffUntil) return done;
+        Problem = null;
         var stampFile = Path.Combine(dataDir, "packs-shared.json");
         var stamps = Community.Read<Dictionary<string, string>>(stampFile) ?? [];
         var files = Middleware.SharedVendors.Select(v => Path.Combine(packsDir, v)).Where(Directory.Exists)
@@ -636,13 +644,13 @@ public sealed class Sharing
         try
         {
             var res = await Post(r);
-            // a server rolled back to before identity or hitcheck blocks refuses them: asked again, and the report goes without
+            // a server rolled back to before identity, hitcheck or tuple_known refuses them: asked again, and the report goes without
             // (a report without keys has only its hit check: refused as it is)
-            if (res.StatusCode is HttpStatusCode.BadRequest && r.Keys != null && (r.Identity != null || r.HitCheck != null))
+            if (res.StatusCode is HttpStatusCode.BadRequest && r.Keys != null && (r.Identity != null || r.HitCheck != null || r.ColdTupleKnown != null))
             {
                 res.Dispose();
                 accepts = null;
-                res = await Post(r = r with { Identity = null, HitCheck = null });
+                res = await Post(r = r with { Identity = null, HitCheck = null, ColdTupleKnown = null });
             }
             if (res.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.RequestEntityTooLarge
                 && r.Keys?.Sum(k => Base64Url.DecodeFromChars(k).Length) > OutcomeReport.OldMaxKeys * 20)

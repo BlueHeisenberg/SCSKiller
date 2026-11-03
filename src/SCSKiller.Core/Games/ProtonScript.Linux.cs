@@ -39,14 +39,16 @@ sealed partial class ProtonScript
     /// change anything. Null when nothing would change. <paramref name="version"/>: the script's CURRENT_PREFIX_VERSION.
     /// <paramref name="steam"/>: Steam's folder as a compile's run names it (STEAM_COMPAT_CLIENT_INSTALL_PATH), set to
     /// config_info's name for it where that names the same folder otherwise. A compile's run computes Proton's defaults for
-    /// the settings config_info records: its launcher drops the variables that change them.</summary>
-    public string? Refreshes(string compatData, string version, ref string steam)
+    /// the settings config_info records: its launcher drops the variables that change them. <paramref name="umu"/>: another
+    /// launcher runs the game through umu, and a prefix it set up with no Steam folder runs with none. <paramref name="sandboxed"/>:
+    /// the run is in the launcher's Flatpak, which names its own Steam folder: config_info's is taken as it is.</summary>
+    public string? Refreshes(string compatData, string version, ref string steam, bool umu = false, bool sandboxed = false)
     {
-        try { return Refresh(compatData, version, ref steam); }
+        try { return Refresh(compatData, version, ref steam, umu, sandboxed); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return $"its prefix's files couldn't be read: {e.Message}"; }
     }
 
-    string? Refresh(string compatData, string version, ref string steam)
+    string? Refresh(string compatData, string version, ref string steam, bool umu, bool sandboxed)
     {
         var pfx = Path.Combine(compatData, "pfx");
         if (Names("cleanup_legacy_dist") && Directory.Exists(Path.Combine(_proton, "dist")))
@@ -77,7 +79,7 @@ sealed partial class ProtonScript
             if (!LinkExists(Path.Combine(pfx, "dosdevices", m.Groups[1].Value)))
                 return $"its prefix has no {m.Groups[1].Value} drive yet: start it once from Steam";
 
-        if (ConfigInfoChange(compatData, version, ref steam) is { } change) return change;
+        if (ConfigInfoChange(compatData, version, ref steam, umu, sandboxed) is { } change) return change;
 
         // wineboot's update_wineprefix: a .update-timestamp other than wine.inf's time, or none, updates the prefix
         var inf = Path.Combine(_proton, "files", "share", "wine", "wine.inf");
@@ -88,7 +90,7 @@ sealed partial class ProtonScript
     }
 
     /// <summary>Why setup_prefix's prefix_info, as a compile's run computes it, isn't config_info's text; null when it is.</summary>
-    string? ConfigInfoChange(string compatData, string version, ref string steam)
+    string? ConfigInfoChange(string compatData, string version, ref string steam, bool umu, bool sandboxed = false)
     {
         if (PrefixInfo(version, steam, out var unknown) is not { } lines) return Unread(unknown!);
         var path = Path.Combine(compatData, "config_info");
@@ -98,6 +100,18 @@ sealed partial class ProtonScript
             if (i >= had.Length || i >= lines.Count) return "its prefix's config_info isn't what its Proton writes: start it once from Steam";
             var (source, value, kind) = lines[i];
             if (had[i] == value || had[i] == "/run/host" + value) continue;
+            // umu run with no STEAM_COMPAT_CLIENT_INSTALL_PATH (Faugus): a compile's run names none either
+            if (umu && kind == Kind.Steam && had[i].Length == 0 && steam.Length > 0)
+            {
+                steam = "";
+                return ConfigInfoChange(compatData, version, ref steam, umu, sandboxed);
+            }
+            // in the Flatpak the run names the launcher's Steam folder as the game's launch did (Heroic's ~/.var/app/<id>/.steam/steam)
+            if (sandboxed && kind == Kind.Steam && had[i] != steam)
+            {
+                steam = had[i];
+                return ConfigInfoChange(compatData, version, ref steam, umu, sandboxed);
+            }
             if (kind == Kind.Steam && Libc.RealPath(had[i]) is { } real && real == Libc.RealPath(value))
             {
                 steam = had[i];

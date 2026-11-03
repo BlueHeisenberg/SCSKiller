@@ -51,6 +51,11 @@ public static class MesaLinux
     /// and steam_precompiled_&lt;hash&gt; (measured), which Steam replaces and rotates.</summary>
     public static bool SteamsFile(string name) => name.StartsWith("steam_", StringComparison.Ordinal);
 
+    /// <summary>A variable that moves Mesa's disk cache or changes its type, of any Mesa version.</summary>
+    public static bool CacheVariable(string name) =>
+        name.StartsWith("MESA_SHADER_CACHE", StringComparison.Ordinal) || name.StartsWith("MESA_GLSL_CACHE", StringComparison.Ordinal)
+        || name.StartsWith("MESA_DISK_CACHE", StringComparison.Ordinal);
+
     /// <summary>The folder Mesa keeps its cache in under these variables: its type's folder in MESA_SHADER_CACHE_DIR, as Mesa
     /// picks the type (single file, else the database, else a file per entry). Null without MESA_SHADER_CACHE_DIR.</summary>
     public static string? Folder(IEnumerable<(string Name, string Value)> cache)

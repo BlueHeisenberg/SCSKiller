@@ -13,7 +13,9 @@
 // stay committed. A freed range waits reuse_frames presents, and the game's GPU work submitted before the free on every
 // queue (a fence of ours per game queue), before it's placed again, and a heap
 // as long after its last free before it's released.
-// Heaps grow while the memory segment's usage plus a heap stays under 90% of its budget; over 95%, an empty heap is
+// No heap is made in a pool until a create would be placed in it (that one stays committed); 5 minutes with nothing
+// placed in it since, its heaps go again. A pool keeps half its bytes in use free ahead (spare_bytes: at least its first
+// heap's 16 MB, or max_resource_mb, at most spare × heap_mb); each heap is the power of two at least that target, 16 MB to heap_mb. Heaps grow while the memory segment's usage plus a heap stays under 90% of its budget; over 95%, an empty heap is
 // released each second. A create that finds no room makes one heap itself, after the one being made, if any. The pool thread reads traversal_suballocate again each second: 0 stops placing, for the session, and releases
 // every empty heap.
 // Keys, in [scskiller] (admission reads an ini with another section as unsigned): traversal_suballocate=0,
@@ -29,7 +31,8 @@
 // traversal_zeroed_reuse=1 when traversal_zeroed or traversal_zeroed_upload is, else 0 (1: a freed range of the zeroed
 // buffer and upload pools is zeroed again by the pool thread and reused; 0, only when set with them on: each range used
 // once, the zeroed pools churn OS-zeroed heaps; the zeroed textures pool is always once-only),
-// traversal_test_budget_mb=0 (the local budget taken as this many MB, a smaller card's).
+// traversal_test_budget_mb=0 (internal builds only: the local budget taken as this many MB, a smaller card's, by the pool
+// and by the game's QueryVideoMemoryInfo).
 // traversal_copy_high=0 (with or without suballocate): the game's COPY queues made at NORMAL priority are made at HIGH,
 // at the original priority when the driver refuses it.
 #pragma once
@@ -44,14 +47,15 @@ static const char* const kKind[KINDS] = {
 // no room, by why the pool couldn't grow: W_ROOM_CAP .. W_ROOM_NONE follow grow()'s Grow values
 enum Why { W_HEAP, W_NODE, W_ZEROED, W_HEAP_FLAGS, W_DIM, W_CLEAR, W_FLAGS, W_UAV_TEX, W_UAV_BUF, W_CPU, W_ACCEL, W_SESSION, W_SIZE, W_ALIGN, W_ROOM,
            W_ROOM_CAP, W_ROOM_BUDGET, W_ROOM_FAILED, W_ROOM_NONE, W_ERROR, W_QUEUE, W_DEVICE, W_ZEROED_ROOM, W_ZEROED_TEX, W_ZEROED_UPLOAD,
-           W_ZEROED_READBACK, W_ROOM_BUSY, W_GROWN, W_BLIND, WHYS };
+           W_ZEROED_READBACK, W_ROOM_BUSY, W_GROWN, W_BLIND, W_FIRST, WHYS };
 static const char* const kWhy[WHYS] = {"heap type off", "custom heap or node mask", "zeroed buffer", "other heap flags", "unknown dimension",
                                        "clear value", "RT/DS/simultaneous/MSAA", "UAV texture", "UAV buffer", "UPLOAD/READBACK texture or flags",
                                        "acceleration structure", "protected session", "too large", "alignment", "no room in a grown heap",
                                        "no room, pool at max_pool_mb", "no room, over 90% of the budget", "no room, heaps failed",
                                        "no room, no budget read yet", "create failed", "device without a command queue", "another device",
                                        "zeroed, no fresh range", "zeroed texture", "zeroed upload", "zeroed readback",
-                                       "no room, a heap being made", "grown by a layer", "a game queue we can't fence"};
+                                       "no room, a heap being made", "grown by a layer", "a game queue we can't fence",
+                                       "the first the pool would take, no heap yet"};
 
 // Per thread: creates and residency calls since the last frame. ponytail: 64 slots, later threads share the last one.
 struct Slot { std::atomic<DWORD> tid; std::atomic<uint64_t> n, ticks, rn, rticks; };
@@ -137,12 +141,27 @@ struct Heap {
     uint64_t last_free;  // g_frames at its last free
     uint64_t last_tick = 0;  // GetTickCount64 then
     uint64_t fresh = 0;      // zeroed pool: where its never-used tail starts
+    uint64_t bytes = 0;      // its size (1044 B: a pool's heaps ramp from 16 MB to heap_mb); every size rule reads this
     ID3D12Resource* alias = nullptr;  // re-zeroed pools: a buffer over the whole heap, the pool thread zeroes freed ranges through
     uint8_t* cpu = nullptr;           // re-zeroed UPLOAD pool: the alias, mapped for good
+    // 1044, the heap's residency (the game's MakeResident / EnqueueMakeResident / Evict of its placed resources): its live
+    // ranges, those the game evicted, their bytes (used minus them: ranges freed and not back yet), resident, pinned by
+    // a residency call of ours (never dropped meanwhile), and the game's fence of the EnqueueMakeResident that made it
+    // resident again (no range taken in it until that fence passes)
+    uint32_t live = 0, evicted = 0, pin = 0;
+    uint64_t live_bytes = 0;
+    bool resident = true;
+    ID3D12Fence* wait = nullptr;
+    uint64_t wait_v = 0;
 };
+// The game fence a heap waits for, let go (the heap leaves the pool).
+static void unwait(Heap& h) {
+    if (h.wait) h.wait->Release(), h.wait = nullptr;
+}
 // The alias holds its heap: it goes first.
 static ID3D12Heap* unalias(Heap& h) {
     if (h.alias) h.alias->Release(), h.alias = nullptr;
+    unwait(h);
     return h.h;
 }
 struct Pool {
@@ -153,6 +172,11 @@ struct Pool {
     bool on;
     std::list<Heap> heaps;
     uint64_t free_bytes, placed;
+    // under g_pmx (1042 per pool, 1044): wanted (a create passed every filter of place() for this pool: its heaps are
+    // made from then), since when, its placed count then, and how many times it was wanted
+    bool wanted = false;
+    uint64_t wanted_tick = 0, wanted_placed = 0;
+    int starts = 0;
 };
 // The zeroed pool serves DEFAULT buffers created without CREATE_NOT_ZEROED from the never-used tail of heaps the OS
 // zeroed at their creation; a freed range there is never taken again, and a spent heap goes once it's empty. The zeroed
@@ -191,7 +215,25 @@ static std::atomic<bool> g_on;
 static bool g_uav_tex;
 static uint64_t g_heap_bytes, g_max_pool, g_max_res;
 static int g_spare;
-static uint64_t spare_bytes(const Pool& p) { return (p.type == D3D12_HEAP_TYPE_DEFAULT ? g_spare : 1) * g_heap_bytes; }
+static uint64_t first_heap() { return std::min(std::max<uint64_t>(16ull << 20, g_max_res), g_heap_bytes); }
+// Under g_pmx (1044 C): the free space a wanted pool keeps ahead of the game: half its bytes in use (ranges live or freed
+// and not back yet), at least its first heap's size (at least max_resource_mb: a create of any size the pool takes finds
+// room without a heap of its own), at most the spare heaps' count times heap_mb. Not tied to its latest heap's size: a
+// heap made raised the target with it, and a small user's pool climbed 16+32+64+128 MB for 48 MB in use (SC2's upload).
+static uint64_t spare_bytes(const Pool& p) {
+    if (!p.wanted) return 0;
+    uint64_t in_use = 0;
+    for (auto& h : p.heaps) in_use += h.used;
+    return std::clamp(in_use / 2, first_heap(), std::max(first_heap(), (p.type == D3D12_HEAP_TYPE_DEFAULT ? g_spare : 1) * g_heap_bytes));
+}
+// Under g_pmx (1044 B): the size of p's next heap: the power of two at least its free target (so at least what it lacks
+// of it, and heaps grow with the pool's use, not one first-size heap per wake), from its first heap's size up to heap_mb.
+static uint64_t next_heap(const Pool& p) {
+    const uint64_t want = spare_bytes(p);
+    uint64_t size = first_heap();
+    while (size < want && size < g_heap_bytes) size *= 2;
+    return std::min(size, g_heap_bytes);
+}
 // the pool's: the device of the game's latest command queue until the first placement, then that one's for good (a
 // feature probe's device makes none; an overlay's or launcher's short-lived one may come first)
 static std::atomic<ID3D12Device*> g_dev;
@@ -272,6 +314,29 @@ static size_t g_zpending;  // under g_pmx: g_pending's ranges of a re-zeroed poo
 static std::atomic<uint64_t> g_rezeroed_gpu, g_rezeroed_cpu, g_fenced;  // bytes zeroed again; ranges waiting for our fence
 static std::atomic<bool> g_ever;  // a resource was placed: residency calls are filtered
 static std::atomic<uint64_t> g_placed, g_why[WHYS], g_filtered;
+// 1042, per pool (1044): no heap in a pool until a create would be placed in it (one past every filter of place(), which
+// goes committed: W_FIRST), and none again after 5 minutes with nothing placed in it since then (a game that places
+// nothing there holds no memory for it).
+static const uint64_t kIdleMs = 5 * 60 * 1000;
+// Under g_pmx: the first create that would be placed in p with no heap of p made: the pool thread makes them from now.
+static void want_pool(Pool& p) {
+    p.wanted = true, p.wanted_tick = GetTickCount64(), p.wanted_placed = p.placed;
+    if (++p.starts == 1) logf("traversal: the first create the %s pool would place: committed, its heaps made from now", p.name);
+    else if (p.starts == 2) logf("traversal: a create the %s pool would place after its heaps went idle: committed, its heaps made again (logged once)", p.name);
+}
+// The heap flags of creates left committed for them (W_HEAP_FLAGS): the first 8 values, each logged once, with counts in
+// the pool line.
+static std::mutex& g_hfmx = *new std::mutex;
+static std::pair<D3D12_HEAP_FLAGS, uint64_t> g_hflags[8];  // under g_hfmx
+static int g_nhflags;                                      // under g_hfmx
+static void heap_flags_seen(D3D12_HEAP_FLAGS f) {
+    std::lock_guard l(g_hfmx);
+    for (int i = 0; i < g_nhflags; ++i)
+        if (g_hflags[i].first == f) return void(++g_hflags[i].second);
+    if (g_nhflags == 8) return;
+    g_hflags[g_nhflags++] = {f, 1};
+    logf("traversal: heap flags 0x%x not taken (%d distinct so far)", (unsigned)f, g_nhflags);
+}
 static std::atomic<HRESULT> g_last_hr;
 // a create left committed, and why
 static bool no(Why w) { return g_why[w].fetch_add(1, std::memory_order_relaxed), g_frame_why[w].fetch_add(1, std::memory_order_relaxed), false; }
@@ -280,16 +345,24 @@ static bool no(Why w) { return g_why[w].fetch_add(1, std::memory_order_relaxed),
 static const GUID kPlaced = {0x6a2f7c14, 0x93b5, 0x4e0d, {0x8c, 0x1a, 0x5f, 0x3e, 0x9b, 0x7d, 0x2a, 0x40}};
 
 // What an empty heap adds to its pool's free bytes: a zeroed one only its fresh tail.
-static uint64_t avail(const Pool& p, const Heap& h) { return once(p) ? g_heap_bytes - h.fresh : g_heap_bytes; }
+static uint64_t avail(const Pool& p, const Heap& h) { return once(p) ? h.bytes - h.fresh : h.bytes; }
 
+// Under g_pmx: a heap ranges can be taken from: resident, and past the game's fence that made it resident again.
+static bool usable(Heap& h) {
+    if (!h.resident) return false;
+    if (h.wait && h.wait->GetCompletedValue() < h.wait_v) return false;
+    return unwait(h), true;
+}
+// Under g_pmx: what a heap adds to its pool's free bytes while resident.
+static uint64_t free_of(const Pool& p, const Heap& h) { return once(p) ? h.bytes - h.fresh : h.bytes - h.used; }
 static bool take(Pool& p, uint64_t size, uint64_t align, Heap*& out, uint64_t& at) {
     if (once(p)) {  // sizes and the alignment are whole pages: the tail stays page aligned
         for (auto& h : p.heaps)
-            if (h.fresh + size <= g_heap_bytes) return at = h.fresh, h.fresh += size, h.used += size, p.free_bytes -= size, out = &h, true;
+            if (h.fresh + size <= h.bytes && usable(h)) return at = h.fresh, h.fresh += size, h.used += size, p.free_bytes -= size, out = &h, true;
         return false;
     }
     for (auto& h : p.heaps)
-        for (auto it = h.free.begin(); it != h.free.end(); ++it) {
+        for (auto it = h.free.begin(); it != h.free.end() && usable(h); ++it) {
             const uint64_t off = it->first, len = it->second, s = (off + align - 1) / align * align;
             if (s + size > off + len) continue;
             h.free.erase(it);
@@ -307,7 +380,8 @@ static void give(Pool& p, Heap& h, uint64_t at, uint64_t size) {
     if (auto n = std::next(it); n != h.free.end() && at + size == n->first) it->second += n->second, h.free.erase(n);
     if (it != h.free.begin())
         if (auto pr = std::prev(it); pr->first + pr->second == at) pr->second += it->second, h.free.erase(it);
-    h.used -= size, p.free_bytes += size;
+    h.used -= size;
+    if (h.resident) p.free_bytes += size;  // a heap evicted doesn't count: none of it is taken
 }
 // Under g_pmx: the freed ranges that have settled go back to their heaps (a re-zeroed pool's to the pool thread first).
 static void reap() {
@@ -341,7 +415,10 @@ struct Range final : IUnknown {
     Heap* h;
     uint64_t at, size;
     Placement info{};
-    Range(Pool* p, Heap* h, uint64_t at, uint64_t size) : p(p), h(h), at(at), size(size) {}
+    // under g_pmx: the game's residency count of its resource (1044): 1 at a create, 0 at a CREATE_NOT_RESIDENT one, +1 at
+    // each MakeResident / EnqueueMakeResident, -1 at each Evict; at 0 it counts in its heap's evicted ranges
+    uint32_t res;
+    Range(Pool* p, Heap* h, uint64_t at, uint64_t size, uint32_t res) : p(p), h(h), at(at), size(size), res(res) {}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void** pp) override {
         if (!pp) return E_POINTER;
         if (id != __uuidof(IUnknown)) return *pp = nullptr, E_NOINTERFACE;
@@ -354,6 +431,8 @@ struct Range final : IUnknown {
             Snap gpu = snap();
             {
                 std::lock_guard l(g_pmx);
+                --h->live, h->live_bytes -= size;
+                if (!res) --h->evicted;
                 // still counted in the heap's use while it waits: a heap with a waiting range is never released
                 g_pending.push_back({p, h, at, size, h->last_free = g_frames.load(std::memory_order_relaxed), h->last_tick = GetTickCount64(), std::move(gpu)});
                 if (rezero(*p)) ++g_zpending;
@@ -661,10 +740,11 @@ static bool drop_empty(const Pool& for_pool) {
         std::lock_guard l(g_pmx);
         for (int i = 0; i < POOLS && !h; ++i)
             for (auto it = g_pool[i].heaps.begin(); it != g_pool[i].heaps.end(); ++it)
-                if (!it->used && settled(it->last_free, it->last_tick)) {
+                if (!it->used && !it->pin && settled(it->last_free, it->last_tick)) {
                     h = it->h, name = g_pool[i].name;
                     g_released.push_back({h, it->alias});  // not released on this game thread, nor under g_pmx
-                    g_pool[i].free_bytes -= avail(g_pool[i], *it), g_pool_bytes -= g_heap_bytes, g_pool[i].heaps.erase(it);
+                    unwait(*it);
+                    g_pool[i].free_bytes -= it->resident ? avail(g_pool[i], *it) : 0, g_pool_bytes -= it->bytes, g_pool[i].heaps.erase(it);
                     break;
                 }
     }
@@ -687,13 +767,15 @@ static Grow grow(Pool& p, bool sync) {
     IDXGIAdapter3* a = g_adapter.load();
     DXGI_QUERY_VIDEO_MEMORY_INFO mi = {};
     if (g_heap_fails >= 3) return G_FAILED;
-    if (!budget(a, p.seg, mi)) return G_NONE;
-    if (mi.CurrentUsage + g_heap_bytes > mi.Budget / 100 * 90) return G_BUDGET;
+    uint64_t size;  // under g_grow_mx: no other grow changes the pool's ramp meanwhile
     {
         std::lock_guard l(g_pmx);
-        if (g_pool_bytes + g_heap_bytes > g_max_pool) return G_CAP;
+        size = next_heap(p);
+        if (g_pool_bytes + size > g_max_pool) return G_CAP;
     }
-    D3D12_HEAP_DESC hd = {g_heap_bytes, {p.type}, 0, p.flags};
+    if (!budget(a, p.seg, mi)) return G_NONE;
+    if (mi.CurrentUsage + size > mi.Budget / 100 * 90) return G_BUDGET;
+    D3D12_HEAP_DESC hd = {size, {p.type}, 0, p.flags};
     ID3D12Heap* h = nullptr;
     LARGE_INTEGER t0, t1;
     QueryPerformanceCounter(&t0);
@@ -707,7 +789,7 @@ static Grow grow(Pool& p, bool sync) {
     void* cpu = nullptr;
     if (rezero(p)) {  // made on the pool thread only: a create that finds a zeroed pool without room stays committed
         const bool up = p.type == D3D12_HEAP_TYPE_UPLOAD;
-        const D3D12_RESOURCE_DESC bd = {D3D12_RESOURCE_DIMENSION_BUFFER, 0, g_heap_bytes, 1, 1, 1, DXGI_FORMAT_UNKNOWN, {1, 0}, D3D12_TEXTURE_LAYOUT_ROW_MAJOR};
+        const D3D12_RESOURCE_DESC bd = {D3D12_RESOURCE_DIMENSION_BUFFER, 0, size, 1, 1, 1, DXGI_FORMAT_UNKNOWN, {1, 0}, D3D12_TEXTURE_LAYOUT_ROW_MAJOR};
         const D3D12_RANGE none = {};
         hr = o_placed(g_dev.load(), h, 0, &bd, up ? D3D12_RESOURCE_STATE_GENERIC_READ : D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&alias));
         if (SUCCEEDED(hr) && up) hr = alias->Map(0, &none, &cpu);
@@ -722,14 +804,14 @@ static Grow grow(Pool& p, bool sync) {
     {
         std::lock_guard l(g_pmx);
         p.heaps.push_back({h, {}, 0, id, 0, 0});
-        p.heaps.back().alias = alias, p.heaps.back().cpu = (uint8_t*)cpu;
-        if (!once(p)) p.heaps.back().free[0] = g_heap_bytes;
-        p.free_bytes += g_heap_bytes, g_pool_bytes += g_heap_bytes;
+        p.heaps.back().alias = alias, p.heaps.back().cpu = (uint8_t*)cpu, p.heaps.back().bytes = size;
+        if (!once(p)) p.heaps.back().free[0] = size;
+        p.free_bytes += size, g_pool_bytes += size;
         g_pool_peak = std::max(g_pool_peak, g_pool_bytes);
         count = p.heaps.size(), pool_mb = g_pool_bytes >> 20;
     }
     if (sync) g_sync_grows.fetch_add(1, std::memory_order_relaxed);
-    logf("traversal: %s heap %zu (id %d) made in %.1f ms%s, pool %llu MB, %s usage %llu of %llu MB, qpc %lld", p.name, count, id, (t1.QuadPart - t0.QuadPart) * 1000.0 / g_freq,
+    logf("traversal: %s heap %zu (id %d, %llu MB) made in %.1f ms%s, pool %llu MB, %s usage %llu of %llu MB, qpc %lld", p.name, count, id, size >> 20, (t1.QuadPart - t0.QuadPart) * 1000.0 / g_freq,
          sync ? " by a create that found no room" : "", pool_mb, p.seg == DXGI_MEMORY_SEGMENT_GROUP_LOCAL ? "local" : "non-local", mi.CurrentUsage >> 20, mi.Budget >> 20,
          t0.QuadPart);
     return G_MADE;
@@ -770,7 +852,9 @@ static bool place(ID3D12Device* dev, const D3D12_HEAP_PROPERTIES* hp, D3D12_HEAP
         return no(W_NODE);
     if (zeroed && !zero(g_pool[pi]))  // a reused range isn't zeroed
         return no(pi == P_TEXTURES ? W_ZEROED_TEX : pi == P_UPLOAD ? W_ZEROED_UPLOAD : pi == P_READBACK ? W_ZEROED_READBACK : W_ZEROED);
-    if (hf & ~D3D12_HEAP_FLAG_CREATE_NOT_ZEROED) return no(W_HEAP_FLAGS);
+    // 1044: CREATE_NOT_RESIDENT (UE's, its residency then set by EnqueueMakeResident) is taken: our heap is resident
+    // already, and the game's residency calls on a placed resource are filtered (left out, or its heap instead)
+    if (hf & ~(D3D12_HEAP_FLAG_CREATE_NOT_ZEROED | D3D12_HEAP_FLAG_CREATE_NOT_RESIDENT)) return heap_flags_seen(hf), no(W_HEAP_FLAGS);
     if (d->Dimension == D3D12_RESOURCE_DIMENSION_UNKNOWN) return no(W_DIM);
     if (cv) return no(W_CLEAR);
     if (cpu && (!buffer || d->Flags)) return no(W_CPU);
@@ -787,19 +871,27 @@ static bool place(ID3D12Device* dev, const D3D12_HEAP_PROPERTIES* hp, D3D12_HEAP
     const uint64_t size = (ai.SizeInBytes + kPage - 1) / kPage * kPage;
     Heap* h = nullptr;
     uint64_t at = 0;
-    bool got = false, low = false, grown;
+    bool got = false, low = false, grown, first = false;
     const uint64_t k = key(*d);
     // under g_pmx: the pool may have moved since the check above
-    auto grab = [&] { return dev == g_dev.load() && take(pool, size, kPage, h, at) && (g_bound = true); };
+    const uint32_t res = hf & D3D12_HEAP_FLAG_CREATE_NOT_RESIDENT ? 0 : 1;  // the game makes it resident itself, later
+    auto grab = [&] {
+        return dev == g_dev.load() && pool.wanted && take(pool, size, kPage, h, at) && (++h->live, h->live_bytes += size, h->evicted += !res, g_bound = true);
+    };
     {
         std::lock_guard l(g_pmx);
-        if (!(grown = g_grown.contains(k))) {
+        if (!(grown = g_grown.contains(k)) && (first = !pool.wanted)) {  // no heap of this pool yet: none grabbed, none made here
+            if (dev != g_dev.load()) return no(W_DEVICE);  // the pool moved since the check above: not this device's demand
+            want_pool(pool);
+        }
+        else if (!grown) {
             reap();
             got = grab();
             low = pool.free_bytes < spare_bytes(pool);
         }
     }
     if (grown) return no(W_GROWN);
+    if (first) return g_pcv.notify_one(), no(W_FIRST);
     if (low) g_pcv.notify_one();
     // the OS zeroing a heap here would cost the create more than its own committed one: the pool thread makes it
     if (!got && zero(pool)) return no(W_ZEROED_ROOM);
@@ -809,19 +901,22 @@ static bool place(ID3D12Device* dev, const D3D12_HEAP_PROPERTIES* hp, D3D12_HEAP
         std::unique_lock g(g_grow_mx, std::try_to_lock);
         if (!g) return no(W_ROOM_BUSY);
         {
-            std::lock_guard l(g_pmx);
-            got = grab();
+            std::lock_guard l(g_pmx);  // under g_grow_mx: the idle release can't run until this create is done
+            if (dev != g_dev.load()) return no(W_DEVICE);  // moved meanwhile
+            if ((first = !pool.wanted)) want_pool(pool);  // its heaps went idle meanwhile: wanted again, none made here
+            else got = grab();
         }
+        if (first) return g_pcv.notify_one(), no(W_FIRST);
         if (!got) {
             Grow r = grow(pool, true);
-            if (r == G_CAP && drop_empty(pool)) r = grow(pool, true);
+            while (r == G_CAP && drop_empty(pool)) r = grow(pool, true);  // ramped heaps: one empty heap may free too little
             if (r != G_MADE) return no(Why(W_ROOM_CAP + r - G_CAP));
             std::lock_guard l(g_pmx);
             got = grab();
         }
     }
     if (!got) return no(W_ROOM);
-    auto* range = new Range(&pool, h, at, size);
+    auto* range = new Range(&pool, h, at, size, res);
     ID3D12Resource* r = nullptr;
     HRESULT e = o_placed(dev, h->h, at, d, st, cv, IID_PPV_ARGS(&r));
     // a layer's CreatePlacedResource can change the desc (ReShade: an add-on's create_resource, RenoDX's format upgrades),
@@ -847,7 +942,8 @@ static bool place(ID3D12Device* dev, const D3D12_HEAP_PROPERTIES* hp, D3D12_HEAP
                 {
                     std::lock_guard l(g_pmx);
                     if (g_grown.size() < 65536) g_grown.insert(k);
-                    if (once(pool) && h->fresh == at + size) back = true, h->fresh = at, h->used -= size, pool.free_bytes += size;
+                    if (once(pool) && h->fresh == at + size)
+                        back = true, h->fresh = at, h->used -= size, --h->live, h->live_bytes -= size, h->evicted -= !res, pool.free_bytes += h->resident ? size : 0;
                 }
                 if (back) delete range;
                 else range->Release();
@@ -946,44 +1042,188 @@ static HRESULT STDMETHODCALLTYPE hk_heap1(ID3D12Device4* dev, const D3D12_HEAP_D
     return timed(HEAP1, [&] { return o_heap1(dev, d, ps, riid, pp); });
 }
 
-// A placed resource's residency is its heap's, which other resources share: the game's MakeResident / Evict of one
-// leaves it out. heaps (EnqueueMakeResident): each one left out stands as its heap instead, once, so the call always
-// reaches the runtime, which signals the game's fence in order with its other residency work (a CPU signal of ours could
-// run ahead of an earlier enqueue's on the same fence, and be rewound by it). A heap of ours is resident already; the
-// extra count on it is never evicted, as the game's Evicts of placed resources are left out.
-template <class F> static HRESULT unplaced(UINT n, ID3D12Pageable* const* o, F&& call, bool heaps = false) {
-    if (!g_ever.load(std::memory_order_relaxed) || !o) return call(n, o);
-    std::vector<ID3D12Pageable*> keep;
-    keep.reserve(n);
-    UINT out = 0;
-    for (UINT i = 0; i < n; ++i) {
-        if (UINT size = 0; !o[i] || FAILED(o[i]->GetPrivateData(kPlaced, &size, nullptr)) || !size) {
-            keep.push_back(o[i]);
-            continue;
-        }
-        ++out;
-        if (!heaps) continue;
-        IUnknown* u = nullptr;
-        UINT size = sizeof u;
-        // the range's heap lives while the resource does (its range counts in the heap's use)
-        ID3D12Pageable* h = SUCCEEDED(o[i]->GetPrivateData(kPlaced, &size, &u)) && u ? static_cast<Range*>(u)->h->h : o[i];
-        if (u) u->Release();
-        if (std::find(keep.begin(), keep.end(), h) == keep.end()) keep.push_back(h);
-    }
-    if (!out) return call(n, o);
-    g_filtered.fetch_add(out, std::memory_order_relaxed);
-    return call((UINT)keep.size(), keep.data());
+// 1044: a placed resource's residency is its heap's, which other placed resources share. Each range keeps the game's
+// residency count of its resource (Range::res); a heap whose live ranges are all at 0, with no freed range not back yet
+// (pending, being zeroed, fenced), is evicted with a game's Evict and takes no range until it's resident again. A
+// MakeResident / EnqueueMakeResident that takes a range off 0 brings its heap into the call when it isn't resident;
+// never a heap that is (residency counts: each Make/Enqueue adds one, each Evict takes one, so one Evict must take ours
+// out). A failed call undoes every count it changed. A MakeResident (synchronous) naming a heap still paging in from an
+// Enqueue waits for that Enqueue's fence before it returns. Enqueued residency is assumed done in submission order, so
+// a later Enqueue's fence doesn't pass before an earlier one's on the same heap. An
+// EnqueueMakeResident always reaches the runtime, which signals the game's fence in order with its other residency work:
+// with every placed object in a resident heap and nothing else left, our 64 KB anchor heap stands in (its count grows,
+// it is never evicted; without it the pool makes no heap). A heap made resident by an Enqueue takes no range until the
+// game's fence reaches the value.
+// Re-zeroed pools' heaps are never evicted (their zeroing writes them). Accepted: a heap with one live range the game
+// didn't evict stays resident. g_rmx is held across our runtime call, then g_pmx briefly: g_rmx before g_pmx; never
+// g_rmx with g_grow_mx.
+static std::mutex& g_rmx = *new std::mutex;
+static std::atomic<ID3D12Heap*> g_anchor;  // the pool thread's, on the pool's device
+static std::atomic<uint64_t> g_heap_evicts, g_heap_backs;
+// The placed object's range (a reference the caller releases, outside g_pmx), or null: not ours.
+static Range* range_of(ID3D12Pageable* o) {
+    UINT size = 0;
+    if (!o || FAILED(o->GetPrivateData(kPlaced, &size, nullptr)) || !size) return nullptr;
+    IUnknown* u = nullptr;
+    size = sizeof u;
+    return SUCCEEDED(o->GetPrivateData(kPlaced, &size, &u)) && u ? static_cast<Range*>(u) : nullptr;
 }
+// The objects that are ours as their ranges, the rest in keep; false: none is ours.
+// Any of ours: a size-only query each, no reference taken, no allocation (a call with nothing placed costs only this).
+static bool any_placed(UINT n, ID3D12Pageable* const* o) {
+    for (UINT i = 0; i < n; ++i)
+        if (UINT size = 0; o[i] && SUCCEEDED(o[i]->GetPrivateData(kPlaced, &size, nullptr)) && size) return true;
+    return false;
+}
+static bool split(UINT n, ID3D12Pageable* const* o, std::vector<ID3D12Pageable*>& keep, std::vector<Range*>& rs) {
+    if (!g_ever.load(std::memory_order_relaxed) || !o || !any_placed(n, o)) return false;
+    for (UINT i = 0; i < n; ++i)
+        if (Range* r = range_of(o[i])) rs.push_back(r);
+        else keep.push_back(o[i]);
+    if (rs.empty()) return false;
+    g_filtered.fetch_add(rs.size(), std::memory_order_relaxed);
+    return true;
+}
+// Under g_pmx: a range's count reached 0 (to) or left it (from): its heap's evicted ranges follow.
+static void h_evicted(Range& r, bool to, bool from = false) {
+    if (to) ++r.h->evicted;
+    if (from) --r.h->evicted;
+}
+static void unref(std::vector<Range*>& rs) {
+    for (Range* r : rs) r->Release();
+}
+// Set across our runtime residency call: a hooker below that calls the device's slot again (back into our hook) goes
+// straight to the original, with g_rmx held by this thread (as t_ecl_q for ExecuteCommandLists).
+static thread_local bool t_res_in;
+struct ResIn {
+    ResIn() { t_res_in = true; }
+    ~ResIn() { t_res_in = false; }
+};
+template <class F> static HRESULT res_evict(UINT n, ID3D12Pageable* const* o, F&& call) {
+    if (t_res_in) return call(n, o);
+    std::vector<ID3D12Pageable*> keep;
+    std::vector<Range*> rs, dec;  // dec: counts this call took one off, back if it fails
+    if (!split(n, o, keep, rs)) return call(n, o);
+    std::lock_guard rl(g_rmx);
+    std::vector<std::pair<Pool*, Heap*>> out;
+    {
+        std::lock_guard l(g_pmx);
+        for (Range* r : rs)
+            if (r->res) dec.push_back(r), h_evicted(*r, --r->res == 0);  // at 0 already: the game's extra Evict, nothing to take
+        // every heap: one whose last resident range went since an Evict goes at this one
+        for (int i = 0; i < POOLS; ++i) {
+            Pool& p = g_pool[i];
+            if (rezero(p)) continue;
+            for (auto& h : p.heaps)
+                if (h.resident && !h.pin && h.live && h.evicted == h.live && h.used == h.live_bytes)
+                    h.resident = false, ++h.pin, p.free_bytes -= free_of(p, h), out.push_back({&p, &h}), keep.push_back(h.h);
+        }
+    }
+    HRESULT hr = S_OK;  // all placed, no heap to evict: as before
+    if (!keep.empty()) {
+        ResIn in_call;
+        hr = call((UINT)keep.size(), keep.data());
+    }
+    {
+        std::lock_guard l(g_pmx);
+        for (auto [p, h] : out)
+            if (--h->pin, FAILED(hr)) h->resident = true, p->free_bytes += free_of(*p, *h);
+        if (FAILED(hr))
+            for (Range* r : dec) h_evicted(*r, false, r->res++ == 0);
+    }
+    unref(rs);
+    if (SUCCEEDED(hr) && !out.empty() && !g_heap_evicts.fetch_add(out.size()))
+        logf("traversal: the game's evicts emptied a heap of resident ranges: %zu heap(s) evicted with its Evict (1044)", out.size());
+    return hr;
+}
+template <class F> static HRESULT res_resident(UINT n, ID3D12Pageable* const* o, bool enqueue, ID3D12Fence* f, UINT64 v, F&& call) {
+    if (t_res_in) return call(n, o);
+    std::vector<ID3D12Pageable*> keep;
+    std::vector<Range*> rs;  // each count this call adds one to: back if it fails
+    if (!split(n, o, keep, rs)) return call(n, o);
+    std::unique_lock rl(g_rmx);
+    std::vector<std::pair<Pool*, Heap*>> in;
+    std::vector<std::pair<ID3D12Fence*, uint64_t>> waits;  // MakeResident: the paging-in heaps' Enqueue fences, waited for
+    {
+        std::lock_guard l(g_pmx);
+        for (Range* r : rs) {
+            Heap* h = r->h;
+            h_evicted(*r, false, r->res++ == 0);
+            // pinned only by this call while g_rmx is held: in `in` already
+            if (!h->resident && !h->pin) ++h->pin, in.push_back({r->p, h}), keep.push_back(h->h);
+            if (!enqueue && h->resident && h->wait) {  // one wait per fence, for its highest value
+                auto w = std::find_if(waits.begin(), waits.end(), [&](auto& x) { return x.first == h->wait; });
+                if (w == waits.end()) h->wait->AddRef(), waits.push_back({h->wait, h->wait_v});
+                else w->second = std::max(w->second, h->wait_v);
+            }
+        }
+    }
+    HRESULT hr = S_OK;
+    if (!keep.empty() || enqueue) {
+        // every placed one in a resident heap, nothing else: the anchor carries the game's fence (it exists while any heap does)
+        if (keep.empty()) keep.push_back(g_anchor.load());
+        ResIn in_call;
+        hr = call((UINT)keep.size(), keep.data());
+    }
+    size_t back = 0;
+    {
+        std::lock_guard l(g_pmx);
+        for (auto [p, h] : in) {
+            --h->pin;
+            if (FAILED(hr)) continue;
+            h->resident = true, p->free_bytes += free_of(*p, *h), ++back;
+            if (enqueue && f) unwait(*h), f->AddRef(), h->wait = f, h->wait_v = v;
+        }
+        if (FAILED(hr))
+            for (Range* r : rs) h_evicted(*r, --r->res == 0);
+    }
+    rl.unlock();
+    unref(rs);
+    for (auto [w, wv] : waits) {  // synchronous: resident when it returns, as the runtime's own would be
+        // a failed blocking wait: polled (a removed device's fence reads UINT64_MAX)
+        if (SUCCEEDED(hr) && w->GetCompletedValue() < wv && FAILED(w->SetEventOnCompletion(wv, nullptr)))
+            while (w->GetCompletedValue() < wv) Sleep(1);
+        w->Release();
+    }
+    if (back && !g_heap_backs.fetch_add(back))
+        logf("traversal: a heap the game's evicts took out is resident again with its %s (1044)", enqueue ? "EnqueueMakeResident" : "MakeResident");
+    return hr;
+}
+// QPC ticks our residency hooks spend outside the runtime's own call (the pool line's own time). Per hook call: its
+// whole time less its runtime calls' (a re-entered hook's runtime time counts in the outer call's runtime time).
+static std::atomic<int64_t> g_res_own;
+struct OwnTime {
+    LARGE_INTEGER a;
+    int64_t rt = 0;
+    OwnTime() { QueryPerformanceCounter(&a); }
+    ~OwnTime() {
+        LARGE_INTEGER b;
+        QueryPerformanceCounter(&b);
+        g_res_own.fetch_add(b.QuadPart - a.QuadPart - rt, std::memory_order_relaxed);
+    }
+    template <class G> HRESULT runtime(G&& g) {
+        LARGE_INTEGER x, y;
+        QueryPerformanceCounter(&x);
+        const HRESULT r = g();
+        QueryPerformanceCounter(&y);
+        rt += y.QuadPart - x.QuadPart;
+        return r;
+    }
+};
 static HRESULT STDMETHODCALLTYPE hk_resident(ID3D12Device* dev, UINT n, ID3D12Pageable* const* o) {
-    return timed(MAKE_RESIDENT, [&] { return unplaced(n, o, [&](UINT k, ID3D12Pageable* const* p) { return k || !n ? o_resident(dev, k, p) : S_OK; }); });
+    OwnTime ot;
+    return timed(MAKE_RESIDENT, [&] {
+        return res_resident(n, o, false, nullptr, 0, [&](UINT k, ID3D12Pageable* const* p) { return ot.runtime([&] { return o_resident(dev, k, p); }); });
+    });
 }
 static HRESULT STDMETHODCALLTYPE hk_evict(ID3D12Device* dev, UINT n, ID3D12Pageable* const* o) {
-    return timed(EVICT, [&] { return unplaced(n, o, [&](UINT k, ID3D12Pageable* const* p) { return k || !n ? o_evict(dev, k, p) : S_OK; }); });
+    OwnTime ot;
+    return timed(EVICT, [&] { return res_evict(n, o, [&](UINT k, ID3D12Pageable* const* p) { return ot.runtime([&] { return o_evict(dev, k, p); }); }); });
 }
 // 865: a placed resource's residency priority is its heap's, set by the heap, never by the resource (INVALID_CALL removes
 // the device): placed resources left out, with their priorities; none left of a non-empty call, S_OK.
 static HRESULT STDMETHODCALLTYPE hk_priority(ID3D12Device1* dev, UINT n, ID3D12Pageable* const* o, const D3D12_RESIDENCY_PRIORITY* pr) {
-    if (!g_ever.load(std::memory_order_relaxed) || !o || !pr) return o_priority(dev, n, o, pr);
+    if (!g_ever.load(std::memory_order_relaxed) || !o || !pr || !any_placed(n, o)) return o_priority(dev, n, o, pr);
     std::vector<ID3D12Pageable*> keep;
     std::vector<D3D12_RESIDENCY_PRIORITY> kp;
     for (UINT i = 0; i < n; ++i)
@@ -995,9 +1235,10 @@ static HRESULT STDMETHODCALLTYPE hk_priority(ID3D12Device1* dev, UINT n, ID3D12P
     return keep.empty() ? S_OK : o_priority(dev, (UINT)keep.size(), keep.data(), kp.data());
 }
 static HRESULT STDMETHODCALLTYPE hk_enqueue(ID3D12Device3* dev, D3D12_RESIDENCY_FLAGS fl, UINT n, ID3D12Pageable* const* o, ID3D12Fence* f, UINT64 v) {
+    OwnTime ot;
     return timed(ENQUEUE_RESIDENT, [&] {
-        // never a CPU signal of the game's fence: always the runtime's call, placed resources as their heaps
-        return unplaced(n, o, [&](UINT k, ID3D12Pageable* const* p) { return o_enqueue(dev, fl, k, p, f, v); }, true);
+        // never a CPU signal of the game's fence: always the runtime's call
+        return res_resident(n, o, true, f, v, [&](UINT k, ID3D12Pageable* const* p) { return ot.runtime([&] { return o_enqueue(dev, fl, k, p, f, v); }); });
     });
 }
 
@@ -1068,7 +1309,7 @@ static void dred_dump(ID3D12Device* dev) {
     bool ours = false;
     for (int i = 0; i < POOLS; ++i)
         for (auto& h : g_pool[i].heaps) {
-            if (!h.va || va < h.va || va >= h.va + g_heap_bytes) continue;
+            if (!h.va || va < h.va || va >= h.va + h.bytes) continue;
             ours = true;
             const uint64_t at = va - h.va;
             logf("traversal: DRED: the fault is in our %s heap %d, offset 0x%llx", g_pool[i].name, h.id, at);
@@ -1107,6 +1348,7 @@ static bool moved() {
                 g_pool[i].heaps.clear(), g_pool[i].free_bytes = 0;
             }
             g_pool_bytes = 0, old = g_dev.exchange(next), a = g_adapter.exchange(nullptr);  // no grow until the new one's set
+            for (int i = 0; i < POOLS; ++i) g_pool[i].wanted = false;  // 1042: the new device's heaps wait for creates of its own
         }
     }
     if (!old) {
@@ -1114,6 +1356,7 @@ static bool moved() {
         return false;
     }
     for (auto* h : heaps) h->Release();
+    if (ID3D12Heap* an = g_anchor.exchange(nullptr)) an->Release();  // nothing placed: no residency call names it
     if (a) a->Release();
     old->Release();
     logf("traversal: pool moved from device %p to %p, the game's latest queue's (nothing placed yet), %zu empty heaps released", (void*)old, (void*)next,
@@ -1218,6 +1461,36 @@ static void zero_freed(Zeroer& z) {
     for (auto& r : cpu) give(*r.p, *r.h, r.at, r.size);
 }
 
+// On the pool thread: 5 minutes after the pool was wanted with nothing placed since, every heap goes (all empty, no
+// range pending; a create taking one meanwhile keeps them all) and the pool isn't wanted until a create would place
+// again. g_grow_mx first: no heap is being made meanwhile.
+static void idle_release() {
+    for (int i = 0; i < POOLS; ++i) {
+        Pool& p = g_pool[i];
+        std::vector<std::pair<ID3D12Heap*, ID3D12Resource*>> heaps;
+        {
+            std::lock_guard g(g_grow_mx);
+            std::lock_guard l(g_pmx);
+            if (!p.wanted || GetTickCount64() < p.wanted_tick + kIdleMs || p.placed != p.wanted_placed) continue;
+            bool busy = false;  // a range taken, freed and not back yet (pending, dirty, being zeroed), or a heap in a residency call
+            for (auto& h : p.heaps) busy |= h.used || h.pin;
+            if (busy) {
+                p.wanted_tick = GetTickCount64();  // placed soon, counted from now
+                continue;
+            }
+            for (auto& h : p.heaps) unwait(h), heaps.push_back({h.h, h.alias}), g_pool_bytes -= h.bytes;
+            p.heaps.clear(), p.free_bytes = 0, p.wanted = false;  // made again from 16 MB
+        }
+        double ms = 0;
+        for (auto [h, alias] : heaps) {
+            if (alias) alias->Release();
+            ms += timed_release(h);
+        }
+        logf("traversal: nothing placed in the %s pool in %llu minutes: its %zu empty heaps released in %.1f ms, made again at a create it would place",
+             p.name, kIdleMs / 60000, heaps.size(), ms);
+    }
+}
+
 static void pool_main() {
     ID3D12Device* dev = g_dev;
     struct Drop {
@@ -1234,6 +1507,13 @@ static void pool_main() {
     logf("traversal: pool on device %p, resource heap tier %d%s, %s", (void*)dev, (int)o.ResourceHeapTier, arch.UMA ? ", UMA" : "",
          a ? "budget read" : "no budget (no DXGI adapter): no heaps");
     if (!a) return;
+    {  // 1044: the anchor an EnqueueMakeResident of placed objects only carries its fence on
+        const D3D12_HEAP_DESC ad = {kPage, {D3D12_HEAP_TYPE_DEFAULT}, 0, D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS};
+        ID3D12Heap* an = nullptr;
+        if (const HRESULT hr = o_heap(dev, &ad, IID_PPV_ARGS(&an)); FAILED(hr))
+            return logf("traversal: no residency anchor heap (0x%08x): no heaps, every create committed", (unsigned)hr);
+        an->SetName(L"SCSKiller traversal residency anchor"), g_anchor = an;
+    }
     Zeroer z;  // before the first heap: g_zreuse_buf may turn off
     if (g_zreuse_buf)
         if (HRESULT hr = z.make(dev); FAILED(hr))
@@ -1269,6 +1549,7 @@ static void pool_main() {
             on = on && (GetFileAttributesW(ini.c_str()) == INVALID_FILE_ATTRIBUTES || GetPrivateProfileIntW(L"scskiller", L"traversal_suballocate", 0, ini.c_str()) == 1);
         if (on != g_on) g_on = on, logf("traversal: suballocate off (scskiller.ini), empty heaps released; on again takes a new session");
         if (!told && g_filtered) told = true, logf("traversal: residency calls named placed resources: left out, their heaps stay resident");
+        idle_release();
         // a wake only for zeroed ranges (traversal_zeroed_reuse): the budget and the pools at most every 100 ms
         const bool skip = zwake && GetTickCount64() < pools_at + 100;
         if (!skip) pools_at = GetTickCount64();
@@ -1281,30 +1562,33 @@ static void pool_main() {
             const DXGI_QUERY_VIDEO_MEMORY_INFO& mi = m[p.seg];
             const bool high = known[p.seg] && mi.CurrentUsage > mi.Budget / 100 * 95;
             bool want;
-            std::vector<std::pair<ID3D12Heap*, bool>> drops;  // and spent
+            std::vector<std::pair<ID3D12Heap*, const char*>> drops;  // and why, when not the pool's
             const char* why = !on ? "suballocate off" : high ? "usage over 95% of the budget" : "more than the spare free";
             {
                 std::lock_guard l(g_pmx);
                 reap();
-                want = on && p.on && known[p.seg] && mi.CurrentUsage + g_heap_bytes <= mi.Budget / 100 * 90 && p.free_bytes < spare_bytes(p) &&
-                       g_pool_bytes + g_heap_bytes <= g_max_pool;
-                // off: every empty heap; over 95%: one a second; else one once a whole heap more than the spare is free (no
-                // make / release churn at the line); an empty zeroed heap more than half used once, always
+                want = p.wanted && on && p.on && known[p.seg] && mi.CurrentUsage + next_heap(p) <= mi.Budget / 100 * 90 && p.free_bytes < spare_bytes(p) &&
+                       g_pool_bytes + next_heap(p) <= g_max_pool;
+                // off: every empty heap; over 95%: one a second; else each whose release still leaves the free target and a first heap
+                // free (no make / release churn at the line), all in this wake: a burst's emptied heaps would hold memory the game
+                // counts against its budget; an empty zeroed heap more than half used once, always
                 for (auto it = p.heaps.begin(); it != p.heaps.end();) {
-                    const bool spent = once(p) && it->fresh > g_heap_bytes / 2;
-                    if (it->used || !settled(it->last_free, it->last_tick) ||
-                        !(spent || (!want && (!on || (high && !dropped) || p.free_bytes >= spare_bytes(p) + 2 * g_heap_bytes)))) {
+                    // an empty heap the game's evicts took out: released, never used again (1044)
+                    const bool out = !it->resident, spent = (once(p) && it->fresh > it->bytes / 2) || out;
+                    if (it->used || it->pin || !settled(it->last_free, it->last_tick) ||
+                        !(spent || (!want && (!on || (high && !dropped) || p.free_bytes >= spare_bytes(p) + it->bytes + first_heap())))) {
                         ++it;
                         continue;
                     }
                     dropped |= on && high && !spent;
-                    drops.push_back({unalias(*it), spent}), p.free_bytes -= avail(p, *it), g_pool_bytes -= g_heap_bytes, it = p.heaps.erase(it);
-                    if (on && !spent) break;
+                    p.free_bytes -= out ? 0 : avail(p, *it);
+                    drops.push_back({unalias(*it), out ? "evicted by the game's evicts, then emptied" : spent ? "its zeroed memory used once" : nullptr});
+                    g_pool_bytes -= it->bytes, it = p.heaps.erase(it);
                 }
             }
             for (auto [h, spent] : drops) {
                 const double ms = timed_release(h);
-                logf("traversal: an empty %s heap released in %.1f ms (%s), qpc %lld", p.name, ms, spent ? "its zeroed memory used once" : why, g_last_release);
+                logf("traversal: an empty %s heap released in %.1f ms (%s), qpc %lld", p.name, ms, spent ? spent : why, g_last_release);
             }
             if (!want) continue;
             std::lock_guard g(g_grow_mx);
@@ -1390,6 +1674,12 @@ static void tick() {
             pools += std::format("{}{} {} placed, {} heaps, {} MB in use", pools.empty() ? "" : "; ", g_pool[i].name, g_pool[i].placed, g_pool[i].heaps.size(), used >> 20);
         }
         pools += std::format("; {} MB of heaps, at most {} MB so far, max_pool_mb {}", g_pool_bytes >> 20, g_pool_peak >> 20, g_max_pool >> 20);
+        if (g_heap_evicts.load()) {
+            size_t outnow = 0;
+            for (int i = 0; i < POOLS; ++i)
+                for (auto& h : g_pool[i].heaps) outnow += !h.resident;
+            pools += std::format("; {} heaps evicted by the game's evicts ({} out now), {} made resident again", g_heap_evicts.load(), outnow, g_heap_backs.load());
+        }
     }
     const std::string rz = g_zreuse_buf || g_zreuse_up ? std::format(", {} MB zeroed again on the GPU and {} MB by the CPU, {} ranges waiting for our fence",
                                                                      g_rezeroed_gpu.load() >> 20, g_rezeroed_cpu.load() >> 20, g_fenced.load())
@@ -1399,11 +1689,44 @@ static void tick() {
         std::lock_guard l(g_tmx);
         queues = g_tracks.size();
     }
+    {
+        std::lock_guard l(g_hfmx);
+        for (int i = 0; i < g_nhflags; ++i) why += std::format("{}0x{:x} {}", i ? ", " : " (heap flags ", (unsigned)g_hflags[i].first, g_hflags[i].second);
+        if (g_nhflags) why += ")";
+    }
     logf("traversal: pool: %llu placed (%s), %llu heaps made by a create that found no room, %zu ranges (%llu MB) waiting for reuse (and %zu game queues' fences)%s, %llu residency "
-         "objects left out; committed instead: %s%s",
-         (uint64_t)g_placed, pools.c_str(), (uint64_t)g_sync_grows, waiting, waiting_bytes >> 20, queues, rz.c_str(), (uint64_t)g_filtered, why.empty() ? "none" : why.c_str(),
+         "objects left out (%.1f ms of our own in residency calls); committed instead: %s%s",
+         (uint64_t)g_placed, pools.c_str(), (uint64_t)g_sync_grows, waiting, waiting_bytes >> 20, queues, rz.c_str(), (uint64_t)g_filtered,
+         g_res_own.load(std::memory_order_relaxed) * 1000.0 / g_freq, why.empty() ? "none" : why.c_str(),
          g_last_hr ? std::format(", last failure 0x{:08x}", (unsigned)g_last_hr.load()).c_str() : "");
 }
+
+#ifdef SCSK_TEST_HOOKS
+// traversal_test_budget_mb, internal builds: the game's QueryVideoMemoryInfo reports the local budget as at most that,
+// so its residency manager evicts. IDXGIAdapter3's slot 14 (vtslots.cpp checks it) on the vtable of the device's
+// adapter, shared by every adapter object of dxgi's class, the game's too; a vtable another hooker took is skipped.
+using PFN_Qvmi = HRESULT(STDMETHODCALLTYPE*)(IDXGIAdapter3*, UINT, DXGI_MEMORY_SEGMENT_GROUP, DXGI_QUERY_VIDEO_MEMORY_INFO*);
+enum { SLOT_QVMI = 14 };
+static PFN_Qvmi o_qvmi;
+static HRESULT STDMETHODCALLTYPE hk_qvmi(IDXGIAdapter3* a, UINT node, DXGI_MEMORY_SEGMENT_GROUP seg, DXGI_QUERY_VIDEO_MEMORY_INFO* mi) {
+    const HRESULT hr = o_qvmi(a, node, seg, mi);
+    if (SUCCEEDED(hr) && mi && seg == DXGI_MEMORY_SEGMENT_GROUP_LOCAL) mi->Budget = std::min(mi->Budget, g_test_budget);
+    return hr;
+}
+static void test_budget_hook(ID3D12Device* dev) {
+    static std::once_flag once;
+    std::call_once(once, [dev] {
+        IDXGIAdapter3* a = nullptr;
+        if (IDXGIFactory4* f; SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&f)))) f->EnumAdapterByLuid(dev->GetAdapterLuid(), IID_PPV_ARGS(&a)), f->Release();
+        if (!a) return logf("traversal: traversal_test_budget_mb: no adapter, the game sees its real budget");
+        patch(*(void***)a, SLOT_QVMI, (void*)hk_qvmi, o_qvmi);
+        const bool on = (*(void***)a)[SLOT_QVMI] == (void*)hk_qvmi;
+        a->Release();
+        logf("traversal: traversal_test_budget_mb (internal build): %s", on ? std::format("the game's local budget reported as at most {} MB", g_test_budget >> 20).c_str()
+                                                                            : "QueryVideoMemoryInfo is another hooker's, the game sees its real budget");
+    });
+}
+#endif
 
 // At each hooked device (under g_mx), not in a warm.
 static void install(ID3D12Device* dev) {
@@ -1428,10 +1751,12 @@ static void install(ID3D12Device* dev) {
         g_pool[P_ZUP].on = key(L"traversal_zeroed_upload", g_zeroed.on) == 1;
         const bool zreuse = key(L"traversal_zeroed_reuse", g_zeroed.on || g_pool[P_ZUP].on) == 1;  // a zeroed buffer pool on: reuse unless set to 0
         g_zreuse_buf = zreuse && g_zeroed.on, g_zreuse_up = zreuse && g_pool[P_ZUP].on;
+#ifdef SCSK_TEST_HOOKS  // internal builds only: a release proxy never shrinks the budget, ours or the game's
         g_test_budget = (uint64_t)std::max(key(L"traversal_test_budget_mb", 0), 0) << 20;
+#endif
         g_on = true;
         auto onoff = [](int i) { return g_pool[i].on ? "on" : "off"; };
-        logf("traversal: probe on (%d ms), suballocate on: %llu MB heaps, %d spare per DEFAULT pool; DEFAULT buffers %s, textures %s%s, UPLOAD %s, "
+        logf("traversal: probe on (%d ms), suballocate on: heaps from 16 MB doubling to %llu MB per pool, %d spare per DEFAULT pool; DEFAULT buffers %s, textures %s%s, UPLOAD %s, "
              "READBACK %s, zeroed DEFAULT buffers %s, zeroed textures %s, zeroed UPLOAD buffers %s, zeroed buffer ranges reused %s; UAV buffers %s; ranges reused after %d frames (%d ms without frames); pool up to %llu MB and 90%% "
              "of the budget%s, resources up to %llu MB",
              g_probe_ms, g_heap_bytes >> 20, g_spare, onoff(P_BUFFERS), onoff(P_TEXTURES), g_uav_tex ? " (UAV too)" : "", onoff(P_UPLOAD),
@@ -1440,6 +1765,9 @@ static void install(ID3D12Device* dev) {
         g_active = true;
     });
     if (!g_active.load()) return;
+#ifdef SCSK_TEST_HOOKS
+    if (g_test_budget) test_budget_hook(dev);
+#endif
     void** vt = *(void***)dev;
     patch(vt, SLOT_CR, (void*)hk_cr, o_cr);
     patch(vt, SLOT_HEAP, (void*)hk_heap, o_heap);

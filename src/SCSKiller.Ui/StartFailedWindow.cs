@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Platform;
 using Avalonia.Threading;
@@ -31,7 +32,7 @@ sealed class StartFailedWindow : Window
                 new StackPanel
                 {
                     Orientation = Orientation.Horizontal, Spacing = 16,
-                    Children = { icon, new SelectableTextBlock { Text = failure.Text, TextWrapping = TextWrapping.Wrap, MaxWidth = 440, VerticalAlignment = VerticalAlignment.Center } },
+                    Children = { icon, new SelectableTextBlock { Text = failure.Text, TextWrapping = TextWrapping.Wrap, [!MaxWidthProperty] = new DynamicResourceExtension("TextFit.440"), VerticalAlignment = VerticalAlignment.Center } },
                 },
                 ok,
             },

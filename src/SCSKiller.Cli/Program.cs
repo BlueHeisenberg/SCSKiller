@@ -14,11 +14,12 @@ const string Usage = """
       add <exe> [<install folder>]                add a game no store lists, by its exe (with its folder: the recorder may go there)
       exe <game> <exe>|auto                       a store game's exe: one of its install, or auto for the one SCSKiller picks
       status [game]                               all games, or one in detail
-      compile <game|--all-ready> [--threads N] [--idle | --when-idle] [--careful | --fast]
+      compile <game|--all-ready> [--threads N] [--idle | --when-idle] [--careful | --fast] [--rt-only]
                                                   --idle: background priority. --when-idle: also only while nobody uses the PC.
                                                   --careful (AMD): this and later compiles of the game compile its recorded
                                                   pipelines in passes on few threads, so the driver keeps more of them (slower).
-                                                  --fast: back to one pass
+                                                  --fast: back to one pass. --rt-only: only the ray tracing pipelines,
+                                                  the rest at the game's next compile
       queue [command]                             debug shell for the compile queue: the command, then one per line on stdin:
                                                   list | add <game> | move <game> <index> | remove <game> | start | stop | wait | quit
       before-after <game> [--minutes N] [--no-overlay] [--max]  debug: a before and after recording without the app (you start the game)
@@ -39,6 +40,7 @@ const string Usage = """
       record remove-all                           take the recorder out of every game, as SCSKiller's uninstall does
       record clear <game>                         delete the game's recording (the recorder's data files and SCSKiller's copy, asks first)
       record alongside <game> on|off              let the recorder chain to a mod's d3d12.dll (renamed, put back on removal)
+      record grant <game>                         Linux: let the game's Flatpak launcher read the recorder folder (asks first)
       shared <game> on|off|follow                 use the shared shader hashes for the game: off, nothing is downloaded for it and its plans leave them out, follow = Settings
       key <game> <hex>                            give a game's AES key or game key (verified, stored locally only)
       index <game> --out <dir>                    debug: dump the engine reader's shader index
@@ -57,9 +59,9 @@ const string Usage = """
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;  // game names carry ™ and ®
 RouteFailover.Product = "SCSKiller-CLI";
-if (args.Length == 0 || args[0] is "-h" or "--help" or "help") { Console.WriteLine(Usage); return 0; }
+if (args.Length == 0 || args[0] is "-h" or "--help" or CliCommands.Help) { Console.WriteLine(Usage); return 0; }
 // before anything reads the data folder: a portable copy's first read copies the installed one's
-if (args[0] is "-v" or "--version" or "version") { Console.WriteLine(AppVersion.Current); return 0; }
+if (args[0] is "-v" or "--version" or CliCommands.Version) { if (Stray(1, "--version") is { } stray) return stray; Console.WriteLine(AppVersion.Current); return 0; }
 if (args[0] != "fetch-codecs" && AppStore.RefusesLiveData()) { Console.Error.WriteLine(AppStore.DevBuildRefusal); return 1; }
 // The app is handing over to Update.exe, which replaces this folder: start nothing (the scheduled task runs again later).
 // Packaging never reads the app's data folder.
@@ -70,7 +72,8 @@ if (args[0] != "fetch-codecs" && Busy.Applying(AppStore.DefaultDir, DateTimeOffs
     // run elevated by the app, the exit code alone (0, for the scheduled task) would read as done
     try { if (Opt(Elevated.ResultArg) is { } file) Elevated.WriteResult(file, false, busy); }
     catch (ArgumentException) { }
-    return 0;
+    // 0 for the scheduled task's and the systemd timer's run alone, which would otherwise show a failure
+    return args[0] == "rewarm-stale" ? 0 : 1;
 }
 // taking the recorders and the task out stays possible on a refused alpha
 if (args[0] != "fetch-codecs" && args is not ["record", "remove-all", ..] and not ["task", "unregister", ..]
@@ -84,28 +87,29 @@ try
 {
     code = args[0] switch
     {
-        "scan" => await Scan(args.Contains("--rescan")),
-        "status" => await Status(args.Length > 1 ? args[1] : null),
-        "add" => await AddGame(),
-        "exe" => await GameExe(),
-        "compile" => await Compile(),
-        "queue" => await QueueShell(),
-        "before-after" => await BeforeAfterCommand(),
-        "rewarm-stale" => await RewarmStale(args.Contains("--if-driver-changed")),
-        "cache" => args.ElementAtOrDefault(1) switch { "clear" => await CacheClear(), "page" => await CachePage(), _ => Cache() },
-        "record" => await Record(),
-        "shared" => await UseShared(),
-        "index" => await Index(),
-        "rehydrate" => await RehydrateCommand(),
-        "reference" when args.ElementAtOrDefault(1) == "export" => await ReferenceExport(),
-        "key" => await Key(),
-        "task" => TaskCommand(),
-        "shader-cleanup" => ShaderCleanup(),
-        "proton-env" => await ProtonEnv(),
-        "steam-place" => await SteamPlace(),
-        "nvidia-snapshot" => NvidiaSnapshot(),
-        "nvidia-auto-shader" => NvidiaAutoShader(),
-        "fetch-codecs" => FetchCodecs(args.ElementAtOrDefault(1) ?? throw new ArgumentException("usage: scskiller fetch-codecs <dir>")),
+        CliCommands.Scan => Stray(1, "scan [--rescan]") ?? await Scan(args.Contains("--rescan")),
+        CliCommands.Status => await Status(args.Length > 1 ? args[1] : null),
+        CliCommands.Add => await AddGame(),
+        CliCommands.Exe => await GameExe(),
+        CliCommands.Compile => await Compile(),
+        CliCommands.Queue => await QueueShell(),
+        CliCommands.BeforeAfter => await BeforeAfterCommand(),
+        CliCommands.RewarmStale => Stray(1, "rewarm-stale [--if-driver-changed]") ?? await RewarmStale(args.Contains("--if-driver-changed")),
+        CliCommands.Cache => args.ElementAtOrDefault(1) switch { "clear" => await CacheClear(), "page" => Stray(args.ElementAtOrDefault(2) == "delete" ? 4 : 2, "cache page [--files] [delete <item>|everything [--others]]") ?? await CachePage(),
+            var sub => Stray(sub switch { "set" => 3, "get" => 2, _ => 1 }, "cache get | cache set <GB|unlimited|default>") ?? Cache() },
+        CliCommands.Record => await Record(),
+        CliCommands.Shared => await UseShared(),
+        CliCommands.Index => await Index(),
+        CliCommands.Rehydrate => await RehydrateCommand(),
+        CliCommands.Reference when args.ElementAtOrDefault(1) == "export" => await ReferenceExport(),
+        CliCommands.Key => await Key(),
+        CliCommands.Task => Stray(2, "task register|unregister") ?? TaskCommand(),
+        CliCommands.ShaderCleanup => Stray(2, "shader-cleanup keep|allow") ?? ShaderCleanup(),
+        CliCommands.ProtonEnv => await ProtonEnv(),
+        CliCommands.SteamPlace => await SteamPlace(),
+        CliCommands.NvidiaSnapshot => Stray(1, "nvidia-snapshot") ?? NvidiaSnapshot(),
+        CliCommands.NvidiaAutoShader => Stray(2, "nvidia-auto-shader off|low|medium|high") ?? NvidiaAutoShader(),
+        CliCommands.FetchCodecs => FetchCodecs(args.ElementAtOrDefault(1) ?? throw new ArgumentException("usage: scskiller fetch-codecs <dir>")),
         _ => Fail($"unknown command '{args[0]}'\n{Usage}"),
     };
 }
@@ -139,9 +143,13 @@ static bool Confirm(string question)
     return false;
 }
 
-static async Task<ScsKiller> Open(bool rescan = false)
+/// <param name="game">a game's id or name: only the games <see cref="Match"/> may pick are read</param>
+/// <param name="collection">and the other games of their collections: a compile's import splits the shared recording into each</param>
+static async Task<ScsKiller> Open(bool rescan = false, string? game = null, bool collection = false)
 {
-    var k = ScsKiller.CreateDefault();
+    bool Asked(string id, string name) => id.Equals(game, StringComparison.OrdinalIgnoreCase) || id.Equals(game!.Replace(':', '_'), StringComparison.OrdinalIgnoreCase) || name.Contains(game, StringComparison.OrdinalIgnoreCase);
+    var k = ScsKiller.CreateDefault(game == null ? null : g => Asked(g.Id, g.Name)
+        || collection && SCSKiller.Core.Games.Collections.Member(g.Id) is { } m && m.All.Any(e => Asked(e.Id, e.Name)));
     k.Log = new StderrLog();   // synchronous: a message logged just before exit still prints
     var account = new Account(AppStore.DefaultDir);
     k.DbEntitled = () => account.SignedIn;   // entitlements are never read here: signed in counts as entitled
@@ -153,17 +161,22 @@ static void BackgroundPriority()   // index/plan/materialize run in this process
 {
     using var self = Process.GetCurrentProcess();
     self.PriorityClass = ProcessPriorityClass.Idle;
+    // Windows 11 runs a throttled low-priority process on the E-cores of Intel hybrid CPUs only. Fails on older Windows 10
+    if (OperatingSystem.IsWindows()) SetProcessInformation(self.Handle, 4 /* ProcessPowerThrottling */, [1, 1 /* EXECUTION_SPEED */, 0], 12);
 }
+
+[System.Runtime.InteropServices.DllImport("kernel32.dll")]
+static extern bool SetProcessInformation(nint process, int infoClass, uint[] state, int size);
 
 static string StatusName(GameState s) => ScsKiller.NeedsOfflineSession(s) ? "NeedsOfflineSession" : ScsKiller.NeedsSteamStart(s) ? "NeedsSteamStart" : s.Status.ToString();
 
 static string Hms(TimeSpan? t) => t?.ToString(@"h\:mm\:ss") ?? "-";
 
 // why the recorder stays out: its skip, else its note
-static string? RecorderWhy(GameState s) => s.RecorderSkip == ScsKiller.SkipModNotChainable ? ScsKiller.NotChainableReason(s.RecorderMod) : s.RecorderSkip ?? s.RecorderFailure ?? s.RecorderNote;
+static string? RecorderWhy(GameState s) => s.RecorderSkip == ScsKiller.SkipAntiCheat ? ScsKiller.AntiCheatHeld(s) ? ScsKiller.HeldSkipped : ScsKiller.AntiCheatOpen(s) ? "its anti-cheat check didn't finish" : ScsKiller.AntiCheatName(s) : s.RecorderSkip == ScsKiller.SkipModNotChainable ? ScsKiller.NotChainableReason(s.RecorderMod) : s.RecorderSkip ?? s.RecorderFailure ?? s.RecorderNote;
 
 static void Row(GameState s) =>
-    Console.WriteLine($"{StatusName(s),-19} {s.Game.Id,-24} {s.Game.Name}{(s.AnyAntiCheat ? $"  [{ScsKiller.AntiCheatName(s)}]" : "")}{(s.KnownStutter is { } ks ? $"  [known stutter: {ks.Severity.ToString().ToLowerInvariant()}]" : "")}{(s.NoStutter != null ? "  [no shader stutter]" : "")}{(s.RecorderInstalled ? "  [recorder]" : "")}{(s.CacheOnDisk is { } c ? $"  [cache {Format.Bytes(c)}]" : "")}  - {(ScsKiller.NeverRecorded(s) ? $"{ScsKiller.NothingRecordedTitle}. {s.RecorderRefused}" : s.StatusReason)}");
+    Console.WriteLine($"{StatusName(s),-19} {s.Game.Id,-24} {s.Game.Name}{(ScsKiller.AntiCheatHeld(s) ? "  [couldn't check for anti-cheat]" : s is { AntiCheatUnfinished: true, Vac: false } ? "  [checking for anti-cheat]" : s.AnyAntiCheat ? $"  [{ScsKiller.AntiCheatName(s)}]" : "")}{(s.KnownStutter is { } ks ? $"  [known stutter: {ks.Severity.ToString().ToLowerInvariant()}]" : "")}{(s.NoStutter != null ? "  [no shader stutter]" : "")}{(s.RecorderInstalled ? "  [recorder]" : "")}{(s.CacheOnDisk is { } c ? $"  [cache {Format.Bytes(c)}]" : "")}  - {(ScsKiller.NeverRecorded(s) ? $"{ScsKiller.NothingRecordedTitle}. {s.RecorderRefused}" : s.StatusReason)}");
 
 /// <summary>The tags' <see cref="Format.Middleware"/> lines joined with " · ", with the DLL names when <paramref name="dlls"/>.</summary>
 static string MiddlewareLine(IReadOnlyList<MiddlewareTag> tags, bool dlls) => string.Join(" · ", tags.Select(t =>
@@ -200,6 +213,16 @@ string? Opt(string name)
     return i + 1 < args.Length && !args[i + 1].StartsWith("--") ? args[i + 1] : throw new ArgumentException($"{name} needs a value");
 }
 
+/// <summary>Exit 2 with the usage line when the command gets more than <paramref name="words"/> arguments that aren't options or
+/// their values (its own words included): a game id given to a command that takes none would otherwise be ignored.</summary>
+int? Stray(int words, string usage)
+{
+    string[] valued = [Elevated.ResultArg, Elevated.ForUserArg, ScsKiller.AdapterArg];
+    if (args.Where((a, i) => i == 0 || !a.StartsWith("--") && !valued.Contains(args[i - 1])).Skip(words).FirstOrDefault() is not { } stray) return null;
+    Fail($"unexpected argument '{stray}'\nusage: scskiller {usage}");
+    return 2;
+}
+
 /// <summary>Refuses an option the command doesn't take (a typo would otherwise run with the default).</summary>
 void Only(params string[] known)
 {
@@ -217,7 +240,7 @@ async Task<int> Scan(bool rescan)
 
 async Task<int> Status(string? query)
 {
-    var k = await Open();
+    var k = await Open(game: query);
     if (query == null)
     {
         foreach (var s in k.Games)
@@ -230,13 +253,13 @@ async Task<int> Status(string? query)
     var g = Match(k.Games, query);
     var rec = k.Store.LoadGame(g.Game.Id);
     Console.WriteLine($"""
-        {g.Game.Name} ({g.Game.Id}, {g.Game.Store})
+        {g.Game.Name} ({g.Game.Id}, {SCSKiller.Core.Games.StoreNames.Of(g.Game)})
           install    {g.Game.InstallDir}
           exe        {g.Game.ExePath}
           runs as    {(rec.LaunchedExeName is { } l0 ? $"{l0} (seen {rec.LaunchedExeSeenAt:yyyy-MM-dd HH:mm})" : "not seen yet")}, warms stage {ScsKiller.WarmExeName(g.Game, rec)}
-          engine     {(g.Engine is { } e ? string.Join(' ', new[] { Format.Engine(e) + (e.VersionGuessed ? " (guessed)" : ""), e.Fork, e.GraphicsApi }.OfType<string>()) + (e.Encrypted ? " encrypted" : "") : "-")}
+          engine     {(g.Engine is { } e ? string.Join(' ', new[] { Format.Engine(e) + (e.VersionGuessed ? " (guessed)" : ""), e.Fork, e.GraphicsApi }.OfType<string>()) + (e.Encrypted ? " encrypted" : "") + (e.Note is { } n ? " · " + n : "") : "-")}
           status     {StatusName(g)}: {g.StatusReason}{(ScsKiller.DeliveryLine(g) is { } asd ? $"\n             {asd}" : "")}{(ScsKiller.CleanupLine(g) is { } cleanup ? $"\n             {cleanup}" : "")}
-          anti-cheat {(g.AnyAntiCheat ? ScsKiller.AntiCheatName(g) : "None")}
+          anti-cheat {(ScsKiller.AntiCheatHeld(g) ? "couldn't be fully checked, recorder kept out" : g is { AntiCheatUnfinished: true, Vac: false } ? "check didn't finish, kept out until it does" : g.AnyAntiCheat ? ScsKiller.AntiCheatName(g) : "None")}
           shaders    {g.ShaderCount?.ToString() ?? "-"}
           plan       {(g.Plan is { } p ? $"{p.Recorded} recorded + {p.Generated} generated + {p.D3D11Shaders} DirectX 11 shaders{(p.D3D11Draws > 0 ? $" ({p.D3D11Draws} vertex shaders with recorded layouts)" : "")} + {p.MiddlewareItems} middleware, {p.RootSignatures} root sigs, rule verified: {p.RootSigRuleVerified}" : "-")}
           stutter    {(g.KnownStutter is { } st ? $"known, {st.Severity.ToString().ToLowerInvariant()}: {st.Reason} ({st.Source}, checked {st.Date})" : g.NoStutter is { } ns ? $"none: {ns}" : "-")}
@@ -250,13 +273,15 @@ async Task<int> Status(string? query)
           other APIs {(g.KeptApis is { Count: > 0 } kept ? string.Join(", ", kept.Select(a => $"{ScsKiller.KeyName(a.Api)} compiled {a.WarmedAt:yyyy-MM-dd HH:mm} for driver {a.DriverVersion}{(a.CurrentDriver ? "" : " (an older driver)")}")) : "-")}
           cache      {(g.CacheOnDisk is { } c ? $"{Format.Bytes(c)} on disk{(Format.InUseShown(c, g.CacheInUse) ? $", {Format.Bytes(g.CacheInUse)} in use" : "")} (driver-cache files its warms or the game had open)" : "-")}{(g.WindowsCache is { } wc ? $", {Format.Bytes(wc)} in its D3DSCache folder" : "")}
           keys       {(rec.CacheKeys.Count > 0 ? string.Join(", ", rec.CacheKeys.Order()) : "-")}{(k.WarmAgs(g.Game.Id) is { } ags ? $" (compiles register its AGS app name {ags.App} as the game does: the exe name's case doesn't matter)" : AmdAppCache.IsNameHashed(rec.CacheKeys, ScsKiller.WarmExeName(g.Game, rec)) == false ? " (an app profile's key, not the exe name's hash: the name's case doesn't matter)" : "")}
-          recorder   {(g.RecorderInstalled ? ScsKiller.Frames11(g.Engine, k.Vendor.Caps) ? "installed, frame times only" : "installed" : "not installed")}{((!g.RecorderInstalled || g.RecorderFailure != null) && RecorderWhy(g) is { } off ? $" ({off})" : "")}{(g.RecorderRefused is { } why ? $". {(ScsKiller.NeverRecorded(g) ? ScsKiller.NothingRecordedTitle + ". " : "")}{why}" : "")}
-          recording  {(g.RecordingBytes > 0 ? $"{(g.RecordingBytes < 1 << 20 ? $"{Math.Max(1, g.RecordingBytes >> 10)} KB" : Format.Bytes(g.RecordingBytes))} (the game folder's files and SCSKiller's copy)" : "-")}, limit {ScsKiller.LimitText(k.Settings.RecordingLimitMB)} per game{(g.RecordingPaused ? $". {ScsKiller.PausedNote(k.Settings)}" : "")}
+          recorder   {(g.RecorderInstalled ? ScsKiller.Frames11(g.Engine, k.Vendor.Caps) ? "installed, frame times only" : "installed" : g.RecorderForeign ? ScsKiller.ForeignPlaced : "not installed")}{((!g.RecorderInstalled || g.RecorderFailure != null) && RecorderWhy(g) is { } off && off != ScsKiller.ForeignNote ? $" ({off})" : g is { RecorderInstalled: false, RecorderForeign: true, RecorderSkip: null, RecorderEffective: false } ? " (record install <game> takes it over)" : "")}{(g.RecorderRefused is { } why ? $". {(ScsKiller.NeverRecorded(g) ? ScsKiller.NothingRecordedTitle + ". " : "")}{why}" : "")}
+          recording  {(g.RecordingBytes > 0 ? $"{(g.RecordingBytes < 1 << 20 ? $"{Math.Max(1, g.RecordingBytes >> 10)} KB" : Format.Bytes(g.RecordingBytes))} (the game folder's files and SCSKiller's copy)" : "-")}{(g.RecordingBytes > 0 && (g.RecordedPipelines ?? (g.Plan is { } pl ? pl.Recorded - (pl.FromDownload ?? 0) - (pl.FromCommunity ?? 0) : null)) is { } rp ? $", {rp:N0} pipelines" : "")}, limit {ScsKiller.LimitText(k.Settings.RecordingLimitMB)} per game{(g.RecordingPaused ? $". {ScsKiller.PausedNote(k.Settings)}" : "")}
           last play  {(g.LastSession is { } l ? $"{Hms(l.Duration)}, {l.Requests} pipelines: {l.FromGameLibrary} from the game's library, {l.CacheHits} cache hits, {l.Compiles} compiles (worst {l.WorstCompileMs:0.0} ms){(l.StartupCompiles > 0 ? $", {l.StartupCompiles} compiles while the game started or loaded" : "")}{(l.RayQueryRecompiles > 0 ? $", {l.RayQueryRecompiles} ray-traced pipelines the driver partly recompiles every launch" : "")}{(l.StateObjectsReady + l.StateObjectsCompiled + l.StateObjectsStartupCompiled > 0 ? $". Ray tracing state objects: {l.StateObjectsReady} ready, {l.StateObjectsCompiled} compiled{(l.StateObjectsStartupCompiled > 0 ? $", {l.StateObjectsStartupCompiled} compiled while the game started or loaded" : "")}" : "")}" : "-")}
-          1st launch {(rec.FirstLaunch is { } fl ? $"{fl.At.LocalDateTime:yyyy-MM-dd HH:mm}, after the last compile: {fl.Hits} cache hits, {fl.Compiles} compiles ({fl.Compiled * 100:0.0}% compiled)" : "-")}
+          1st launch {(rec.FirstLaunch is { } fl ? $"{fl.At.LocalDateTime:yyyy-MM-dd HH:mm}, after the last compile: {fl.Hits} cache hits, {fl.Compiles} compiles ({fl.Compiled * 100:0.0}% compiled{(fl.ShaderSets is { } sets ? $", {sets}" : "")})" : "-")}
         """);
     foreach (var line in Format.ModNote(g).Split('\n', StringSplitOptions.RemoveEmptyEntries)) Console.WriteLine($"  mod        {line}");
     if (g.RuntimeWarning is { } warning) Console.WriteLine($"  warning    {warning}");
+    if (SCSKiller.Core.Games.LauncherPrefix.Is(g.Game))
+        Console.WriteLine($"  prefix     {(SCSKiller.Core.Games.LauncherPrefix.Of(g.Game, out var noPrefix) is { } pfx ? $"{pfx.WineDir} on {(pfx.Proton ? "Proton" : "Wine")} {pfx.Bin}" : $"- ({noPrefix})")}");
     return 0;
 }
 
@@ -469,7 +494,9 @@ async Task<int> QueueShell()
 
     static IEnumerable<string> StdinLines()
     {
-        while (Console.ReadLine() is { } l) yield return l;
+        // a .NET Framework writer starts with a UTF-8 byte order mark, which Console.ReadLine decodes in the console's code page
+        using var piped = Console.IsInputRedirected ? new StreamReader(Console.OpenStandardInput(), Console.InputEncoding, detectEncodingFromByteOrderMarks: true) : null;
+        while ((piped != null ? piped.ReadLine() : Console.ReadLine()) is { } l) yield return l;
     }
 }
 
@@ -481,13 +508,15 @@ async Task<int> CacheClear()
     var precache = args.Contains("--game-precache");
     var parts = k.GameCaches(g.Game.Id, precache);
     var gap = k.DriverCacheGap(g.Game.Id);
-    if (parts.Count == 0 && g.WarmedAt == null) return Fail($"no shader-cache files of {g.Game.Name} were found" + (gap != null ? $" ({gap})" : ""));
+    var shared = k.SharedCacheNote(g.Game.Id);
+    if (parts.Count == 0 && g.WarmedAt == null) return Fail(shared != null ? $"{g.Game.Name}: nothing else to clear. {shared}" : gap != null ? $"Nothing to clear yet for {g.Game.Name}: {gap}." : $"no shader-cache files of {g.Game.Name} were found");
     foreach (var p in parts)
     {
         Console.WriteLine($"{p.Name}  {Format.Bytes(p.Bytes)}");
         foreach (var f in p.Files) Console.WriteLine($"  {f}");
     }
-    if (gap != null) Console.WriteLine($"note: {gap}");
+    if (gap != null) Console.WriteLine($"note: {gap}.");
+    if (shared != null) Console.WriteLine($"note: {shared}");
     if (!precache && k.GameCaches(g.Game.Id, true).Where(p => p.Name is ScsKiller.PipelinePart or ScsKiller.PrecachePart).ToList() is { Count: > 0 } own)
         Console.WriteLine($"kept: the game's own caches ({string.Join(", ", own.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}"))}), --game-precache deletes them too");
     if (!Confirm(parts.Count == 0 ? $"Forget {g.Game.Name}'s compile? No files are deleted, and it shows as not warmed afterwards."
@@ -509,19 +538,19 @@ async Task<int> CachePage()
     Console.WriteLine($"total: {Format.Bytes(inv.Groups.Sum(g => g.Bytes))}");
     foreach (var g in inv.Groups)
     {
-        Console.WriteLine($"{g.Kind}  {Format.Bytes(g.Bytes)}{(g.Note is { } gn ? $"  ({gn})" : "")}");
+        Console.WriteLine($"{CacheNames.Texts(g.Kind, inv.DriverInstalled).Title}  {Format.Bytes(g.Bytes)}{(g.Note is { } gn ? $"  ({gn})" : "")}");
         foreach (var i in g.Items)
         {
-            Console.WriteLine($"  {i.Name}  {Format.Bytes(i.Bytes)}  {i.Files.Count} files{(i.Kept ? "  kept" : "")}{(i.Note is { } n ? $"  ({n})" : "")}");
+            Console.WriteLine($"  {CacheNames.Item(g.Kind, i)}  {Format.Bytes(i.Bytes)}  {i.Files.Count} files{(i.Kept ? "  kept" : "")}{(i.Note is { } n ? $"  ({n})" : "")}");
             if (args.Contains("--files")) foreach (var f in i.Files) Console.WriteLine($"    {f.Path}");
         }
     }
     if (args.ElementAtOrDefault(2) != "delete") return 0;
     if (args.ElementAtOrDefault(3) is not { } what) return Fail("cache page delete <item>|everything [--others]");
     var items = what == "everything" ? inv.Everything(args.Contains("--others"))
-        : inv.Groups.SelectMany(g => g.Items).Where(i => i.Name.Equals(what, StringComparison.OrdinalIgnoreCase)).ToList();
+        : inv.Groups.SelectMany(g => g.Items.Where(i => i.Name.Equals(what, StringComparison.OrdinalIgnoreCase) || CacheNames.Item(g.Kind, i).Equals(what, StringComparison.OrdinalIgnoreCase))).ToList();
     if (items.Count == 0) return Fail($"nothing to delete for '{what}'");
-    if (!Confirm($"Delete {string.Join(", ", items.Select(i => i.Name))} ({Format.Bytes(items.Sum(i => i.Bytes))})?")) return 1;
+    if (!Confirm($"Delete {string.Join(", ", items.Select(i => CacheNames.Item(i.Kind, i)))} ({Format.Bytes(items.Sum(i => i.Bytes))})?")) return 1;
     var r = k.DeleteCaches(items);
     Console.WriteLine($"deleted {Format.Bytes(r.Bytes)} in {r.Files} files");
     foreach (var why in r.Skipped) Console.WriteLine($"skipped: {why}");
@@ -530,11 +559,11 @@ async Task<int> CachePage()
 
 async Task<int> Compile()
 {
-    if (args.Length < 2) return Fail("compile <game|--all-ready> [--threads N] [--idle | --when-idle] [--careful | --fast]");
-    Only("--all-ready", "--threads", "--idle", "--when-idle", "--careful", "--fast");
+    if (args.Length < 2) return Fail("compile <game|--all-ready> [--threads N] [--idle | --when-idle] [--careful | --fast] [--rt-only]");
+    Only("--all-ready", "--threads", "--idle", "--when-idle", "--careful", "--fast", "--rt-only");
     int? threads = Opt("--threads") is { } t ? int.TryParse(t, out var n) && n > 0 ? n : throw new ArgumentException("--threads takes a number of threads") : null;
     using var awake = KeepAwake.Start();   // before the first await: still on the main thread
-    var k = await Open();
+    var k = await Open(game: args[1] == "--all-ready" ? null : args[1], collection: true);
     if (threads != null) k.ThreadsOverride = threads;
     bool whenIdle = args.Contains("--when-idle");
     k.Background = args.Contains("--idle");
@@ -549,6 +578,8 @@ async Task<int> Compile()
             k.SetCarefulCompile(g.Game.Id, args.Contains("--careful"));
             Console.WriteLine($"{g.Game.Name}: {(k.Games.Single(s => s.Game.Id == g.Game.Id) is var gs ? CarefulLine(gs.Careful, gs.Plan) : "")}");
         }
+    if (args.Contains("--rt-only"))
+        foreach (var g in targets) k.RtOnlyNext(g.Game.Id);
     return await RunQueue(k, targets, whenIdle);
 }
 
@@ -580,7 +611,18 @@ async Task<int> RewarmStale(bool ifDriverChanged)
             return 0;
         default:
             BackgroundPriority();
-            return await RunQueue(k, ifDriverChanged ? k.IdleRewarmGames() : stale, whenIdle: true);
+            // the app shows the notifications Core raises, as it would have run the queue itself
+            var handing = new List<Task>();
+            k.Notice += (id, _, kind) =>
+            {
+                lock (handing) handing.Add(Task.Run(() => Console.WriteLine(ScsKiller.StartApp(ScsKiller.NoticeArg, kind, id) is { } app
+                    ? $"notification ({kind}) handed to {app}" : $"notification ({kind}): no app to show it")));
+            };
+            var code = await RunQueue(k, ifDriverChanged ? k.IdleRewarmGames() : stale, whenIdle: true);
+            Task[] started;
+            lock (handing) started = [.. handing];
+            await Task.WhenAll(started);
+            return code;
     }
 }
 
@@ -634,10 +676,10 @@ async Task<int> UseShared()
 
 async Task<int> Record()
 {
-    if (args.ElementAtOrDefault(1) == "remove-all") return RemoveAll();
+    if (args.ElementAtOrDefault(1) == "remove-all") return Stray(2, "record remove-all") ?? RemoveAll();
     bool alongside = args.Length > 3 && args[1] == "alongside" && args[3] is "on" or "off";
-    if (!alongside && (args.Length < 3 || args[1] is not ("install" or "uninstall" or "clear")))
-        return Fail("record install|uninstall|clear <game> | record alongside <game> on|off | record remove-all");
+    if (!alongside && (args.Length < 3 || args[1] is not ("install" or "uninstall" or "clear" or "grant")))
+        return Fail("record install|uninstall|clear|grant <game> | record alongside <game> on|off | record remove-all");
     var k = await Open();
     var g = Match(k.Games, args[2]);
     if (args[1] == "clear")
@@ -647,6 +689,15 @@ async Task<int> Record()
                      "the game creates them again while recording, and the compile plan goes back to what the game's files give.")) return 1;
         k.ClearRecording(g.Game.Id);   // a refusal throws InvalidOperationException: printed as "error: <reason>"
         Console.WriteLine($"cleared {g.Game.Name}'s recording");
+        return 0;
+    }
+    if (args[1] == "grant")
+    {
+        IScsKiller core = k;
+        if (core.FlatpakGrantLauncher(g.Game.Id) is not { } launcher) return Fail($"{g.Game.Name}: {RecorderWhy(g) ?? "its launcher already sees the recorder folder"}");
+        if (!Confirm(ScsKiller.FlatpakGrantConfirm(launcher, core.FlatpakGrantWrites(g.Game.Id)) + ".")) return 1;
+        if (core.GrantFlatpak(g.Game.Id) is { } why) return Fail(why);
+        Console.WriteLine(ScsKiller.FlatpakGrantDone(launcher));
         return 0;
     }
     if (alongside)
@@ -690,7 +741,7 @@ async Task<int> AddGame()
 async Task<int> GameExe()
 {
     if (args.Length < 3) return Fail("exe <game> <exe>|auto");
-    var k = await Open();
+    var k = await Open(game: args[1]);
     var id = Match(k.Games, args[1]).Game.Id;
     k.SetGameExe(id, args[2] == "auto" ? null : args[2]);
     Console.WriteLine($"{id}  {Match(k.Games, id).Game.ExePath}");
@@ -730,10 +781,13 @@ async Task<int> SteamPlace()
 
 async Task<int> Key()
 {
-    if (args.Length < 3) return Fail("key <game> <hex>");
-    var k = await Open();
+    if (args.Length < 3) return Fail("key <game> <hex> [<hex>...]");
+    var k = await Open(game: args[1]);
     var g = Match(k.Games, args[1]);
-    if (!k.SetEncryptionKey(g.Game.Id, args[2])) return Fail($"that key doesn't open {g.Game.Name}'s files");
+    var (stored, refused) = k.SetEncryptionKey(g.Game.Id, string.Join('\n', args[2..]));
+    if (!stored && !refused.Any(r => r.StartsWith("line "))) return Fail($"{g.Game.Name}: {string.Join(", ", refused)}");
+    foreach (var why in refused) Console.WriteLine($"refused {why}");
+    if (!stored) return Fail($"{g.Game.Name}: no key stored");
     await k.RescanAsync(CancellationToken.None);
     Console.WriteLine($"key accepted for {g.Game.Name}: {k.Games.First(s => s.Game.Id == g.Game.Id).StatusReason}");
     return 0;
@@ -741,7 +795,7 @@ async Task<int> Key()
 
 static async Task<(ScsKiller K, GameState G, IEngineReader Reader, EngineInfo Engine, ShaderIndex Index)> OpenIndex(string query, IProgress<string>? log = null)
 {
-    var k = await Open();
+    var k = await Open(game: query);
     var g = Match(k.Games, query);
     var reader = ScsKiller.DefaultReaders();
     var engine = g.Engine ?? reader.Detect(g.Game) ?? throw new InvalidOperationException($"{g.Game.Name}: engine not supported");
@@ -847,6 +901,7 @@ int ShaderCleanup()
 int TaskCommand()
 {
     if (!OperatingSystem.IsWindows()) return Fail("the re-warm task is a Windows scheduled task");
+    if (AppStore.Moved != null) return Fail(AppStore.MovedRefusal);
     switch (args.ElementAtOrDefault(1))
     {
         case "register":

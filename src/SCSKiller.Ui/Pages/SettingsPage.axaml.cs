@@ -32,12 +32,29 @@ public sealed partial class SettingsPage : UserControl
             Dispatcher.UIThread.Post(() => refreshing = false, DispatcherPriority.Background);
         };
         AccountPart.DataContext = Patreon;
-        RemoveRecordersPart.IsVisible = OperatingSystem.IsLinux();   // an AppImage has no uninstall to take them out
+        RemoveRecordersPart.IsVisible = !OperatingSystem.IsMacOS();   // no recorder there yet
         refresh = new(Host.Ui, Vm.GamesChanged);   // reconcile changes the recorder count
         Vm.PropertyChanged += (_, _) => Patreon.Refresh();   // e.g. the share checkbox ticked: the prompt goes
         // a new channel list (sign-in) resets the selection after the index was read: show the chosen channel again
         Patreon.PropertyChanged += (_, _) => Dispatcher.UIThread.Post(() => ChannelBox.SetCurrentValue(SelectingItemsControl.SelectedIndexProperty, Patreon.ChannelIndex),
             DispatcherPriority.Background);
+        Cards.SizeChanged += (_, e) => { if (e.WidthChanged) FitCards(); };
+        PropertyChanged += (_, e) => { if (e.Property == FontSizeProperty) FitCards(); };
+    }
+
+    // two cards side by side need about 26 lines of text width each, so a large Text size stacks them
+    void FitCards()
+    {
+        bool narrow = (Cards.Bounds.Width - Cards.ColumnSpacing) / 2 < FontSize * 26;
+        if (narrow == Scroller.Classes.Contains("Narrow")) return;
+        Scroller.Classes.Set("Narrow", narrow);
+        Cards.ColumnDefinitions = new ColumnDefinitions(narrow ? "*" : "*,*");
+        Cards.RowDefinitions = new RowDefinitions(narrow ? "Auto,Auto,Auto,Auto" : "Auto,Auto");
+        for (int i = 0; i < Cards.Children.Count; i++)
+        {
+            Grid.SetColumn(Cards.Children[i], narrow ? 0 : i % 2);
+            Grid.SetRow(Cards.Children[i], narrow ? i : i / 2);
+        }
     }
 
     void OnChanged(GameState _) => refresh.Request();
@@ -92,9 +109,8 @@ public sealed partial class SettingsPage : UserControl
     {
         Title = "Recording in games with anti-cheat", CloseButtonText = "Close",
         Content = "For one session, SCSKiller puts its recorder (a d3d12.dll) next to the game's exe.\n\n"
-            + "Games with anti-cheat can treat the recorder as cheating and ban your account, during the session or later. No game is known to be safe.\n\n"
             + "SCSKiller removes every file it places when the game exits, or after a crash at your next logon.\n\n"
-            + "Enabling the recorder in these games is at your own risk. SCSKiller isn't responsible for bans.",
+            + "Enabling the recorder in games with anti-cheat is at your own risk. SCSKiller isn't responsible for bans.",
     };
 
     async void OnAntiCheatDetails(object? _, RoutedEventArgs __) => await App.ShowAsync(AntiCheatDetailsDialog());
@@ -108,6 +124,8 @@ public sealed partial class SettingsPage : UserControl
             .. removed.VulkanLeft is { } vulkan ? [$"Vulkan recorders' registrations: {vulkan}"] : Array.Empty<string>()];
         if (left.Length == 0)
         {
+            // a test identity's toast registration goes at quit
+            ScsKiller.RemoveTraces(Program.Identity.Production ? Environment.ProcessPath : null, m => real.Log?.Report(m));
             App.Quit();
             return;
         }
@@ -166,6 +184,7 @@ public sealed partial class SettingsPage : UserControl
     public double ScrolledBy => Scroller.Offset.Y;
     public void ScrollToNewShaders() => ScrollTo(NewShadersHeader, 40);
     public void ScrollToTraversal() => ScrollTo(TraversalLabel, 300);
+    public void ScrollToCompactUi() => ScrollTo(CompactUiBox, 300);
 
     // WinUI's BringIntoView at the top with a VerticalOffset: the element <offset> px below the viewport's top (above it when negative)
     void ScrollTo(Control element, double offset)

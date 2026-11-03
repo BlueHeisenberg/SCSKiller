@@ -74,7 +74,6 @@ public static partial class VulkanPlan
     /// <summary>A plan on <see cref="DeviceKey"/> whose game's device isn't recorded yet: the warm can't reach its cache.</summary>
     public const string DeviceNeeded = "turn on recording and start the game once, so the compile uses its Vulkan device";
     /// <summary>A plan on <see cref="DeviceKey"/> whose game's last launch didn't use Steam's shader cache folder.</summary>
-    public const string SteamCacheNeeded = "start the game once from Steam with Shader Pre-Caching on";
     /// <summary>A Steam game whose folder has Valve's download but no archive this PC recorded: the download's pipelines count
     /// only for the application a launch here records (<see cref="SteamPipelineCache.Sources"/>), so no recorder is needed.</summary>
     public const string StartOnce = "start it once from Steam, then it can compile from Steam's shader download";
@@ -632,6 +631,11 @@ public static partial class VulkanPlan
         finally { File.Delete(tmp); }
         return left;
     }
+
+    /// <summary>Rewrites a work folder's <see cref="WorkFile"/> to its ray tracing pipelines and those that trace rays inline,
+    /// and what they are created from (ScsKiller.CompileRtOnly). Returns how many were left out.</summary>
+    public static long KeepRayTracing(string workFoz) =>
+        LeaveOut(workFoz, Pipelines(workFoz).Where(p => p.Entry.Tag != Foz.RayTracing && !p.RayQuery).Select(p => Key(p.Name)).ToHashSet(StringComparer.Ordinal));
 
     /// <summary>The <see cref="Key"/>s of a warm's pipelines it created: every one in its <see cref="WorkFile"/> but those a
     /// <see cref="App.Recordings.FailedFile"/> names.</summary>

@@ -111,15 +111,41 @@ static partial class NamedMutex
     /// made 0700 once every folder above it passed. <paramref name="lstat"/>, <paramref name="acl"/>: tests set others.</summary>
     internal static string? Exposed(string dir, string? made = null, Func<string, (uint Uid, uint Mode)?>? lstat = null, Func<string, int>? acl = null)
     {
+        var stat = lstat ?? Libc.Lstat;
         var chain = new Stack<string>();
         for (string? d = dir; d != null; d = Path.GetDirectoryName(d)) chain.Push(d);
         foreach (var d in chain)
         {
             if (made != null && d.StartsWith(made + "/", StringComparison.Ordinal)) Libc.MakePrivateDir(d);
-            if (OwnPath.Node(d, Libc.EffectiveUserId, lstat ?? Libc.Lstat, acl ?? Libc.AccessAcl, stickyRoot: true) is { } why)
+            if (OwnPath.Node(d, Libc.EffectiveUserId, p => stat(p) is { } n ? (n.Uid == Unmapped && (n.Mode & 0x12) == 0 ? 0 : n.Uid, n.Mode) : null, acl ?? Libc.AccessAcl, stickyRoot: true) is { } why)
                 return $"The folder where SCSKiller keeps its locks can't be trusted: {why}";
         }
         return null;
+    }
+
+    /// <summary>The owner a user namespace (bwrap, firejail, Flatpak) shows for every uid it doesn't map, root's among them.
+    /// Folders above the lock folder with it count as root's unless a group or every user can write to them (a sticky /tmp
+    /// too, as its owner can rename what's in it): another user's can't be told apart there, the lock folder itself still
+    /// has to be ours. Null where that uid is mapped (outside a namespace it is nobody's).</summary>
+    internal static uint? Unmapped = FindUnmapped(ReadOrNull("/proc/sys/kernel/overflowuid"), ReadOrNull("/proc/self/uid_map"));
+
+    static uint? FindUnmapped(string? overflow, string? uidMap)
+    {
+        if (!uint.TryParse(overflow?.Trim(), out var uid) || uidMap == null) return null;
+        foreach (var line in uidMap.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            // inside, outside, count
+            var f = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (f.Length != 3 || !ulong.TryParse(f[0], out var inside) || !ulong.TryParse(f[2], out var count)) return null;
+            if (uid >= inside && uid - inside < count) return null;
+        }
+        return uid;
+    }
+
+    static string? ReadOrNull(string path)
+    {
+        try { return File.ReadAllText(path); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
     }
 
     /// <summary>Why <paramref name="root"/> or its shm folder isn't a private folder of the user's, null when both are. A

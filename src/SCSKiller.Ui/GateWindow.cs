@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Platform;
 using SCSKiller.Core.App;
@@ -20,7 +21,9 @@ sealed class GateWindow : Window
     public GateWindow(Account account, string dataDir, Action opened)
     {
         (this.account, this.dataDir, this.opened) = (account, dataDir, opened);
-        (Title, Width, Height, CanResize) = ("SCSKiller", 520, 300, false);
+        (Title, CanResize) = ("SCSKiller", false);
+        Bind(WidthProperty, this.GetResourceObservable("TextFit.520"));
+        Bind(HeightProperty, this.GetResourceObservable("TextFit.300"));
         Icon = new WindowIcon(AssetLoader.Open(App.Asset("app.ico")));
         Bind(BackgroundProperty, this.GetResourceObservable("SolidBackgroundFillColorBaseBrush"));
         Bind(ForegroundProperty, this.GetResourceObservable("TextFillColorPrimaryBrush"));
@@ -34,7 +37,7 @@ sealed class GateWindow : Window
             Spacing = 12,
             Children =
             {
-                new TextBlock { Text = AlphaGate.Title, FontSize = 20, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap },
+                new TextBlock { Text = AlphaGate.Title, [!TextBlock.FontSizeProperty] = new DynamicResourceExtension("TextSize.20"), FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap },
                 new TextBlock { Text = AlphaGate.Intro, TextWrapping = TextWrapping.Wrap },
                 why,
                 new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { signIn, quit } },

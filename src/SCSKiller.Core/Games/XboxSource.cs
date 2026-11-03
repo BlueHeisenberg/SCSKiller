@@ -8,9 +8,11 @@ namespace SCSKiller.Core.Games;
 /// package-manager query is needed to enumerate installs: the manifest sits right there in Content, readable like
 /// any other file since the 2022 Xbox app. It's only used, via the native PackageFamilyNameFromId (below), to turn
 /// the manifest's Identity name+publisher into the same PackageFamilyName Get-AppxPackage would show, for the id.</summary>
-public sealed class XboxSource(IEnumerable<string>? driveRoots = null) : IGameSource
+public sealed class XboxSource(IEnumerable<string>? driveRoots = null) : IGameSource, ILeavesOut
 {
     public Store Store => Store.Xbox;
+
+    public Func<string, bool> LeftOut { get; set; } = _ => false;
 
     /// <summary>Games listed before, by id: the exe found below Content for a game whose config and Content folder name none
     /// is reused while the game's version and folder are the same and the exe is there.</summary>
@@ -20,7 +22,7 @@ public sealed class XboxSource(IEnumerable<string>? driveRoots = null) : IGameSo
     {
         var games = new List<Game>();
         var roots = driveRoots ?? DriveInfo.GetDrives().Where(d => d.DriveType is DriveType.Fixed or DriveType.Removable).Select(d => d.RootDirectory.FullName);
-        foreach (var root in roots.SelectMany(LibraryFolders).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var root in roots.Where(r => !LeftOut(r)).SelectMany(LibraryFolders).Where(l => !LeftOut(l)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             IEnumerable<string> titleDirs;
             try { titleDirs = Directory.Exists(root) ? Directory.GetDirectories(root) : []; }
@@ -28,6 +30,7 @@ public sealed class XboxSource(IEnumerable<string>? driveRoots = null) : IGameSo
             foreach (var titleDir in titleDirs)
             {
                 var content = Path.Combine(titleDir, "Content");
+                if (LeftOut(content)) continue;
                 var configPath = Path.Combine(content, "MicrosoftGame.config");
                 if (!File.Exists(configPath)) continue;
                 try

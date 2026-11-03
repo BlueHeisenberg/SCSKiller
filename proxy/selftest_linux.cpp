@@ -3,9 +3,9 @@
 // X armed (a signed scskiller.ini) with the layer explicit through VK_LAYER_PATH, FOSSILIZE_DUMP_PATH aimed at the copy's
 // folder and a cache redirect set: the archive and the csv (#api,vulkan, #cache, #vkinstance, #vkdevice, a row per
 // pipeline) go to the recorder folder's vulkan/<exe key>/, nothing but the ini is in the copy's folder. T the exe touched
-// since it was signed, A an EasyAntiCheat folder beside it, U unarmed: each passes through, writes nothing there and
-// leaves its refusal in refused/. Then the layer as the app writes it per game, an implicit one enabled by SteamAppId=4242,
-// in a temp $XDG_DATA_HOME/vulkan/implicit_layer.d: I0 without SteamAppId isn't loaded, I1 with it records.
+// since it was signed, A an EasyAntiCheat folder beside it: each passes through, writes nothing there and leaves its
+// refusal in refused/. U without an ini passes through with no refusal: not a folder the app armed. Then the layer as the
+// app writes it per game, an implicit one enabled by SteamAppId=4242, in a temp $XDG_DATA_HOME/vulkan/implicit_layer.d: I0 without SteamAppId isn't loaded, I1 with it records.
 // P presents on a headless surface (SCSK_VK_PRESENT), recreates the swapchain and presents again: the presents return
 // what P0, the same without the layer, gets, and scskiller_frames.bin holds every frame on one swap chain index, its launch
 // record stamped as the csv's #session. PU presents unarmed: no frames file. PO is P with the ini's countdown lines: the
@@ -305,9 +305,19 @@ static bool arm(const std::string& game, const std::string& exe, const std::stri
                        time = std::to_wstring(((uint64_t)st.st_mtim.tv_sec + 11644473600ull) * 10000000ull + (uint64_t)st.st_mtim.tv_nsec / 100);
     const std::string here = final_dir(game);
     const std::wstring p = pid ? std::to_wstring(pid) : L"", pt = pid ? std::to_wstring(pid_time) : L"";
-    const std::string sig = recorder_sig(key, file_key(exe), file_key(no_slash(game)), signed_stamp(size, time, p, pt, L"", L"", overlay ? L"1" : L"", overlay ? L"300" : L"", overlay ? L"before" : L""), L".", file_key(no_slash(here)));
+    // arm=: the one arms/ keeps for this folder, else a new one kept there (ScsKiller.Arm)
+    const std::string arms = rec + "/arms/" + file_key(no_slash(game));
+    std::string arm = to_utf8(arm_line(read_all(arms, 64)));
+    if (!arm_well_formed(widen(arm))) {
+        std::random_device rd;
+        arm.clear();
+        for (int i = 0; i < 32; ++i) arm += "0123456789abcdef"[rd() & 15];
+        mkdir((rec + "/arms").c_str(), 0700);
+        if (!write_file(arms, arm)) return false;
+    }
+    const std::string sig = recorder_sig(key, file_key(exe), file_key(no_slash(game)), signed_stamp(size, time, p, pt, L"", L"", overlay ? L"1" : L"", overlay ? L"300" : L"", overlay ? L"before" : L"", L"", widen(arm)), L".", file_key(no_slash(here)));
     const std::string bound = pid ? "pid=" + to_utf8(p) + "\r\npid_time=" + to_utf8(pt) + "\r\n" : "";
-    return !sig.empty() && write_file(game + "scskiller.ini", "[scskiller]\r\nexe_size=" + to_utf8(size) + "\r\nexe_time=" + to_utf8(time) + "\r\n" + bound + (overlay ? "overlay=1\r\nab_play_s=300\r\nab_tag=before\r\n" : "") + "root=.\r\nsig=" + sig + "\r\n");
+    return !sig.empty() && write_file(game + "scskiller.ini", "[scskiller]\r\nexe_size=" + to_utf8(size) + "\r\nexe_time=" + to_utf8(time) + "\r\narm=" + arm + "\r\n" + bound + (overlay ? "overlay=1\r\nab_play_s=300\r\nab_tag=before\r\n" : "") + "root=.\r\nsig=" + sig + "\r\n");
 }
 
 // The process's start time as Core's ProcessTree.Stat parses it: the 20th field after the name's closing parenthesis.
@@ -588,11 +598,11 @@ static int vkrec(const std::string& bin) {
 
     CHECK(!unlink((game + "scskiller.ini").c_str()));
     Seen u = play("U");
-    bad += !nothing(u) || !u.refused || u.game.size() != 1;
+    bad += !nothing(u) || u.refused || u.game.size() != 1;
     setenv("SCSK_VK_PRESENT", "1", 1);
     Seen pu = play("PU");
     unsetenv("SCSK_VK_PRESENT");
-    bad += pu.code != p0.code || pu.foz || pu.rows || pu.frames != -1 || !pu.refused;
+    bad += pu.code != p0.code || pu.foz || pu.rows || pu.frames != -1 || pu.refused;
 
     clean();
     CHECK(arm(game, exe, rec));

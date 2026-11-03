@@ -23,9 +23,9 @@ public sealed class RulesFile
     /// object config (<see cref="RtRule.Config"/>); rs.re.v1: RE Engine's construction with its parameters (<see cref="ReRule"/>);
     /// rs.re.v2: its <see cref="ReRule.DenyMesh"/>, <see cref="ReRule.CbvUavAbove"/> and <see cref="ReRule.BindlessSpaces"/>; rs.re.v3: its <see cref="ReRule.OtherCbvBase"/>;
     /// rs.samplers.v1: static samplers as raw descriptions; rs.stock.v2: <see cref="StockRule.DenyMesh"/>; rs.stock.v3: <see cref="StockRule.NvExtensionEverywhere"/>; rt.nv.v1: <see cref="RtRule.Nv"/>;
-    /// amd.ags.v1: <see cref="PlanRule.Ags"/>; nv.aftermath.v1: <see cref="PlanRule.Aftermath"/>; vi.v1: <see cref="PlanRule.ViewInstancing"/>;
+    /// amd.ags.v1: <see cref="PlanRule.Ags"/>; amd.ags.v2: its <see cref="AgsRule.Registrations"/>; nv.aftermath.v1: <see cref="PlanRule.Aftermath"/>; vi.v1: <see cref="PlanRule.ViewInstancing"/>;
     /// passnames.v1: <see cref="PlanRule.PassNames"/>; d3ds.identity.v1: an <see cref="IdentityRule"/>, alone.</summary>
-    public static readonly IReadOnlySet<string> Capabilities = new HashSet<string> { "rs.desc.v1", "rs.desc.v2", "rs.stock.v1", "rs.select.v1", "stagesets.v1", "rt.collection.v1", "rt.noconfig.v1", "rs.re.v1", "rs.re.v2", "rs.re.v3", "rs.samplers.v1", "rs.stock.v2", "rs.stock.v3", "rt.nv.v1", "amd.ags.v1", "nv.aftermath.v1", "vi.v1", "passnames.v1", IdentityCap };
+    public static readonly IReadOnlySet<string> Capabilities = new HashSet<string> { "rs.desc.v1", "rs.desc.v2", "rs.stock.v1", "rs.select.v1", "stagesets.v1", "rt.collection.v1", "rt.noconfig.v1", "rs.re.v1", "rs.re.v2", "rs.re.v3", "rs.samplers.v1", "rs.stock.v2", "rs.stock.v3", "rt.nv.v1", "amd.ags.v1", "amd.ags.v2", "nv.aftermath.v1", "vi.v1", "passnames.v1", IdentityCap };
 
     public const string IdentityCap = "d3ds.identity.v1";
 
@@ -140,9 +140,14 @@ public sealed class RulesFile
                 || vi.Views is not { Length: >= 1 and <= 4 } || vi.Views.Any(v => v is not [< 16, < 2048]) || vi.Flags > 1
                 || vi.Libraries is { } libs && (libs.Length is 0 or > 256 || !libs.All(l => ContentFile.Text(l, 64)))))
             return "bad viewInstancing";
-        if (r.Ags is { } ags && (!Needs("amd.ags.v1") || r.RootSignature != null || r.Rt != null
+        static bool Hex8(string? v) => v == null || v is { Length: 8 } && v.All(char.IsAsciiHexDigit);
+        if (r.Ags is { } ags && (!(Needs("amd.ags.v1") || Needs("amd.ags.v2")) || r.RootSignature != null || r.Rt != null
+                || (ags.Profiles != null || ags.Proven != null) && !Needs("amd.ags.v1")
                 || ags.Profiles?.All(p => ContentFile.Text(p.Key, 64) && p.Value is { Length: 8 } && p.Value.All(char.IsAsciiHexDigit)) == false
-                || ags.Proven?.All(a => ContentFile.Text(a, 64)) == false))
+                || ags.Proven?.All(a => ContentFile.Text(a, 64)) == false
+                || ags.Registrations is { } regs && (!Needs("amd.ags.v2") || regs.Count is 0 or > 4096
+                    || !regs.All(p => ContentFile.Text(p.Key, 64) && p.Key.Contains(':') && p.Value is { } v
+                        && (v.Engine == null || ContentFile.Text(v.Engine, 64)) && Hex8(v.AppVersion) && Hex8(v.EngineVersion)))))
             return "bad ags";
         if (r.Aftermath is { } am && (!Needs("nv.aftermath.v1") || r.RootSignature != null || r.Rt != null || r.Ags != null || am.Count == 0
                 || !am.All(p => ContentFile.Text(p.Key, 64) && p.Key.Contains(':') && p.Value is { Version: > 0, Features: > 0 })))
@@ -326,7 +331,13 @@ public sealed record ViRule(string Note, uint[][] Views, uint Flags = 0, string[
 
 /// <summary>Driver app profiles matched on the AGS app name, exact case: app name -> DxcCache key, 8 hex digits. Proven: app
 /// names whose game's own process was seen holding the key they give, registered before the game has been seen.</summary>
-public sealed record AgsRule(Dictionary<string, string>? Profiles = null, string[]? Proven = null);
+public sealed record AgsRule(Dictionary<string, string>? Profiles = null, string[]? Proven = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] Dictionary<string, AgsOverride>? Registrations = null);
+
+/// <summary>What a game's compiles register with AGS instead (<see cref="Vendors.AmdAgs.Registered"/>), by store id; a field
+/// left out keeps what the game is seen or known to register. <paramref name="Engine"/>: "-" registers none; the versions are
+/// 8 hex digits.</summary>
+public sealed record AgsOverride(string? Engine = null, string? AppVersion = null, string? EngineVersion = null);
 
 /// <summary>An engine family; an inclusive "major.minor" range of its versions (none: any version); a fork (none: any); the
 /// games (<see cref="EngineInfo.Game"/>, none: any) whose own roots the rule describes, each a store id ("steam:1895880": any

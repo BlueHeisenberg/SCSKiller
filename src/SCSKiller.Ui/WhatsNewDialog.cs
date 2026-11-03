@@ -1,6 +1,8 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
+using Avalonia.Layout;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using SCSKiller.Core.App;
 using SCSKiller.Ui.Controls;
@@ -19,7 +21,7 @@ public static class WhatsNewDialog
         foreach (var (heading, line, group) in AboutVm.WhatsNewLines(section))
         {
             var text = new LinkText { TextWrapping = TextWrapping.Wrap, Inlines = new InlineCollection(), Margin = heading && panel.Children.Count > 0 ? new Thickness(0, group ? 28 : 16, 0, 0) : default };
-            if (group) (text.FontSize, text.TextDecorations) = (16, TextDecorations.Underline);
+            if (group) (text[!TextBlock.FontSizeProperty], text.TextDecorations) = (new DynamicResourceExtension("TextSize.16"), TextDecorations.Underline);
             var links = new Dictionary<Run, Uri>();
             foreach (var s in line)
             {
@@ -41,6 +43,6 @@ public static class WhatsNewDialog
             panel.Children.Add(text);
         }
         // as tall as the window leaves room for: the release notes run long
-        return new ContentDialog { Title = $"What's new in {section.Version}", Content = panel, CloseButtonText = "Close", MaxWidth = 880, ContentMaxHeight = double.PositiveInfinity, Margin = new(0, 32) };
+        return new ContentDialog { Title = $"What's new in {section.Version}", Content = panel, CloseButtonText = "Close", [!Layoutable.MaxWidthProperty] = new DynamicResourceExtension("TextFit.880"), ContentMaxHeight = double.PositiveInfinity, Margin = new(0, 32) };
     }
 }

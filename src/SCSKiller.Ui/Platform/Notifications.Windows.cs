@@ -10,14 +10,14 @@ namespace SCSKiller.Ui.Platform;
 /// <summary>Windows toasts through the Windows App SDK, as the WinUI app shows them.</summary>
 static partial class Notifications
 {
-    static string? testAumid;
+    static string? testAumid, testFolder;
 
     /// <summary>A test identity's AUMID, set before any window: the installed app keeps the one Velopack set.</summary>
     public static void UseIdentity(InstanceIdentity identity)
     {
         if (identity.Aumid is not { } aumid) return;
         Marshal.ThrowExceptionForHR(SetCurrentProcessExplicitAppUserModelID(aumid));
-        testAumid = aumid;
+        (testAumid, testFolder) = (aumid, identity.Folder);
     }
 
     /// <summary>Registers this process for toasts and their clicks (<paramref name="invoked"/>, any thread), before the
@@ -91,13 +91,16 @@ static partial class Notifications
 
     static AppNotification Build(Toast t)
     {
+        // a test identity's registration outlives a crash: its clicks name its data folder (InstanceIdentity.RefusesToast)
+        IEnumerable<KeyValuePair<string, string>> Tagged(IEnumerable<KeyValuePair<string, string>> args) =>
+            testFolder == null ? args : args.Append(new(InstanceIdentity.FolderArg, testFolder));
         var b = new AppNotificationBuilder();
-        foreach (var (key, value) in t.Args) b.AddArgument(key, value);
+        foreach (var (key, value) in Tagged(t.Args)) b.AddArgument(key, value);
         b.AddText(t.Title).AddText(t.Text);
         foreach (var button in t.Buttons)
         {
             var a = new AppNotificationButton(button.Label);
-            foreach (var (key, value) in button.Args) a.AddArgument(key, value);
+            foreach (var (key, value) in Tagged(button.Args)) a.AddArgument(key, value);
             b.AddButton(a);
         }
         var toast = b.BuildNotification();

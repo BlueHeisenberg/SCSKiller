@@ -142,9 +142,8 @@ The offline session for ELDEN RING and ARMORED CORE VI runs them offline without
 started directly: Steam must be running (offline mode is fine), and SCSKiller adds `d3d12.dll`, `scskiller.ini` and
 `steam_appid.txt` to the game's folder and starts the exe itself. With "Allow the recorder in games with anti-cheat (at
 your own risk)" on in Settings, any other supported game can run a session too: SCSKiller starts the game as usual, with
-`d3d12.dll` and `scskiller.ini` in its folder. Games with anti-cheat can treat the recorder as cheating and ban your
-account, during the session or later. No game is known to be safe. Enabling the recorder in these games is at your own
-risk, and SCSKiller isn't responsible for bans. Bans from it are not support issues. In both kinds the recorder records
+`d3d12.dll` and `scskiller.ini` in its folder. Enabling the recorder in games with anti-cheat is at your own risk.
+SCSKiller isn't responsible for bans. Bans from it are not support issues. In both kinds the recorder records
 only that process. When the game exits, SCSKiller takes those files out again (each only while it is still the file it
 added) and keeps the recording and the session's frame times, at the next logon or start if SCSKiller was closed or the
 PC crashed. If those files are still there when you start the game online, you could be banned. Don't uninstall

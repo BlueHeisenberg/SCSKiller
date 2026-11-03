@@ -9,16 +9,18 @@ namespace SCSKiller.Core.Games;
 /// <summary>Starts a game the way its store's own Play and desktop shortcut do, never by its exe: Steam (a non-Steam game
 /// added to it by its 64-bit game id), Epic and Ubisoft Connect by their URI, Xbox by the package's app id, GOG through
 /// GOG Galaxy's run command, PURPLE through PurpleLauncher.exe --game-id &lt;code&gt;. The EA app's own shortcuts run the game exe and discovery has no EA offer id; Battle.net and Riot Client games count as anti-cheat: none of these has a launch. A game the
-/// user added has no store: its exe runs from its own folder, with no arguments. Off Windows Steam's URI opens through xdg-open, on
-/// Linux Heroic's (its Epic, GOG and Amazon games) and Lutris's too, and PURPLE has no launch.</summary>
+/// user added has no store: its exe runs from its own folder, with no arguments, on Windows alone. Off Windows Steam's URI opens through xdg-open, on
+/// Linux Heroic's (its Epic, GOG and Amazon games and the ones added to it) and Lutris's too, Faugus's by its launcher's --game, and PURPLE has no launch.</summary>
 public static class StoreLaunch
 {
-    /// <summary>The game's store has a launch; no file read beyond whether GOG Galaxy or PURPLE is installed.</summary>
-    public static bool Supported(Game g) => g.Store == Store.Manual || Prefix(g) switch
+    /// <summary>The game's store has a launch; no file read beyond whether GOG Galaxy or PURPLE is installed and Faugus's games.json and launcher.</summary>
+    public static bool Supported(Game g) => g.Store == Store.Manual ? !OperatingSystem.IsLinux() : Prefix(g) switch
     {
         "steam" or "steam-shortcut" or "epic" or "xbox" or "ubisoft" => true,
         "gog" => OperatingSystem.IsLinux() || OperatingSystem.IsWindows() && GalaxyExe() != null,
-        "amazon" or "lutris" => OperatingSystem.IsLinux(),
+        "amazon" or "heroic" or "lutris" => OperatingSystem.IsLinux(),
+        // its launch runs a host program, which a Flatpak SCSKiller's sandbox doesn't have
+        "faugus" => OperatingSystem.IsLinux() && App.Installation.ThisElsewhere?.Kind != App.InstallKind.Flatpak && FaugusSource.Launch(g) != null,
         "purple" => OperatingSystem.IsWindows() && PurpleSource.LauncherExe() != null,
         _ => false,
     };
@@ -39,6 +41,7 @@ public static class StoreLaunch
         if (OperatingSystem.IsLinux() && HeroicSource.RunnerOf(g.Id) is { } runner)
             return new ProcessStartInfo("xdg-open", [$"heroic://launch?appName={Uri.EscapeDataString(id)}&runner={HeroicSource.RunnerName(runner)}"]);
         if (OperatingSystem.IsLinux() && LutrisSource.Is(g.Id)) return new ProcessStartInfo("xdg-open", [$"lutris:rungameid/{id}"]);
+        if (OperatingSystem.IsLinux() && FaugusSource.Is(g.Id)) return FaugusSource.Launch(g);
         if (!OperatingSystem.IsWindows() && Prefix(g) == "steam") return SteamSource.AppId(g.Id) is { } steam ? new ProcessStartInfo("xdg-open", [$"steam://rungameid/{steam}"]) : null;
         var uri = Prefix(g) switch
         {
@@ -49,7 +52,7 @@ public static class StoreLaunch
             _ => null,
         };
         if (uri != null) return new ProcessStartInfo(uri) { UseShellExecute = true };
-        if (g.Store == Store.Manual) return new ProcessStartInfo(g.ExePath) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(g.ExePath) };
+        if (g.Store == Store.Manual && !OperatingSystem.IsLinux()) return new ProcessStartInfo(g.ExePath) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(g.ExePath) };
         // Galaxy's own desktop shortcut; a trailing backslash would escape the closing quote
         if (OperatingSystem.IsWindows() && Prefix(g) == "gog" && ulong.TryParse(id, out _) && (galaxyExe ?? GalaxyExe()) is { } galaxy)
             return new ProcessStartInfo(galaxy, $"/command=runGame /gameId={id} /path=\"{g.InstallDir.TrimEnd('\\')}\"");

@@ -16,6 +16,7 @@ public partial class App
     /// registry as it is.</summary>
     static Task ApplyStartWithWindows(bool byUser)
     {
+        if (AppStore.Moved != null) return byUser ? Task.FromException(new InvalidOperationException(AppStore.MovedRefusal)) : Task.CompletedTask;
         if (Environment.ProcessPath is not { } exe) return Task.CompletedTask;
         // a portable copy's start never writes the value, so its setting follows the value
         if (!byUser && StartsAtSignIn() is { } on && on != Host.Core.Settings.StartWithWindows)

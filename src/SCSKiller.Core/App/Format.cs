@@ -22,15 +22,17 @@ public static class Format
 
     /// <summary>The cache's line on the Library and the Cache page, from sizes the app already measured: the driver cache against
     /// its limit, AMD's DirectX 11 cache apart (<paramref name="capped"/>: its DirectX 12 one, which the limit counts) and the Windows
-    /// shader cache (NVIDIA 621 and later), led by what they hold on disk together.</summary>
-    public static string CacheSplit(CacheUsage usage, CacheLimit? limit, long? capped, long windows)
+    /// shader cache (NVIDIA 621 and later), led by what they hold on disk together, or by <paramref name="total"/>: the Cache page's
+    /// rows, which also count a pending fold's staged dbs and the folders the parts leave out.</summary>
+    public static string CacheSplit(CacheUsage usage, CacheLimit? limit, long? capped, long windows, long? total = null)
     {
         var driver = capped ?? usage.BytesOnDisk;
         var dx11 = capped is { } c ? Math.Max(0, usage.BytesOnDisk - c) : 0;
-        List<string> parts = [$"driver cache {Bytes(driver)}" + (limit is null ? ", limit unknown" : limit.Bytes is { } l ? $" of its {Bytes(l)} limit" : ", no limit")];
+        List<string> parts = [$"driver cache {Bytes(driver)}" + (limit is null ? ", limit unknown" : limit.Bytes is { } l ? limit.Ours ? $", SCSKiller gives each game {Bytes(l)}" : $" of its {Bytes(l)} limit" : ", no limit")];
         if (dx11 > 0) parts.Add($"DirectX 11 {Bytes(dx11)}");
         if (windows > 0) parts.Add($"Windows {Bytes(windows)}");
-        if (parts.Count > 1) parts.Insert(0, $"{Bytes(driver + dx11 + windows)} on disk");
+        var lead = Math.Max(total ?? 0, driver + dx11 + windows);
+        if (parts.Count > 1 || lead > driver) parts.Insert(0, $"{Bytes(lead)} on disk");
         else parts[0] = "D" + parts[0][1..];
         return string.Join(" · ", parts);
     }
@@ -111,17 +113,22 @@ public static class Format
     public static bool Running(QueueItem q) => q.Stage is QueueStage.Indexing or QueueStage.Planning or QueueStage.Materializing
         or QueueStage.Warming or QueueStage.Merging or QueueStage.Saving or QueueStage.Finishing or QueueStage.Paused;
 
+    /// <summary>The warm runs under the game's exe name (the driver keys its cache on it), so it looks like the game in Task
+    /// Manager. A paused warm is suspended, not ended: a pause keeps its pipeline count only then.</summary>
+    public static string? ProcessLine(QueueItem q, Game game) => (q.Stage == QueueStage.Warming || q is { Stage: QueueStage.Paused, Progress.Total: > 0 }) && OperatingSystem.IsWindows()
+        ? $"Shows as {Path.GetFileName(game.ExePath)} in Task Manager while it compiles." : null;
+
     /// <summary>A running item's progress report: only its count changed, not its stage (a warm's, a fold's, a plan step's).</summary>
     public static bool ProgressTick(QueueItem q) => q.Stage is QueueStage.Warming or QueueStage.Merging or QueueStage.Saving or QueueStage.Finishing
         || q is { Stage: QueueStage.Planning or QueueStage.Materializing, Progress.Note: not null };
 
     /// <summary>The notification area's status: a line, and the compile's share done (null = no progress to show).
     /// <paramref name="running"/>: the queue's running item (<see cref="Running"/>), <paramref name="name"/> its game's.</summary>
-    public static (string Line, double? Done) TrayStatus(QueueItem? running, string? name, bool quitting)
+    public static (string Line, double? Done) TrayStatus(QueueItem? running, string? name, bool quitting, string? scan = null)
     {
         double? done = running is { Progress: { Total: > 0 } p } ? Math.Clamp((double)p.Done / p.Total, 0, 1) : null;
         return quitting ? ("Finishing: the driver is saving the shader cache", null)
-            : running == null ? ("Idle", null)
+            : running == null ? (scan ?? "Idle", null)
             : running.PlanCheck ? ("Checking games for more to compile", null)
             : running.Stage == QueueStage.Paused ? ($"Paused: {name}", done)
             : running.Stage == QueueStage.Warming && done is { } d ? ($"Compiling {name}, {100 * d:0}%", d)
@@ -173,6 +180,7 @@ public static class Format
             GameStatus.Warmed when ScsKiller.BothApis(s.Plan) => "DirectX 11 and 12" + (ScsKiller.IsPartial(s.Plan) ? " · partly covered" : "") + KeyNote(s),
             GameStatus.Warmed => $"Driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? " · partly covered" : "") + KeyNote(s),
             GameStatus.Stale => StaleNote(r),
+            _ when ScsKiller.CheckingAntiCheat(s) => null,   // the title: ScsKiller.CheckingAntiCheatTitle
             GameStatus.NeedsRecording when r == ScsKiller.OfflineSessionNote => r,
             GameStatus.NeedsRecording when r is Vulkan.VulkanPlan.StartOnce or ScsKiller.LauncherClearsReason => null,   // the title says it
             GameStatus.NeedsRecording when s.NoStutter != null && !s.RecorderInstalled => "Compiling isn't needed",
@@ -187,19 +195,19 @@ public static class Format
             GameStatus.NeedsRecording when s.RiskEligible => "Record a session on its page",
             GameStatus.NeedsRecording when s.RecorderSkip != null => "Recorder not available",
             GameStatus.NeedsRecording => "Turn on Record and play",
-            GameStatus.Ready when Has("ray-traced effects aren't compiled") => !s.AnyAntiCheat || s.RiskEligible ? "Ray tracing not compiled" : $"Ray tracing blocked by {ScsKiller.AntiCheatName(s)}",
+            GameStatus.Ready when Has("ray-traced effects aren't compiled") => !s.AnyAntiCheat || s.RiskEligible || s is { AntiCheatUnfinished: true, Vac: false } ? "Ray tracing not compiled" : "Ray tracing not compiled, contains anti-cheat",
             GameStatus.Ready when Has(ScsKiller.RtUnseenNote) => "No ray tracing seen while recording",
             GameStatus.Ready when Has(ScsKiller.RtInlineNote) => "Path tracing needs a recording",
             GameStatus.Ready when s.Engine?.KeyMissing == true => Sentence(ScsKiller.KeyForFullCoverage),
             GameStatus.Ready when ScsKiller.IsPartial(s.Plan) => "Partly covered",
             GameStatus.Ready when Has(Planning.Planner.UntestedNote) => "Not tested on this engine version",
-            GameStatus.Ready when Has("for DirectX 12, ") => !s.AnyAntiCheat || s.RiskEligible ? "DirectX 11, DirectX 12 needs a recording" : $"DirectX 11, DirectX 12 blocked by {ScsKiller.AntiCheatName(s)}",
+            GameStatus.Ready when Has("for DirectX 12, ") => !s.AnyAntiCheat || s.RiskEligible || s is { AntiCheatUnfinished: true, Vac: false } ? "DirectX 11, DirectX 12 needs a recording" : "DirectX 11 only, contains anti-cheat",
             GameStatus.Ready when Has("also compiles every DirectX 11 shader") => "DirectX 11 and 12",
             GameStatus.Ready when Starts("compiles every DirectX 11 shader") => "DirectX 11",
             GameStatus.Ready => null,
             _ when r == Games.BootPrecompiles.Reason => "Builds its shaders at the main menu",
             _ when s.ShaderModBlocks => $"{s.ShaderMod} changes all its pipelines",
-            _ when s.AnyAntiCheat && Starts("needs a recording, which") => $"Blocked by {ScsKiller.AntiCheatName(s)}" + (s.InCommunityDb == true ? " · " + InDb(r) : ""),
+            _ when s.AnyAntiCheat && (Starts("needs a recording, which") || Starts(ScsKiller.AntiCheatNoRecordingStart)) => "Contains anti-cheat" + (s.InCommunityDb == true ? " · " + InDb(r) : ""),
             _ when Has(ScsKiller.ManualNoRecording) => "Needs a recording: confirm its folder",
             _ when s.Engine?.Encrypted == true => null,   // the title: "Encrypted game files"
             _ when r is Codecs.NoOodleDll or Codecs.NoNativeOodle => r,
@@ -219,6 +227,7 @@ public static class Format
     public static string ModNote(GameState s) =>
         (s is { ShaderMod: not null, ShaderModBlocks: false } && s.Status != GameStatus.Unsupported ? "\n" + ScsKiller.ShaderModNote(s) : "")
         + (s.Dxvk && s.Status != GameStatus.Unsupported ? "\n" + (s.DxvkCompiled ? ScsKiller.DxvkCompiledNote : ScsKiller.DxvkNote) : "")
+        + (s is { SmartAppControl: true, RecorderEffective: true } ? "\n" + ScsKiller.SmartAppControlNote : "")
         + (s.MfgUnlocker ? "\n" + ScsKiller.MfgUnlockerNote : "")
         + (s.StarfieldLuma && s.Status != GameStatus.Unsupported ? "\n" + ScsKiller.StarfieldLumaNote : "");
 

@@ -37,8 +37,9 @@ public sealed partial class ScsKiller
                 // another driver's links that couldn't be dropped must not be relabelled as this driver's
                 if (DriverId is { } now && k.Read().Driver is { } was && was != now && !Drop(k, gameId, "kept for another driver")) return;
                 var keys = OwnKeys(gameId, rec);   // none left: the links of keys shared since go
-                if (k.Keep(amd.D3D12FileNames(keys), keys, DriverId) is { Unkept: > 0 } s)
-                    Log?.Report($"{name}: {s.Unkept} cache file{(s.Unkept == 1 ? "" : "s")} not kept aside, in use by {s.HeldBy ?? "another app"}");
+                var s = k.Keep(amd.D3D12FileNames(keys), keys, DriverId);
+                if (s.Unkept > 0) Log?.Report($"{name}: {s.Unkept} cache file{(s.Unkept == 1 ? "" : "s")} not kept aside, in use by {s.HeldBy ?? "another app"}");
+                if (s.Denied > 0) Log?.Report($"{name}: {s.Denied} cache file{(s.Denied == 1 ? "" : "s")} written by a process run as administrator, not kept aside");
             }
         }
         catch (Exception e) { Log?.Report($"{name}: keeping the cache aside failed: {e.Message}"); }   // never fails the compile or the poll
@@ -116,16 +117,17 @@ public sealed partial class ScsKiller
         var games = Path.Combine(Store.DataDir, "games");
         var all = !Settings.KeepCachesAside || AppCache is not AmdAppCache;
         if (!Directory.Exists(games) || !all && DriverId == null) return;
+        var scope = IdScope();   // another game's wait for a whole scan
         try
         {
             lock (_keptLock)
                 foreach (var dir in Directory.EnumerateDirectories(games))
-                    if (Path.Combine(dir, KeptFolder) is var kept && Directory.Exists(kept) && new AmdKept("", kept) is var k
+                    if (scope(AppStore.GameId(Path.GetFileName(dir))) && Path.Combine(dir, KeptFolder) is var kept && Directory.Exists(kept) && new AmdKept("", kept) is var k
                         && (all || k.Read().Driver is { } was && was != DriverId))
                         Drop(k, Path.GetFileName(dir), all ? "keeping caches aside is off" : "kept for another driver");
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"removing kept caches failed: {e.Message}"); }
-        foreach (var s in Games) ShowKept(s.Game.Id);
+        foreach (var s in Games.Where(s => InScope(s.Game))) ShowKept(s.Game.Id);
     }
 
     KeptCache? KeptState(string gameId)

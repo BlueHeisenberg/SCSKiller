@@ -7,9 +7,11 @@ namespace SCSKiller.Core.Games;
 /// added by hand does (<see cref="ManualSource.Resolve"/>, <see cref="ManualSource.RootProblem"/>), and it, that folder
 /// and the shortcut's start folder must be outside the system's folders, Steam's own files and Wine's Windows folder
 /// (<see cref="PathProblem"/>): the recorder goes in beside the exe. Store.Other, told apart by its id.</summary>
-public sealed class SteamShortcutSource(string? steamRoot = null) : IGameSource
+public sealed class SteamShortcutSource(string? steamRoot = null) : IGameSource, ILeavesOut
 {
     public Store Store => Store.Other;
+
+    public Func<string, bool> LeftOut { get; set; } = _ => false;
 
     /// <summary>A shortcut or a shortcuts.vdf left out, and why.</summary>
     public IProgress<string>? Log { get; set; }
@@ -26,7 +28,8 @@ public sealed class SteamShortcutSource(string? steamRoot = null) : IGameSource
         var root = Root;
         var games = new List<Game>();
         foreach (var s in SteamShortcuts.All(root, why => Log?.Report($"Steam: {why}")))
-            if (GameOf(root, s, out var why) is { } g) games.Add(g);
+            if (LeftOut(s.Exe)) continue;
+            else if (GameOf(root, s, out var why) is { } g) games.Add(g);
             else if (why != null) Log?.Report($"Steam: the non-Steam game {s.Name} isn't listed: {why}");
         return games;
     }

@@ -8,9 +8,11 @@ namespace SCSKiller.Core.Games;
 /// and HKCU\Software\miHoYo\HYP\1_1\&lt;biz&gt; (China), value GameInstallPath, the folder of the game exe. biz is the
 /// game code plus server (hk4e_global, hkrpg_cn, nap_global, bh3_global, ...). The launcher writes config.ini's
 /// [General] game_version when the install finishes; without it the game isn't listed.</summary>
-public sealed class HoYoPlaySource(IEnumerable<(string Biz, string InstallDir)>? entries = null) : IGameSource
+public sealed class HoYoPlaySource(IEnumerable<(string Biz, string InstallDir)>? entries = null) : IGameSource, ILeavesOut
 {
     public Store Store => Store.Other;
+
+    public Func<string, bool> LeftOut { get; set; } = _ => false;
 
     static readonly Dictionary<string, string> Names = new()
     {
@@ -25,7 +27,7 @@ public sealed class HoYoPlaySource(IEnumerable<(string Biz, string InstallDir)>?
         foreach (var (biz, install) in entries ?? (OperatingSystem.IsWindows() ? Entries() : []))
             try
             {
-                if (!Directory.Exists(install)) continue;
+                if (LeftOut(install) || !Directory.Exists(install)) continue;
                 string text;
                 try { text = File.ReadAllText(Path.Combine(install, "config.ini")); }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }

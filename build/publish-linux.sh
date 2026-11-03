@@ -274,6 +274,10 @@ echo "native: ${#natives[@]} Windows files match $sums, ${#linux_natives[@]} Lin
 rm -rf "$out"
 common=(-c "$configuration" -f net10.0 -r linux-x64 --self-contained true -p:DebugType=None -p:DebugSymbols=false "${version_args[@]}")
 "$dotnet" publish "$repo/src/SCSKiller.Ui/SCSKiller.Ui.csproj" -o "$out" "${common[@]}"
+# .NET up to 10.0.12 keeps its named mutexes in /tmp, which a sandbox (bwrap, Flatpak) shows as another user's: every lock
+# would count as held
+runtime=$(python3 -I -c 'import json, sys; print(*[f["version"] for f in json.load(open(sys.argv[1]))["runtimeOptions"].get("includedFrameworks") or [] if f.get("name") == "Microsoft.NETCore.App"])' "$out/SCSKiller.Ui.runtimeconfig.json")
+printf '%s\n' 10.0.13 "$runtime" | sort -VC || die "the app carries .NET '$runtime', older than 10.0.13: publish with the SDK ci-linux-package.sh pins"
 "$dotnet" publish "$repo/src/SCSKiller.Cli/SCSKiller.Cli.csproj" -o "$tmp/cli" "${common[@]}"
 (
     cd "$tmp/cli"

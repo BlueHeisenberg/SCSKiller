@@ -9,7 +9,7 @@ public static class Fmt
 {
     public static string RecorderDll(GameState s) => s.AgsHost ? ScsKiller.AgsName : s.Records11 ? ScsKiller.Dll11 : ScsKiller.Records9(s.Engine) ? ScsKiller.Dll9 : ScsKiller.Dll12;
     /// <summary>What the recorder adds next to the game: its dll, and the preloader that loads it before DLSS.</summary>
-    public static string RecorderFiles(GameState s) => s.Preload is { } p ? $"{RecorderDll(s)} and {p}" : RecorderDll(s);
+    public static string RecorderFiles(GameState s) => ScsKiller.RecorderFile(s, RecorderDll(s)) is var dll && s.Preload is { } p ? $"{dll} and {p}" : dll;
     /// <summary>The file's name in a Windows or a Linux path: the design data's paths are Windows ones everywhere.</summary>
     public static string FileName(string path) => path[(path.LastIndexOfAny(['\\', '/']) + 1)..];
     public static string N(long? n) => n?.ToString("N0") ?? Format.Dash;
@@ -31,14 +31,10 @@ public static class Fmt
     /// <summary>"Severe shader-compilation stutter: reason", then the source and when it was checked; null when not listed.</summary>
     public static string? StutterTip(GameState s) => s.KnownStutter is { } k
         ? $"{(k.Severity == StutterSeverity.Severe ? "Severe" : "Moderate")} shader-compilation stutter: {k.Reason}.\nSource: {k.Source} (checked {k.Date})" : null;
-    /// <summary>Library sections, in list order. Steam's non-Steam games, GOG, Ubisoft, Battle.net, PURPLE, HoYoPlay, Gaijin and Riot Client games are Store.Other: told apart by their id prefix.</summary>
-    public static readonly string[] Stores = ["Steam", SteamShortcut, "Epic Games", "Xbox / Game Pass", "EA app", "GOG", "Ubisoft Connect", "Battle.net", "PURPLE", "HoYoPlay", "Gaijin", "Riot Client", "Other", AddedByYou];
-    public const string AddedByYou = "Added by you", SteamShortcut = "Steam (non-Steam game)";
-    public static string StoreName(Game g) => g.Store switch
-    {
-        Store.Steam => "Steam", Store.Epic => "Epic Games", Store.Xbox => "Xbox / Game Pass", Store.EA => "EA app", Store.Manual => AddedByYou,
-        _ => g.Id[..Math.Max(0, g.Id.IndexOf(':'))] switch { "steam-shortcut" => SteamShortcut, "gog" => "GOG", "ubisoft" => "Ubisoft Connect", "battlenet" => "Battle.net", "purple" => "PURPLE", "hoyoplay" => "HoYoPlay", "gryphline" => "GRYPHLINK", "gaijin" => "Gaijin", "riot" => "Riot Client", _ => "Other" },
-    };
+    /// <summary>Library sections, in list order (<see cref="StoreNames.Sections"/>).</summary>
+    public static readonly string[] Stores = StoreNames.Sections;
+    public const string AddedByYou = StoreNames.AddedByYou, SteamShortcut = StoreNames.SteamShortcut;
+    public static string StoreName(Game g) => StoreNames.Of(g);
     /// <summary>The stores the Library's summary says games of these <see cref="StoreName"/>s were found in: a non-Steam game's
     /// is Steam, a game added by hand's none.</summary>
     public static string FoundIn(IEnumerable<string> storeNames)

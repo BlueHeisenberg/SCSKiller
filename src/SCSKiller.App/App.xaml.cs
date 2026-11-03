@@ -73,7 +73,7 @@ public partial class App : Application
         // before the core exists: a refused alpha scans nothing and places nothing
         var account = new Account(AppStore.DefaultDir);
         // someone is at the PC: the window shows whatever started it, and a toast's activation expires meanwhile
-        args = args.Where(a => a != WindowsStartup.TrayArg && a != "--driver-updated" && !a.StartsWith("----AppNotificationActivated:", StringComparison.Ordinal)).ToArray();
+        args = args.TakeWhile(a => a != ScsKiller.NoticeArg).Where(a => a != WindowsStartup.TrayArg && a != "--driver-updated" && !a.StartsWith("----AppNotificationActivated:", StringComparison.Ordinal)).ToArray();
         var gate = new GateWindow(account, AppStore.DefaultDir, () => Start(account));
         gate.Activate();
         _ = gate.StartAsync();
@@ -81,11 +81,11 @@ public partial class App : Application
 
     // Args: --fake (sample data), --screenshots <dir> (fake data, off-screen, never activated, then exit),
     // --driver-updated (PLATFORM's scheduled task after a driver update leaves stale games in Ask mode),
-    // --tray (the sign-in entry, WindowsStartup: starts in the notification area, no window).
+    // --tray (the sign-in entry, WindowsStartup: starts in the notification area, no window), --notice (a CLI run's notification).
     void Launch(string[] args, Account? signedIn)
     {
         int shots = Array.IndexOf(args, "--screenshots");
-        bool driverUpdated = args.Contains("--driver-updated");
+        bool driverUpdated = args.Contains("--driver-updated"), handed = args.Contains(ScsKiller.NoticeArg);
         Core = shots >= 0 || args.Contains("--fake") ? new FakeScsKiller() : ScsKiller.CreateDefault();
         // The design data starts signed out and never touches the real auth.dat.
         var fakeDir = Path.Combine(Path.GetTempPath(), $"SCSKiller-fake-{Environment.ProcessId}");
@@ -98,7 +98,8 @@ public partial class App : Application
             real.Log = Codecs.Log = applog;
             applog.Start($"Windows {Environment.OSVersion.Version}, {real.Vendor.Gpu.Name}, driver {real.Vendor.Gpu.DriverVersion}");
             real.Community = new Community(AppStore.DefaultDir, Account.GetDbTokenAsync) { TokenWith = Account.GetTokenAsync };
-            real.DbEntitled = () => Account.SignedIn && (Account.Status == null || Account.HasDb);
+            real.DbEntitled = () => Account.DbEntitled;
+            real.DbMissing = () => Account.DbMissing;
             real.Sharing = new Sharing(AppStore.DefaultDir, () => real.Settings.ShareRecordings);   // anonymous: never the Patreon sign-in
             real.Diagnostics = new Diagnostics(() => real.Settings.ShareDiagnostics);   // no token at all
             real.ContentRoutes = RouteFailover.Default;
@@ -107,7 +108,7 @@ public partial class App : Application
             real.UserFetch = async () => { await Account.RefreshAsync(); await Updater.CheckAsync(); };
             real.ActiveCheck = new ActiveCheck(AppStore.DefaultDir, () => ActiveCheck.Allowed(real.Settings), real.Vendor.Vendor);
             // not in the unattended --driver-updated launch: nobody at the PC, no game folder is written
-            real.ManageRecorders = !driverUpdated;
+            real.ManageRecorders = !driverUpdated && !handed;
             real.CleanupHelper = Environment.ProcessPath;
             real.CheckPlans = true;
             var hadDb = false;   // signed in (or the membership turned active): check at once, not at the next scan
@@ -197,14 +198,16 @@ public partial class App : Application
                 if (a.WindowActivationState == WindowActivationState.Deactivated || DateTime.UtcNow - lastSizes < TimeSpan.FromSeconds(10)) return;
                 lastSizes = DateTime.UtcNow;
                 Task.Run(Core.RefreshCacheSizes);
+                if (Core is ScsKiller k) _ = AskOldPlansAsync(k);   // a compile that ended while the window was away, the CLI's too
             };
             if (Core is ScsKiller gpu) gpu.GpuChanged += () => Main.DispatcherQueue.TryEnqueue(OnGpuChanged);
             if (Core is ScsKiller ends) ends.QueueChanged += q => { if (notifications && ends.EndedNotice(q) is { } n) Main.DispatcherQueue.TryEnqueue(() => ShowEnded(q.GameId, n)); };
-            if (Core is ScsKiller folds) folds.Notice += (id, n) => { if (notifications) Main.DispatcherQueue.TryEnqueue(() => ShowEnded(id, n)); };
+            if (Core is ScsKiller folds) folds.Notice += (id, n, _) => { if (notifications) Main.DispatcherQueue.TryEnqueue(() => ShowEnded(id, n)); };
+            if (Core is ScsKiller plans) plans.QueueChanged += q => { if (q.Stage == QueueStage.Done) Main.DispatcherQueue.TryEnqueue(() => { if (IsWindowVisible(WinRT.Interop.WindowNative.GetWindowHandle(Main))) _ = AskOldPlansAsync(plans); }); };
             ApplyStartWithWindows(byUser: false);
             Updater.Start();
             if (activation is null or { Kind: ExtendedActivationKind.Launch }) _ = Updater.ApplyAtStartAsync(args[1..]);
-            if (Core is ScsKiller k && !driverUpdated)
+            if (Core is ScsKiller k && !driverUpdated && !handed)
             {
                 var check = newShadersCheck = new Coalesced(Main.DispatcherQueue, () => NotifyNewShaders(k.Store));
                 Core.GameChanged += _ => check.Request();
@@ -230,6 +233,12 @@ public partial class App : Application
             // Stay in the notification area (no window) unless the user later picks Compile now or the toast body; the
             // NotificationInvoked handler above then runs OnToast in this same process.
             NotifyDriverUpdate(exitIfNothing: true);
+            return;
+        }
+
+        if (handed)
+        {
+            ShowHanded(k => k.HandedNotice(args), exitIfNothing: true);
             return;
         }
 
@@ -309,8 +318,17 @@ public partial class App : Application
         var line = (a.Data as Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs)?.Arguments ?? "";
         if (line.Contains("--driver-updated")) NotifyDriverUpdate(exitIfNothing: false);
         else if (line.Contains(MemoryArg)) LogMemory();
+        else if (line.Contains(ScsKiller.NoticeArg)) ShowHanded(k => k.HandedNotice(line), exitIfNothing: false);
         else if (!line.Contains(WindowsStartup.TrayArg)) ShowWindow();
     }
+
+    /// <summary>A CLI run's notification, once a scan listed the games it names. Nothing to show: the unattended launch leaves.</summary>
+    static void ShowHanded(Func<ScsKiller, (string Id, (string Title, string Text) Notice)?> notice, bool exitIfNothing) =>
+        Core.ScanAsync(CancellationToken.None).ContinueWith(_ => Main.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (Core is ScsKiller k && notice(k) is { } n && notifications) ShowEnded(n.Id, n.Notice);
+            else if (exitIfNothing && !IsWindowVisible(WinRT.Interop.WindowNative.GetWindowHandle(Main))) _ = QuitAsync();
+        }));
 
     /// <summary>`SCSKiller.exe --memory` while the app runs: a line of what it holds in memory.log, for a bug report. Counts
     /// only, nothing of the process's contents. The window stays as it is.</summary>
@@ -456,6 +474,41 @@ public partial class App : Application
         };
     }
 
+    static bool askingOldPlans;
+
+    /// <summary>A game with a lot of cache its version and plan don't use (<see cref="ScsKiller.OldPlansNotice"/>), asked once:
+    /// Delete and compile clears it as Clear cache does, then compiles, Delete takes only its earlier versions' folders. Keep it or
+    /// Esc keeps it.</summary>
+    static async Task AskOldPlansAsync(ScsKiller k)
+    {
+        if (askingOldPlans) return;
+        askingOldPlans = true;
+        try
+        {
+            var (id, notice) = await Task.Run(() => k.Games.Select(s => (s.Game.Id, k.OldPlansNotice(s.Game.Id))).FirstOrDefault(a => a.Item2 != null));
+            if (notice is not { } n) return;
+            var root = ((FrameworkElement)Main.Content).XamlRoot;
+            ContentDialogResult result;
+            try { result = await Themed(OldPlansDialog(root, n)).ShowAsync(); }
+            catch (COMException) { return; }   // another dialog is open: asked again later
+            var clear = result == ContentDialogResult.Primary;
+            await Task.Run(() => k.OldPlansAnswered(id, keep: !clear));
+            if (!clear) return;
+            string? error;
+            try { error = n.Compile ? await Task.Run(() => k.ClearGameCache(id)) ? null : "No shader-cache files of this game were found." : await Task.Run(() => k.DeleteOrphanedD3DSCache(id)) > 0 ? null : "No earlier versions' shader cache could be deleted."; }
+            catch (Exception e) { error = e.Message; }
+            if (error != null) await ShowAsync(new ContentDialog { XamlRoot = root, Title = "Couldn't clear the cache", Content = error, CloseButtonText = "OK" });
+            else if (n.Compile) k.Compile(id);
+        }
+        finally { askingOldPlans = false; }
+    }
+
+    public static ContentDialog OldPlansDialog(XamlRoot root, (string Title, string Text, bool Compile) n) => new()
+    {
+        XamlRoot = root, Title = n.Title, Content = new TextBlock { Text = n.Text, TextWrapping = TextWrapping.Wrap },
+        PrimaryButtonText = n.Compile ? ScsKiller.OldPlansClear : ScsKiller.OldVersionsClear, CloseButtonText = ScsKiller.OldPlansKeep, DefaultButton = ContentDialogButton.Close,
+    };
+
     /// <summary>The one-time diagnostics question (<see cref="Diagnostics.Asks"/>): either button, or Esc, answers it.</summary>
     static async Task AskDiagnosticsAsync(XamlRoot root)
     {
@@ -590,13 +643,14 @@ public partial class App : Application
         var tip = new Coalesced(Main.DispatcherQueue, UpdateTip);
         Core.QueueChanged += _ => tip.Request();
         Core.GameChanged += _ => tip.Request();
+        if (Core is ScsKiller k) k.ScanProgressed += tip.Request;
         return t;
     }
 
     static (string Line, double? Done) Status()
     {
         var q = Running();
-        return Format.TrayStatus(q, q == null ? null : Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId, quitting);
+        return Format.TrayStatus(q, q == null ? null : Core.Games.FirstOrDefault(g => g.Game.Id == q.GameId)?.Game.Name ?? q.GameId, quitting, (Core as ScsKiller)?.ScanProgress);
     }
 
     static void UpdateTip()

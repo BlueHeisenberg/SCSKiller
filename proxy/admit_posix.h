@@ -156,9 +156,8 @@ static std::string real_path(const std::string& p) {
 
 // A regular file's bytes, read whole: false when it can't be opened, isn't a regular file (a FIFO never blocks it), fails
 // in between or holds more than cap. errno is the open's when that failed.
-static bool read_file(const std::string& path, std::string& s, size_t cap = 1 << 20) {
+static bool read_fd(int fd, std::string& s, size_t cap) {
     s.clear();
-    const int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) return false;
     struct stat st;
     bool ok = !fstat(fd, &st) && S_ISREG(st.st_mode);
@@ -171,6 +170,8 @@ static bool read_file(const std::string& path, std::string& s, size_t cap = 1 <<
     close(fd);
     return ok;
 }
+
+static bool read_file(const std::string& path, std::string& s, size_t cap = 1 << 20) { return read_fd(open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC), s, cap); }
 
 static std::string read_all(const std::string& path, size_t cap = 1 << 20) {
     std::string s;
@@ -364,9 +365,44 @@ static bool stamped_recorder_dir(const std::string& dir, std::string& out) {
     return true;
 }
 
+// The recorder folder, opened once (links followed that once) and held while admission decides: its files are read
+// relative to fd, never through a link at their end, and the recording goes to its real path.
+struct RecFd {
+    int fd = -1;
+    std::string real;
+    dev_t dev = 0;
+    ino_t ino = 0;
+    RecFd() = default;
+    RecFd(const RecFd&) = delete;
+    ~RecFd() {
+        if (fd >= 0) close(fd);
+    }
+};
+static thread_local const RecFd* t_rec;
+
+// path opened and held in r: false when it can't be, or isn't a folder.
+static bool pin_rec(const std::string& path, RecFd& r) {
+    struct stat st;
+    if (path.empty() || (r.fd = open(path.c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC)) < 0 || fstat(r.fd, &st)) return false;
+    std::string real(PATH_MAX, '\0');
+    const ssize_t n = readlink(("/proc/self/fd/" + std::to_string(r.fd)).c_str(), real.data(), real.size());
+    if (n <= 0 || n >= (ssize_t)real.size() || real[0] != '/') return false;
+    real.resize(n);
+    r.real = real, r.dev = st.st_dev, r.ino = st.st_ino;
+    return true;
+}
+
+// A file of the held folder, name relative to it ("<folder>/<file>" at most, neither part a link), read whole.
+static bool read_in(const RecFd& r, const std::string& name, std::string& s, size_t cap) {
+    const size_t slash = name.find('/');
+    const int dir = slash == std::string::npos ? r.fd : openat(r.fd, name.substr(0, slash).c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    const bool ok = read_fd(dir < 0 ? -1 : openat(dir, name.substr(slash + 1).c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC), s, cap);
+    if (dir >= 0 && dir != r.fd) close(dir);
+    return ok;
+}
+
 // The recorder folder (recorder.key, recorder.revoked, refused/, vulkan/) of the copy whose recorder is in <dir>:
 // stamped_recorder_dir's, else the installed copy's <local app data>/SCSKiller; "" when it can't be had.
-static thread_local const std::string* t_rec;  // while admission decides: the recorder folder it read first
 
 static std::string recorder_dir_now(const std::string& dir) {
     if (g_load_env.has_test_recorder) return g_load_env.test_recorder;
@@ -377,9 +413,9 @@ static std::string recorder_dir_now(const std::string& dir) {
     return local.empty() ? "" : local + "/SCSKiller";
 }
 
-// recorder_dir_now's, the same one for the whole decision (t_rec): a ledger changed in between can't move the checks
-// after the signature's, or the recording, to another folder.
-static std::string recorder_dir(const std::string& dir) { return t_rec ? *t_rec : recorder_dir_now(dir); }
+// While admission decides and records, the held folder's real path (t_rec): a ledger or link changed in between can't move
+// the recording to another folder.
+static std::string recorder_dir(const std::string& dir) { return t_rec && t_rec->fd >= 0 ? t_rec->real : recorder_dir_now(dir); }
 
 // sig= as recorder_key.h's recorder_sig makes it: the HMAC-SHA1 under key of the message's UTF-16LE.
 static std::string recorder_sig(const std::string& key, const std::string& exe_key, const std::string& dir_key, const std::wstring& stamp, const std::wstring& root,
@@ -520,10 +556,10 @@ static std::string install_root(const std::string& here) {
     return real.empty() || real.back() == '/' ? real : real + "/";
 }
 
-// here and each folder above it up to the install root; the root alone besides here when it isn't above it. Empty when
-// the root is more than 64 folders up.
+// admit.h's root_above: the install root is here or a folder above it (both '/'-ended).
+static bool root_above(const std::string& here, const std::string& root) { return !here.compare(0, root.size(), root); }
+// here and each folder above it up to the install root (root_above). Empty when the root is more than 64 folders up.
 static std::vector<std::string> folders_to(const std::string& here, const std::string& root) {
-    if (here.compare(0, root.size(), root)) return {here, root};
     std::vector<std::string> dirs;
     for (std::string d = here; dirs.size() < 64;) {
         dirs.push_back(d);
@@ -928,12 +964,11 @@ static const char* vac_now(const std::vector<std::string>& dirs) {
 // This folder's key on the app's revocation list (recorder.revoked), or the list can't be read whole (only a list that
 // doesn't exist is empty): why it refuses; nullptr: neither.
 static const char* revoked_here() {
-    const std::string dir = recorder_dir(admit_dir()), file = dir + "/recorder.revoked";
-    if (dir.empty()) return "SCSKiller's revocation list can't be read";
     std::string list;
-    if (!read_file(file, list, 1 << 20)) {
+    if (!t_rec || t_rec->fd < 0) return "SCSKiller's revocation list can't be read";
+    if (!read_in(*t_rec, "recorder.revoked", list, 1 << 20)) {
         struct stat st;
-        return lstat(file.c_str(), &st) && (errno == ENOENT || errno == ENOTDIR) ? nullptr : "SCSKiller's revocation list can't be read";
+        return fstatat(t_rec->fd, "recorder.revoked", &st, AT_SYMLINK_NOFOLLOW) && errno == ENOENT ? nullptr : "SCSKiller's revocation list can't be read";
     }
     const std::string key = file_key(no_slash(admit_dir()));
     for (size_t at = 0; at < list.size();) {
@@ -947,16 +982,50 @@ static const char* revoked_here() {
     return nullptr;
 }
 
+// The ini's arm= is the one the recorder folder keeps in arms/ for this folder (admit.h's armed_here).
+static const char* armed_here() {
+    const std::wstring arm = ini_string(L"arm");
+    if (!arm_well_formed(arm)) return "signed by an earlier SCSKiller version";
+    std::string kept;
+    return !t_rec || !read_in(*t_rec, "arms/" + file_key(no_slash(admit_dir())), kept, 65536) || arm_line(kept) != arm ? "not armed by SCSKiller" : nullptr;
+}
+
+// The held recorder folder is out of the game's reach (admit.h's outside_game): not the install root, the exe's folder or in
+// them, nor under Wine in the prefix the game runs in, and under Wine named by a scskiller.ledger (without one the folder
+// would be the Wine-less default). nullptr, else why not.
+static const char* outside_game(const std::string& here, const std::string& root) {
+    if (!t_rec || t_rec->fd < 0) return "SCSKiller's recorder folder can't be resolved";
+    const std::string& real = t_rec->real;
+    // root= is the ini's and can name a narrower folder than the game's (admit.h's steam_game_folder)
+    const size_t sc = lower_az(here).find("/steamapps/common/"), end = sc == std::string::npos ? sc : here.find('/', sc + strlen("/steamapps/common/"));
+    const std::string steam = end == std::string::npos ? "" : here.substr(0, end + 1);
+    const std::string& game = !steam.empty() && root_above(root, steam) ? steam : root;
+    if (is_or_under(real, no_slash(game)) || is_or_under(real, no_slash(here))) return "SCSKiller's recorder folder is inside the game's folder";
+    std::string argv, stamped;
+    module_path(&argv);
+    if (argv.empty()) return nullptr;
+    if (!g_load_env.has_test_recorder && !stamped_recorder_dir(admit_dir(), stamped)) return "SCSKiller's recorder folder isn't named for this game";
+    const std::string prefix = real_path(wine_prefix_dir());
+    if (prefix.empty()) return "the game's Wine prefix can't be found";
+    return is_or_under(real, prefix) ? "SCSKiller's recorder folder is inside the game's Wine prefix" : nullptr;
+}
+
+// The held folder is still the one recorder_dir_now names, by device and inode.
+static bool rec_same() {
+    struct stat st;
+    const std::string now = recorder_dir_now(admit_dir());
+    return t_rec && !now.empty() && !stat(now.c_str(), &st) && st.st_dev == t_rec->dev && st.st_ino == t_rec->ino;
+}
+
 // sig= is recorder_sig of this exe's and this folder's file_key, the stamp lines, root= and the root's file_key under the
 // recorder folder's recorder.key (admit.h's signed_by_app).
 static bool signed_by_app(const std::string& root) {
-    const std::string dir = recorder_dir(admit_dir()), exe = module_path();
+    const std::string exe = module_path();
     const std::wstring sig = ini_string(L"sig"), pid = ini_string(L"pid");
-    if (dir.empty() || exe.empty() || sig.size() != 40) return false;
-    const std::string key = read_all(dir + "/recorder.key", 256);
-    if (key.size() < 32 || key.size() > 128) return false;
+    std::string key;
+    if (!t_rec || exe.empty() || sig.size() != 40 || !read_in(*t_rec, "recorder.key", key, 256) || key.size() < 32 || key.size() > 128) return false;
     const std::wstring stamp = signed_stamp(ini_string(L"exe_size"), ini_string(L"exe_time"), pid, ini_string(L"pid_time"), ini_string(L"risk"), ini_string(L"vendor"),
-                                            ini_string(L"overlay"), ini_string(L"ab_play_s"), ini_string(L"ab_tag"));
+                                            ini_string(L"overlay"), ini_string(L"ab_play_s"), ini_string(L"ab_tag"), L"", ini_string(L"arm"));
     const std::string want = recorder_sig(key, file_key(exe), file_key(no_slash(admit_dir())), stamp, ini_string(L"root"), file_key(no_slash(root)));
     return !want.empty() && to_utf8(sig) == want;
 }
@@ -973,6 +1042,7 @@ static const char* admission_verdict(bool whole, const std::string& read, bool e
     const std::string here = final_dir(admit_dir()), root = here.empty() ? "" : install_root(here);
     const bool bound = !ini_string(L"pid").empty();
     risk = !ini_string(L"risk").empty();
+    const char* reach = nullptr;
     const char* why = admit_dir().empty() ? "the recorder's folder can't be read"
                     : elsewhere ? "loaded from another folder than the exe"
                     : !exe_as_checked() ? "exe not as checked"
@@ -980,11 +1050,14 @@ static const char* admission_verdict(bool whole, const std::string& read, bool e
                     : here.empty() ? "the exe's folder can't be resolved"
                     : root.empty() ? (ini_string(L"root").empty() ? "no install root" : "the install root can't be resolved")
                     : !utf8_path(module_path()) || !utf8_path(here) || !utf8_path(root) ? "a folder or file name isn't UTF-8"
+                    : (reach = outside_game(here, root)) ? reach
                     : !signed_by_app(root) ? "not signed by SCSKiller"
+                    : !root_above(here, root) ? "the game's exe is outside its folder"
                     : bound && !bound_here() ? "bound to another process"
                     : !risk_well_formed(ini_string(L"pid"), ini_string(L"risk")) ? "risk= malformed"
                     : !anti_cheat_markers(markers) ? "markers= malformed" : nullptr;
     if (!why) why = revoked_here();
+    if (!why) why = armed_here();
     if (!why && bound && !risk) markers.erase(markers.begin(), markers.begin() + kEasyAntiCheatMarkers);
     const std::vector<std::string> dirs = why ? std::vector<std::string>{} : folders_to(here, root);
     if (!why && dirs.empty()) why = "install root too far up";
@@ -1007,7 +1080,8 @@ static const char* admission_verdict(bool whole, const std::string& read, bool e
         why = loaded.size() == 1 && loaded[0] == "?" ? "the process's libraries can't be listed" : decide(risk, riot_games(), found, found_why, loaded, vac_now(dirs), seen);
     }
     if (!why && (!ini_bytes(ini, again) || again != read)) why = "scskiller.ini changed while deciding";
-    if (!why && t_rec && recorder_dir_now(admit_dir()) != *t_rec) why = "SCSKiller's recorder folder changed while deciding";
+    if (!why && !rec_same()) why = "SCSKiller's recorder folder changed while deciding";
     if (!why) why = revoked_here();
+    if (!why) why = armed_here();
     return why;
 }

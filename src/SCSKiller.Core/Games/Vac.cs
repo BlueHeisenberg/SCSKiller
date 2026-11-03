@@ -8,9 +8,8 @@ namespace SCSKiller.Core.Games;
 /// whatever store found it. A Steam game is VAC when Steam marks it (appinfo.vdf common/category/category_8, the store's
 /// "Valve Anti-Cheat enabled"), when it is one of Valve's multiplayer titles (Deadlock carries no flag), and whenever Steam's
 /// data can't say: no manifest names its folder, appinfo.vdf missing or unreadable, the app absent from it or without its
-/// info. A game outside every Steam library is not VAC, unless a steam_appid.txt in its folders names an app Steam has no
-/// info about (<see cref="Named"/>): its recorder goes in only for a session at the user's own risk, as the proxy's
-/// named_vac admits it. Under Wine (Proton) Steam's data is the Linux Steam's
+/// info. A game outside every Steam library is not VAC, unless a steam_appid.txt in its folders names an app appinfo.vdf
+/// marks VAC or lists without its info (<see cref="Named"/>), as the proxy's named_vac refuses it. Under Wine (Proton) Steam's data is the Linux Steam's
 /// (<see cref="SteamSource.AppInfoPath(string)"/>). The proxy checks the same flag itself at each launch (proxy.cpp
 /// vac_now), against the app id the ini gives it (<see cref="AppId"/>).</summary>
 public static class Vac
@@ -35,11 +34,24 @@ public static class Vac
     {
         steam = true;
         if (g.Id.StartsWith("steam:", StringComparison.Ordinal)) return SteamSource.AppId(g.Id);
+        bool? exeWeGame = null;
+        // a WeGame install folder no manifest names is no Steam game's, as the proxy's vac_now takes the exe and its final path
+        bool WeGame(string path)
+        {
+            try
+            {
+                return (exeWeGame ??= WeGameSource.InSteamLibrary(g.ExePath) && GameFiles.FinalPath(g.ExePath) is { } exe
+                    && WeGameSource.InSteamLibrary(exe) && Unowned(steamRoot, [Path.GetFullPath(g.ExePath), exe])) && WeGameSource.InSteamLibrary(path);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.Security.SecurityException) { return false; }
+        }
         foreach (var path in new[] { g.InstallDir, g.ExePath })
         {
             try
             {
-                if (SteamSource.AppAt(steamRoot, path) is { InLibrary: true } at) return at.Id;
+                if (SteamSource.AppAt(steamRoot, path) is { InLibrary: true } at && (at.Id != null || !WeGame(path))) return at.Id;
+                // through a link, as the proxy resolves the exe: a hand-added folder can be a junction into a library
+                if (GameFiles.FinalPath(path) is { } real && SteamSource.AppAt(steamRoot, real) is { InLibrary: true } linked && (linked.Id != null || !WeGame(real))) return linked.Id;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {
@@ -51,33 +63,159 @@ public static class Vac
         return null;
     }
 
+    /// <summary>No Steam manifest owns the exe at <paramref name="paths"/> (as named and its final path), as the proxy's vac_now
+    /// looks for an owner: libraryfolders.vdf lists libraries, none has a name ending in a dot or a space, none without its
+    /// steamapps holds a path, and in Steam's folder, each library and each path's own library every manifest reads as one
+    /// AppState with one app id and folder, none names a common folder a path is in, and none's folder that is there holds a
+    /// path through its final path. False when one can't be read.</summary>
+    static bool Unowned(string steamRoot, string[] paths)
+    {
+        try { return Swept(steamRoot, paths); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.Security.SecurityException) { return false; }
+    }
+
+    static bool Swept(string steamRoot, string[] paths)
+    {
+        var names = StringComparison.OrdinalIgnoreCase;
+        var s = Path.DirectorySeparatorChar;
+        bool Holds(string dir, string p) => p.Equals(dir, names) || p.StartsWith(Path.TrimEndingDirectorySeparator(dir) + s, names);
+        // every library must be known: one libraryfolders.vdf doesn't list could hold a Steam game's folder linked here
+        if (!SteamSource.Values(File.ReadAllText(Path.Combine(steamRoot, "steamapps", "libraryfolders.vdf")), "path").Any()) return false;
+        var folders = new List<string>();
+        var libraries = new List<string> { Path.GetFullPath(steamRoot) };
+        libraries.AddRange(SteamSource.Libraries(steamRoot));
+        foreach (var p in paths)
+        {
+            var at = p.IndexOf(SteamSource.CommonPart, names);
+            if (at < 0) return false;
+            libraries.Add(p[..at]);
+            folders.Add(p[(at + SteamSource.CommonPart.Length)..].Split(s)[0]);
+        }
+        foreach (var lib in libraries.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (lib.Split(s).Any(n => n.EndsWith('.') || n.EndsWith(' '))) return false;
+            var apps = Path.Combine(lib, "steamapps");
+            if (!Directory.Exists(apps))
+            {
+                if (paths.Any(p => Holds(lib, p))) return false;
+                continue;
+            }
+            foreach (var acf in Directory.GetFiles(apps, "appmanifest_*.acf"))
+            {
+                var text = File.ReadAllText(acf);
+                var dirs = SteamSource.Values(text, "installdir").ToList();
+                var ids = SteamSource.Values(text, "appid").ToList();
+                if (dirs.Any(d => folders.Any(f => f.Equals(d, names)))) return false;
+                if (SteamSource.KeyValues(text) is not { Count: 1 } top || !top.ContainsKey("AppState") || top["AppState"] is not Dictionary<string, object>
+                    || dirs.Count != 1 || ids.Count != 1 || ids[0] is not { Length: > 0 and <= 10 } digits || !digits.All(char.IsAsciiDigit)
+                    || !uint.TryParse(digits, out var id) || id == 0 || dirs[0] is "" or "." or ".." || dirs[0].IndexOfAny(['\\', '/', ':']) >= 0) return false;
+                var folder = Path.Combine(apps, "common", dirs[0]);
+                if (GameFiles.FinalPath(folder) is { } owner ? paths.Any(p => Holds(owner, p)) : Directory.Exists(folder) || File.Exists(folder)) return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>The path is in a game folder of drive C of the non-Steam game's own Proton prefix
+    /// (steamapps/compatdata/&lt;its shortcut id&gt;/pfx) in Steam's folder or a library, as named and on disk: not in Wine's
+    /// Windows folder nor in any Steam folder but compatdata, libraryfolders.vdf read, no library left out
+    /// (<paramref name="leftOut"/>: never read), and no Steam game's folder and no other app's or shortcut's prefix (its
+    /// folder, pfx or drive_c) is it or holds it on disk. A game installed into the prefix Steam runs it in, which the
+    /// recorder's own check admits too (admit_posix.h vac_now). False when Steam's folders can't be read.</summary>
+    static bool InOwnPrefix(uint shortcut, string path, string steamRoot, Func<string, bool>? leftOut)
+    {
+        var id = shortcut.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var s = Path.DirectorySeparatorChar;
+        try
+        {
+            var full = Path.GetFullPath(path);
+            if (!NamesPrefix(id, full) || GameFiles.FinalPath(full) is not { } real) return false;
+            var names = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            static bool Is(string a, string b) => a.Equals(b, StringComparison.OrdinalIgnoreCase);
+            bool Game(string drive, string p)
+            {
+                var parts = p.Split(s);
+                // any steamapps on the way but one to the game's own prefix: a Steam folder or prefix the libraries listed may not name
+                return GameFiles.Inside(drive, p, names) && Path.GetRelativePath(drive, p).Split(s) is var rel && !Is(rel[0], "windows") && !rel.Any(n => Is(n, "steamapps"))
+                    && !parts.Zip(parts.Skip(1)).Any(n => n.First == "drive_c" && Is(n.Second, "windows"))
+                    && Enumerable.Range(0, parts.Length).All(i => !Is(parts[i], "steamapps") || i + 2 < parts.Length && parts[i + 1] == "compatdata" && parts[i + 2] == id);
+            }
+            // every library must be known: one libraryfolders.vdf doesn't list could hold a Steam game's folder linked here
+            if (!SteamSource.Values(File.ReadAllText(Path.Combine(steamRoot, "steamapps", "libraryfolders.vdf")), "path").Any()) return false;
+            var libraries = Libraries(steamRoot);
+            if (LeftOut(libraries, leftOut)) return false;
+            if (!libraries.Any(lib => Path.Combine(lib, "steamapps", "compatdata", id, "pfx", "drive_c") is var drive
+                    && Game(drive, full) && GameFiles.FinalPath(drive) is { } on && Game(on, real))) return false;
+            bool Holds(string? f) => f != null && (real.Equals(f, names) || real.StartsWith(Path.EndsInDirectorySeparator(f) ? f : f + s, names));
+            foreach (var lib in libraries)
+            {
+                if (Entries(Path.Combine(lib, "steamapps", "common")).Any(f => Holds(Real(f)))) return false;
+                if (Entries(Path.Combine(lib, "steamapps", "compatdata")).Any(d => Path.GetFileName(d) != id
+                        && new[] { d, Path.Combine(d, "pfx"), Path.Combine(d, "pfx", "drive_c") }.Any(p => Holds(Real(p))))) return false;
+            }
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.Security.SecurityException) { return false; }
+    }
+
+    static bool NamesPrefix(string id, string full)
+    {
+        var s = Path.DirectorySeparatorChar;
+        return full.Contains($"{s}compatdata{s}{id}{s}pfx{s}drive_c{s}", StringComparison.Ordinal);
+    }
+
+    static List<string> Libraries(string steamRoot) => SteamSource.Libraries(steamRoot).Prepend(Path.GetFullPath(steamRoot))
+        .Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).ToList();
+
+    // a library whose game folders or prefixes are left out, by the folder or one above it
+    static bool LeftOut(List<string> libraries, Func<string, bool>? leftOut) =>
+        leftOut != null && libraries.Any(l => leftOut(Path.Combine(l, "steamapps", "common")) || leftOut(Path.Combine(l, "steamapps", "compatdata")));
+
+    /// <summary>The game is a non-Steam game in its own prefix (<see cref="InOwnPrefix"/>) by its folder's name, and a Steam
+    /// library is left out (<paramref name="leftOut"/>): it counts as VAC as that library is never read.</summary>
+    public static bool PrefixLeftOut(Game g, Func<string, bool> leftOut, string? steamRoot = null)
+    {
+        try
+        {
+            return SteamShortcuts.AppId(g.Id) is { } own && NamesPrefix(own.ToString(System.Globalization.CultureInfo.InvariantCulture), Path.GetFullPath(g.InstallDir))
+                && LeftOut(Libraries(steamRoot ?? SteamSource.Root()), leftOut);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.Security.SecurityException) { return false; }
+    }
+
+    // a folder's entries, none when it isn't there; one that can't be listed throws
+    static string[] Entries(string dir)
+    {
+        try { return Directory.GetFileSystemEntries(dir); }
+        catch (DirectoryNotFoundException) { return []; }
+    }
+
+    // the path's real path, null when nothing is there (a link to nothing included); one that can't be told throws
+    static string? Real(string path)
+    {
+        if (GameFiles.FinalPath(path) is { } real) return real;
+        try { File.GetAttributes(path); }
+        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { }
+        return null;
+    }
+
     /// <summary>The game is VAC. <paramref name="steamRoot"/>, <paramref name="appinfo"/>: Steam's folder and its appinfo.vdf
-    /// (default: Steam's own).</summary>
-    public static bool Is(Game g, string? appinfo = null, string? steamRoot = null)
+    /// (default: Steam's own). <paramref name="leftOut"/>: the folders the user left out, never read: a non-Steam game in
+    /// its own prefix is VAC while a Steam library is left out (<see cref="InOwnPrefix"/>).</summary>
+    public static bool Is(Game g, string? appinfo = null, string? steamRoot = null, Func<string, bool>? leftOut = null)
     {
         var root = steamRoot ?? SteamSource.Root();
         var path = appinfo ?? SteamSource.AppInfoPath(root);
         var id = AppId(g, root, out var steam);
+        // a non-Steam game in its own prefix is no Steam app's, as outside every library
+        if (steam && id == null && SteamShortcuts.AppId(g.Id) is { } own && InOwnPrefix(own, g.InstallDir, root, leftOut) && InOwnPrefix(own, g.ExePath, root, leftOut))
+            steam = false;
         if (steam && (id is not { } app || Valve.Contains(app) || Apps(path) is not { } apps || apps.GetValueOrDefault(app)?.Vac != false)) return true;
-        return Named(g).Any(n => Unknown(n, path));
-    }
-
-    /// <summary>The app is one Steam has no info about: no appinfo.vdf, the app not in it, or its entry without info. A known
-    /// one (VAC or not) and an appinfo.vdf that can't be read aren't, as the proxy's named_vac takes them.</summary>
-    static bool Unknown(uint app, string appinfo) =>
-        !Valve.Contains(app) && (appinfo.Length > 0 && Absent(appinfo) || Apps(appinfo) is { } apps && apps.GetValueOrDefault(app)?.Vac == null);
-
-    /// <summary>The file isn't there, as the proxy's ENOENT: not one that can't be read.</summary>
-    static bool Absent(string path)
-    {
-        try { File.GetAttributes(path); }
-        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { return true; }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { }
-        return false;
+        return Named(g).Any(n => Valve.Contains(n) || Apps(path)?.GetValueOrDefault(n) is { Vac: true or null });
     }
 
     /// <summary>The app ids the steam_appid.txt files name in the folders the proxy's vac_named reads (folders_to: the exe's
-    /// folder and each one above it up to the install folder, or the install folder alone besides it when it isn't above it),
+    /// folder and each one above it up to the install folder; the install folder alone besides it when it isn't above it, a root the proxy refuses),
     /// read as it reads them: leading digits after a BOM and blanks. A file without them, or one that can't be read, names none.</summary>
     internal static IEnumerable<uint> Named(Game g)
     {
@@ -151,6 +289,8 @@ public static class Vac
             string? error = f.Exists ? null : "missing";
             var apps = (f.Exists ? SteamSource.Apps(path, null, states, e => error = e) : null)
                 ?.ToDictionary(a => a.Key, a => new SteamApp(Verdict(a.Value, states.GetValueOrDefault(a.Key)), LaunchExes(a.Value)));
+            // an entry that doesn't parse is listed without usable info, as the proxy's damaged entry
+            if (apps != null) foreach (var id in states.Keys) apps.TryAdd(id, new SteamApp(null, []));
             _cache = (path, stamp, apps, apps == null ? error ?? "unreadable" : null, Stopwatch.StartNew());
             return apps;
         }

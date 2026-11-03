@@ -82,35 +82,6 @@ static class SteamLaunchOptions
         }
     }
 
-    /// <summary>The launch options that set <paramref name="vars"/> in the game's environment: each NAME=value, its value
-    /// quoted where the shell would read it otherwise, then %command%.</summary>
-    internal static string Line(IEnumerable<(string Name, string Value)> vars) => string.Join(' ', vars.Select(v => $"{v.Name}={Quoted(v.Value)}")) + " %command%";
-
-    /// <summary>The options set each of <paramref name="vars"/> to its value (<see cref="Variables"/>): false too when an env
-    /// option SCSKiller doesn't read leaves them unknown, when what comes before %command% is more than words SCSKiller
-    /// reads as the shell does (<see cref="Words"/>), such as another command, a comment or an expansion, or when an env
-    /// other than the word right before %command% comes after the last of them: its options, or another env's, such as -i,
-    /// -u or -S, can clear them before the game starts. A shell of <see cref="Shells"/> or a wrapper of <see cref="Wrappers"/>
-    /// anywhere after them, by its file name, can too.</summary>
-    internal static bool Hold(string? options, IReadOnlyList<(string Name, string Value)> vars)
-    {
-        var set = Variables(options, out var unread, out var plain, out var words);
-        if (unread != null || !plain || !vars.All(v => set.Any(s => (s.Name, s.Value) == v))) return false;
-        var last = set.Where(s => vars.Contains((s.Name, s.Value))).Select(s => s.At).DefaultIfEmpty(-1).Max();
-        return !words.Skip(last + 1).SkipLast(1).Any(w => w.Word == "env" || w.Word.EndsWith("/env", StringComparison.Ordinal))
-            && !words.Skip(last + 1).Any(w => Path.GetFileName(w.Word) is var name && (Shells.Contains(name) || Wrappers.Contains(name)));
-    }
-
-    static readonly string[] Shells = ["sh", "bash", "dash", "zsh", "ksh", "fish"];
-
-    // each can start the game with an environment of its own making
-    static readonly string[] Wrappers = ["sudo", "su", "pkexec", "doas", "firejail", "bwrap", "systemd-run", "flatpak-spawn", "steam-run"];
-
-    // in single quotes the shell takes every character as it is but a single quote, which ends them and goes in escaped
-    static string Quoted(string value) =>
-        value.Length > 0 && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '.' or '/' or ':' or ',' or '+' or '@' or '=')
-            ? value : "'" + value.Replace("'", "'\\''") + "'";
-
     /// <summary>Why the options run the game on wined3d, without vkd3d-proton or DXVK, as the Proton's script reads them; null when
     /// they don't. Only a variable the script <paramref name="reads"/> counts. PROTON_USE_WINED3D (else PROTON_USE_WINED3D11)
     /// set to anything but empty or 0 does, and set to one of those undoes the rest. wined3d or wined3d11 in

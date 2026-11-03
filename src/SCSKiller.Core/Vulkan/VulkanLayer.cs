@@ -10,8 +10,9 @@ namespace SCSKiller.Core.Vulkan;
 /// vulkan-layer\&lt;key&gt;\ (<see cref="Key"/>). A Steam game's is an implicit layer that only a Steam launch of the game enables
 /// (SteamAppId=&lt;appid&gt;, a non-Steam game's SteamGameId, <see cref="EnableVariable"/>), registered on Windows as a value of HKCU's ImplicitLayers (the manifest's path, 0), on Linux as
 /// the manifest's copy under its own name in the loader's per-user implicit_layer.d (<see cref="ImplicitDir"/>). Any other
-/// game's (Windows) is an entry of SCSKiller's loader settings file (<see cref="SettingsName"/>), which turns the layer on
-/// for the game's exe path alone: no other process ever finds it. The layer records only an exe the recorder's admission
+/// game's on Windows is an entry of SCSKiller's loader settings file (<see cref="SettingsName"/>), which turns the layer on
+/// for the game's exe path alone: no other process ever finds it. On Linux a game of Heroic, Lutris or Faugus has an
+/// implicit layer like a Steam game's, enabled by the variable its launcher starts it with (<see cref="Launcher"/>). The layer records only an exe the recorder's admission
 /// admits (its signed scskiller.ini beside the exe), into the recorder folder's vulkan\&lt;exe file key&gt;\: the archives
 /// (<see cref="VulkanPlan.InboxPattern"/>) and scskiller_creates.csv with #api,vulkan, the driver-cache variables the game ran
 /// with (#cache,NAME=value) and its instance and device create infos (#vkinstance, #vkdevice; scskiller_layer.hpp).</summary>
@@ -47,13 +48,36 @@ public static partial class VulkanLayer
         uint.TryParse(appId, NumberStyles.None, CultureInfo.InvariantCulture, out var app) && SteamShortcuts.IsShortcut(app)
             ? ("SteamGameId", SteamShortcuts.GameId(app).ToString(CultureInfo.InvariantCulture)) : ("SteamAppId", appId);
 
-    /// <summary>The game's layer key: a Steam game's app id, on Windows any other game's "g" and 15 hex digits of its id's
-    /// SHA-256 (never all digits). Null off Windows for a game that isn't Steam's: its exe runs under Wine there, so the
-    /// loader settings file can't name it.</summary>
-    public static string? Key(Game g) => AppId(g) ?? (OperatingSystem.IsWindows()
-        ? "g" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(g.Id)))[..15] : null);
+    /// <summary>The game's layer key: a Steam game's app id, any other game's "g" and 15 hex digits of its id's SHA-256 (never
+    /// all digits) on Windows and for a game of Heroic, Lutris or Faugus on Linux (<see cref="Launched"/>). Null for any other
+    /// game off Windows: nothing in its launch tells the loader it's that game.</summary>
+    public static string? Key(Game g) => AppId(g) ?? (OperatingSystem.IsWindows() || Launched(g) ? HashKey(g.Id) : null);
 
-    static bool IsSteamKey(string key) => key.All(char.IsAsciiDigit);
+    static string HashKey(string gameId) => "g" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(gameId)))[..15];
+
+    /// <summary>A game Heroic, Lutris or Faugus lists, on Linux: its launch sets a variable of the launcher's own for the game
+    /// (<see cref="Launcher"/>), which enables its layer.</summary>
+    public static bool Launched(Game g) => OperatingSystem.IsLinux() && (HeroicSource.RunnerOf(g.Id) != null || LutrisSource.Is(g.Id) || FaugusSource.Is(g.Id));
+
+    /// <summary>The variable a game of a launcher (<see cref="Launched"/>) is started with, as its launcher's files say now, which
+    /// enables its layer on Linux: Proton, umu and the runtime's container pass every variable on to the game. Null with
+    /// the reason when it can't be told.</summary>
+    public static (string Name, string Value)? Launcher(Game g, out string? why)
+    {
+        why = null;
+        var v = HeroicSource.RunnerOf(g.Id) != null ? HeroicSource.LaunchVariable(g, out why)
+            : LutrisSource.Is(g.Id) ? LutrisSource.LaunchVariable(g, out why)
+            : FaugusSource.Is(g.Id) ? FaugusSource.LaunchVariable(g) : null;
+        if (v is { } x && (x.Value.Length is 0 or > 4096 || x.Value.Any(char.IsControl)))
+            (v, why) = (null, $"the variable it starts with ({x.Name}) can't name it");   // a NUL ends it in the game's environment
+        else if (v == null) why ??= "it isn't a game of Heroic, Lutris or Faugus";
+        return v;
+    }
+
+    public static bool IsSteamKey(string key) => key.All(char.IsAsciiDigit);
+
+    /// <summary>The file beside a launcher game's manifest (Linux) that names its game: the manifest's name has only its key.</summary>
+    public const string GameFile = "game";
 
     public static string LayerName(string appId) => "VK_LAYER_SCSKILLER_" + appId;
 
@@ -62,9 +86,10 @@ public static partial class VulkanLayer
     /// <summary>The layer's inbox for an exe: the recorder folder's vulkan\&lt;file key&gt;.</summary>
     public static string Inbox(string recorderDir, string fileKey) => Path.Combine(recorderDir, "vulkan", fileKey);
 
-    /// <summary>The manifest: the layer enabled only where <see cref="EnableVariable"/> is the game's, disabled by
-    /// DISABLE_VK_LAYER_SCSKILLER_&lt;appid&gt;=1 (an implicit layer needs one).</summary>
-    public static string Manifest(string appId, string dllPath)
+    /// <summary>The manifest: the layer enabled only where <paramref name="enable"/> is set to its value (a launcher game's
+    /// <see cref="Launcher"/>), by default <see cref="EnableVariable"/>, disabled by DISABLE_VK_LAYER_SCSKILLER_&lt;key&gt;=1
+    /// (an implicit layer needs one).</summary>
+    public static string Manifest(string appId, string dllPath, (string Name, string Value)? enable = null)
     {
         using var ms = new MemoryStream();
         using (var w = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = true }))
@@ -83,7 +108,7 @@ public static partial class VulkanLayer
             w.WriteString("vkGetDeviceProcAddr", "VK_LAYER_fossilize_GetDeviceProcAddr");
             w.WriteEndObject();
             w.WriteStartObject("enable_environment");
-            var (name, value) = EnableVariable(appId);
+            var (name, value) = enable ?? EnableVariable(appId);
             w.WriteString(name, value);
             w.WriteEndObject();
             w.WriteStartObject("disable_environment");
@@ -93,6 +118,19 @@ public static partial class VulkanLayer
             w.WriteEndObject();
         }
         return Encoding.UTF8.GetString(ms.ToArray());
+    }
+
+    /// <summary>The manifest text is this key's as <see cref="Manifest"/> writes it for <paramref name="dllPath"/>, with the
+    /// enable variable it names: one this copy placed, whatever launcher variable it was written for.</summary>
+    public static bool Placed(string text, string key, string dllPath)
+    {
+        try
+        {
+            using var d = JsonDocument.Parse(text);
+            var on = d.RootElement.GetProperty("layer").GetProperty("enable_environment").EnumerateObject().ToList();
+            return on is [var only] && only.Value.ValueKind == JsonValueKind.String && text == Manifest(key, dllPath, (only.Name, only.Value.GetString()!));
+        }
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException) { return false; }
     }
 
     /// <summary>The registrations of a manifest of this key that isn't <paramref name="manifest"/>: another SCSKiller copy's,

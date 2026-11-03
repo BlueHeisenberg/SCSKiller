@@ -7,9 +7,11 @@ namespace SCSKiller.Core.Games;
 /// ("C:/Riot Games/VALORANT/live"). RiotClientInstalls.json beside Metadata names only the client's own exe. The name is the
 /// uninstall entry's (HKCU "Riot Game &lt;product&gt;.&lt;patchline&gt;"), else the product's known one. Every Riot game counts
 /// as anti-cheat (<see cref="GameFiles.DetectAntiCheat"/>): Vanguard installs outside the game folder.</summary>
-public sealed class RiotSource(string? metadataDir = null, Func<string, string?>? registry = null) : IGameSource
+public sealed class RiotSource(string? metadataDir = null, Func<string, string?>? registry = null) : IGameSource, ILeavesOut
 {
     public Store Store => Store.Other;
+
+    public Func<string, bool> LeftOut { get; set; } = _ => false;
 
     public static string DefaultMetadataDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Riot Games", "Metadata");
 
@@ -38,6 +40,7 @@ public sealed class RiotSource(string? metadataDir = null, Func<string, string?>
                 {
                     if (InstallPath.Match(File.ReadAllText(Path.Combine(sub, key + ".product_settings.yaml"))) is not { Success: true } m || m.Groups[1].Value.Length == 0) continue;
                     install = GameFiles.DirKey(m.Groups[1].Value);
+                    if (LeftOut(install)) continue;
                     if (known.Exe != null && !File.Exists(Path.Combine(install, known.Exe))) continue;   // still installing
                     if (GameFiles.FindExe(install, known.Exe) is not { } found) continue;
                     exe = found;

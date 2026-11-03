@@ -7,14 +7,16 @@ namespace SCSKiller.Core.Games;
 /// <summary>Games installed with Gaijin's own launcher, from HKCU\Software\Gaijin\&lt;project&gt; ("InstallDir"). The exe is
 /// the one BattlEye\BELauncher.ini starts (64BitExe): the install root holds the launcher, which FindExe would take, and
 /// the anti-cheat there keeps it from reading the exes to look further.</summary>
-public sealed class GaijinSource : IGameSource
+public sealed class GaijinSource : IGameSource, ILeavesOut
 {
     public Store Store => Store.Other;
 
-    public IReadOnlyList<Game> Discover() => OperatingSystem.IsWindows() ? Installed() : [];
+    public Func<string, bool> LeftOut { get; set; } = _ => false;
+
+    public IReadOnlyList<Game> Discover() => OperatingSystem.IsWindows() ? Installed(LeftOut) : [];
 
     [SupportedOSPlatform("windows")]
-    static List<Game> Installed()
+    static List<Game> Installed(Func<string, bool> leftOut)
     {
         var games = new List<Game>();
         using var root = Registry.CurrentUser.OpenSubKey(@"Software\Gaijin");
@@ -23,7 +25,7 @@ public sealed class GaijinSource : IGameSource
             try
             {
                 using var key = root.OpenSubKey(project);
-                if (key?.GetValue("InstallDir") is not string install || !Directory.Exists(install) || Exe(install) is not { } exe) continue;
+                if (key?.GetValue("InstallDir") is not string install || leftOut(install) || !Directory.Exists(install) || Exe(install) is not { } exe) continue;
                 games.Add(new Game($"gaijin:{project.ToLowerInvariant()}", Regex.Replace(project, "(?<=[a-z])(?=[A-Z])", " "), Store.Other, install, exe));
             }
             catch (Exception e) when (e is not OperationCanceledException) { GameFiles.Skip("Gaijin", $"gaijin:{project}", e); }

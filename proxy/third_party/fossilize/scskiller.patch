@@ -1,6 +1,6 @@
 --- a/cli/fossilize_replay.cpp
 +++ b/cli/fossilize_replay.cpp
-@@ -63,6 +63,53 @@
+@@ -63,6 +63,120 @@
  using namespace Fossilize;
  using namespace std;
  
@@ -20,6 +20,10 @@
 +// no create info and is listed as invalid, or else as unsupported.
 +static mutex scsk_rejected_lock;
 +static unordered_set<Hash> scsk_rejected, scsk_unsupported_modules;
++// by kind (a library is of its pipeline's kind): the pipelines listed invalid or unsupported, and the ones the driver
++// refused or that didn't parse, whose dependants are invalid
++static unordered_set<Hash> scsk_invalid_pipelines[RESOURCE_COUNT], scsk_unsupported_pipelines[RESOURCE_COUNT],
++	scsk_dead_pipelines[RESOURCE_COUNT];
 +
 +static void scsk_reject(Hash module)
 +{
@@ -31,6 +35,27 @@
 +{
 +	lock_guard<mutex> holder{scsk_rejected_lock};
 +	scsk_unsupported_modules.insert(module);
++}
++
++static void scsk_dead(ResourceTag tag, Hash hash)
++{
++	lock_guard<mutex> holder{scsk_rejected_lock};
++	scsk_dead_pipelines[tag].insert(hash);
++}
++
++// a pipeline Fossilize leaves out before creating it, listed once
++static void scsk_skip(ResourceTag tag, Hash hash, bool unsupported)
++{
++	{
++		lock_guard<mutex> holder{scsk_rejected_lock};
++		if (scsk_invalid_pipelines[tag].count(hash) || scsk_unsupported_pipelines[tag].count(hash))
++			return;
++		(unsupported ? scsk_unsupported_pipelines : scsk_invalid_pipelines)[tag].insert(hash);
++	}
++	if (unsupported)
++		scsk_unsupported(tag, hash);
++	else
++		scsk_invalid(tag, hash);
 +}
 +
 +// before resolve_shader_modules: the stages still hold their modules' hashes
@@ -45,70 +70,121 @@
 +			unsupported = unsupported || scsk_unsupported_modules.count((Hash) stages[i].module) != 0;
 +		}
 +	}
-+	if (rejected)
-+		scsk_invalid(tag, hash);
-+	else if (unsupported)
-+		scsk_unsupported(tag, hash);
++	if (rejected || unsupported)
++		scsk_skip(tag, hash, !rejected);
++}
++
++// the pipelines scskiller_warm left out of this pass as faulty (SCSKILLER_REPLAY_FAULTY: "<tag> <hash>" lines)
++static bool scsk_faulty(ResourceTag tag, Hash hash)
++{
++	static const vector<unordered_set<Hash>> faulty = [] {
++		vector<unordered_set<Hash>> s(RESOURCE_COUNT);
++		const char *path = getenv("SCSKILLER_REPLAY_FAULTY");
++		if (FILE *f = path ? fopen(path, "r") : nullptr)
++		{
++			unsigned t;
++			unsigned long long h;
++			while (fscanf(f, "%u %llx", &t, &h) == 2)
++				if (t < RESOURCE_COUNT)
++					s[t].insert(Hash(h));
++			fclose(f);
++		}
++		return s;
++	}();
++	return faulty[tag].count(hash) != 0;
++}
++
++// before resolve_pipelines: a pipeline whose library wasn't created is invalid when that library is invalid, refused,
++// unparsable or not in the archive, and unsupported when it is unsupported. Else a fault left it out: skipped as it is.
++// settled: the libraries queued for creation are done (their handles can be read), else only missing ones count.
++static void scsk_check_libraries(ResourceTag tag, Hash hash, const VkPipelineLibraryCreateInfoKHR *library,
++                                 const unordered_map<Hash, VkPipeline> &pipelines, DatabaseInterface *db, bool settled)
++{
++	bool invalid = false, unsupported = false;
++	for (uint32_t i = 0; library && i < library->libraryCount && !invalid; i++)
++	{
++		Hash lib = (Hash) library->pLibraries[i];
++		auto itr = pipelines.find(lib);
++		if ((itr != pipelines.end() && (!settled || itr->second != VK_NULL_HANDLE)) || scsk_faulty(tag, lib))
++			continue;
++		{
++			lock_guard<mutex> holder{scsk_rejected_lock};
++			invalid = scsk_invalid_pipelines[tag].count(lib) != 0 || scsk_dead_pipelines[tag].count(lib) != 0;
++			unsupported = unsupported || scsk_unsupported_pipelines[tag].count(lib) != 0;
++		}
++		invalid = invalid || (itr == pipelines.end() && db && !db->has_entry(tag, lib));
++	}
++	if (invalid || unsupported)
++		scsk_skip(tag, hash, !invalid);
 +}
 +
  #ifndef FOSSILIZE_REPLAY_WRAPPER_ENV
  #define FOSSILIZE_REPLAY_WRAPPER_ENV "FOSSILIZE_REPLAY_WRAPPER"
  #endif
-@@ -984,6 +1031,9 @@
+@@ -984,6 +1098,12 @@
  		{
  			LOGW("Entry (%u: %016" PRIx64 ") does not exist, this might be benign depending on where the archive comes from.\n",
  			     unsigned(work_item.tag), work_item.hash);
 +			if (work_item.tag == RESOURCE_GRAPHICS_PIPELINE || work_item.tag == RESOURCE_COMPUTE_PIPELINE ||
 +			    work_item.tag == RESOURCE_RAYTRACING_PIPELINE)
++			{
 +				scsk_unparsed(work_item.tag, work_item.hash);  // unreadable (a bad payload or CRC): as unparsable
++				scsk_dead(work_item.tag, work_item.hash);
++			}
  			if (work_item.tag == RESOURCE_SHADER_MODULE && opts.control_block)
  				opts.control_block->parsed_module_failures.fetch_add(1, std::memory_order_relaxed);
  			return false;
-@@ -995,6 +1045,9 @@
+@@ -995,6 +1115,12 @@
  		{
  			LOGW("Entry (%u: %016" PRIx64 ") does not exist, this might be benign depending on where the archive comes from.\n",
  			     unsigned(work_item.tag), work_item.hash);
 +			if (work_item.tag == RESOURCE_GRAPHICS_PIPELINE || work_item.tag == RESOURCE_COMPUTE_PIPELINE ||
 +			    work_item.tag == RESOURCE_RAYTRACING_PIPELINE)
++			{
 +				scsk_unparsed(work_item.tag, work_item.hash);  // unreadable (a bad payload or CRC): as unparsable
++				scsk_dead(work_item.tag, work_item.hash);
++			}
  			return false;
  		}
  
-@@ -1016,6 +1069,9 @@
+@@ -1016,6 +1142,12 @@
  		{
  			LOGW("Did not replay blob (tag: %d, hash: 0x%016" PRIx64 "). See previous logs for context.\n",
  			     work_item.tag, work_item.hash);
 +			if (work_item.tag == RESOURCE_GRAPHICS_PIPELINE || work_item.tag == RESOURCE_COMPUTE_PIPELINE ||
 +			    work_item.tag == RESOURCE_RAYTRACING_PIPELINE)
++			{
 +				scsk_unparsed(work_item.tag, work_item.hash);
++				scsk_dead(work_item.tag, work_item.hash);
++			}
  
  			if (opts.control_block)
  			{
-@@ -1270,6 +1326,7 @@
+@@ -1270,6 +1402,7 @@
  		if (!device->get_feature_filter().graphics_pipeline_is_supported(work_item.create_info.graphics_create_info))
  		{
  			LOGW("Graphics pipeline %016" PRIx64 " is not supported by current device, skipping.\n", work_item.hash);
-+			scsk_unsupported(work_item.tag, work_item.hash);
++			scsk_skip(work_item.tag, work_item.hash, true);
  			return false;
  		}
  
-@@ -1309,6 +1366,7 @@
+@@ -1309,6 +1442,7 @@
  		if (!device->get_feature_filter().compute_pipeline_is_supported(work_item.create_info.compute_create_info))
  		{
  			LOGW("Compute pipeline %016" PRIx64 " is not supported by current device, skipping.\n", work_item.hash);
-+			scsk_unsupported(work_item.tag, work_item.hash);
++			scsk_skip(work_item.tag, work_item.hash, true);
  			return false;
  		}
  
-@@ -1359,6 +1417,7 @@
+@@ -1359,6 +1493,7 @@
  		if (!device->get_feature_filter().raytracing_pipeline_is_supported(work_item.create_info.raytracing_create_info))
  		{
  			LOGW("Raytracing pipeline %016" PRIx64 " is not supported by current device, skipping.\n", work_item.hash);
-+			scsk_unsupported(work_item.tag, work_item.hash);
++			scsk_skip(work_item.tag, work_item.hash, true);
  			return false;
  		}
  
-@@ -1463,6 +1522,7 @@
+@@ -1463,6 +1598,7 @@
  
  	void complete_work_item(const PipelineWorkItem &work_item) const
  	{
@@ -116,7 +192,7 @@
  		if (work_item_is_dependency(work_item))
  		{
  			*work_item.hash_map_entry.pipeline = *work_item.output.pipeline;
-@@ -1556,7 +1616,13 @@
+@@ -1556,7 +1692,14 @@
  		}
  		else
  		{
@@ -125,13 +201,14 @@
 +			if (primary)
 +			{
 +				scsk_failed(work_item.tag, work_item.hash, result);
++				scsk_dead(work_item.tag, work_item.hash);
 +				if (opts.control_block)  // SCSKiller: a refused pipeline is done too
 +					opts.control_block->skipped_graphics.fetch_add(1, std::memory_order_relaxed);
 +			}
  		}
  	}
  
-@@ -1620,7 +1686,13 @@
+@@ -1620,7 +1763,14 @@
  		}
  		else
  		{
@@ -140,13 +217,14 @@
 +			if (primary)
 +			{
 +				scsk_failed(work_item.tag, work_item.hash, result);
++				scsk_dead(work_item.tag, work_item.hash);
 +				if (opts.control_block)  // SCSKiller: a refused pipeline is done too
 +					opts.control_block->skipped_compute.fetch_add(1, std::memory_order_relaxed);
 +			}
  		}
  	}
  
-@@ -1684,7 +1756,13 @@
+@@ -1684,7 +1834,14 @@
  		}
  		else
  		{
@@ -155,13 +233,14 @@
 +			if (primary)
 +			{
 +				scsk_failed(work_item.tag, work_item.hash, result);
++				scsk_dead(work_item.tag, work_item.hash);
 +				if (opts.control_block)  // SCSKiller: a refused pipeline is done too
 +					opts.control_block->skipped_raytracing.fetch_add(1, std::memory_order_relaxed);
 +			}
  		}
  	}
  
-@@ -1699,6 +1777,9 @@
+@@ -1699,6 +1856,9 @@
  	{
  		if (!run_creation_work_item_setup(resolver, work_item))
  			return;
@@ -171,7 +250,7 @@
  
  		bool valid_type = true;
  
-@@ -1799,7 +1880,8 @@
+@@ -1799,7 +1959,8 @@
  
  			if (work_item.parse_only)
  				run_parse_work_item(per_thread_replayer[work_item.memory_context_index], json_buffer, work_item);
@@ -181,7 +260,7 @@
  				run_creation_work_item(pipeline_resolver, work_item);
  
  			idle_start_time = chrono::steady_clock::now();
-@@ -2446,6 +2528,7 @@
+@@ -2446,6 +2607,7 @@
  			if (!ret)
  			{
  				LOGW("Failed to validate SPIR-V module: %0" PRIX64 ", skipping!\n", hash);
@@ -189,7 +268,7 @@
  				*module = VK_NULL_HANDLE;
  				lock_guard<mutex> lock(internal_enqueue_mutex);
  				//LOGI("Inserting shader module %016llx.\n", static_cast<unsigned long long>(hash));
-@@ -2464,6 +2547,7 @@
+@@ -2464,6 +2626,7 @@
  		if (!device->get_feature_filter().shader_module_is_supported(create_info))
  		{
  			LOGW("Shader module %0" PRIx64 " is not supported on this device.\n", hash);
@@ -197,18 +276,31 @@
  			*module = VK_NULL_HANDLE;
  
  			lock_guard<mutex> lock(internal_enqueue_mutex);
-@@ -2866,8 +2950,9 @@
+@@ -2866,27 +3029,45 @@
  		return ret;
  	}
  
 -	void resolve_shader_modules(VkGraphicsPipelineCreateInfo *info)
++	// a module that wasn't created (rejected, missing, unparsable) leaves the pipeline out as invalid, unless it is listed
++	// unsupported or a fault masked the module (it was in flight then): that one stays skipped
++	template <typename Info>
++	void scsk_check_module(const Info *info, Hash hash, Hash module, VkShaderModule got) const
++	{
++		if (got == VK_NULL_HANDLE && !masked_shader_modules.count(module))
++			scsk_skip(scsk_tag(info), hash, false);
++	}
++	static ResourceTag scsk_tag(const VkGraphicsPipelineCreateInfo *) { return RESOURCE_GRAPHICS_PIPELINE; }
++	static ResourceTag scsk_tag(const VkComputePipelineCreateInfo *) { return RESOURCE_COMPUTE_PIPELINE; }
++	static ResourceTag scsk_tag(const VkRayTracingPipelineCreateInfoKHR *) { return RESOURCE_RAYTRACING_PIPELINE; }
++
 +	void resolve_shader_modules(VkGraphicsPipelineCreateInfo *info, Hash hash)
  	{
 +		scsk_check_stages(RESOURCE_GRAPHICS_PIPELINE, hash, info->pStages, info->stageCount);
  		for (uint32_t i = 0; i < info->stageCount; i++)
  		{
  			auto result = shader_modules.find_object((Hash) info->pStages[i].module);
-@@ -2875,8 +2960,9 @@
++			scsk_check_module(info, hash, (Hash) info->pStages[i].module, result.first);
+ 			const_cast<VkPipelineShaderStageCreateInfo *>(info->pStages)[i].module = result.first;
  		}
  	}
  
@@ -219,7 +311,8 @@
  		for (uint32_t i = 0; i < info->stageCount; i++)
  		{
  			auto result = shader_modules.find_object((Hash) info->pStages[i].module);
-@@ -2884,8 +2970,9 @@
++			scsk_check_module(info, hash, (Hash) info->pStages[i].module, result.first);
+ 			const_cast<VkPipelineShaderStageCreateInfo *>(info->pStages)[i].module = result.first;
  		}
  	}
  
@@ -228,9 +321,22 @@
  	{
 +		scsk_check_stages(RESOURCE_COMPUTE_PIPELINE, hash, &info->stage, 1);
  		auto result = shader_modules.find_object((Hash) info->stage.module);
++		scsk_check_module(info, hash, (Hash) info->stage.module, result.first);
  		const_cast<VkComputePipelineCreateInfo*>(info)->stage.module = result.first;
  	}
-@@ -3263,7 +3350,7 @@
+ 
+@@ -2951,7 +3132,10 @@
+ 	{
+ 		auto *library = work_item_get_library_info(info);
+ 		if (library)
++		{
++			scsk_check_libraries(DerivedInfo::get_tag(), info.hash, library, pipelines, global_database, true);
+ 			resolve_pipeline_library_info(*library, pipelines);
++		}
+ 	}
+ 
+ 	template <typename DerivedInfo>
+@@ -3263,7 +3447,7 @@
  				                 {
  					                 if (item.info)
  					                 {
@@ -239,7 +345,18 @@
  						                 enqueue_pipeline(item.hash, item.info, item.pipeline,
  						                                  item.index + hash_offset + start_index, memory_index);
  					                 }
-@@ -3386,7 +3473,7 @@
+@@ -3377,7 +3561,10 @@
+ 							                continue;
+ 
+ 						                if (!derived_work_item_is_satisfied(parent, pipelines))
++						                {
++							                scsk_check_libraries(DerivedInfo::get_tag(), parent.hash, work_item_get_library_info(parent), pipelines, global_database, false);
+ 							                continue;
++						                }
+ 
+ 						                uint32_t depth = parents_depth.at(parent.hash);
+ 						                if (prev_depth != depth)
+@@ -3386,7 +3573,7 @@
  							                sync_worker_memory_context(PARENT_PIPELINE_MEMORY_CONTEXT);
  						                }
  
@@ -248,7 +365,7 @@
  						                resolve_pipelines(parent, pipelines);
  						                enqueue_pipeline(parent.hash, parent.info,
  						                                 parent.pipeline,
-@@ -3425,7 +3512,7 @@
+@@ -3425,7 +3612,7 @@
  					                 // compiling them twice.
  					                 if (i->info && parents.count(i->hash) == 0)
  					                 {
@@ -257,7 +374,16 @@
  						                 resolve_pipelines(*i, pipelines);
  						                 enqueue_pipeline(i->hash, i->info, i->pipeline,
  						                                  i->index + hash_offset + start_index, memory_index);
-@@ -4741,14 +4828,8 @@
+@@ -3436,6 +3623,8 @@
+ 				                 if (itr != begin(*derived))
+ 				                 {
+ 					                 auto skipped_count = unsigned(itr - begin(*derived));
++					                 for (auto i = begin(*derived); i != itr; ++i)
++						                 scsk_check_libraries(DerivedInfo::get_tag(), i->hash, work_item_get_library_info(*i), pipelines, global_database, false);
+ 					                 LOGW("%u pipelines were not compiled because parent pipelines do not exist.\n", skipped_count);
+ 
+ 					                 if (opts.control_block)
+@@ -4741,14 +4930,8 @@
  	}
  
  #ifndef NO_ROBUST_REPLAYER
@@ -1175,3 +1301,235 @@
  
  	if (device_info.ppEnabledLayerNames)
  		for (uint32_t i = 0; i < device_info.enabledLayerCount; i++)
+--- a/fossilize.cpp
++++ b/fossilize.cpp
+@@ -225,8 +225,14 @@
+ 			VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT,
+ 			create_info.pNext);
+ 
++	// Flags2 replaces flags when chained.
++	VkPipelineCreateFlags2KHR flags = create_info.flags;
++	if (auto *flags2 = find_pnext<VkPipelineCreateFlags2CreateInfoKHR>(
++			VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR, create_info.pNext))
++		flags = flags2->flags;
++
+ 	// If we're not creating a library, assume we're defining a complete pipeline.
+-	if ((create_info.flags & VK_PIPELINE_CREATE_LIBRARY_BIT_KHR) != 0 && graphics_pipeline_library)
++	if ((flags & VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR) != 0 && graphics_pipeline_library)
+ 		state_flags = graphics_pipeline_library->flags;
+ 
+ 	return state_flags;
+@@ -394,6 +400,7 @@
+ 	bool parse_ray_tracing_pipeline_cluster_acceleration_structure_info(const Value &state, VkRayTracingPipelineClusterAccelerationStructureCreateInfoNV **out_info) FOSSILIZE_WARN_UNUSED;
+ 	bool parse_shader_descriptor_set_and_binding_mapping(const Value &state, VkShaderDescriptorSetAndBindingMappingInfoEXT **out_info) FOSSILIZE_WARN_UNUSED;
+ 	bool parse_custom_resolve(const Value &state, VkCustomResolveCreateInfoEXT **out_info) FOSSILIZE_WARN_UNUSED;
++	bool parse_attachment_sample_count(const Value &state, VkAttachmentSampleCountInfoAMD **out_info) FOSSILIZE_WARN_UNUSED;
+ 	bool parse_uints(const Value &attachments, const uint32_t **out_uints) FOSSILIZE_WARN_UNUSED;
+ 	bool parse_sints(const Value &attachments, const int32_t **out_uints) FOSSILIZE_WARN_UNUSED;
+ 	const char *duplicate_string(const char *str, size_t len);
+@@ -555,6 +562,9 @@
+ 	void *copy_pnext_struct(const VkCustomResolveCreateInfoEXT *create_info,
+ 	                        ScratchAllocator &alloc, const DynamicStateInfo *dynamic_state_info,
+ 	                        VkGraphicsPipelineLibraryFlagsEXT state_flags) FOSSILIZE_WARN_UNUSED;
++	void *copy_pnext_struct(const VkAttachmentSampleCountInfoAMD *create_info,
++	                        ScratchAllocator &alloc, const DynamicStateInfo *dynamic_state_info,
++	                        VkGraphicsPipelineLibraryFlagsEXT state_flags) FOSSILIZE_WARN_UNUSED;
+ 	template <typename T>
+ 	void *copy_pnext_struct_simple(const T *create_info, ScratchAllocator &alloc) FOSSILIZE_WARN_UNUSED;
+ 
+@@ -1117,6 +1127,32 @@
+ 	return true;
+ }
+ 
++// The driver ignores it with a render pass and in a library without fragment output state: its array isn't read then.
++static bool attachment_sample_count_ignored(const DynamicStateInfo *dynamic_state_info, VkGraphicsPipelineLibraryFlagsEXT state_flags)
++{
++	return !dynamic_state_info || dynamic_state_info->has_render_pass ||
++	       (state_flags & VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT) == 0;
++}
++
++static bool hash_pnext_struct(const StateRecorder *, Hasher &h, const VkAttachmentSampleCountInfoAMD &info,
++                              const DynamicStateInfo *dynamic_state_info, VkGraphicsPipelineLibraryFlagsEXT state_flags)
++{
++	if (attachment_sample_count_ignored(dynamic_state_info, state_flags))
++	{
++		h.u32(0);
++		return true;
++	}
++
++	if (info.colorAttachmentCount && !info.pColorAttachmentSamples)
++		return false;
++
++	h.u32(info.colorAttachmentCount);
++	for (uint32_t i = 0; i < info.colorAttachmentCount; i++)
++		h.u32(info.pColorAttachmentSamples[i]);
++	h.u32(info.depthStencilAttachmentSamples);
++	return true;
++}
++
+ static bool hash_pnext_chain_pdf2(const StateRecorder *recorder, Hasher &h, const void *pNext)
+ {
+ 	auto *vk14 = find_pnext<VkPhysicalDeviceVulkan14Features>(
+@@ -1990,6 +2026,14 @@
+ 			}
+ 			break;
+ 
++		case VK_STRUCTURE_TYPE_ATTACHMENT_SAMPLE_COUNT_INFO_AMD:
++			if (!hash_pnext_struct(recorder, h, *static_cast<const VkAttachmentSampleCountInfoAMD *>(pNext),
++				dynamic_state_info, state_flags))
++			{
++				return false;
++			}
++			break;
++
+ 		default:
+ 			log_error_pnext_chain("Unsupported pNext found, cannot hash.", pNext);
+ 			return false;
+@@ -5431,6 +5475,25 @@
+ 	return true;
+ }
+ 
++bool StateReplayer::Impl::parse_attachment_sample_count(const Value &state, VkAttachmentSampleCountInfoAMD **out_info)
++{
++	auto *info = allocator.allocate_cleared<VkAttachmentSampleCountInfoAMD>();
++	*out_info = info;
++
++	info->depthStencilAttachmentSamples = static_cast<VkSampleCountFlagBits>(state["depthStencilAttachmentSamples"].GetUint());
++
++	if (state.HasMember("colorAttachmentSamples"))
++	{
++		auto &samples = state["colorAttachmentSamples"];
++		info->colorAttachmentCount = samples.Size();
++		static_assert(sizeof(VkSampleCountFlagBits) == sizeof(uint32_t), "Enum size is not 32-bit.");
++		if (!parse_uints(samples, reinterpret_cast<const uint32_t **>(&info->pColorAttachmentSamples)))
++			return false;
++	}
++
++	return true;
++}
++
+ bool StateReplayer::Impl::parse_mutable_descriptor_type(const Value &state,
+                                                         VkMutableDescriptorTypeCreateInfoEXT **out_info)
+ {
+@@ -5911,6 +5974,15 @@
+ 			break;
+ 		}
+ 
++		case VK_STRUCTURE_TYPE_ATTACHMENT_SAMPLE_COUNT_INFO_AMD:
++		{
++			VkAttachmentSampleCountInfoAMD *info = nullptr;
++			if (!parse_attachment_sample_count(next, &info))
++				return false;
++			new_struct = reinterpret_cast<VkBaseInStructure *>(info);
++			break;
++		}
++
+ 		default:
+ 			LOGE_LEVEL("Failed to parse pNext chain for sType: %d\n", int(sType));
+ 			return false;
+@@ -6756,6 +6828,34 @@
+ 	return info;
+ }
+ 
++void *StateRecorder::Impl::copy_pnext_struct(
++		const VkAttachmentSampleCountInfoAMD *create_info,
++		ScratchAllocator &alloc,
++		const DynamicStateInfo *dynamic_state_info,
++		VkGraphicsPipelineLibraryFlagsEXT state_flags)
++{
++	auto *info = copy(create_info, 1, alloc);
++	if (!info)
++		return nullptr;
++
++	if (Hashing::attachment_sample_count_ignored(dynamic_state_info, state_flags))
++	{
++		info->colorAttachmentCount = 0;
++		info->pColorAttachmentSamples = nullptr;
++		info->depthStencilAttachmentSamples = VkSampleCountFlagBits(0);
++	}
++	else if (info->colorAttachmentCount)
++	{
++		if (!info->pColorAttachmentSamples)
++			return nullptr;
++		info->pColorAttachmentSamples = copy(info->pColorAttachmentSamples, info->colorAttachmentCount, alloc);
++		if (!info->pColorAttachmentSamples)
++			return nullptr;
++	}
++
++	return info;
++}
++
+ template <typename T>
+ void *StateRecorder::Impl::copy_pnext_struct_simple(const T *create_info, ScratchAllocator &alloc)
+ {
+@@ -7142,6 +7242,16 @@
+ 			break;
+ 		}
+ 
++		case VK_STRUCTURE_TYPE_ATTACHMENT_SAMPLE_COUNT_INFO_AMD:
++		{
++			auto *ci = static_cast<const VkAttachmentSampleCountInfoAMD *>(pNext);
++			auto *samples = static_cast<VkBaseInStructure *>(copy_pnext_struct(ci, alloc, dynamic_state_info, state_flags));
++			if (!samples)
++				return false;
++			*ppNext = samples;
++			break;
++		}
++
+ 		default:
+ 			LOGE_LEVEL("Cannot copy unknown pNext sType: %d.\n", int(pin->sType));
+ 			return false;
+@@ -10650,6 +10760,24 @@
+ 	return true;
+ }
+ 
++static bool json_value(const VkAttachmentSampleCountInfoAMD &create_info, Allocator &alloc, Value *out_value)
++{
++	Value value(kObjectType);
++	value.AddMember("sType", create_info.sType, alloc);
++	value.AddMember("depthStencilAttachmentSamples", create_info.depthStencilAttachmentSamples, alloc);
++
++	if (create_info.colorAttachmentCount)
++	{
++		Value samples(kArrayType);
++		for (uint32_t i = 0; i < create_info.colorAttachmentCount; i++)
++			samples.PushBack(create_info.pColorAttachmentSamples[i], alloc);
++		value.AddMember("colorAttachmentSamples", samples, alloc);
++	}
++
++	*out_value = value;
++	return true;
++}
++
+ static bool json_value(const VkSubpassDescriptionDepthStencilResolve &create_info, Allocator &alloc, Value *out_value);
+ static bool json_value(const VkFragmentShadingRateAttachmentInfoKHR &create_info, Allocator &alloc, Value *out_value);
+ static bool json_value(const VkPipelineSampleLocationsStateCreateInfoEXT &create_info, Allocator &alloc, Value *out_value,
+@@ -10894,6 +11022,11 @@
+ 				return false;
+ 			break;
+ 
++		case VK_STRUCTURE_TYPE_ATTACHMENT_SAMPLE_COUNT_INFO_AMD:
++			if (!json_value(*static_cast<const VkAttachmentSampleCountInfoAMD *>(pNext), alloc, &next))
++				return false;
++			break;
++
+ 		default:
+ 			log_error_pnext_chain("Unsupported pNext found, cannot hash sType.", pNext);
+ 			return false;
+--- a/cli/fossilize_feature_filter.cpp
++++ b/cli/fossilize_feature_filter.cpp
+@@ -1873,6 +1873,14 @@
+ 			break;
+ 		}
+ 
++		case VK_STRUCTURE_TYPE_ATTACHMENT_SAMPLE_COUNT_INFO_AMD:
++		{
++			if (!enabled_extensions.count(VK_AMD_MIXED_ATTACHMENT_SAMPLES_EXTENSION_NAME) &&
++			    !enabled_extensions.count(VK_NV_FRAMEBUFFER_MIXED_SAMPLES_EXTENSION_NAME))
++				return false;
++			break;
++		}
++
+ 		default:
+ 			LOGE("Unrecognized pNext sType: %u. Treating as unsupported.\n", unsigned(base->sType));
+ 			return false;

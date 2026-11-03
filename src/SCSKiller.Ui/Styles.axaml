@@ -17,23 +17,24 @@
         <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
     </Style>
     <Style Selector="TextBlock.Caption">
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{DynamicResource TextSize.12}" />
         <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
     </Style>
     <Style Selector="TextBlock.CaptionText">
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{DynamicResource TextSize.12}" />
     </Style>
     <Style Selector="TextBlock.Title">
-        <Setter Property="FontSize" Value="28" />
+        <Setter Property="FontSize" Value="{DynamicResource TextSize.28}" />
         <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
     <Style Selector="TextBlock.Big">
-        <Setter Property="FontSize" Value="22" />
+        <Setter Property="FontSize" Value="{DynamicResource TextSize.22}" />
         <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
     <Style Selector="TextBlock.Section">
-        <Setter Property="FontSize" Value="16" />
+        <Setter Property="FontSize" Value="{DynamicResource TextSize.16}" />
         <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
     <Style Selector="TextBlock.BodyStrong">
         <Setter Property="FontWeight" Value="SemiBold" />
@@ -74,8 +75,11 @@
         <Setter Property="Margin" Value="-4,0" />
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
+    <Style Selector="ui|ContentDialog">
+        <Setter Property="MaxWidth" Value="{DynamicResource TextFit.548}" />
+    </Style>
     <Style Selector="Border.Chip">
-        <Setter Property="Height" Value="26" />
+        <Setter Property="MinHeight" Value="26" />
         <Setter Property="Padding" Value="10,0" />
         <Setter Property="CornerRadius" Value="13" />
         <Setter Property="Background" Value="{DynamicResource ControlFillColorSecondaryBrush}" />
@@ -146,7 +150,7 @@
         <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
     </Style>
     <Style Selector="Button.Nav">
-        <Setter Property="Height" Value="36" />
+        <Setter Property="MinHeight" Value="36" />
         <Setter Property="Margin" Value="4,2" />
         <Setter Property="Padding" Value="0" />
         <Setter Property="HorizontalAlignment" Value="Stretch" />

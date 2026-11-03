@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Documents;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using SCSKiller.Core;
@@ -24,6 +25,19 @@ public sealed partial class DetailPage : UserControl, INavigable
         InitializeComponent();
         refresh = new(Host.Ui, () => Vm.Refresh());
         progress = new(Host.Ui, () => Vm.RefreshProgress());
+        Header.LayoutUpdated += (_, _) => FitHeader();
+    }
+
+    /// <summary>The buttons go under the title when beside it they'd leave the title less than 8 em, as with a large Text size.</summary>
+    void FitHeader()
+    {
+        var shown = HeaderButtons.Children.Where(c => c.IsVisible).ToList();
+        var buttons = shown.Sum(c => c.DesiredSize.Width) + HeaderButtons.ItemSpacing * Math.Max(0, shown.Count - 1);
+        bool below = Header.Bounds.Width - 56 - 2 * Header.ColumnSpacing - buttons < TitleText.FontSize * 8;
+        if (below == (Grid.GetRow(HeaderButtons) == 1)) return;
+        Grid.SetRow(HeaderButtons, below ? 1 : 0);
+        Grid.SetColumn(HeaderButtons, below ? 1 : 2);
+        HeaderButtons.Margin = below ? new(0, 12, 0, 0) : default;
     }
 
     void OnChanged(GameState s) { if (s.Game.Id == Vm?.Row.Id) refresh.Request(); }   // a scan raises one per game
@@ -131,7 +145,12 @@ public sealed partial class DetailPage : UserControl, INavigable
 
     void OnRefreshGame(object? _, RoutedEventArgs __) => Vm.RefreshGame();
     async void OnKeepShaders(object? _, RoutedEventArgs __) => await Vm.KeepShadersAsync();
-    async void OnCopyLaunchLine(object? _, RoutedEventArgs __) => await Vm.CopyLaunchLine();
+    async void OnGrantFlatpak(object? _, RoutedEventArgs __)
+    {
+        if (Vm.GrantLauncher is not { } launcher) return;
+        if (await App.ConfirmAsync($"Let {launcher} read SCSKiller's recorder folder?", ScsKiller.FlatpakGrantConfirm(launcher, Vm.GrantWrites), ScsKiller.FlatpakGrantButton(launcher)))
+            await Vm.GrantAsync();
+    }
     void OnPlay(object? _, RoutedEventArgs __) => Vm.Play();
 
     static readonly (CompatChoice Choice, string Text)[] ReportChoices =
@@ -226,7 +245,7 @@ public sealed partial class DetailPage : UserControl, INavigable
             ("Status", $"{vm.StatusTitle}. {vm.StatusReason}"),
             ("Coverage", vm.CoverageHeadline),
             (vm.TimeLabel, vm.HasTimeValue ? vm.TimeValue : ""),
-            (vm.DiskLabel, vm.HasDiskValue ? vm.DiskValue : ""),
+            (vm.DiskLabel, vm.HasDiskValue ? vm.DiskValue + (vm.HasDiskInUse ? ", " + vm.DiskInUse : "") : ""),
             (vm.StuttersLabel, vm.HasStutterTile ? vm.StuttersValue : ""),
             (vm.CompileTitle, vm.HasCompileCard ? vm.CompileText : ""),
             ("Last session", vm.FramesVerdict),
@@ -238,7 +257,7 @@ public sealed partial class DetailPage : UserControl, INavigable
         var report = new TextBox
         {
             IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 240,
-            FontFamily = new FontFamily("Consolas, Cascadia Mono, DejaVu Sans Mono, monospace"), FontSize = 12,
+            FontFamily = new FontFamily("Consolas, Cascadia Mono, DejaVu Sans Mono, monospace"), [!FontSizeProperty] = new DynamicResourceExtension("TextSize.12"),
         };
         ScrollViewer.SetVerticalScrollBarVisibility(report, Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
         var problemText = Warn(new TextBlock { TextWrapping = TextWrapping.Wrap, IsVisible = false });
@@ -339,13 +358,15 @@ public sealed partial class DetailPage : UserControl, INavigable
     {
         var game = Vm.Row.State.Game;
         if (await GameFolderDialog.ShowAsync(game, $"{game.Name}'s folder", "Save") is not { } folder) return;
-        try { await Task.Run(() => Host.Core.AddManualGame(game.ExePath, folder)); }   // checks the folder again, then the game
+        ManualAdd added;
+        try { added = await Task.Run(() => Host.Core.AddManualGame(game.ExePath, folder)); }   // checks the folder again, then the game
         catch (Exception ex)
         {
             await App.ShowAsync(new ContentDialog { Title = "Couldn't set the game folder", Content = ex.Message, CloseButtonText = "OK" });
             return;
         }
-        Vm.Refresh();
+        if (added.Game.Id != game.Id) App.Main.Navigate(typeof(LibraryPage));   // a moved exe is another game id
+        else Vm.Refresh();
     }
 
     async void OnGameExe(object? _, RoutedEventArgs __)
@@ -431,6 +452,12 @@ public sealed partial class DetailPage : UserControl, INavigable
     /// <summary>Screenshots: the coverage card's Details and the session's slow frames open.</summary>
     public void ShowDetails() => DetailsExpander.IsExpanded = SlowFramesExpander.IsExpanded = EarlierExpander.IsExpanded = true;
 
+    /// <summary>Screenshots: the Details at the top.</summary>
+    public void ScrollToDetails()
+    {
+        if (DetailsExpander.TranslatePoint(default, Scroller) is { } at) Scroller.Offset = new(0, Math.Max(0, Scroller.Offset.Y + at.Y - 12));
+    }
+
     /// <summary>Screenshots: the frame times card at the top; false without one.</summary>
     public bool ScrollToFrames()
     {
@@ -474,6 +501,13 @@ public sealed partial class DetailPage : UserControl, INavigable
         }
         Host.Core.CompileMax(id);
         vm.Refresh();
+    }
+
+    void OnRtOnlyCompile(object? _, RoutedEventArgs __)
+    {
+        try { Host.Core.CompileRtOnly(Vm.Row.Id); }
+        catch (InvalidOperationException ex) { Vm.Error = ex.Message; }
+        Vm.Refresh();
     }
 
     // IsCheckedChanged also fires when the binding sets the switch: only a user's flip differs from the view model.
@@ -607,9 +641,11 @@ public sealed partial class DetailPage : UserControl, INavigable
             try
             {
                 var all = await Task.Run(() => Host.Core.GameCaches(id, gamePrecache: true));
+                var shared = await Task.Run(() => Host.Core.SharedCacheNote(id));
                 static bool Own(CachePart p) => p.Name is ScsKiller.PipelinePart or ScsKiller.PrecachePart;
                 var (parts, own) = (all.Where(p => !Own(p)).ToList(), all.Where(Own).ToList());
-                text.Text = (parts.Count > 0 ? string.Join(" · ", parts.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}")) + ".\n\n" : "No cache files on disk now.\n\n") + note;
+                text.Text = (parts.Count > 0 ? string.Join(" · ", parts.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}")) + ".\n\n" : "No cache files on disk now.\n\n")
+                    + (shared != null ? shared + "\n\n" : "") + note;
                 ownText.Text = $"Also delete the game's own shader cache ({Format.Bytes(own.Sum(p => p.Bytes))}). It rebuilds it at its next start, which then takes longer.";
                 alsoOwn.IsVisible = own.Count > 0;
             }
@@ -685,14 +721,15 @@ public sealed partial class DetailPage : UserControl, INavigable
         vm.AlwaysPending = true;   // the switch stays on, and off for a second toggle, until the dialog is answered
         vm.Refresh();
         AntiCheat shown;
-        try { shown = await Host.Core.CheckAntiCheatAsync(id); }
+        bool open;
+        try { (shown, open) = await Host.Core.CheckAntiCheatAsync(id); }
         catch (Exception ex)
         {
             (vm.Error, vm.AlwaysPending) = (Describe(ex), null);
             vm.Refresh();
             return;
         }
-        var fresh = vm.Row.State with { AntiCheat = shown };   // VAC stays the state's: the check only names a client anti-cheat
+        var fresh = vm.Row.State with { AntiCheat = shown, AntiCheatUnfinished = open };   // VAC stays the state's: the check only names a client anti-cheat
         var ok = await App.ConfirmAsync($"Always record {vm.Name} at your own risk?",
             Text(DetailVm.RiskText(fresh) + (ScsKiller.VulkanPickWarning(fresh) is { } pick ? "\n\n" + pick : "")), "Always record");
         vm.AlwaysPending = null;
@@ -731,14 +768,15 @@ public sealed partial class DetailPage : UserControl, INavigable
         vm.OfflineStarting = true;   // before the check: the button stays off until the dialog is answered
         vm.Refresh();
         AntiCheat shown;
-        try { shown = await Host.Core.CheckAntiCheatAsync(id); }
+        bool open;
+        try { (shown, open) = await Host.Core.CheckAntiCheatAsync(id); }
         catch (Exception ex)
         {
             (vm.Error, vm.OfflineStarting) = (Describe(ex), false);
             vm.Refresh();
             return;
         }
-        var fresh = vm.Row.State with { AntiCheat = shown };   // VAC stays the state's: the check only names a client anti-cheat
+        var fresh = vm.Row.State with { AntiCheat = shown, AntiCheatUnfinished = open };   // VAC stays the state's: the check only names a client anti-cheat
         var ok = await App.ShowAsync(RiskDialog(vm, fresh)) == ContentDialogResult.Primary;
         if (!ok)
         {

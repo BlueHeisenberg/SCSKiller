@@ -46,6 +46,38 @@ public sealed class AmdAppCache(string dxcDir, string dxDir, string? vkDir = nul
         return tag.SequenceEqual("NTRY"u8) ? true : tag.SequenceEqual("FOTR"u8) ? false : null;
     }
 
+    /// <summary>A small fingerprint of a .parc that changes when the driver adds a record, which a write through its mapping
+    /// shows in neither the length nor the write time: the length, the first 4 KiB, and the 64 KiB before the zero tail of the
+    /// preallocated file (records fill it from the front), found by a binary search over 4 KiB blocks. About 20 reads. Null:
+    /// unreadable.</summary>
+    public static string? ParcStamp(string path)
+    {
+        const int Block = 4096;
+        try
+        {
+            using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1);
+            var buf = new byte[1 << 16];
+            int Read(long at, int count)
+            {
+                f.Position = at;
+                return f.ReadAtLeast(buf.AsSpan(0, count), count, throwOnEndOfStream: false);
+            }
+            long lo = 1, hi = (f.Length + Block - 1) / Block;   // block 0 holds the header
+            while (lo < hi)
+            {
+                var mid = lo + (hi - lo) / 2;
+                if (buf.AsSpan(0, Read(mid * Block, Block)).ContainsAnyExcept((byte)0)) lo = mid + 1; else hi = mid;
+            }
+            var end = Math.Min(lo * Block, f.Length);
+            using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+            sha.AppendData(buf, 0, Read(0, Block));
+            var from = Math.Max(0, end - buf.Length);
+            sha.AppendData(buf, 0, Read(from, (int)(end - from)));
+            return $"{f.Length}:{end}:{Convert.ToHexString(sha.GetHashAndReset())}";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+    }
+
     static readonly System.Text.RegularExpressions.Regex BinName = new(@"^[0-9a-f]{48}\.bin2?$",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
@@ -64,6 +96,14 @@ public sealed class AmdAppCache(string dxcDir, string dxDir, string? vkDir = nul
         var app = ulong.Parse(parts[0], System.Globalization.NumberStyles.HexNumber);
         return d3d12 ? (app <= uint.MaxValue ? $"{D3D12Prefix}{app:x8}" : null) : $"{D3D11Prefix}{app:x16}";
     }
+
+    /// <summary>"3980fcd1.64ab3adb.7deb3888.a3db4f35.0.parc" in DxcCache -> "dxc:3980fcd1.64ab3adb": the key and the name's second
+    /// part. One key can hold several such sets, and a process uses one (26.10.1: a compile's and the game's own launch's
+    /// differed under one key). Null for anything else.</summary>
+    public static string? Part(string fileName) => Key(fileName, true) is { } k ? $"{k}.{fileName.Split('.')[1].ToLowerInvariant()}" : null;
+
+    /// <summary>"dxc:3980fcd1.64ab3adb" -> "dxc:3980fcd1"; any other key as it is.</summary>
+    public static string KeyOf(string part) => part.StartsWith(D3D12Prefix, StringComparison.Ordinal) && part.IndexOf('.') is var i and > 0 ? part[..i] : part;
 
     /// <summary>HINT ONLY: the DxcCache app hash the driver uses for an exe without an app profile: FNV-1a-32 over the exe
     /// file name's UTF-16LE bytes, exactly as the process was launched (case matters: "AMDTESTA.EXE" and "amdtestA.exe" are
@@ -133,13 +173,37 @@ public sealed class AmdAppCache(string dxcDir, string dxDir, string? vkDir = nul
         return set.Count == 0 ? [] : All().Where(f => set.Contains(f.Key)).Select(f => new FileInfo(f.Path)).ToList();
     }
 
+    /// <summary>Those of these keys whose files are all .bin/.bin2 (the Always on D3D11 cache): the game's own launch writes
+    /// several prefixes, so one isn't a stable app key. A key with a .parc file isn't one; none when the listing fails.</summary>
+    public HashSet<string> BinKeys(IEnumerable<string> keys)
+    {
+        var set = keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (set.Count == 0) return [];
+        try
+        {
+            return All().Where(f => set.Contains(f.Key)).GroupBy(f => f.Key, StringComparer.OrdinalIgnoreCase)
+                .Where(g => g.All(f => BinName.IsMatch(Path.GetFileName(f.Path)))).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
+    }
+
     /// <summary>Bytes of these keys' files. Sizes are current even while the driver has a file mapped (it grows the file;
     /// only the write time stays put).</summary>
     public long SizeOf(IEnumerable<string> keys) => FilesOf(keys).Sum(f => f.Exists ? f.Length : 0);   // the driver trims files at any time
 
     /// <summary>Keys of the DxcCache and DxCache files a running process with this exe file name has open now: the
     /// authoritative way to learn a game's key (profiles included).</summary>
-    public IReadOnlySet<string> KeysOpenBy(string exeFileName) => AppCacheFiles.KeysOpenBy(exeFileName, All());
+    public IReadOnlySet<string> KeysOpenBy(string exeFileName) => PartsOpenBy(exeFileName).Select(KeyOf).ToHashSet();
+
+    /// <summary><see cref="KeysOpenBy"/> with the D3D12 keys as the file sets held (<see cref="Part"/>).</summary>
+    public IReadOnlySet<string> PartsOpenBy(string exeFileName) =>
+        AppCacheFiles.KeysOpenBy(exeFileName, All().Select(f => f.Key.StartsWith(D3D12Prefix, StringComparison.Ordinal) && Part(Path.GetFileName(f.Path)) is { } p ? (f.Path, p) : f));
+
+    /// <summary>The D3D12 file sets of these keys, each with the latest creation or write time of its files (UTC), from the
+    /// listing alone.</summary>
+    public Dictionary<string, DateTime> PartsOf(IEnumerable<string> keys) => FilesOf(keys)
+        .Where(f => Path.GetDirectoryName(f.FullName) == Path.GetFullPath(DxcDir).TrimEnd(Path.DirectorySeparatorChar) && Part(f.Name) != null)
+        .GroupBy(f => Part(f.Name)!).ToDictionary(g => g.Key, g => g.Max(f => f.CreationTimeUtc > f.LastWriteTimeUtc ? f.CreationTimeUtc : f.LastWriteTimeUtc));
 
     public int Delete(IEnumerable<string> keys) => AppCacheFiles.DeleteAll(FilesOf(keys));
 

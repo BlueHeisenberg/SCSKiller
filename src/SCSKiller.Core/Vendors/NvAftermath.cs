@@ -68,44 +68,76 @@ public static class NvAftermath
     }
 
     /// <summary>The init a warm of the game mirrors, only one that changes the driver's key (<see cref="AftermathInit.ChangesKey"/>),
-    /// with its <paramref name="dll"/> present, taken only from the game's own run: what the recorder logged the game doing
-    /// (<see cref="FromLog"/>), else the plan rules' entry for the game (nv.aftermath.v1), else an Unreal game's logged
-    /// DX12_Initialize (<see cref="Inferred"/>, Inferred true). Never from its config files or the DLL being there: Unreal
-    /// configs turn shader debug info on in builds that don't start Aftermath. The version is the DLL's own where its file
-    /// version gives it (<see cref="ApiVersion"/>). None when the log's newest session shows the game running without it
-    /// (<see cref="LogFacts.Without"/>), whatever an older session did.</summary>
-    public static (AftermathInit? Init, bool Inferred) Resolve(Game g, EngineInfo? e, string? recorderLog, string? dll)
+    /// with its <paramref name="dll"/> present: what the recorder logged the game doing (<see cref="FromLog"/>), else the plan
+    /// rules' entry for the game (nv.aftermath.v1), else an Unreal game's logged DX12_Initialize (<see cref="Inferred"/>), else
+    /// an Unreal game's Engine config (<see cref="ConfigGuess"/>); the last two with Inferred true, judged by the compile's first
+    /// launch. The DLL being there alone never counts: Unreal games load it without initializing it. The version is the DLL's
+    /// own where its file version gives it (<see cref="ApiVersion"/>). None when the newest session shows the game running
+    /// without it (<see cref="LogFacts.Without"/>), whatever an older session or the config says.</summary>
+    public static (AftermathInit? Init, bool Inferred) Resolve(Game g, EngineInfo? e, string? recorderLog, string? dll) => Resolve(g, e, Facts(recorderLog), dll);
+
+    /// <param name="shared">the community recordings in use say the game starts it so (<see cref="Shared(EngineInfo?, LogFacts, bool)"/>)</param>
+    public static (AftermathInit? Init, bool Inferred) Resolve(Game g, EngineInfo? e, LogFacts facts, string? dll, bool shared = false)
     {
         if (dll == null) return (null, false);
-        var facts = Facts(recorderLog);
         var init = facts.Without ? null : facts.Init ?? Rule(g.Id);
-        var inferred = init == null && Inferred(e, facts);
-        if (inferred) init = new AftermathInit(0x217, facts.Features!.Value, 3, 1);
+        // a config guess needs the DLL's own API version: an old one (1.x) has no crash dumps call to make
+        var inferred = init == null && (Inferred(e, facts) || (ConfigGuess(e, facts) || Shared(e, facts, shared)) && ApiVersion(dll) != null);
+        if (inferred) init = new AftermathInit(0x217, facts.Features ?? 0xa, 3, 1);
         // the DLL takes only its own API version (2.27 refused 0x217 and 0x21c): a game update may have brought another
         return init is { ChangesKey: true } ? (init with { Version = ApiVersion(dll) ?? init.Version }, inferred) : (null, false);
     }
 
     public static AftermathInit? Of(Game g, EngineInfo? e, string? recorderLog, string? dll) => Resolve(g, e, recorderLog, dll).Init;
 
+    /// <summary>No session says otherwise and the Unreal game's Engine config turns shader debug info on with Aftermath not off
+    /// (<see cref="EngineInfo.AftermathShaderDebug"/>): Unreal starts it so (Galactic Racer 0xa, Gears of War: E-Day 0x8) and
+    /// games whose config is silent load the DLL without initializing it (Darwin's Paradox, FF7 Rebirth).</summary>
+    /// <summary>The last word, when nothing on this PC has one (no session, no rule, no Unreal config turning shader debug
+    /// info on or Aftermath off): the community recordings in use say their uploaders' games started it with shader debug
+    /// info. Tried as a config guess is, with its flags (never the uploaders' values), and judged by the compile's first launch.</summary>
+    public static bool Shared(EngineInfo? e, LogFacts f, bool shared) => shared && !f.Known && e is not { AftermathOff: true };
+
+    public static bool ConfigGuess(EngineInfo? e, LogFacts f) => e is { Family: "Unreal", AftermathShaderDebug: true, AftermathOff: false } && f is { Without: false, Init: null };
+
     /// <summary>An Unreal game's newest session logged DX12_Initialize with shader debug info but not its crash dumps call,
     /// made before the hook went in (on device creation): Unreal's crash dumps are taken as on, so the flags change the key.</summary>
     public static bool Inferred(EngineInfo? e, LogFacts f) => e is { Family: "Unreal" } && f is { Without: false, Init: null, Features: { } x } && (x & 8) != 0;
 
     /// <summary><see cref="Of"/> may give an init once the DLL is known: the install's walk (<see cref="DllFor"/>) waits for it.</summary>
-    public static bool MayStart(Game g, EngineInfo? e, string? recorderLog) => Facts(recorderLog) switch
+    public static bool MayStart(Game g, EngineInfo? e, string? recorderLog) => MayStart(g, e, Facts(recorderLog));
+
+    public static bool MayStart(Game g, EngineInfo? e, LogFacts facts, bool shared = false) => facts switch
     {
         { Without: true } => false,
         { Init: { } init } => init.ChangesKey,
-        var f => Rule(g.Id) is { } rule ? rule.ChangesKey : Inferred(e, f),
+        var f => Rule(g.Id) is { } rule ? rule.ChangesKey : Inferred(e, f) || ConfigGuess(e, f) || Shared(e, f, shared),
     };
+
+    /// <summary>The 'N' record a recording carries <paramref name="f"/> in (<see cref="Planning.HashOnly.AftermathTarget"/>): all
+    /// zero when the session ran without an init that changes the key, the init when it ran with one; null when it showed
+    /// neither or passed values <see cref="Planning.HashOnly.AftermathOn"/> doesn't take.</summary>
+    public static Planning.PsoDb.Rec? Shared(LogFacts f)
+    {
+        if (!f.Without && f.Init is not { ChangesKey: true }) return null;
+        var p = new byte[Planning.PsoDb.NvState.Size];
+        Convert.FromHexString(Planning.HashOnly.AftermathTarget).CopyTo(p, 0);
+        if (!f.Without && f.Init is { } i)
+            foreach (var (v, at) in new[] { i.Version, i.Features, i.Apis, i.DumpFlags }.Select((v, k) => (v, 20 + 4 * k))) System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(p.AsSpan(at), v);
+        var r = new Planning.PsoDb.Rec('N', p);
+        return Planning.HashOnly.AftermathOn(r) == null ? null : r;
+    }
 
     /// <summary>The init the compile after a compile the game's launch didn't use tries (ScsKiller: once per driver and exe),
     /// with its <paramref name="dll"/> present, only when the log's newest session shows the game loading Aftermath
     /// (<see cref="LogFacts.Loaded"/>) and nothing saying it runs without one that changes the key: no init the recorder
     /// logged (<see cref="FromLog"/>), no plan rule, no <see cref="LogFacts.Without"/>. The feature flags are a DX12_Initialize's that session logged without its crash dumps call, else (DX12_Initialize
     /// not hooked) 0xa (resource tracking and shader debug info, as Mafia: The Old Country passes them), with Unreal's crash dumps.</summary>
-    public static AftermathInit? Retry(Game g, string? recorderLog, string? dll) =>
-        dll == null || Rule(g.Id) != null || Facts(recorderLog) is not { Without: false, Init: null, Loaded: true } facts ? null
+    public static AftermathInit? Retry(Game g, string? recorderLog, string? dll) => Retry(g, null, Facts(recorderLog), dll);
+
+    /// <param name="e">an Unreal config turning Aftermath off (<see cref="EngineInfo.AftermathOff"/>) rules the retry out</param>
+    public static AftermathInit? Retry(Game g, EngineInfo? e, LogFacts facts, string? dll) =>
+        dll == null || Rule(g.Id) != null || e is { AftermathOff: true } || facts is not { Without: false, Init: null, Loaded: true } ? null
             : new AftermathInit(ApiVersion(dll) ?? 0x217, facts.Features ?? 0xa, 3, 1);
 
     public static AftermathInit? Rule(string gameId) =>
@@ -125,11 +157,15 @@ public static class NvAftermath
     /// <summary>What a recorder log tells about the game's Aftermath. <paramref name="Init"/>: its last successful
     /// EnableGpuCrashDumps and DX12_Initialize, null without both. <paramref name="Without"/>: the newest session (from its
     /// last "loaded into" line) shows the game running without an init that changes the key: a DX12_Initialize without
-    /// shader debug info, crash dumps with no APIs, every device it created made while the DLL wasn't loaded, or
-    /// DX12_Initialize hooked and never called (the hook goes in on device creation, before the game's init on it).
-    /// <paramref name="Features"/>: that session's DX12_Initialize feature flags. <paramref name="Loaded"/>: a device that
-    /// session created had the game's Aftermath DLL loaded.</summary>
-    public readonly record struct LogFacts(AftermathInit? Init, bool Without, uint? Features, bool Loaded = false);
+    /// shader debug info, crash dumps with no APIs, devices created and the DLL never loaded, or DX12_Initialize hooked and
+    /// never called (the hook goes in on device creation, or as the DLL loads after a device, before the game's init).
+    /// <paramref name="Features"/>: that session's DX12_Initialize feature flags. <paramref name="Loaded"/>: the session had
+    /// the game's Aftermath DLL loaded.</summary>
+    public readonly record struct LogFacts(AftermathInit? Init, bool Without, uint? Features, bool Loaded = false)
+    {
+        /// <summary>The session showed anything about Aftermath: a newer one without anything doesn't replace a stored one.</summary>
+        public bool Known => Init != null || Without || Features != null || Loaded;
+    }
 
     /// <summary>The recorder log's last successful EnableGpuCrashDumps and DX12_Initialize; null without both.</summary>
     public static AftermathInit? FromLog(string? path) => Facts(path).Init;
@@ -144,21 +180,25 @@ public static class NvAftermath
             if (Logs.TryGetValue(path, out var c) && c.At == f.LastWriteTimeUtc && c.Length == f.Length) return c.Facts;
             Match? dumps = null, init = null;
             uint? features = null, apis = null;
-            var (devices, loaded, hooked) = (0, 0, false);
+            var (devices, loaded, hooked, late) = (0, 0, false, false);
             uint Hex(Match m, int g) => uint.Parse(m.Groups[g].Value, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture);
             using (var r = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)))
                 while (r.ReadLine() is { } line)
-                    if (line.Contains("] loaded into ", StringComparison.Ordinal)) (features, apis, devices, loaded, hooked) = (null, null, 0, 0, false);
+                    if (line.Contains("] loaded into ", StringComparison.Ordinal)) (features, apis, devices, loaded, hooked, late) = (null, null, 0, 0, false, false);
                     else if (line.Contains("] device: ", StringComparison.Ordinal) && line.EndsWith("; NVIDIA Aftermath loaded", StringComparison.Ordinal)) (devices, loaded) = (devices + 1, loaded + 1);
                     else if (line.Contains("] device: ", StringComparison.Ordinal) && line.EndsWith("; NVIDIA Aftermath not loaded", StringComparison.Ordinal)) devices++;
+                    // the DLL loaded after the session's devices: hooked as it loaded, or the recorder couldn't
+                    else if (line.Contains("dedupe: off, NVIDIA Aftermath loaded", StringComparison.Ordinal)) late = true;
                     else if (line.Contains("aftermath: ", StringComparison.Ordinal))
                     {
+                        if (line.Contains("aftermath: at its load, ", StringComparison.Ordinal)) late = true;
                         if (line.EndsWith(", DX12_Initialize hooked", StringComparison.Ordinal)) hooked = true;
                         if (Dumps.Match(line) is { Success: true } d) (dumps, apis) = (d, Hex(d, 2));
                         else if (Init.Match(line) is { Success: true } i) (init, features) = (i, Hex(i, 2));
                     }
+            var dll = loaded > 0 || late || features != null || apis != null;   // the session had the game's Aftermath DLL loaded
             var found = new LogFacts(dumps != null && init != null ? new AftermathInit(Hex(init, 1), Hex(init, 2), Hex(dumps, 2), Hex(dumps, 3)) : null,
-                features is { } fl && (fl & 8) == 0 || apis == 0 || devices > 0 && loaded == 0 || hooked && features == null, features, loaded > 0);
+                features is { } fl && (fl & 8) == 0 || apis == 0 || devices > 0 && !dll || hooked && features == null, features, dll);
             Logs[path] = (f.LastWriteTimeUtc, f.Length, found);
             return found;
         }

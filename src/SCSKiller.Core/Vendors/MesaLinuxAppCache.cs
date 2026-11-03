@@ -35,6 +35,9 @@ public sealed class MesaLinuxAppCache(Func<bool, IEnumerable<(string SteamApps, 
 
     public long SizeOf(IEnumerable<string> keys) => FilesOf(keys).Sum(f => f.Length);
 
+    /// <summary>The path under Steam's shadercache folder, '/' between parts: the single file repeats its names in each driver's folder.</summary>
+    public string NameOf(FileInfo file) => NoLinkFolders(file.FullName) is { } p ? string.Join('/', [.. p.Folders, file.Name]) : file.Name;
+
     public IReadOnlySet<string> KeysOpenBy(string exeFileName) =>
         AppCacheFiles.KeysOpenBy(exeFileName, Folders().SelectMany(f => Files(f.Dir).Select(file => (file.FullName, f.Key))));
 

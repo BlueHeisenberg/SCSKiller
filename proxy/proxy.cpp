@@ -133,18 +133,21 @@ struct Rec { char tag; std::string payload; };
 static std::vector<Rec> g_recs;                              // every recorded PSO payload (templates for plans)
 static std::unordered_map<Hash, std::string_view, HashH> g_blob_bytes; // warm mode only: views into the mapped dbs (map_blobs)
 static std::unordered_map<Hash, size_t, HashH> g_rec_idx;       // PSO key -> g_recs index
+static size_t g_main_recs;                                       // g_recs from scskiller.db (recorded), the rest from scskiller_gen.db (generated)
 static std::vector<std::string> g_plan;                          // warm mode only: 'P' payloads from scskiller_gen.db
 static std::vector<std::string> g_items11;                       // warm mode only: D3D11 items, the tag ('1', '2', '3') + the payload
 static Hash key11(size_t k) { return sha1(g_items11[k].data(), g_items11[k].size()); }  // key_of(tag, payload)
 static HashSet g_known_tuples;                                   // (stages + root sig) tuples known at launch
 static uint64_t g_lib_loads, g_db_records_at_start, g_creates, g_known_hits, g_tuple_hits, g_slow_known, g_slow_tuple, g_slow_unknown, g_unsupported;
 static std::atomic<uint64_t> g_create_fails;
+static std::atomic<uint64_t> g_create_fails_cached;  // of them, stream creates carrying the game's own CachedPSO blob
 static std::atomic<uint64_t> g_dd_hits, g_dd_held, g_dd_hits_slow, g_dd_held_slow;  // dedupe: re-creates answered, and those whose kept
                                                                                   // pipeline the game still held (driver call); slow: >= 10 ms
 static uint64_t g_repeats, g_slow_repeats;  // creates of a desc this process created before, and those over the slow mark
 static HashSet g_created;                    // every key this process created (note)
 static std::atomic<uint64_t> g_warm_ok, g_warm_fail, g_warm_crash;  // crash: skipped, it removed the device in an earlier run
 static std::atomic<uint64_t> g_warm_other;                       // items of another pass: counted done, never created
+static std::atomic<uint64_t> g_warm_unbuilt;  // of g_warm_fail: D3D11 items SCSKiller can't build (ScsKiller.Unbuilt11's split)
 static std::atomic<uint64_t> g_warm_unsupported;  // of g_warm_ok: refused for blending on a format this GPU can't blend
 // SCSKiller_CountCached: d3dscache's ShaderCache_AddValue calls on this thread. A create that made none stored no compile:
 // the runtime served it from a cache, the game's delivery when one is registered for the staged exe
@@ -330,11 +333,78 @@ struct SignedLines {
 };
 static SignedLines g_signed;  // written once, before g_admission
 static void unhook_ags(const char* why);
+static void unhook_opti(const char* why);
 static void ldr_off();
 static thread_local bool t_early;    // this thread asks from D3D12GetInterface, before any device
 static std::atomic<bool> g_recheck;  // admitted early: the first device runs the verdict again
+// A run that ends undecided, no device create having reached this dll, would otherwise write nothing: at exit the refused
+// file says so, and whether D3D12Core.dll was loaded. Loaded without a probe here, the game made its DirectX 12 device past
+// this dll. Not loaded, or loaded by a probe here, it most likely ran on DirectX 11. Its path is found off the loader lock
+// (nd_find, a thread started at attach); the exit writes it with kernel32 alone, from these buffers.
+static std::atomic<bool> g_asked;  // admitted() was entered: it writes the log or the refusal itself
+static std::atomic<uint32_t> g_nd_creates, g_nd_probes, g_nd_locked;  // D3D12CreateDevice with and without a device out, D3D12GetInterface under the loader lock
+static wchar_t g_nd_path[32768];
+static size_t g_nd_dir, g_nd_parent;  // where g_nd_path's refused\ folder and the recorder folder end
+static std::atomic<bool> g_nd_ready;
+#ifndef SCSK_AGS_WRAP
+static DWORD WINAPI nd_find(void* self) {
+    try {
+        const std::wstring f = refused_path();
+        const size_t dir = f.find_last_of(L'\\'), parent = dir && dir != std::wstring::npos ? f.find_last_of(L'\\', dir - 1) : std::wstring::npos;
+        wchar_t vol[MAX_PATH];
+        UINT type = DRIVE_UNKNOWN;
+        // local volumes only: a network folder can stall the exit's write, which nothing could cut short under the loader lock
+        if (parent && parent != std::wstring::npos && f.size() < std::size(g_nd_path) && GetVolumePathNameW(f.substr(0, parent).c_str(), vol, MAX_PATH)
+            && ((type = GetDriveTypeW(vol)) == DRIVE_FIXED || type == DRIVE_REMOVABLE || type == DRIVE_RAMDISK)) {
+            wmemcpy(g_nd_path, f.c_str(), f.size() + 1), g_nd_dir = dir, g_nd_parent = parent;
+            g_nd_ready.store(true, std::memory_order_release);
+        }
+    } catch (...) {
+    }
+    FreeLibraryAndExitThread((HMODULE)self, 0);
+}
+// DllMain at process exit, under the loader lock: nothing allocated, nothing waited on.
+static void nd_write() {
+    if (!g_nd_ready.load(std::memory_order_acquire) || g_admission != 0 || g_asked || g_warm || g_staged || g_nd_creates)
+        return;
+    char b[192];
+    size_t n = 0;
+    const auto put = [&](const char* s) { while (*s && n < sizeof b) b[n++] = *s++; };
+    const auto num = [&](uint64_t v) {
+        char d[20];
+        int k = 0;
+        do d[k++] = char('0' + v % 10); while (v /= 10);
+        while (k && n < sizeof b) b[n++] = d[--k];
+    };
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    num(((uint64_t)ft.dwHighDateTime << 32 | ft.dwLowDateTime) / 10000 - 11644473600000ull);  // unix ms, as refused() writes
+    put(" no DirectX 12 device came through the recorder (D3D12GetInterface under the loader lock "), num(g_nd_locked), put(")");
+    put(g_nd_probes ? ", D3D12Core loaded by a support check only" : GetModuleHandleW(L"d3d12core.dll") ? ", D3D12Core loaded" : ", D3D12Core not loaded");
+    for (size_t at : {g_nd_parent, g_nd_dir}) g_nd_path[at] = 0, CreateDirectoryW(g_nd_path, nullptr), g_nd_path[at] = L'\\';
+    HANDLE h = CreateFileW(g_nd_path, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    // a refusal another process of this exe wrote is kept: a helper exiting after it would hide it. One from an earlier
+    // launch is older than the app's last run and read as none.
+    char old[64];
+    DWORD r = 0;
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (!ReadFile(h, old, sizeof old, &r, nullptr)) return (void)CloseHandle(h);
+        const char nd[] = " no DirectX 12 device came through";
+        DWORD at = 0, k = 0;
+        while (at < r && old[at] != ' ') ++at;
+        while (k + 1 < sizeof nd && at + k < r && old[at + k] == nd[k]) ++k;
+        if (k + 1 < sizeof nd || SetFilePointer(h, 0, nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER) return (void)CloseHandle(h);
+    }
+    DWORD w;
+    WriteFile(h, b, (DWORD)n, &w, nullptr);
+    SetEndOfFile(h);
+    CloseHandle(h);
+}
+#endif
 static bool admitted() {
     if (g_warm) return true;  // scskiller_warm's staged child replays; it is never a game
+    g_asked = true;
     static std::once_flag once;
     std::call_once(once, [] {
         const std::wstring ini = g_dir + L"scskiller.ini";
@@ -349,7 +419,7 @@ static bool admitted() {
         const char* why = admission_verdict(whole, read, g_elsewhere, risk, seen);
         {
             std::lock_guard l(g_early_mx);
-            if (!why && (g_log = _wfopen((g_dir + L"scskiller.log").c_str(), L"a"))) fputs(g_early.c_str(), g_log), fflush(g_log);
+            if (!why && (g_log = _wfopen((g_dir + L"scskiller.log").c_str(), L"aN"))) fputs(g_early.c_str(), g_log), fflush(g_log);
             g_early.clear(), g_log_deferred = false;
             if (!why) g_signed = {ini_string(L"vendor"), ini_string(L"overlay"), ini_string(L"ab_play_s"), ini_string(L"ab_tag"), traversal_lines(ini_string)};
             // the load-time gate can't check sig=: only a vendor=amd inside the ini this admission verified keeps the AGS hook
@@ -357,14 +427,20 @@ static bool admitted() {
             if (!why && t_early) g_recheck = true;
             g_admission = why ? -1 : 1;
         }
-        if (why) unhook_ags("admission refused"), ldr_off();   // an AGS patch from the load path must not stay in a refused process
+        if (why) unhook_ags("admission refused"), unhook_opti("admission refused"), ldr_off();   // an AGS patch from the load path must not stay in a refused process
         else if (g_signed.vendor != L"amd") unhook_ags("vendor=amd isn't in the signed ini");
         if (!why && risk) logf("risk=1: recording at the user's own risk, anti-cheat seen: %s", seen.c_str());
         refused(why);
     });
     // Outside call_once: GetModuleFileNameW takes the loader lock, which a thread waiting on call_once may hold.
     static std::atomic<bool> listed;
-    if (g_admission > 0 && !listed.exchange(true)) log_modules();
+    if (g_admission > 0 && !listed.exchange(true)) {
+        try {
+            logf("VAC check: Steam's folder %s (%s)", *g_steam_used ? shown(trimmed(g_steam_used), true).c_str() : "unknown", g_steam_from ? g_steam_from : "not read");
+        } catch (...) {
+        }
+        log_modules();
+    }
     return g_admission > 0;
 }
 
@@ -1204,7 +1280,7 @@ static void map_blobs(const std::wstring& path, const std::vector<std::pair<Hash
 }
 
 static void load_file(const std::wstring& path, bool main, bool with_bytes) {
-    FILE* f = _wfopen(path.c_str(), L"rb");
+    FILE* f = _wfopen(path.c_str(), L"rbN");
     if (!f) return;
     long long good = 0, flen = _filelengthi64(_fileno(f));
     std::vector<std::pair<Hash, std::pair<long long, uint32_t>>> blobs;  // with_bytes: each blob's offset and size
@@ -1228,6 +1304,9 @@ static void load_file(const std::wstring& path, bool main, bool with_bytes) {
                     Hash t;
                     NvExt x;
                     memcpy(t.data(), p.data(), 20), memcpy(&x, p.data() + 20, 16);
+                    // a slot past any register a shader declares: pointer-like values, another per process (Phantom Blade Zero's
+                    // community entry, on 10,759 pipelines' 'N'); a game never sets the same one again, so it replays without it
+                    if (x.slot != ~0u && x.slot >= 0x10000) x.slot = ~0u, x.space = 0;
                     g_nvext[t] = x;  // ponytail: one state per record; a PSO a game also creates without it replays with it only
                 }
                 if (main) g_keys.insert(key_of('N', p));
@@ -1306,12 +1385,26 @@ static size_t load_keys(const std::wstring& path) {
     return g_imported.size();
 }
 
+static bool loader_lock_held();
 static void load_db(bool with_bytes) {
     // deny-write, before the load: what is read and repaired can't change under it, and a second process of the folder
     // (another instance, a launcher) records and repairs nothing rather than interleaving with or cutting this one's records
-    g_db = _wfsopen((g_dir + L"scskiller.db").c_str(), L"ab", _SH_DENYWR);
+    // a Steam self-restart (SteamAPI_RestartAppIfNecessary) starts the game again while the exiting process still holds it:
+    // up to 2 s, only in the process's first 5 s (a startup, before a frame through another device) and never under the
+    // loader lock. A second live instance can't be told from a dying one: it waits the 2 s.
+    const auto u64 = [](FILETIME f) { return (uint64_t)f.dwHighDateTime << 32 | f.dwLowDateTime; };
+    FILETIME made, unused, now;
+    GetSystemTimeAsFileTime(&now);
+    const bool may_wait = GetProcessTimes(GetCurrentProcess(), &made, &unused, &unused, &unused) && u64(now) - u64(made) < 50000000ull && !loader_lock_held();
+    const double asked = now_ms();
+    bool waited = false;
+    while ((_doserrno = 0, !(g_db = _wfsopen((g_dir + L"scskiller.db").c_str(), L"abN", _SH_DENYWR))) && _doserrno == ERROR_SHARING_VIOLATION && may_wait
+           && now_ms() - asked < 2000)
+        Sleep(100), waited = true;
     if (!g_db) logf("db: scskiller.db is open in another process: nothing is recorded in this one");
+    else if (waited) logf("db: scskiller.db was open in another process, free after %.1f s", (now_ms() - asked) / 1000);
     load_file(g_dir + L"scskiller.db", true, with_bytes);
+    g_main_recs = g_recs.size();
     if (size_t n = with_bytes ? 0 : load_keys(g_dir + L"scskiller.keys")) logf("db: %zu keys of records and blobs imported earlier or shipped with the game", n);
     if (!with_bytes) load_warmed(g_dir + L"scskiller.warmed");
     g_db_records_at_start = g_keys.size();
@@ -1447,8 +1540,8 @@ static void note(Writer& w, double ms, bool lib, double pre_ms) {
                 GetCurrentThreadId(), (int)t_presenting);
     }
     if (g_creates % 500 == 0) {
-        logf("creates=%llu (library loads %llu) known=%llu tuple_known=%llu | slow: known=%llu tuple_only=%llu unknown=%llu | repeats=%llu slow=%llu | unsupported=%llu failed=%llu db=%zu nvapi_state=%llu dedupe=%llu held=%llu slow: dedupe=%llu held=%llu db_skipped=%llu",
-             g_creates, g_lib_loads, g_known_hits, g_tuple_hits, g_slow_known, g_slow_tuple, g_slow_unknown, g_repeats, g_slow_repeats, g_unsupported, g_create_fails.load(), g_keys.size(),
+        logf("creates=%llu (library loads %llu) known=%llu tuple_known=%llu | slow: known=%llu tuple_only=%llu unknown=%llu | repeats=%llu slow=%llu | unsupported=%llu failed=%llu (cached blob %llu) db=%zu nvapi_state=%llu dedupe=%llu held=%llu slow: dedupe=%llu held=%llu db_skipped=%llu",
+             g_creates, g_lib_loads, g_known_hits, g_tuple_hits, g_slow_known, g_slow_tuple, g_slow_unknown, g_repeats, g_slow_repeats, g_unsupported, g_create_fails.load(), g_create_fails_cached.load(), g_keys.size(),
              g_nv_creates, g_dd_hits.load(), g_dd_held.load(), g_dd_hits_slow.load(), g_dd_held_slow.load(), g_db_skipped);
     }
 }
@@ -1514,6 +1607,11 @@ static void drain_debug(const char* when) {
 static std::mutex g_failmx;
 static std::map<std::string, uint64_t> g_fail_tally;
 
+// out of memory is the PC's state, not the item's: skipped for this compile, the next one creates it
+static void note_oom(size_t j) {
+    static std::atomic<int> said;
+    if (said++ < 50) logf("warm: item %zu not created: out of memory (E_OUTOFMEMORY), skipped for this compile", j);
+}
 static void note_fail(size_t j, const std::string& what) {
     uint64_t n;
     {
@@ -1535,7 +1633,7 @@ struct SoSlot {
     std::once_flag once;
     HRESULT hr = E_FAIL;
     std::string why;  // decode / dependency failure; empty = the driver's hr
-    bool skipped = false;  // it, or one it builds on, crashed or hung the driver: skipped, not failed
+    bool skipped = false;  // it, or one it builds on, crashed or hung the driver or ran out of memory: skipped, not failed
     bool known = false;    // ...in an earlier compile on this driver (--known-keys)
     ID3D12StateObject* obj = nullptr;
     std::atomic<bool> building{false}, done{false};  // done is set before building clears, both under g_defer_mx
@@ -1635,9 +1733,12 @@ static size_t losses(bool add) {  // the losses in the last 60 s, after adding o
     if (add) g_loss_mem.push_back(GetTickCount64());
     wchar_t tmp[MAX_PATH + 1];
     const DWORD n = GetTempPathW(MAX_PATH + 1, tmp);
+    std::wstring path = n && n <= MAX_PATH ? std::wstring(tmp, n) + L"scskiller_device_losses.bin" : L"";
+    if (GetEnvironmentVariableW(L"SCSKILLER_TEST_DEVICE_LOSSES", nullptr, 0) > 1)  // a test run's file, never the user's: none when too long
+        path = env(L"SCSKILLER_TEST_DEVICE_LOSSES", tmp) ? tmp : L"";
     HANDLE f = INVALID_HANDLE_VALUE;
-    for (int i = 0; n && n <= MAX_PATH && i < 50; ++i, Sleep(10))  // another process has it for a moment
-        if ((f = CreateFileW((std::wstring(tmp, n) + L"scskiller_device_losses.bin").c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, 0,
+    for (int i = 0; !path.empty() && i < 50; ++i, Sleep(10))  // another process has it for a moment
+        if ((f = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, 0,
                              nullptr)) != INVALID_HANDLE_VALUE || GetLastError() != ERROR_SHARING_VIOLATION) break;
     const ULONGLONG now = GetTickCount64();  // after the file is ours: no other process adds a later one meanwhile
     auto old = [&](ULONGLONG x) { return x > now || now - x >= 60000; };  // later than now: from before a reboot
@@ -1678,6 +1779,11 @@ static SIZE_T g_fault_item = SIZE_MAX;  // SCSKILLER_WARM_FAULT=<item>[-<last>]:
 static SIZE_T g_fault_last = SIZE_MAX;
 static int g_fault_kind;                // 1 access violation after the create, 2 a create that never returns, 3 the process dies, 4 a PSO create that takes g_fault_hold_ms unless created alone (PSOs, with SCSK_TEST_HOOKS)
 static DWORD g_fault_hold_ms;
+// With SCSK_TEST_HOOKS: SCSKILLER_TEST_WARM_MEM=<ram MB>,<item>,<last>,<MB>: the memory checks take the PC's RAM as ram MB, and
+// each PSO from item to last commits MB that is never freed while it is created, 128 MB per 50 ms, alone too.
+// SCSKILLER_TEST_WARM_OOM=<item>,<last>: those PSOs' creates return E_OUTOFMEMORY.
+static double g_test_ram_mb;
+static size_t g_mem_item = SIZE_MAX, g_mem_last, g_mem_item_mb, g_oom_item = SIZE_MAX, g_oom_last;
 
 // SCSKILLER_WARM_SO_MS=<ms> (development): no driver call for state objects; each create takes ms per state object it
 // builds on (plus one) and succeeds, so chains of any depth run on WARP. SCSKILLER_WARM_SO_KB=<kb>: each also commits kb that is
@@ -1732,8 +1838,9 @@ static double g_start_mb;
 static std::atomic<double> g_held_mb;
 static std::atomic<int> g_allowed{1 << 30}, g_active;
 static std::atomic<bool> g_d12_over;  // the D3D12 workers are done: the budget no longer limits any
-// The warm stopped itself to free memory (warm_restart_tick): private and free MB then. SCSKILLER_WARM_MEM_RESTART=1 (the
-// child sets it for --memory-restart 1) allows it, else it is logged once and the warm goes on.
+// The warm stopped itself to free memory (warm_restart_tick, or past 60% of RAM): private and free MB then.
+// SCSKILLER_WARM_MEM_RESTART=1 (the child sets it for --memory-restart 1) allows warm_restart_tick's, 2 only the 60% one,
+// else warm_restart_tick's is logged once and the warm goes on.
 static std::atomic<bool> g_mem_stop;
 static double g_mem_stop_mb, g_mem_stop_free;
 static HANDLE g_rt_sem;              // g_rt_threads at a time; nullptr = no limit
@@ -1808,15 +1915,17 @@ static void so_create(size_t j, SoSlot& s) {
     if (!r.ok) { s.hr = E_INVALIDARG, s.why = dep_why.empty() ? r.why : dep_why, so_untime(); return; }
     D3D12_STATE_OBJECT_DESC desc = {d.type, (UINT)d.subs.size(), d.subs.data()};
     ID3D12StateObject* obj = nullptr;
-    if (g_rt_sem) so_untime(), WaitForSingleObject(g_rt_sem, INFINITE);
-    so_time(g_stuck_ms + kSoLinkMs * linked);
+    so_untime();
+    if (g_rt_sem) WaitForSingleObject(g_rt_sem, INFINITE);
     {
         std::shared_lock gate(g_rt_gate);  // taken out here: so_call catches any fault, so this always unlocks
-        NvScope nv(nvext_of(rec.tag, rec.payload), true);
+        NvScope nv(nvext_of(rec.tag, rec.payload), true);  // may wait for the state objects under other options
+        so_time(g_stuck_ms + kSoLinkMs * linked);
         if (!nv.why) s.hr = so_call(rec, &desc, base, &obj, j, linked);
         else s.hr = E_INVALIDARG, s.why = nv.why;
     }
     if (g_rt_sem) ReleaseSemaphore(g_rt_sem, 1, nullptr);
+    if (s.hr == E_OUTOFMEMORY) s.skipped = true, note_oom(j);
     if (SUCCEEDED(s.hr) && obj) {
         if (g_so_keep[j]) s.obj = obj;
         else park(obj);  // may release a batch into the driver: still timed
@@ -1903,6 +2012,12 @@ static int replay(size_t j, const Rec& rec, const Override* ovr = nullptr, const
     ID3D12PipelineState* pso = nullptr;
     const uint64_t adds = t_cache_adds;
     HRESULT hr = build(rec, r, &pso, ovr ? nv : nvext_of(rec.tag, rec.payload));
+#ifdef SCSK_TEST_HOOKS
+    if (j >= g_oom_item && j <= g_oom_last) {
+        if (pso) pso->Release(), pso = nullptr;
+        hr = E_OUTOFMEMORY;
+    }
+#endif
     // an async-PSO ReShade returns its own object at once and compiles on its threads: its GetCachedBlob waits for that
     // compile and returns its result, which keeps the item in flight here for the stuck supervisor and a death's culprit
     const bool layers = pso && *(uintptr_t*)pso - g_layer_lo < g_layer_hi - g_layer_lo;
@@ -1915,6 +2030,7 @@ static int replay(size_t j, const Rec& rec, const Override* ovr = nullptr, const
     if (pso) pso->Release();  // the driver keeps the compiled result in its disk cache
     if (SUCCEEDED(hr) && g_count_cached && !layers && t_cache_adds == adds) ++g_warm_cached;  // a layer's thread compiled it: unseen
     if (FAILED(hr) && removed()) return -2;  // its root signature failed on the removed device too: retried, never failed
+    if (hr == E_OUTOFMEMORY) return note_oom(j), 2;
     // a recording from another vendor's GPU: not for this one, and done, so a recompile on this driver doesn't retry it
     if (hr == E_INVALIDARG && r.ok && r.unblendable) return g_warm_unsupported++, 1;
     if (FAILED(hr)) {
@@ -1951,6 +2067,8 @@ static __declspec(noinline) int replay_one(size_t j, size_t nrec) {
     if (j == g_fault_item && g_fault_kind == 1 && !is_so(j, nrec)) *(volatile int*)nullptr = 0;
     if (j >= g_fault_item && j <= g_fault_last && g_fault_kind == 2 && !is_so(j, nrec)) Sleep(INFINITE);
     if (j == g_fault_item && g_fault_kind == 3) TerminateProcess(GetCurrentProcess(), 0xC0000005);  // as a driver fault no handler sees ends it
+    if (j >= g_mem_item && j <= g_mem_last && !is_so(j, nrec))
+        for (size_t mb = 0; mb < g_mem_item_mb; mb += 128) VirtualAlloc(nullptr, size_t(128) << 20, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE), Sleep(50);
     if (j >= g_fault_item && j <= g_fault_last && g_fault_kind == 4 && !t_alone && !is_so(j, nrec)) Sleep(g_fault_hold_ms);
 #endif
     return j < nrec ? replay(j, g_recs[j]) : replay_plan(j, g_plan[j - nrec]);
@@ -2086,6 +2204,7 @@ static void worker11(Worker11& w, std::atomic<size_t>& next, size_t n, bool debu
     const char* why = "";
     auto tally = [&](int r, uint32_t s, const char* y) {
         if (r != 2) w.tally[names[s < std::size(names) ? s : 0] + std::string(r == 1 ? " ok" : r == 3 ? " skipped: it crashed this driver before" : " failed: ") + (r ? "" : y)]++;
+        if (r == 0 && !std::string_view(y).starts_with("the runtime rejects") && std::string_view(y) != "exception") ++g_warm_unbuilt;
     };
     // 1 drawn, 0 failed (why), 2 another pass's, 3 skipped: it crashed this driver in an earlier compile, -1 abandoned while stuck in it
     auto item = [&](size_t k) {
@@ -2126,6 +2245,11 @@ static void worker11(Worker11& w, std::atomic<size_t>& next, size_t n, bool debu
         if (g_state == STOP || g_hung || !pace_losses() || (j = next.fetch_add(batch)) >= n) break;
         const size_t end = std::min(j + batch, n);
         w.j = j, w.end = end, w.claimed = false;
+        if (g_skip.count(n12 + j)) {  // --skip names a D3D11 batch by its first item: a stop resumes there, not at an item in it
+            if (w.claimed.exchange(true)) return;
+            add(j, {}, end - j), w.tally["batch skipped: it made no progress on one thread"] += end - j;
+            continue;
+        }
         int res[batch];
         uint32_t st[batch];
         const char* whys[batch];
@@ -2319,7 +2443,7 @@ static void warm_main() {
     if (nso) logf("warm: %zu of the recorded items are ray tracing state objects%s", nso,
                   !g_warm_dev5 ? " (this device has no ID3D12Device5: they fail)" : !g_warm_dev7 ? " (no ID3D12Device7: additions fail)" : "");
     auto t0 = now_ms();
-    logf("warm: compiling %zu recorded + %zu generated PSOs + %zu D3D11 shaders from item %zu on %d threads", nrec, g_plan.size(),
+    logf("warm: compiling %zu recorded + %zu generated PSOs + %zu D3D11 shaders from item %zu on %d threads", g_main_recs, nrec - g_main_recs + g_plan.size(),
          g_items11.size(), first, g_threads);
     wchar_t core[MAX_PATH] = L"none";
     HMODULE cm = GetModuleHandleW(L"D3D12Core.dll");
@@ -2374,6 +2498,10 @@ static void warm_main() {
         const wchar_t* last = wcschr(fault, L'-');
         g_fault_last = last ? _wtoi64(last + 1) : g_fault_item;
     }
+#ifdef SCSK_TEST_HOOKS
+    if (wchar_t v[64]; env(L"SCSKILLER_TEST_WARM_MEM", v)) swscanf_s(v, L"%lf,%zu,%zu,%zu", &g_test_ram_mb, &g_mem_item, &g_mem_last, &g_mem_item_mb);
+    if (wchar_t v[48]; env(L"SCSKILLER_TEST_WARM_OOM", v)) swscanf_s(v, L"%zu,%zu", &g_oom_item, &g_oom_last);
+#endif
     if (env(L"SCSKILLER_WARM_SO_MS", fault)) g_so_fake_ms = _wtoi(fault);
     if (env(L"SCSKILLER_WARM_SO_KB", fault)) g_so_fake_kb = _wtoi(fault);
     if (env(L"SCSKILLER_WARM_REMOVE", fault)) {
@@ -2395,14 +2523,36 @@ static void warm_main() {
     };
     std::vector<Alone*> given_up;  // leaked: their stuck threads may still return into them
     size_t blamed_alone = SIZE_MAX, alone_at = 0;
+    // a PSO that alone grows private memory by what restarts the warm (a third of RAM) is given up on like a hung one
+    MEMORYSTATUSEX ram{sizeof ram};
+    const double hog_mb = g_mem_mb && GlobalMemoryStatusEx(&ram) ? (g_test_ram_mb ? g_test_ram_mb : ram.ullTotalPhys / 1048576.0) / 3 : 0;
     t_replay = true;
     double alone_pass = now_ms();
+    // the 60% stop only while a D3D12 item is unfinished or D3D11 items are left: a stop with nothing left would end a done run
+    auto work_left = [&] {
+        size_t j = first;
+        while (j < n12 && finished(g_item_state[j])) ++j;
+        return j < n12 || (n > n12 && first + warm_done() < n);
+    };
+    // the supervisor's 60% stop, while items are created alone before it runs: what is in flight is left for the resume
+    auto alone_hard = [&] {
+        MEMORYSTATUSEX s{sizeof s};
+        const double ram_mb = GlobalMemoryStatusEx(&s) ? (g_test_ram_mb ? g_test_ram_mb : s.ullTotalPhys / 1048576.0) : 0, mb = private_mb();
+        int run = RUN;
+        if (!g_mem_mb || ram_mb <= 0 || mb <= 0.6 * ram_mb || g_state != RUN || g_rt_off || g_removed || g_hung || !work_left()) return;
+        if ((g_mem_stop = true, g_state.compare_exchange_strong(run, STOP))) {
+            g_mem_stop_mb = mb, g_mem_stop_free = s.ullAvailPhys / 1048576.0;
+            logf("warm: private memory %.0f MB, %.0f MB of RAM free, past 60%% of the PC's RAM while creating items alone: stopping, a new process goes on from the first unfinished item",
+                 mb, g_mem_stop_free);
+        } else g_mem_stop = false;
+    };
     for (; alone_at < g_alone.size() && g_state != STOP; ++alone_at) {
         size_t k = g_alone[alone_at];
         if (k < first || k >= n12 || g_crash.count(k) || other_pass(k)) continue;
         while (g_state == PAUSE) Sleep(50);
         if (!pace_losses()) break;
         g_item_state[k] = kItemInFlight;
+        const double at_mb = private_mb();  // before its thread starts: all of its growth counts
         auto* a = new Alone{k};
         std::thread t([a, nrec] {
             SetThreadPriority(GetCurrentThread(), g_prio);
@@ -2414,10 +2564,13 @@ static void warm_main() {
         const bool so = is_so(k, nrec);
         const double since = live_pass(alone_pass);
         size_t creating = SIZE_MAX;
+        bool hog = false;
         auto stuck = [&] {  // as the workers' supervisor judges one, its pass skipping a suspension
+            alone_hard();
             double now = live_pass(alone_pass);
             creating = a->so.creating;  // before the segment judged: one it moves past meanwhile blames nothing
-            if (!so) return now - since > (g_state == STOP ? stuck_stop_ms : stuck_ms);
+            // an abandoned create may still be growing: then no later one is blamed for memory
+            if (!so) return now - since > (g_state == STOP ? stuck_stop_ms : stuck_ms) || (hog = hog_mb && given_up.empty() && private_mb() - at_mb >= hog_mb);
             auto g = a->so.seg.load();
             if (g.since > now && a->so.seg.compare_exchange_strong(g, {now, g.limit})) g.since = now;
             if (g_state == STOP) return now - (g.since ? g.since : since) > stuck_stop_ms;
@@ -2437,12 +2590,14 @@ static void warm_main() {
             if (so && (a->so.seg.load().since || !g_rt_off)) rt_stop("a state object create hung alone", k, a->so.creating == creating ? creating : kNoBlame);
             // a PSO stuck behind a poisoned driver or a removed device is its victim: left for a new process
             const bool fatal = so ? g_rt_fatal == k : !g_rt_off && !removed();
-            if (fatal && !so) culprit(k);
+            if (fatal && !so && !hog) culprit(k);  // the PC's memory, not this driver: later compiles create it again
             if (fatal) g_alone_skip += (g_alone_skip.empty() ? "" : ",") + std::to_string(k);
             g_item_state[k] = fatal ? kItemInFlight : g_removed ? 4 : 3;  // 5 once no later item is alone with it (a death names no item then)
             ++g_work;  // the app's stall watchdog sees the alone items move
-            logf("warm: item %zu, created alone, stuck for %.0f s: %s", k, (live_pass(alone_pass) - since) / 1000,
-                 fatal ? "skipped for this compile, later runs on this driver skip it" : "left for a new process");
+            if (hog) logf("warm: item %zu, created alone, grew private memory by %.0f MB (a third of RAM): %s", k, private_mb() - at_mb,
+                          fatal ? "skipped for this compile" : "left for a new process");
+            else logf("warm: item %zu, created alone, stuck for %.0f s: %s", k, (live_pass(alone_pass) - since) / 1000,
+                      fatal ? "skipped for this compile, later runs on this driver skip it" : "left for a new process");
             continue;
         }
         t.join();
@@ -2466,6 +2621,12 @@ static void warm_main() {
     }
     for (Alone* u : given_up)
         if (g_item_state[u->k] == kItemInFlight) g_item_state[u->k] = 5;  // counted when a worker takes it
+    // a 60% stop as the last item alone finished leaves nothing for a new process: the workers go on and count the items
+    if (g_mem_stop && g_state == STOP && n == n12) {
+        size_t j = first;
+        while (j < n12 && finished(g_item_state[j])) ++j;
+        if (j == n12) g_mem_stop = false, g_state = RUN;
+    }
     if (blamed_alone != SIZE_MAX && g_fault_code) logf("warm: item %zu faulted (0x%08x) alone: later runs skip it", blamed_alone, g_fault_code.load());
     else if (blamed_alone != SIZE_MAX) logf("warm: item %zu removed the device alone: later runs skip it", blamed_alone);
 
@@ -2626,6 +2787,9 @@ static void warm_main() {
                     for (size_t j = from; j < n12; ++j)
                         if (g_item_state[j] == 4) g_alone_next.push_back(j);
                     if (g_alone_next.size() == 1) g_blamed.swap(g_alone_next);
+                } else if (g_mem_stop) {  // in flight at the stop: the app has them created alone first when this process moved nothing
+                    for (size_t j = from; j < n12; ++j)
+                        if (g_item_state[j] == 3) g_alone_next.push_back(j);
                 }
                 char fault[48];
                 int rt_next = std::max(1, (g_rt_threads ? g_rt_threads : g_threads) / 4);
@@ -2669,7 +2833,8 @@ static void warm_main() {
     WarmMemory wm{double(g_mem_mb), g_threads, g_allowed, t0};
     WarmRestart wr;
     wchar_t restart_env[8] = {}, restart_at_env[24] = {};
-    const bool may_restart = env(L"SCSKILLER_WARM_MEM_RESTART", restart_env) && restart_env[0] == L'1';
+    const bool may_restart = env(L"SCSKILLER_WARM_MEM_RESTART", restart_env) && (restart_env[0] == L'1' || restart_env[0] == L'2');
+    const bool hard_only = may_restart && restart_env[0] == L'2';  // the last restart moved little: only the 60% bound restarts this one
     // SCSKILLER_TEST_WARM_MEM_RESTART_AT=N (tests): the memory stop once this process has done N items, whatever its memory
     const uint64_t restart_at = env(L"SCSKILLER_TEST_WARM_MEM_RESTART_AT", restart_at_env) ? _wtoi64(restart_at_env) : 0;
     bool restart_said = false;
@@ -2718,15 +2883,18 @@ static void warm_main() {
                                     free_mb, mb, wm.allowed);
         }
         // the D3D11 phase too: a warm of D3D11 items only ends the block above on its first tick
-        if (g_state == RUN && g_mem_mb && !restart_said &&
-            (warm_restart_tick(wr, mb, g_start_mb, g_mem_mb, got ? sys.ullTotalPhys / 1048576.0 : 0, low, now_ms()) || (restart_at && warm_done() >= restart_at))) {
+        const double ram_mb = got ? (g_test_ram_mb ? g_test_ram_mb : sys.ullTotalPhys / 1048576.0) : 0;
+        // past 60% of RAM the PC pages: the process stops for a new one, whatever its restart setting
+        const bool hard = g_mem_mb && ram_mb > 0 && mb > 0.6 * ram_mb && work_left();
+        if (g_state == RUN && g_mem_mb && (!restart_said || hard && !may_restart) &&
+            (hard || !hard_only && warm_restart_tick(wr, mb, g_start_mb, g_mem_mb, ram_mb, low, now_ms()) || (restart_at && warm_done() >= restart_at))) {
             int run = RUN;
-            if (!may_restart)
-                restart_said = true, logf("warm: private memory %.0f MB (%.0f MB at the start), %.0f MB of RAM free: no restart left, this process goes on", mb, g_start_mb, free_mb);
-            else if (!g_rt_off && !g_removed && !g_hung && (g_mem_stop = true, g_state.compare_exchange_strong(run, STOP))) {  // set before STOP: the threads stopping read it
+            if (!may_restart && !hard) {
+                if (!restart_said) restart_said = true, logf("warm: private memory %.0f MB (%.0f MB at the start), %.0f MB of RAM free: its restarts are off, this process goes on until 60%% of RAM", mb, g_start_mb, free_mb);
+            } else if (!g_rt_off && !g_removed && !g_hung && (g_mem_stop = true, g_state.compare_exchange_strong(run, STOP))) {  // set before STOP: the threads stopping read it
                 restart_said = true, g_mem_stop_mb = mb, g_mem_stop_free = free_mb;
-                logf("warm: private memory %.0f MB (%.0f MB at the start), %.0f MB of RAM free: stopping, a new process goes on from the first unfinished item",
-                     mb, g_start_mb, free_mb);
+                logf("warm: private memory %.0f MB (%.0f MB at the start), %.0f MB of RAM free%s: stopping, a new process goes on from the first unfinished item",
+                     mb, g_start_mb, free_mb, hard ? ", past 60% of the PC's RAM" : "");
             } else g_mem_stop = false;
         }
         if (d12done && (first + warm_done() >= n || g_warm_faults >= 3 || g_state == STOP || n == n12 || g_retry_from != SIZE_MAX)) break;
@@ -2865,6 +3033,7 @@ static thread_local Hash t_asked;  // the key of the game's create in flight on 
 // (key, hr) pairs are logged, the rest only counted. Not under g_mx, and nothing allocated but the log line.
 static void create_failed(const Writer& w, const Hash& k, HRESULT hr) {
     ++g_create_fails;
+    if (w.tag == 'S' && w.cached.pCachedBlob && w.cached.CachedBlobSizeInBytes) ++g_create_fails_cached;
     static std::atomic<bool> full;
     if (full) return;
     static std::mutex& mx = *new std::mutex;
@@ -2899,6 +3068,7 @@ static std::unordered_map<Hash, Dd, HashH> g_dd;
 static std::unordered_map<void*, Hash> g_dd_obj;  // kept object -> its key
 static std::list<Hash> g_ddlru;                   // front: least recently asked for
 static std::atomic<int> g_dd_mode{2};             // 0 off, 1 on, -1 NVIDIA only, 2 not read yet
+static std::atomic<bool> g_any_device;            // a device went through device_created
 static std::atomic<bool> g_dd_layer;              // a layer's device is under our hooks (hook_below)
 static size_t g_dd_cap = 4096;
 static void** g_pso_vt;  // the PSO vtable whose private-data methods are hooked: only its objects are kept
@@ -2921,7 +3091,7 @@ static void dd_flush() {
     for (auto* o : v) o->Release();  // outside the lock: a PSO's teardown is the driver's
 }
 static void dd_private(void* o, REFGUID g) {
-    if (g == WKPDID_D3DDebugObjectName || g == WKPDID_D3DDebugObjectNameW || g_dd_mode == 0) return;
+    if (g == WKPDID_D3DDebugObjectName || g == WKPDID_D3DDebugObjectNameW) return;   // also when off: Aftermath turns it off with objects still kept
     {
         std::lock_guard l(g_ddmx);
         if (!g_dd_obj.count(o)) return;
@@ -2941,7 +3111,7 @@ static bool dd_on() {
         int m = v == L"0" ? 0 : v == L"1" ? 1 : host ? 0 : -1;
         if (wchar_t c[16]; env(L"SCSKILLER_DEDUPE_MAX", c) && _wtoi(c) >= 0) g_dd_cap = _wtoi(c);
         int was = 2;
-        g_dd_mode.compare_exchange_strong(was, m);
+        if (!g_dd_mode.compare_exchange_strong(was, m)) m = was;   // already off (Aftermath, private data)
         logf("dedupe: %s, up to %zu kept", g_next || g_dd_layer ? "off (a layer is under the hooks)" : m == 0 ? "off" : m == 1 ? "on"
                                            : g_ov_nvidia ? "on (NVIDIA)" : "off (not NVIDIA)", g_dd_cap);
     });
@@ -2964,7 +3134,7 @@ template <class F> static HRESULT dd_create(ID3D12Device* dev, const Writer& w, 
     t_dd = 0;
     {
         std::lock_guard l(g_ddmx);
-        if (auto it = g_dd.find(k); it != g_dd.end()) {
+        if (auto it = g_dd.find(k); it != g_dd.end() && g_dd_mode != 0) {
             pin = it->second.o;
             // ours + this pin: no holder left, so it's never shared with one. Claimed here: a second hit counts this pin.
             free = pin->AddRef() == 2;
@@ -2973,7 +3143,7 @@ template <class F> static HRESULT dd_create(ID3D12Device* dev, const Writer& w, 
     }
     if (pin) {
         // a removed device's create must fail as the driver's would: the game's recovery starts there
-        HRESULT hr = free && dev->GetDeviceRemovedReason() == S_OK ? pin->QueryInterface(riid, pp) : E_NOINTERFACE;
+        HRESULT hr = free && g_dd_mode != 0 && dev->GetDeviceRemovedReason() == S_OK ? pin->QueryInterface(riid, pp) : E_NOINTERFACE;
         pin->Release();
         if (SUCCEEDED(hr)) return t_dd = 1, ++g_dd_hits, hr;
         if (!free) t_dd = 2, ++g_dd_held;
@@ -3123,9 +3293,11 @@ static HRESULT STDMETHODCALLTYPE hk_createlib(ID3D12Device1* dev, const void* bl
 // At the first hooked device: the db and the csv's session marker.
 static void open_session() {
     static std::once_flag once;
-    std::call_once(once, [] {
+    // outside call_once: GetModuleFileNameW takes the loader lock, which a thread waiting on call_once may hold
+    const std::wstring exe = exe_name();
+    std::call_once(once, [&exe] {
         if (!g_frames_only) load_db(g_warm);  // load_db creates scskiller.db
-        g_csv = _wfopen((g_dir + L"scskiller_creates.csv").c_str(), L"a");
+        g_csv = _wfopen((g_dir + L"scskiller_creates.csv").c_str(), L"aN");
         std::lock_guard l(g_mx);
         if (LARGE_INTEGER size; g_db && GetFileSizeEx(g_dbo.h = (HANDLE)_get_osfhandle(_fileno(g_db)), &size)) g_dbo.at = size.QuadPart;
         else g_dbo.h = nullptr, g_db = nullptr;
@@ -3133,7 +3305,7 @@ static void open_session() {
         if (g_csv && !g_staged) {  // a staged scskiller_warm run is a warm-up, not a play session: no marker
             g_session_unix = unix_ms();
             double t = now_ms();  // #clock: the stamp on the t_ms clock, which starts when the recorder loads
-            csv_line("#session,%lld,%ls\n#clock,%.1f\n%s", g_session_unix, exe_name().c_str(), t, g_api11 ? "#api,d3d11\n" : "");
+            csv_line("#session,%lld,%ls\n#clock,%.1f\n%s", g_session_unix, exe.c_str(), t, g_api11 ? "#api,d3d11\n" : "");
             g_wrote_session = true;
         }
         if (g_csv || g_db) try {
@@ -3421,15 +3593,19 @@ static int (*o_am_dumps)(int, uint32_t, uint32_t, void*, void*, void*, void*, vo
 static int hk_am_init(int api, int version, uint32_t flags, void* dev) {
     int r = o_am_init(api, version, flags, dev);
     if (api == 1) logf("aftermath: DX12_Initialize(version 0x%x, feature flags 0x%x) = 0x%x%s", version, flags, r, flags & 8 ? ": shader debug info (another driver cache key while crash dumps are on)" : "");
+    // measured (Galactic Racer, 0xa): with dedupe on, a recorded launch's pipelines missed the cache an Aftermath warm filled
+    if (api == 1 && r == 1 && (flags & 8) && g_dd_mode.exchange(0) != 0) logf("dedupe: off, the game initialized NVIDIA Aftermath");   // what it kept goes at the next device or exit: this may run under the loader lock
     return r;
 }
 static uint32_t image_size(HMODULE m);
+static void* export_of(HMODULE m, const char* name);
+static void ags_note(std::string s);
 // init's address, only when both stubs match byte for byte and jump to the same init (a torn read of one displacement
 // can't agree with the other), a 16-aligned function start after int3 padding in the module's executable image; else null
 static uint8_t* am_init_of(HMODULE m) {
     auto base = (uint8_t*)m, end = base + image_size(m);
     auto target = [&](const char* name, const uint8_t* want, size_t n) -> uint8_t* {   // want ends with the jmp's E9
-        auto p = (uint8_t*)GetProcAddress(m, name);
+        auto p = (uint8_t*)export_of(m, name);
         uint8_t b[32];
         if (!p || p < base || p + n + 4 > end || !safe_code_read(b, p, n + 4) || memcmp(b, want, n)) return nullptr;
         int32_t r;
@@ -3449,18 +3625,31 @@ static int hk_am_dumps(int version, uint32_t apis, uint32_t flags, void* dump, v
     logf("aftermath: EnableGpuCrashDumps(version 0x%x, apis 0x%x, flags 0x%x, shader debug info callback %s) = 0x%x", version, apis, flags, debug_info ? "set" : "none", r);
     return r;
 }
-static void hook_aftermath() {
-    HMODULE m = GetModuleHandleW(L"GFSDK_Aftermath_Lib.x64.dll");
-    std::lock_guard l(g_hook_mx);   // a second device's thread waits until the first has installed (or failed) these
-    static bool done;
-    if (!m || done) return;
-    done = true;
+// loading: Aftermath as it loads (on_dll, under the loader lock): no wait on g_hook_mx, no logf, exports read from the image
+static void hook_aftermath(HMODULE loading = nullptr) {
+    static std::atomic<HMODULE> tried;   // set under g_hook_mx
+    auto note = [loading](const std::string& s) { loading ? ags_note(s) : logf("%s", s.c_str()); };
+    if (loading && (tried || !g_any_device)) {   // before the first device it's hooked there
+        // loaded again, maybe at another base: our patch went with the old image
+        if (tried && g_dd_mode.exchange(0) != 0) note("dedupe: off, NVIDIA Aftermath loaded again");
+        return;
+    }
+    std::unique_lock l(g_hook_mx, std::defer_lock);
+    if (loading && !l.try_lock()) {
+        if (g_dd_mode.exchange(0) != 0) note("dedupe: off, NVIDIA Aftermath loaded while another hook was being installed");
+        return;
+    }
+    if (!loading) l.lock();   // a second device's thread waits until the first has installed (or failed) these
+    HMODULE m = loading ? loading : GetModuleHandleW(L"GFSDK_Aftermath_Lib.x64.dll");
+    if (!m || tried) return;
+    tried = m;
     auto at = [&](uint8_t* p, void* hook, void** orig) { return p && hook_fn(p, hook, orig) ? "hooked" : "not hooked"; };
-    auto p = (uint8_t*)GetProcAddress(m, "GFSDK_Aftermath_EnableGpuCrashDumps");
+    auto p = (uint8_t*)export_of(m, "GFSDK_Aftermath_EnableGpuCrashDumps");
     for (int i = 0; p && p[0] == 0xE9 && i < 4; ++i) { int32_t r; memcpy(&r, p + 1, 4); p += 5 + r; }  // an export that is a jmp thunk
     const char* a = at(p, (void*)hk_am_dumps, (void**)&o_am_dumps);
     const char* b = at(am_init_of(m), (void*)hk_am_init, (void**)&o_am_init);
-    logf("aftermath: EnableGpuCrashDumps %s, DX12_Initialize %s", a, b);
+    if (strcmp(b, "hooked")) g_dd_mode = 0, note("dedupe: off, NVIDIA Aftermath's DX12_Initialize isn't hooked");
+    note(std::string("aftermath: ") + (loading ? "at its load, " : "") + "EnableGpuCrashDumps " + a + ", DX12_Initialize " + b);
 }
 
 // AMD AGS: a device created through agsDriverExtensionsDX12_CreateDevice with an app name has the DxcCache keyed on
@@ -3593,11 +3782,15 @@ static void unhook_ags(const char* why) {
 // Cheap enough for the loader lock (no directory walk, no key): the ini reads, the stamp's exe lines (the app's own anti-cheat
 // check of the install) and a sig= of the right length, and GetModuleHandle for anti-cheat clients. The signature (which
 // covers vendor=), VAC, Riot and the rest stay in admission, which takes the hook out when it refuses.
+static bool stamp_cheap_ok();
 static bool ags_cheap_ok() {
     wchar_t v[64];
+    GetPrivateProfileStringW(L"scskiller", L"vendor", L"", v, 32, (g_dir + L"scskiller.ini").c_str());
+    return !wcscmp(v, L"amd") && stamp_cheap_ok();   // the app signs vendor=amd only where the recorder is admitted (AMD, see AgsEligible)
+}
+static bool stamp_cheap_ok() {
+    wchar_t v[64];
     const std::wstring file = g_dir + L"scskiller.ini";
-    GetPrivateProfileStringW(L"scskiller", L"vendor", L"", v, 32, file.c_str());
-    if (wcscmp(v, L"amd")) return false;   // the app signs vendor=amd only where the recorder is admitted (AMD, see AgsEligible)
     if (GetPrivateProfileStringW(L"scskiller", L"sig", L"", v, 64, file.c_str()) != 40) return false;
     auto number = [&](const wchar_t* key) { return GetPrivateProfileStringW(L"scskiller", key, L"", v, 32, file.c_str()) ? _wcstoui64(v, nullptr, 10) : 0; };
     wchar_t exe[MAX_PATH];
@@ -3653,6 +3846,8 @@ static void CALLBACK on_dll(ULONG reason, const LdrNotification* d, void*) {
     if (reason != 1 || !d || !d->base || !d->base->buffer) return;  // LDR_DLL_NOTIFICATION_REASON_LOADED
     if (d->base->length == 15 * sizeof(wchar_t) && !_wcsnicmp(d->base->buffer, L"amd_ags_x64.dll", 15)) {
         if (g_ags_late) hook_ags((HMODULE)d->dll_base, true);
+    } else if (d->base->length == 27 * sizeof(wchar_t) && !_wcsnicmp(d->base->buffer, L"GFSDK_Aftermath_Lib.x64.dll", 27)) {
+        hook_aftermath((HMODULE)d->dll_base);
     } else ffx_loaded(d->base, (HMODULE)d->dll_base);
 }
 // The dll-load notification, registered once: by ags_hooks at load, else by frame_hooks at the first device.
@@ -5963,6 +6158,7 @@ static HRESULT device_created(HRESULT hr, IUnknown* adapter, D3D_FEATURE_LEVEL f
     const bool ok = admitted();
     if (refused_late() || !ok) return hr;  // joined even when admitted() reads the late refusal: its cleanup comes first
     pin_self();
+    g_any_device = true;   // from here a late Aftermath is hooked at its load
     if (ID3D12Device* d; !g_ov_nvidia && SUCCEEDED(((IUnknown*)*pp)->QueryInterface(IID_PPV_ARGS(&d)))) {
         IDXGIFactory4* f = nullptr;
         IDXGIAdapter1* a = nullptr;
@@ -5990,6 +6186,7 @@ static HRESULT device_created(HRESULT hr, IUnknown* adapter, D3D_FEATURE_LEVEL f
 
 extern "C" HRESULT WINAPI Proxy_D3D12CreateDevice(IUnknown* adapter, D3D_FEATURE_LEVEL fl, REFIID riid, void** pp) {
     if (!real_CreateDevice) return E_NOTIMPL;  // loaded as d3d11.dll
+    ++(pp ? g_nd_creates : g_nd_probes);
     if (pp) dd_flush();  // our refs keep a released device alive, and the runtime hands out a live device again
     static std::once_flag once;
     std::call_once(once, [] {
@@ -6102,7 +6299,7 @@ extern "C" HRESULT WINAPI Proxy_D3D12GetInterface(REFCLSID clsid, REFIID riid, v
     HRESULT hr = ((decltype(&D3D12GetInterface))real_D3D12GetInterface)(clsid, riid, pp);
     if (FAILED(hr) || !pp || !*pp || (clsid != CLSID_D3D12DeviceFactory && clsid != CLSID_D3D12SDKConfiguration)) return hr;
     // decided before the first patch: a refused process never has its SDK configuration or factory hooked
-    if (loader_lock_held()) return hr;  // admission may wait on a thread that needs the loader lock
+    if (loader_lock_held()) return ++g_nd_locked, hr;  // admission may wait on a thread that needs the loader lock
     t_early = true;
     const bool ok = admitted();
     t_early = false;
@@ -6173,7 +6370,7 @@ static bool refused_late() {
             }
         }
         for (auto& s : slots) FreeLibrary(s.m);
-        unhook_ags("refused at the first device"), ldr_off();
+        unhook_ags("refused at the first device"), unhook_opti("refused at the first device"), ldr_off();
         std::string line = std::string(why) + " (at the first device, after the early decision)";
         if (!back) line += "; a slot another hook took meanwhile still forwards through ours";
         char t[24];
@@ -6305,6 +6502,8 @@ extern "C" void WINAPI SCSKiller_Skipped(uint64_t out[2]) {
 }
 
 extern "C" uint64_t WINAPI SCSKiller_Unsupported() { return g_warm_unsupported; }
+
+extern "C" uint64_t WINAPI SCSKiller_Unbuilt() { return g_warm_unbuilt; }
 
 using ScAdd = INT_PTR(WINAPI*)(INT_PTR, INT_PTR, INT_PTR, INT_PTR, INT_PTR, INT_PTR, INT_PTR, INT_PTR);
 static ScAdd o_sc_add[2];
@@ -6517,6 +6716,26 @@ static std::wstring own_dir(HMODULE self) {
     return same_file(L"\\\\?\\GLOBALROOT" + mapped, exe_dir + mapped.substr(mapped.find_last_of(L'\\') + 1)) ? exe_dir : dir;
 }
 
+// OptiScaler as d3d12.dll loads this file by that name as its original d3d12, but its LdrLoadDll hook binds its exports
+// to the System32 d3d12.dll our attach loads: the game's device create reaches System32's entry, never our export. That
+// entry is hooked in front of OptiScaler's detour (the order of OptiScaler as dxgi.dll beside our d3d12.dll), our export
+// as the hook, so a device passes it once either way. Gated and taken out on refusal as the AGS hook is.
+static const wchar_t kOptiOriginal[] = L"d3d12-original.dll";
+static HookPatch g_opti_patch;
+static void unhook_opti(const char* why) {
+    if (!g_opti_patch.t) return;
+    ags_note(std::string("opti: ") + (unhook(g_opti_patch) ? "unhooked (" : "NOT unhooked, left our code in (") + why + ")");
+}
+static void hook_opti() {
+    std::unique_lock l(g_hook_mx, std::try_to_lock);
+    if (!l.owns_lock()) return logf("opti: not hooked (another hook was being installed)");
+    if (!stamp_cheap_ok()) return logf("opti: not hooked (scskiller.ini isn't signed for this exe, or an anti-cheat client is loaded)");
+    auto entry = (void*)GetProcAddress(g_real, "D3D12CreateDevice");
+    pin_self();  // the patched entry jumps into this dll
+    const bool hooked = entry && hook_fn(entry, (void*)Proxy_D3D12CreateDevice, (void**)&real_CreateDevice, false, &g_opti_patch, 64, 0, true);
+    logf("opti: loaded as OptiScaler's %ls, System32's D3D12CreateDevice %s", kOptiOriginal, hooked ? "hooked" : "not hooked (entry not recognized)");
+}
+
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     if (reason == DLL_PROCESS_DETACH) {
         // reserved != nullptr: the process is terminating (not a plain FreeLibrary). Best effort, no lock: the loader lock
@@ -6524,6 +6743,10 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
         g_ov_exiting = true;
         if (reserved) out_exit(g_dbo), out_exit(g_csvo);  // before the "#end"
         if (reserved && g_wrote_session && !g_csvo.failed) write_end_marker();
+#ifndef SCSK_AGS_WRAP
+        if (reserved) nd_write();
+#endif
+        if (g_opti_patch.t) unhook(g_opti_patch);
         auto unreg = (LONG(NTAPI*)(void*))GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "LdrUnregisterDllNotification");
         if (!reserved && g_ldr_cookie && unreg) unreg(g_ldr_cookie);  // unloaded, not exiting: the callback goes with this dll
         g_log = nullptr;  // the CRT closes its streams after this returns: a later line (another dll's detach) is dropped
@@ -6586,14 +6809,24 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     g_threads = _wtoi(cfg(L"SCSKILLER_THREADS", L"threads", L"0").c_str());
     if (g_threads <= 0) g_threads = std::max(1, (int)std::thread::hardware_concurrency() - 2);
     if (!g_warm) SetEvent(g_warm_done);
-    if (g_warm) g_log = _wfopen((g_dir + L"scskiller.log").c_str(), L"a");
+    if (g_warm) g_log = _wfopen((g_dir + L"scskiller.log").c_str(), L"aN");
     else g_log_deferred = true;  // opened by admitted(), at the first device
+#ifndef SCSK_AGS_WRAP
+    // the thread holds this dll until it ends: a FreeLibrary meanwhile can't unmap its code
+    if (HMODULE pin; !g_warm && !g_api11 && !g_elsewhere && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCWSTR)&nd_find, &pin)) {
+        if (HANDLE t = CreateThread(nullptr, 0, nd_find, pin, 0, nullptr)) CloseHandle(t);
+        else FreeLibrary(pin);
+    }
+#endif
     GetModuleFileNameW(nullptr, p, MAX_PATH);
     logf("loaded into %s", shown(p, true).c_str());
     if (warm_asked && !g_warm) logf("mode warm ignored: this process isn't scskiller_warm, it records");
     g_next = mod;
     if (mod) logf("next: %ls (the device and every export it has come from it)", next);
     else if (next_why) logf("next: %ls %s: the system %ls is used without it", wcspbrk(next, L"\\/:") ? L"(a path)" : next, next_why, sys_dll);
+    if (!g_api11 && !g_warm && !g_elsewhere && !mod && !_wcsicmp(own.c_str() + (own.find_last_of(L'\\') + 1), kOptiOriginal)
+        && GetModuleHandleW((module_dir(nullptr) + L"d3d12.dll").c_str()))   // the exe folder's d3d12.dll (OptiScaler) loading us
+        hook_opti();
     ags_hooks(reserved != nullptr);
     return TRUE;
 }

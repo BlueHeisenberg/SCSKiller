@@ -30,16 +30,19 @@ template <size_t N> static bool env(const wchar_t* name, wchar_t (&v)[N]) {
     DWORD n = GetEnvironmentVariableW(name, v, N);
     return n && n < N;
 }
-// A module's path as the loader reports it, at any length; "" when it can't be had or passes 32,768 characters.
+// A module's path as the loader reports it, at any length; "" when it can't be had or passes 32,768 characters. Wine names
+// one on no drive unix\... (its \??\unix\ path less \??\), which would open relative to the current folder: \\?\unix\... here.
 static std::wstring module_path(HMODULE m) {
     for (DWORD size = MAX_PATH;; size = std::min<DWORD>(size * 2, 32768)) {
         std::wstring s(size, L'\0');
         const DWORD n = GetModuleFileNameW(m, s.data(), size);
         if (!n) return L"";
-        if (n < size) return s.resize(n), s;
+        if (n < size) return s.resize(n), s.rfind(L"unix\\", 0) ? s : L"\\\\?\\" + s;
         if (size == 32768) return L"";
     }
 }
+// The exe is on no Wine drive (module_path's \\?\unix\): the game's prefix has no drive for its folder.
+static bool driveless() { return !module_path(nullptr).rfind(L"\\\\?\\unix\\", 0); }
 // Admission, decided once at the first device (any path: D3D12CreateDevice, a device factory, a D3D11 device), or earlier
 // when D3D12GetInterface hands out an SDK configuration or a device factory, before either is hooked. The recorder records
 // for the whole run only when all hold, else it is a pure pass-through (no device hooked, nothing written in the game
@@ -50,14 +53,18 @@ static std::wstring module_path(HMODULE m) {
 //    (GameFiles.DetectAntiCheat walks it; this dll doesn't) and signs it only when that check is clean, so an exe updated
 //    since, or during it, is refused, and so is an ini that SCSKiller didn't write, or wrote for another exe or root;
 //  - no anti-cheat marker in this folder or in any folder above it up to the install root (root=, relative to this folder;
-//    more than 64 up refuses), each listed whole: the built-in list, plus scskiller.ini markers= (it only adds; malformed:
-//    no). pid= and pid_time= (its creation FILETIME, UTC; under Wine its Linux pid and /proc start time, wine_bound) name
-//    the one process the app started suspended itself for an offline session: for that process EasyAntiCheat's names
+//    one that isn't this folder or above it refuses, so does one more than 64 up), each listed whole: the built-in list,
+//    plus scskiller.ini markers= (it only adds; malformed: no). pid= and pid_time= (its creation FILETIME, UTC; under Wine
+//    its Linux pid and /proc start time, wine_bound) name the one process the app started suspended itself for an offline
+//    session: for that process EasyAntiCheat's names
 //    leave the list; any other process with that ini is refused;
 //  - no "Riot Games" folder in the exe's path;
 //  - no anti-cheat client module loaded, and not a VAC game by Steam's files (vac_now);
 //  - this dll was loaded from the exe's folder;
 //  - this folder isn't on the app's revocation list (recorder.revoked: folders whose scskiller.ini it couldn't take out);
+//  - its signed arm= is the one the recorder folder's arms\ keeps for this folder (a removal deletes it);
+//  - the recorder folder is out of the game's reach: not in the install or, under Wine, the prefix, and under Wine named by
+//    a scskiller.ledger on Z:;
 //  - scskiller.ini is still as it was read when the decision is made (the app takes it out when it finds anti-cheat).
 // risk=1 with that binding, inside the signed stamp (a session the user confirmed at their own risk, beside the anti-cheat):
 // the marker, Riot, client and VAC checks still run but refuse on nothing they find, and the log names it all once, as it
@@ -181,10 +188,13 @@ static std::wstring install_root(const std::wstring& here) {
     full.resize(m);
     return full.back() == L'\\' ? full : full + L'\\';
 }
-// here and each folder above it up to the install root; the root alone besides here when it isn't above it. Empty when
-// the root is more than 64 folders up: not all can be listed.
+// The install root is here or a folder above it (both backslash-ended): the app keeps the exe inside the folder it checked.
+static bool root_above(const std::wstring& here, const std::wstring& root) {
+    return here.size() >= root.size() && !_wcsnicmp(here.c_str(), root.c_str(), root.size());
+}
+// here and each folder above it up to the install root (root_above). Empty when the root is more than 64 folders up: not
+// all can be listed.
 static std::vector<std::wstring> folders_to(const std::wstring& here, const std::wstring& root) {
-    if (here.size() < root.size() || _wcsnicmp(here.c_str(), root.c_str(), root.size())) return {here, root};
     std::vector<std::wstring> dirs;
     for (std::wstring d = here; dirs.size() < 64;) {
         dirs.push_back(d);
@@ -193,9 +203,34 @@ static std::vector<std::wstring> folders_to(const std::wstring& here, const std:
     }
     return {};
 }
-// <recorder folder>\refused\<this exe's file_key>; "" when it can't be had.
+// The Steam game folder holding here (steamapps\common\<name>\), as Steam made it, whatever root= names; "" outside one.
+static std::wstring steam_game_folder(const std::wstring& here) {
+    std::wstring lower = here;
+    for (auto& c : lower) c = towlower(c);
+    const size_t sc = lower.find(L"\\steamapps\\common\\"), end = sc == std::wstring::npos ? sc : here.find(L'\\', sc + wcslen(L"\\steamapps\\common\\"));
+    return end == std::wstring::npos ? L"" : here.substr(0, end + 1);
+}
+static const char* const kWineNoLedger = "SCSKiller for Windows can't record a game under Wine, use SCSKiller for Linux";
+// The recorder folder admission reads, to open: recorder_dir's, under Wine only the scskiller.ledger's Z:\ path as a
+// \\?\unix\ path (the prefix's drive links and %LOCALAPPDATA% are the game's to change). "" with why.
+static std::wstring rec_path(const char*& why) {
+    why = "SCSKiller's recorder folder can't be resolved";
+    if (admit_dir().empty()) return L"";
+    std::wstring d;
+    if (!under_wine()) d = recorder_dir(admit_dir());
+    else if (!stamped_recorder_dir(admit_dir(), d)) return why = kWineNoLedger, L"";
+    else if (!d.empty() && (d[0] | 0x20) != L'z') return why = "SCSKiller's recorder folder isn't on Wine's Z: drive", L"";
+    else if (!d.empty()) d = L"\\\\?\\unix" + d.substr(2);
+    if (!d.empty()) why = nullptr;
+    return d;
+}
+// <recorder folder>\refused\<this exe's file_key>; "" when it can't be had. Under Wine without a ledger: the prefix's, where
+// SCSKiller for Windows reads it.
 static std::wstring refused_path() {
-    const std::wstring exe = module_path(nullptr), dir = recorder_dir(admit_dir());
+    const char* why;
+    std::wstring dir = rec_path(why);
+    if (dir.empty()) dir = recorder_dir(admit_dir());
+    const std::wstring exe = module_path(nullptr);
     return exe.empty() || dir.empty() ? L"" : dir + L"\\refused\\" + file_key(exe);
 }
 // A pass-through writes nothing in the game folder: its reason goes to the app's recorder folder (refused_path, "unix_ms
@@ -220,8 +255,8 @@ static void refused(const char* why) {
 // added VAC): an exe in a Steam library is the app whose appmanifest names its folder, and it records only when that app
 // isn't one of Valve's VAC titles and appinfo.vdf has its info without the "Valve Anti-Cheat enabled" category (category_8).
 // Anything that can't be read or found refuses. An exe outside every Steam library isn't Steam's: no VAC, unless a
-// steam_appid.txt between it and the install root names a Steam app (Steamworks starts the game as that app). One naming an
-// app Steam has no info about (named_vac) refuses only outside a risk session.
+// steam_appid.txt between it and the install root names a Steam app with VAC (Steamworks starts the game as that app). One
+// naming an app Steam doesn't list (named_vac) records.
 static std::string read_all(const std::wstring& path, size_t cap = 1 << 20) {
     std::string s;
     if (FILE* f = _wfsopen(path.c_str(), L"rb", _SH_DENYNO)) {
@@ -512,26 +547,58 @@ static std::wstring appinfo_path(const std::wstring& steam) {
     return r.empty() ? L"" : r + L"\\appcache\\appinfo.vdf";
 }
 
+// Steam's folder in Games.SteamSource.Root's order: SteamPath, HKLM's InstallPath, the default folder, the first holding
+// steam.exe (SteamPath can name a game's bundled Steam folder). Backslashed. None does: SteamPath as it is ("" unset), never
+// the default: a default without Steam can hold a stale appinfo.vdf, and dropping SteamPath drops the libraries it lists.
+// from: which one it is, or why none.
+static std::wstring steam_pick(std::wstring path, std::wstring install, const char** from = nullptr, std::wstring guess = L"C:\\Program Files (x86)\\Steam") {
+    static const char* const kFrom[] = {"SteamPath", "InstallPath", "the default folder"};
+    int i = 0;
+    for (std::wstring* p : {&path, &install, &guess}) {
+        for (auto& c : *p) if (c == L'/') c = L'\\';
+        const DWORD a = p->empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(join(*p, L"steam.exe").c_str());
+        if (a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY)) {
+            if (from) *from = kFrom[i];
+            return *p;
+        }
+        ++i;
+    }
+    if (from) *from = path.empty() ? "no SteamPath, no folder holds steam.exe" : "SteamPath, no folder holds steam.exe";
+    return path;
+}
+
+// steam_root's last pick and where it came from, for the admitted run's log ("" with a source: unknown).
+static wchar_t g_steam_used[MAX_PATH];  // no allocation: the decision path never fails on it
+static const char* g_steam_from;
+
 // Steam's folder, backslashed; false when it is unknown.
 static bool steam_root(std::wstring& steam) {
-    wchar_t root[MAX_PATH];
-    DWORD n = sizeof root;
+    wchar_t root[MAX_PATH], install[MAX_PATH];
+    DWORD n = sizeof root, m = sizeof install;
     // tests: another Steam folder, only in a process exporting SCSKiller_WarmHost (selftest), never a game
     if (GetProcAddress(GetModuleHandleW(nullptr), "SCSKiller_WarmHost") && GetEnvironmentVariableW(L"SCSKILLER_TEST_STEAM_ROOT", root, MAX_PATH)) {
-    } else if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Valve\\Steam", L"SteamPath", RRF_RT_REG_SZ, nullptr, root, &n) != ERROR_SUCCESS) return false;
-    steam = root;
-    for (auto& c : steam) if (c == L'/') c = L'\\';
-    return true;
+        steam = root;
+        for (auto& c : steam) if (c == L'/') c = L'\\';
+        wcsncpy_s(g_steam_used, steam.c_str(), _TRUNCATE), g_steam_from = "SCSKILLER_TEST_STEAM_ROOT";
+        return true;
+    }
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Valve\\Steam", L"SteamPath", RRF_RT_REG_SZ, nullptr, root, &n) != ERROR_SUCCESS) root[0] = 0;
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Valve\\Steam", L"InstallPath", RRF_RT_REG_SZ | RRF_SUBKEY_WOW6432KEY, nullptr, install, &m) != ERROR_SUCCESS)
+        install[0] = 0;
+    steam = steam_pick(root, install, &g_steam_from);
+    wcsncpy_s(g_steam_used, steam.c_str(), _TRUNCATE);
+    return !steam.empty();
 }
 
 // The Steam app's VAC: a Valve VAC title, or appinfo.vdf's info about it marks VAC or can't be had (steam "": Steam's
 // folder is unknown). nullptr: no VAC.
 static const char* vac_of(uint32_t app, const std::wstring& steam) {
     if (std::find(std::begin(kValveVac), std::end(kValveVac), app) != std::end(kValveVac)) return "VAC (a Valve game)";
-    if (steam.empty()) return kVacNoSteam;
     // appinfo.vdf: u32 magic (v28 0x07564428, v29 0x07564429), u32 universe, [v29: i64 offset of the key string table],
     // then entries {u32 app, u32 size, u32 info state (2: Steam has the info), 56 more bytes, binary KeyValues} until app 0
     const std::wstring path = appinfo_path(steam);
+    // under Wine the Steam that started the game names it without a Windows Steam
+    if (steam.empty() && path == L"\\appcache\\appinfo.vdf") return kVacNoSteam;
     FILE* f = path.empty() ? nullptr : _wfsopen(path.c_str(), L"rb", _SH_DENYNO);
     if (!f) return !path.empty() && errno == ENOENT ? kVacNoAppinfo : "VAC: Steam's appinfo.vdf can't be read";
     const int64_t flen = _filelengthi64(_fileno(f));
@@ -632,6 +699,67 @@ static const char* vac_named(const std::vector<std::wstring>& dirs) {
     return vac;
 }
 
+// The digits of a rail_game_identify.json written plainly, {"game_id":N} or {"game_id":"N"} with JSON blanks around each
+// token and an optional BOM: "" for anything else. Games.WeGameSource.PlainId reads it the same.
+static std::string wegame_id(std::string t) {
+    if (!t.rfind("\xEF\xBB\xBF", 0)) t.erase(0, 3);
+    size_t i = 0;
+    const auto blanks = [&] { while (i < t.size() && (t[i] == ' ' || t[i] == '\t' || t[i] == '\r' || t[i] == '\n')) ++i; };
+    const auto take = [&](const char* s) {
+        blanks();
+        const size_t n = strlen(s);
+        if (i + n > t.size() || t.compare(i, n, s)) return false;
+        i += n;
+        return true;
+    };
+    if (!take("{") || !take("\"game_id\"") || !take(":")) return "";
+    blanks();
+    const bool quoted = i < t.size() && t[i] == '"';
+    if (quoted) ++i;
+    const size_t start = i;
+    while (i < t.size() && t[i] >= '0' && t[i] <= '9') ++i;
+    const std::string id = t.substr(start, i - start);
+    if (id.empty() || id.size() > 19 || id[0] == '0' || (quoted && (i >= t.size() || t[i++] != '"')) || !take("}")) return "";
+    blanks();
+    return i == t.size() ? id : "";
+}
+
+// The path is in a WeGame install folder in a Steam library: steamapps\common\<folder>\rail_apps\<name>(<id>), whose
+// rail_files\rail_game_identify.json names that id plainly (wegame_id) and which holds WeGameLauncher\launcher.exe.
+// Games.WeGameSource.InSteamLibrary decides it the same.
+static bool wegame_folder(const std::wstring& path) {
+    const std::wstring p = trimmed(plain_path(path));
+    std::wstring lower = p;
+    for (auto& c : lower) c = towlower(c);
+    const std::wstring common = L"\\steamapps\\common\\";
+    const size_t sc = lower.find(common);
+    if (sc == std::wstring::npos) return false;
+    std::wstring parts[3];
+    size_t at = sc + common.size();
+    for (auto& part : parts) {
+        if (at >= p.size()) return false;
+        const size_t cut = p.find(L'\\', at);
+        part = p.substr(at, cut == std::wstring::npos ? std::wstring::npos : cut - at);
+        if (part.empty()) return false;
+        at = cut == std::wstring::npos ? p.size() : cut + 1;
+    }
+    if (!same_name(parts[1], L"rail_apps")) return false;
+    const std::wstring& name = parts[2];
+    const size_t open = name.rfind(L'(');
+    if (open == std::wstring::npos || name.back() != L')') return false;
+    std::string id;
+    for (size_t k = open + 1; k + 1 < name.size(); ++k) {
+        if (name[k] < L'0' || name[k] > L'9') return false;
+        id += (char)name[k];
+    }
+    if (id.empty() || id.size() > 19 || id[0] == '0') return false;
+    const std::wstring folder = p.substr(0, sc + common.size()) + parts[0] + L"\\" + parts[1] + L"\\" + name;
+    const DWORD a = GetFileAttributesW(long_path(join(folder, L"WeGameLauncher\\launcher.exe")).c_str());
+    if (a == INVALID_FILE_ATTRIBUTES || (a & FILE_ATTRIBUTE_DIRECTORY)) return false;
+    std::string text;
+    return !read_whole(join(folder, L"rail_files\\rail_game_identify.json"), text, 4096) && wegame_id(text) == id;
+}
+
 // nullptr: records; else why not. Never throws. As admit_posix.h decides it: every library Steam lists and each of its
 // manifests is read whole and parsed (admission.h's Vdf), else it refuses. The exe is the app's whose installdir its
 // steamapps\common folder names or whose game folder's final path holds it. A listed library without its steamapps or a
@@ -697,8 +825,8 @@ static const char* vac_now_unguarded() {
     if (const DWORD err = read_whole(join(steam, L"steamapps\\libraryfolders.vdf"), text)) {
         if (!absent(err) || !absolute(steam) || !absent(real_of(join(steam, L"steamapps"), there))) return "VAC: Steam's libraryfolders.vdf can't be read";
         if (held(steam, in)) return "VAC: Steam's folder can't be resolved";
-        if (in) return "VAC: Steam's folder without its steamapps holds the game's path";
-        // an uninstalled Steam's registry entry, or Proton's stand-in: no library but the game's own
+        // an uninstalled Steam's registry entry, Proton's stand-in or a game's bundled Steam folder (platform\steam): no
+        // library, a game in it is no Steam game's
     } else {
         if (!vdf_root(text, "libraryfolders", top)) return "VAC: Steam's libraryfolders.vdf is malformed";
         add({steam, false, {}, {}});
@@ -751,7 +879,8 @@ static const char* vac_now_unguarded() {
     }
     if (apps.size() > 1) return "VAC: two Steam manifests name the game's folder";
     if (!apps.empty()) return vac_of(apps[0], steam);
-    if (!common.empty()) return "VAC: no Steam manifest names the game's folder";
+    // a WeGame install folder no manifest names is no Steam game's, as outside every library (Games.Vac.AppId)
+    if (!common.empty()) return wegame_folder(exe) && wegame_folder(real) ? nullptr : "VAC: no Steam manifest names the game's folder";
     return in_library ? "VAC: in a Steam library, not a Steam game folder" : nullptr;
 }
 
@@ -768,23 +897,128 @@ static const char* vac_now(const std::vector<std::wstring>& dirs) {
 }
 
 static bool g_by_path;  // signed_by_app admitted by the path form
+
+// The recorder folder, held open while admission decides: its files are read relative to this handle, so a ledger, link or
+// Wine drive changed meanwhile can't move the reads to another folder.
+struct RecFolder {
+    HANDLE h = INVALID_HANDLE_VALUE;
+    FILE_ID_INFO id{};
+    RecFolder() = default;
+    RecFolder(const RecFolder&) = delete;
+    ~RecFolder() {
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    }
+};
+// The folder at path opened and held: nullptr, else why not.
+static const char* open_rec(const std::wstring& path, RecFolder& r) {
+    r.h = CreateFileW(long_path(path).c_str(), FILE_TRAVERSE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                      FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    BY_HANDLE_FILE_INFORMATION info;
+    if (r.h == INVALID_HANDLE_VALUE || !GetFileInformationByHandle(r.h, &info) || !(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+        || !GetFileInformationByHandleEx(r.h, FileIdInfo, &r.id, sizeof r.id))
+        return "SCSKiller's recorder folder can't be resolved";
+    return nullptr;
+}
+// A file in the held folder (name relative to it, its last part never a link), read whole: ERROR_SUCCESS, else why not (the
+// open's error, a file that isn't one on disk, more than cap bytes).
+static DWORD read_in(HANDLE dir, std::wstring name, std::string& s, size_t cap) {
+    s.clear();
+    static const auto create = reinterpret_cast<decltype(&NtCreateFile)>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtCreateFile"));
+    static const auto dos_error = reinterpret_cast<ULONG(WINAPI*)(NTSTATUS)>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlNtStatusToDosError"));
+    if (!create || !dos_error) return ERROR_PROC_NOT_FOUND;
+    UNICODE_STRING relative{USHORT(name.size() * sizeof(WCHAR)), USHORT(name.size() * sizeof(WCHAR)), name.data()};
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &relative, OBJ_CASE_INSENSITIVE, dir, nullptr);
+    IO_STATUS_BLOCK io;
+    HANDLE h;
+    if (const NTSTATUS st = create(&h, GENERIC_READ | SYNCHRONIZE, &oa, &io, nullptr, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+                                   FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT, nullptr, 0);
+        st < 0) {
+        const ULONG e = dos_error(st);
+        return e ? e : ERROR_GEN_FAILURE;
+    }
+    FILE_ATTRIBUTE_TAG_INFO tag{};
+    DWORD err = GetFileType(h) == FILE_TYPE_DISK && GetFileInformationByHandleEx(h, FileAttributeTagInfo, &tag, sizeof tag)
+                        && !(tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+                    ? ERROR_SUCCESS
+                    : ERROR_BAD_FILE_TYPE;
+    char b[65536];
+    for (DWORD n; !err;) {
+        if (!ReadFile(h, b, sizeof b, &n, nullptr)) err = last_error();
+        else if (!n) break;
+        else if (s.size() + n > cap) err = ERROR_FILE_TOO_LARGE;
+        else s.append(b, n);
+    }
+    CloseHandle(h);
+    return err;
+}
+// The recorder folder is out of the game's reach: not the install root, the exe's folder or in them, and under Wine not in
+// the prefix either (the game can write all of those, and the prefix's drive links). nullptr, else why not. Under Wine the
+// folder's path (\\?\unix\...) and each folder above it as text are opened, following links, and none may be one of those.
+static const char* outside_game(const RecFolder& rec, const std::wstring& path, const std::wstring& here, const std::wstring& root) {
+    const char* const in_game = "SCSKiller's recorder folder is inside the game's folder";
+    // root= is the ini's and can name a narrower folder than the game's
+    const std::wstring steam = steam_game_folder(here);
+    const std::wstring& game = !steam.empty() && root_above(root, steam) ? steam : root;
+    if (!under_wine()) {
+        std::wstring f(32768, L'\0');
+        const DWORD m = GetFinalPathNameByHandleW(rec.h, f.data(), (DWORD)f.size(), 0);
+        if (!m || m >= f.size()) return "SCSKiller's recorder folder can't be resolved";
+        f.resize(m);
+        f = plain_path(f);
+        if (f.back() != L'\\') f += L'\\';
+        return root_above(f, game) || root_above(f, here) ? in_game : nullptr;
+    }
+    std::vector<FILE_ID_128> ids;
+    for (auto& d : folders_to(here, game)) {
+        FILE_ID_INFO id;
+        if (!open_id(d, id)) return "the game's folder can't be resolved";
+        ids.push_back(id.FileId);
+    }
+    // the prefix: the folder of its dosdevices\, as Wine names drive C:'s Unix path
+    const auto unix_name = reinterpret_cast<char*(CDECL*)(LPCWSTR)>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "wine_get_unix_file_name"));
+    char* c = unix_name ? unix_name(L"C:\\") : nullptr;
+    std::string p = c ? c : "";
+    if (c) HeapFree(GetProcessHeap(), 0, c);
+    const size_t cut = p.find("/dosdevices/");
+    if (cut != std::string::npos) p.resize(cut);
+    else {
+        while (p.size() > 1 && p.back() == '/') p.pop_back();
+        p.resize(p.find_last_of('/') == std::string::npos ? 0 : p.find_last_of('/'));
+    }
+    std::wstring prefix = widen(p);
+    for (auto& ch : prefix)
+        if (ch == L'/') ch = L'\\';
+    FILE_ID_INFO pid;
+    if (prefix.size() < 2 || prefix[0] != L'\\' || !open_id(L"\\\\?\\unix" + prefix, pid)) return "the game's Wine prefix can't be found";
+    // /proc and /dev name other processes' folders and files
+    const std::wstring unix = path.substr(8) + L"\\";
+    if (!unix.rfind(L"\\proc\\", 0) || !unix.rfind(L"\\dev\\", 0)) return "SCSKiller's recorder folder can't be resolved";
+    FILE_ID_INFO id = rec.id;
+    for (std::wstring at = path;;) {
+        if (!memcmp(&id.FileId, &pid.FileId, sizeof id.FileId)) return "SCSKiller's recorder folder is inside the game's Wine prefix";
+        for (auto& g : ids)
+            if (!memcmp(&id.FileId, &g, sizeof g)) return in_game;
+        const size_t up = at.find_last_of(L'\\');
+        if (up <= 8) return nullptr;  // past \\?\unix\<first folder>
+        at.resize(up);
+        if (!open_id(at, id)) return "SCSKiller's recorder folder can't be resolved";
+    }
+}
+// The held folder is still the one rec_path names now: false when it isn't, or can't be told.
+static bool rec_same(const RecFolder& rec) {
+    const char* why;
+    const std::wstring path = rec_path(why);
+    FILE_ID_INFO id;
+    return !why && open_id(path, id) && !memcmp(&id, &rec.id, sizeof id);
+}
 // This folder's key on the app's revocation list (recorder.revoked in its recorder folder: the file_key of each folder whose
 // scskiller.ini it couldn't take out, one a line, as ScsKiller.Revoke writes them), or the list can't be read whole (only
 // a list that doesn't exist is empty): why it refuses; nullptr: neither.
-static const char* revoked_here() {
-    const std::wstring dir = recorder_dir(admit_dir()), file = dir + L"\\recorder.revoked";
-    if (dir.empty()) return "SCSKiller's revocation list can't be read";
+static const char* revoked_here(const RecFolder& rec) {
     std::string list;
-    FILE* f = _wfsopen(file.c_str(), L"rb", _SH_DENYNO);
-    if (!f) {
-        const DWORD e = GetFileAttributesW(file.c_str()) == INVALID_FILE_ATTRIBUTES ? GetLastError() : ERROR_ACCESS_DENIED;
+    if (const DWORD e = read_in(rec.h, L"recorder.revoked", list, 1 << 20))
         return e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND ? nullptr : "SCSKiller's revocation list can't be read";
-    }
-    char b[65536];
-    for (size_t n; list.size() <= (1 << 20) && (n = fread(b, 1, sizeof b, f));) list.append(b, n);
-    const bool bad = ferror(f) || list.size() > (1 << 20);
-    fclose(f);
-    if (bad) return "SCSKiller's revocation list can't be read";
     // admitted by the path form, any revoked folder refuses: this process can't tell the folder at this path from one revoked
     // elsewhere and moved here, by identity or by path
     if (g_by_path && list.find_first_not_of(" \t\r\n") != std::string::npos) return "SCSKiller's revocation list isn't empty";
@@ -805,18 +1039,28 @@ static const char* revoked_here() {
     }
     return nullptr;
 }
-// sig= is recorder_sig of this exe's and this folder's file_key, the stamp lines (signed_stamp: vendor= and the countdown's lines
-// too, so a hand edit can't turn the AGS hook or the panel on), root= and the root's file_key under the
+// The ini's arm= is the one the recorder folder keeps in arms\ for this folder (its folder_file_key, its path_folder_key when
+// admitted by the path form; ScsKiller.Arm): nullptr, else why not. A removal deletes that file, a new arm makes a new one.
+static const char* armed_here(const RecFolder& rec) {
+    const std::wstring arm = ini_string(L"arm");
+    if (!arm_well_formed(arm)) return "signed by an earlier SCSKiller version";
+    std::wstring here = admit_dir();
+    if (here.size() > 3 && here.back() == L'\\') here.pop_back();
+    const std::wstring key = g_by_path ? path_folder_key(here) : folder_file_key(here);
+    std::string kept;
+    return key.empty() || read_in(rec.h, L"arms\\" + key, kept, 65536) || arm_line(kept) != arm ? "not armed by SCSKiller" : nullptr;
+}
+// sig= is recorder_sig of this exe's and this folder's file_key, the stamp lines (signed_stamp: vendor=, arm= and the
+// countdown's lines too, so a hand edit can't turn the AGS hook or the panel on), root= and the root's file_key under the
 // recorder folder's recorder.key: an ini copied beside another exe or a hard link of it in another folder, or reached
 // through a link whose root= resolves to another folder, fails.
-static bool signed_by_app(const std::wstring& root) {
-    const std::wstring dir = recorder_dir(admit_dir()), exe = module_path(nullptr), sig = ini_string(L"sig"), pid = ini_string(L"pid");
+static bool signed_by_app(const RecFolder& rec, const std::wstring& root) {
+    const std::wstring exe = module_path(nullptr), sig = ini_string(L"sig"), pid = ini_string(L"pid");
     g_by_path = false;
-    if (dir.empty() || exe.empty() || sig.size() != 40) return false;
-    const std::string key = read_all(dir + L"\\recorder.key", 256);
-    if (key.size() < 32 || key.size() > 128) return false;
+    std::string key;
+    if (exe.empty() || sig.size() != 40 || read_in(rec.h, L"recorder.key", key, 256) || key.size() < 32 || key.size() > 128) return false;
     const std::wstring stamp = signed_stamp(ini_string(L"exe_size"), ini_string(L"exe_time"), pid, ini_string(L"pid_time"), ini_string(L"risk"), ini_string(L"vendor"),
-                                            ini_string(L"overlay"), ini_string(L"ab_play_s"), ini_string(L"ab_tag"), traversal_lines(ini_string));
+                                            ini_string(L"overlay"), ini_string(L"ab_play_s"), ini_string(L"ab_tag"), traversal_lines(ini_string), ini_string(L"arm"));
     const auto no_slash = [](const std::wstring& d) { return d.substr(0, d.size() > 3 ? d.size() - 1 : d.size()); };
     const std::wstring exe_key = file_key(exe), want = recorder_sig(key, exe_key, folder_file_key(no_slash(admit_dir())), stamp, ini_string(L"root"),
                                                                       folder_file_key(no_slash(root)));
@@ -827,8 +1071,8 @@ static bool signed_by_app(const std::wstring& root) {
     if (ini_string(L"root") != L"." || !made_up_here(no_slash(admit_dir()), exe) || hard_links(exe) != 1
         || (GetFileAttributesW(long_path(exe).c_str()) & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
     const std::wstring here = path_folder_key(no_slash(admit_dir()));
-    if (here.empty()) return false;
-    const std::string kept = read_all(dir + L"\\stamps\\" + here, 4096);
+    std::string kept;
+    if (here.empty() || read_in(rec.h, L"stamps\\" + here, kept, 4096)) return false;
     for (size_t at = 0; at < kept.size();) {
         size_t end = kept.find('\n', at);
         std::string line = kept.substr(at, end == std::string::npos ? std::string::npos : end - at);
@@ -876,26 +1120,38 @@ static bool ini_bytes(const std::wstring& path, std::string& out) {
 // recorder wasn't loaded from that folder. risk and seen: for the log, as it opens.
 static const char* admission_verdict(bool whole, const std::string& read, bool elsewhere, bool& risk, std::string& seen) {
     const std::wstring ini = admit_dir() + L"scskiller.ini";
+    // opened once and held: a ledger, link or Wine drive changed meanwhile can't move what is read there
+    RecFolder rec;
+    const char* rec_why = nullptr;
+    const std::wstring rec_at = rec_path(rec_why);
+    if (!rec_why) rec_why = open_rec(rec_at, rec);
     std::string again;
     std::vector<std::wstring> markers;
     // the folders as they are on disk: a launch through a link or junction lists the real exe-to-root chain
-    const std::wstring here = final_dir(admit_dir()), root = here.empty() ? L"" : install_root(here);
+    // the root as on disk too: a root= spelled through a link names the same folder as its target
+    const std::wstring here = final_dir(admit_dir()), root = here.empty() ? L"" : final_dir(install_root(here));
     const bool bound = !ini_string(L"pid").empty();
     risk = !ini_string(L"risk").empty();
     const char* unbound = nullptr;
+    const char* reach = nullptr;
     const char* why = admit_dir().empty() ? "the recorder's folder can't be read"
+                    : driveless() ? "the game runs from a folder no Wine drive holds"
                     : elsewhere ? "loaded from another folder than the exe"
                     : !exe_as_checked() ? "exe not as checked"
                     : !whole ? "scskiller.ini can't be read whole"
                     : here.empty() ? "the exe's folder can't be resolved"
                     : root.empty() ? "no install root"
                     : odd_name(here) || odd_name(root) ? "a folder name ends in a dot or a space"
-                    : !signed_by_app(root) ? "not signed by SCSKiller"
+                    : rec_why ? rec_why
+                    : (reach = outside_game(rec, rec_at, here, root)) ? reach
+                    : !signed_by_app(rec, root) ? "not signed by SCSKiller"
+                    : !root_above(here, root) ? "the game's exe is outside its folder"
                     : g_by_path && (ini_string(L"root") != L"." || !listed_here()) ? "the game's folder reads differently inside the game"
                     : bound && (unbound = bound_here()) ? unbound
                     : !risk_well_formed(ini_string(L"pid"), ini_string(L"risk")) ? "risk= malformed"
                     : !anti_cheat_markers(markers) ? "markers= malformed" : nullptr;
-    if (!why) why = revoked_here();
+    if (!why) why = revoked_here(rec);
+    if (!why) why = armed_here(rec);
     if (!why && bound && !risk) markers.erase(markers.begin(), markers.begin() + kEasyAntiCheatMarkers);  // the app started this process without EasyAntiCheat
     const std::vector<std::wstring> dirs = why ? std::vector<std::wstring>{} : folders_to(here, root);
     if (!why && dirs.empty()) why = "install root too far up";
@@ -925,6 +1181,8 @@ static const char* admission_verdict(bool whole, const std::string& read, bool e
         if (go) WaitForSingleObject(go, 60000), CloseHandle(go);
     }
     if (!why && (!ini_bytes(ini, again) || again != read)) why = "scskiller.ini changed while deciding";  // the app took it out meanwhile
-    if (!why) why = revoked_here();
+    if (!why && !rec_same(rec)) why = "SCSKiller's recorder folder changed while deciding";
+    if (!why) why = revoked_here(rec);
+    if (!why) why = armed_here(rec);
     return why;
 }

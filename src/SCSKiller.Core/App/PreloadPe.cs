@@ -168,6 +168,9 @@ public static class PreloadPe
     public static bool Unfit(string name) => name.IndexOfAny(['\\', '/', ':']) >= 0 ||name.StartsWith("api-ms-", StringComparison.Ordinal) || name.StartsWith("ext-ms-", StringComparison.Ordinal)
         || !name.EndsWith(".dll", StringComparison.Ordinal) || Denied.Any(p => name.StartsWith(p, StringComparison.Ordinal)) || KnownDlls.Value.Contains(name);
 
+    /// <summary>A KnownDLL: <paramref name="name"/> in any case, with its extension.</summary>
+    public static bool Known(string name) => KnownDlls.Value.Contains(name);
+
     static readonly string[] Denied = ["d3d", "dxgi", "dxcore", "dxil", "dxcompiler", "dxva", "vulkan", "opengl", "sl.", "nv", "amd", "ati", "ig", "intel",
         "ntdll", "kernel", "msvcp", "msvcr", "vcruntime", "ucrtbase", "concrt", "vcomp", "mscoree", "clr", "winmm", "version", "dinput8"];
 

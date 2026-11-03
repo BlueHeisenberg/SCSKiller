@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using SCSKiller.Core;
@@ -27,11 +28,12 @@ static class GameFolderDialog
             Title = title, PrimaryButtonText = primary, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary,
             Content = new StackPanel
             {
-                Spacing = 4, MaxWidth = 520,
+                Spacing = 4, [!Layoutable.MaxWidthProperty] = new DynamicResourceExtension("TextFit.520"),
                 Children =
                 {
                     new TextBlock { TextWrapping = TextWrapping.Wrap, Text = "Before it records, SCSKiller checks the whole game folder for anti-cheat. "
                         + "Pick the game's own folder, not one that holds other games." },
+                    new TextBlock { TextWrapping = TextWrapping.Wrap, Text = Host.Platform.AddGamesNote ?? "", IsVisible = Host.Platform.AddGamesNote != null },
                     Label("Game"),
                     new TextBlock { Text = game.Name, TextWrapping = TextWrapping.Wrap },
                     Label("Program (the recorder goes next to it)"),

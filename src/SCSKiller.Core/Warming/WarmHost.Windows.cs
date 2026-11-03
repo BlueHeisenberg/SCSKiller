@@ -4,7 +4,8 @@ namespace SCSKiller.Core.Warming;
 
 static partial class WarmHost
 {
-    public static partial IWarmHost For(Game game, string workDir, GpuInfo gpu, IProgress<string>? log, string? steamRoot, bool vulkan, long? cacheCap, bool mesa) => new WindowsWarmHost(workDir);
+    public static partial IWarmHost For(Game game, string workDir, GpuInfo gpu, IProgress<string>? log, string? steamRoot, bool vulkan, long? cacheCap, bool mesa,
+        IReadOnlyList<(string Name, string Value)>? launchGpu) => new WindowsWarmHost(workDir);
 
     public static partial string? Refusal(Game game, string? steamRoot, bool vulkan, bool mesa) => null;
 }

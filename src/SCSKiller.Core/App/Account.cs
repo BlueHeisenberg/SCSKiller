@@ -81,6 +81,10 @@ public sealed class Account
     internal string? AccessToken => accessToken;
     /// <summary>The last token carries "db" (the community database); false when signed out or not read yet.</summary>
     public bool HasDb => Status?.Ent.Contains("db") == true;
+    /// <summary>Signed in, with "db" in the last token or entitlements not read yet.</summary>
+    public bool DbEntitled => SignedIn && (Status == null || HasDb);
+    /// <summary>Why the community database's downloads aren't this install's, in a few words; null while <see cref="DbEntitled"/>.</summary>
+    public string? DbMissing => !SignedIn ? "not signed in with Patreon" : !DbEntitled ? "the Patreon membership doesn't include it" : null;
     /// <summary>The last failure, or a sign-in's caveat (kept in a file, not the keyring), in plain words; null after a
     /// plain success.</summary>
     public string? Problem { get; private set; }

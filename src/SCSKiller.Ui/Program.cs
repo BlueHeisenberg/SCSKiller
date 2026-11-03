@@ -21,12 +21,14 @@ static class Program
     // Args: --cli <command> (Linux: the CLI beside the app in its place), --fake (sample data), --screenshots <dir> (sample
     // data, rendered off-screen to PNG files, then exit), else the real core on the data folder (SCSKILLER_DATA_DIR moves
     // it): one instance per data folder, a second launch hands its activation to the running one and exits. Design runs
-    // register nothing, redirect nowhere and write no crash log.
+    // register nothing, redirect nowhere and write no crash log. --version, --help, a CLI command or an option the app doesn't
+    // take prints and exits instead (LaunchArgs).
     [STAThread]
     public static int Main(string[] args)
     {
         Core.App.Format.PlainGroupSeparator();
         if (App.RunCli(args) is { } cli) return cli;
+        if (LaunchArgs.Handled(args) is { } printed) return printed;
         Host.Platform = Features.Current;
         if (!Host.Platform.Tray) args = [.. args.Where(a => a != WindowsStartup.TrayArg)];   // no icon to come back from
         int shots = Array.IndexOf(args, "--screenshots");

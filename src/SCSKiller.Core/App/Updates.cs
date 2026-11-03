@@ -285,15 +285,15 @@ public static class AutoInstall
     public const string Off = "Automatic install is off.";
     public const string Internal = "Updates on the internal channel install only through Restart to update.";
     public const string Compiling = "A compile is running.";
-    public const string Offline = "A recording session's game or cleanup is running. The update installs once it has ended.";
+    public const string Offline = "A recording session's game is running, or its files are still in the game folder. The update installs once it has ended.";
     public const string Playing = "A game is running, or the games aren't known yet.";
 
     /// <summary>Whether a download from <paramref name="channel"/>'s feed installs by itself at a start or quit.</summary>
     public static bool On(Settings s, string channel) => s.InstallUpdatesAutomatically && channel != UpdateChannels.Internal;
 
     /// <summary>Why a download from <paramref name="channel"/>'s feed doesn't install by itself now; null: it does.</summary>
-    public static string? HeldBack(Settings s, string channel, bool compiling, bool offline, bool playing) =>
-        channel == UpdateChannels.Internal ? Internal : !s.InstallUpdatesAutomatically ? Off : compiling ? Compiling : offline ? Offline : playing ? Playing : null;
+    public static string? HeldBack(Settings s, string channel, bool compiling, bool offline, bool playing, string? untrusted = null) =>
+        channel == UpdateChannels.Internal ? Internal : !s.InstallUpdatesAutomatically ? Off : compiling ? untrusted ?? Compiling : offline ? Offline : playing ? Playing : null;
 
     /// <summary>"Restart to update" shows for every downloaded update that still installs, whatever the setting: its
     /// channel still the chosen one, and newer than <paramref name="current"/> whatever a feed lists. The one older one is
@@ -750,12 +750,14 @@ public static class Busy
     public static string? Handover(string dataDir, DateTimeOffset now, string? name = null, string? lockRoot = null)
     {
         MarkApplying(dataDir, now);
-        var why = NamedMutex.Unsafe(lockRoot) is { } locks ? $"{locks}. No update installs until that is fixed."
-            : IsHeld(name) ? CompileStarted
-            : null;
+        var why = Untrusted(lockRoot) ?? (IsHeld(name) ? CompileStarted : null);
         if (why != null) ClearApplying(dataDir);
         return why;
     }
+
+    /// <summary>Why no update installs while the names can't be trusted (<see cref="NamedMutex.Unsafe"/>), which
+    /// <see cref="IsHeld"/> counts as held; null when they can.</summary>
+    public static string? Untrusted(string? lockRoot = null) => NamedMutex.Unsafe(lockRoot) is { } locks ? $"{locks}. No update installs until that is fixed." : null;
 
     static string Marker(string dataDir) => Path.Combine(dataDir, "applying");
 

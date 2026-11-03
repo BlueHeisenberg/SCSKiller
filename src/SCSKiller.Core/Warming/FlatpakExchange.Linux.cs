@@ -25,7 +25,7 @@ sealed class FlatpakExchange : IDisposable
     const string OutName = "warm.out", ErrName = "warm.err", LogName = "launcher.log", AliveName = "alive";
 
     /// <summary>The warm's outputs in a stage folder that Core reads (<see cref="CopyOutputs"/>).</summary>
-    static readonly HashSet<string> OutputNames = new(["scskiller.log", "scskiller_creates.csv", "scskiller_warm_times.csv", Recordings.FailedFile], StringComparer.Ordinal);
+    static readonly HashSet<string> OutputNames = new(["scskiller.log", "scskiller_creates.csv", "scskiller_warm_times.csv", "scskiller_items.bin", Recordings.FailedFile], StringComparer.Ordinal);
 
     /// <summary>The most one output may hold, and all of a process's together.</summary>
     const long OutputMax = 256L << 20, OutputsMax = 1L << 30;
@@ -750,14 +750,14 @@ sealed class FlatpakSandbox : IDisposable
     }
 }
 
-/// <summary>Lowers the priority of the systemd scopes a Flatpak Steam game's warm runs in: flatpak-portal starts the game's
+/// <summary>Lowers the priority of the systemd scopes a Flatpak game's warm runs in: flatpak-portal starts the game's
 /// processes in a scope of their own, which the launcher's nice and ionice never reach (measured). As
 /// <see cref="ProtonLaunch.Command"/>'s scope: CPUWeight=idle (1 before systemd 251) and IOWeight=1 for idle, CPUWeight=10 for
 /// below normal, set at runtime through <paramref name="systemctl"/> on each scope once, and never one that would raise a
-/// weight. Only a scope of the Flatpak Steam's (app-flatpak-com.valvesoftware.Steam-&lt;n&gt;.scope) that holds a process
+/// weight. Only a scope of the app's (<paramref name="app"/>: app-flatpak-&lt;app&gt;-&lt;n&gt;.scope) that holds a process
 /// of <paramref name="sandbox"/>'s and every one of whose host-namespace processes is tied to this launch
 /// (<see cref="Stranger"/>, <see cref="FlatpakSandbox"/>), up to <see cref="ScopeMax"/> scopes.</summary>
-sealed class FlatpakScopes(string systemctl, int systemdVersion, WarmPriority priority, FlatpakSandbox sandbox, Action<string>? log)
+sealed class FlatpakScopes(string systemctl, int systemdVersion, WarmPriority priority, FlatpakSandbox sandbox, Action<string>? log, string app = ProtonLaunch.FlatpakApp)
 {
     const int Tries = 40, ScopeMax = 8;
     readonly Dictionary<string, int> _scopes = new(StringComparer.Ordinal);   // cgroup -> looks left, 0 once done
@@ -768,7 +768,7 @@ sealed class FlatpakScopes(string systemctl, int systemdVersion, WarmPriority pr
     {
         foreach (var pid in members)
         {
-            if (Of(pid) is not { } cgroup || _over.Contains(cgroup)) continue;
+            if (Of(pid, app) is not { } cgroup || _over.Contains(cgroup)) continue;
             if (!_scopes.TryGetValue(cgroup, out var left))
             {
                 if (_scopes.Count >= ScopeMax)
@@ -792,20 +792,20 @@ sealed class FlatpakScopes(string systemctl, int systemdVersion, WarmPriority pr
         }
     }
 
-    /// <summary>The cgroup of the Flatpak Steam's scope the process is in; null for any other.</summary>
-    internal static string? Of(int pid)
+    /// <summary>The cgroup of the app's scope the process is in; null for any other.</summary>
+    internal static string? Of(int pid, string app = ProtonLaunch.FlatpakApp)
     {
         try
         {
             var line = File.ReadLines($"/proc/{pid}/cgroup").FirstOrDefault(l => l.StartsWith("0::/", StringComparison.Ordinal));
-            return line != null && IsScope(Path.GetFileName(line[3..])) ? line[3..] : null;
+            return line != null && IsScope(Path.GetFileName(line[3..]), app) ? line[3..] : null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
     }
 
-    internal static bool IsScope(string unit) =>
-        unit.StartsWith("app-flatpak-" + ProtonLaunch.FlatpakApp + "-", StringComparison.Ordinal) && unit.EndsWith(".scope", StringComparison.Ordinal)
-        && unit[("app-flatpak-" + ProtonLaunch.FlatpakApp + "-").Length..^".scope".Length] is { Length: > 0 and <= 20 } n && n.All(char.IsAsciiDigit);
+    internal static bool IsScope(string unit, string app = ProtonLaunch.FlatpakApp) =>
+        unit.StartsWith("app-flatpak-" + app + "-", StringComparison.Ordinal) && unit.EndsWith(".scope", StringComparison.Ordinal)
+        && unit[("app-flatpak-" + app + "-").Length..^".scope".Length] is { Length: > 0 and <= 20 } n && n.All(char.IsAsciiDigit);
 
     /// <summary>Why the cgroup isn't this launch's sandbox: a process in a pid namespace but the sandbox's and the host's, a
     /// host-namespace process not tied to this launch, or none in the sandbox's; null when every process is tied. The

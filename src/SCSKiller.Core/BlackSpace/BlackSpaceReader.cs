@@ -224,6 +224,7 @@ public sealed class BlackSpaceReader(string dataDir) : IEngineReader
                 : $"; {roots.Count} root signatures, {withRoot} shaders with theirs" + (badRoots > 0 ? $"; warning: {badRoots} .pars files aren't root signatures (a wrong key?), their passes have none" : ""))
             + string.Concat(skipped.Select(s => $"; warning: {s.Value} entries skipped ({s.Key})"))
             + (bad > 0 ? $"; {bad} unparseable" : "")
+            + (pamt.Oversized > 0 ? $"; warning: {pamt.Oversized} entries over {Pamt.MaxEntry >> 20} MB not read" : "")
             + $" ({sw.Elapsed.TotalSeconds:F1}s)");
         return new ShaderIndex(Convert.ToHexStringLower(content.GetHashAndReset()), [CarvedReader.Platform, .. lanes.Values.Distinct().Order(StringComparer.Ordinal)], shaders, maps, roots);
     }

@@ -28,7 +28,7 @@ public sealed record WarmEvent(string Event, long Done, long Total, long Failed,
     long From = 0, int RtThreads = 0, long FailedItem = -1, string? Reason = null, IReadOnlyList<string>? Crashed = null, IReadOnlyList<long>? Isolate = null,
     string? Stage = null, int Workers = 0, int Threads = 0, long DriverSkipped = 0, IReadOnlyList<long>? Skip = null, long Invalid = 0,
     long Unsupported = 0, bool NoFlush = false, long Work = 0, long PassedOver = -1, long Cached = 0, long Known = 0, IReadOnlyList<string>? Culprits = null,
-    long PrivateMB = 0, long FreeMB = 0)
+    long PrivateMB = 0, long FreeMB = 0, long Unbuilt = 0)
 {
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -49,12 +49,21 @@ public sealed record WarmEvent(string Event, long Done, long Total, long Failed,
 /// <summary>Drives scskiller_warm.exe (staged path: the vendor cache is keyed by exe name).</summary>
 public sealed class Warmer(IGpuVendorBackend vendor, string? warmExe = null) : IWarmer
 {
+    /// <summary>What a Linux warm's environment lines start with in its stderr, which a failure's message leaves out.</summary>
+    internal const string EnvPrefix = "env: ";
+
+    /// <summary>DXVK's line, at DXVK_LOG_LEVEL=info, for a device it found or skipped and why, or its error: its own prefixes
+    /// ("info:  ", "err:   "), not Wine's err: channels. A Linux warm's failure relays them, its message leaves them out.</summary>
+    internal static bool DxvkDeviceLine(string line) => line.StartsWith("err:   ", StringComparison.Ordinal)
+        || line.StartsWith("info:  ", StringComparison.Ordinal) && (line.Contains("Found device: ", StringComparison.Ordinal) || line.Contains("Skipping: ", StringComparison.Ordinal));
+
     /// <summary>After Stop: a warm that hasn't printed its done event by then is stuck (workers deadlocked in the driver
     /// ignore the stop event) and is ended. Replaceable for tests.</summary>
     public TimeSpan StuckAfter { get; init; } = TimeSpan.FromSeconds(30);
     public const string StuckError = "the compile didn't stop cleanly (the driver may be stuck), so it was ended";
     public const string NoDoneError = "scskiller_warm exited without a done event";
     public const string DiedError = "scskiller_warm died without an exit code";
+    public const string ExitedError = "scskiller_warm exited with code ";
     public const string StalledError = "the compile stopped making progress (the GPU driver or an add-on of the game's layer may hang), so it was ended";
     public const string OutputHeldError = "the compile's process ended but its output stayed open (a process it started, or one the GPU driver keeps from ending, still holds it), so the compile was ended";
 
@@ -75,10 +84,11 @@ public sealed class Warmer(IGpuVendorBackend vendor, string? warmExe = null) : I
     public const string CrashStormError = "the GPU driver crashed on too many pipelines, so the compile stopped. " + GoesOn;
     public const string HungError = "the GPU driver kept hanging, so the compile stopped. " + GoesOn;
     public const string FaultingError = "the GPU driver kept faulting on ray tracing, so the compile stopped. " + GoesOn;
+    public const string MemoryError = "the compile kept running out of memory at the same pipelines, so it stopped. " + GoesOn;
     const string GoesOn = "Compiling again continues where it stopped";
 
     /// <summary>A warm that gave up on the driver's recoveries (<see cref="CrashedError"/>, <see cref="HungError"/>,
-    /// <see cref="FaultingError"/>): its resume point is where the driver kept failing. Not a <see cref="CrashStormError"/>,
+    /// <see cref="FaultingError"/>, <see cref="MemoryError"/>): its resume point is where the driver kept failing. Not a <see cref="CrashStormError"/>,
     /// whose crashers are all blamed: the items past it were never tried.</summary>
     public static bool GaveUp(string? error) => error != CrashStormError && error?.EndsWith(GoesOn, StringComparison.Ordinal) == true;
 
@@ -137,7 +147,7 @@ public sealed class Warmer(IGpuVendorBackend vendor, string? warmExe = null) : I
     IWarmRun StartOne(Game game, string workDir, WarmOptions options, IProgress<WarmProgress>? progress, GpuInfo gpu)
     {
         IWarmHost host;
-        try { host = Host?.Invoke(game, workDir) ?? WarmHost.For(game, workDir, gpu, Log, SteamRoot, options.Vulkan, options.CacheCap, MesaLinux.Is(vendor.Caps)); }
+        try { host = Host?.Invoke(game, workDir) ?? WarmHost.For(game, workDir, gpu, Log, SteamRoot, options.Vulkan, options.CacheCap, MesaLinux.Is(vendor.Caps), options.LaunchGpu); }
         catch (CacheFullException e)
         {
             Log?.Report($"{game.Name}: {e.Message}: nothing more to compile");
@@ -165,6 +175,7 @@ public sealed class Warmer(IGpuVendorBackend vendor, string? warmExe = null) : I
             var agsDll = reg == null ? null : AmdAgs.DllFor(game, NativeTools.Find(AmdAgs.DllName));
             var ags = AgsArgs(vendor.Vendor, reg, agsDll == null ? null : host.WarmPath(agsDll), out var agsWhy);
             if (agsWhy != null) Log?.Report($"{game.Name}: {agsWhy}");
+            else if (ags.Length > 0) Log?.Report($"{game.Name}: the compile registers with AGS as app {reg!.App}, engine {(reg.Engine == "" ? "none" : reg.Engine)}, versions {reg.AppVersion:x8}/{reg.EngineVersion:x8}");
             if (Layer?.Invoke(game, workDir) is { } layer) ags = [.. ags, "--layer", host.WarmPath(layer)];
             if (AgilityDir(game.ExePath) is { } d3d12) ags = [.. ags, "--d3d12", host.WarmPath(d3d12)];
             if (OperatingSystem.IsWindows())
@@ -394,7 +405,7 @@ sealed class SteamFirstRun : IWarmRun
                     Invalid = p.Invalid + invalid, Unsupported = p.Unsupported + unsupported }))));
             return rest with
             {
-                Done = rest.Done + steam, Total = rest.Total + steam, Failed = rest.Failed + failed, DriverSkipped = rest.DriverSkipped + skipped,
+                Done = rest.Done + steam, DiedAt = rest.DiedAt + steam, Total = rest.Total + steam, Failed = rest.Failed + failed, DriverSkipped = rest.DriverSkipped + skipped,
                 Invalid = rest.Invalid + invalid, Unsupported = rest.Unsupported + unsupported, Cached = rest.Cached + cached,
                 Elapsed = rest.Elapsed + (first?.Elapsed ?? TimeSpan.Zero), CacheGrowthBytes = rest.CacheGrowthBytes + (first?.CacheGrowthBytes ?? 0),
                 CacheKeysAdded = first?.CacheKeysAdded is { } added ? [.. added, .. rest.CacheKeysAdded ?? []] : rest.CacheKeysAdded, Full = rest.Full ?? first?.Full,
@@ -447,7 +458,11 @@ sealed class FullRun(WarmResult result) : IWarmRun
 /// retry: the next one creates the items that were in flight alone first and skips the ones that crash the driver (by record
 /// key). A process whose creates kept hanging ends with a "hang" retry: the next one creates the hung items alone first, and
 /// one that hangs again alone is skipped and remembered (WarmEvent.Culprits). Both go on until MaxRecoveries such retries in a row blame no new item, or the first MaxRecoveries + 1 processes
-/// created nothing (a driver that crashes on everything), per pass of a careful warm. A work folder
+/// created nothing (a driver that crashes on everything), per pass of a careful warm. A "memory" retry whose process moved
+/// nothing has the items then in flight created alone first too, and one that alone grows by a third of RAM is skipped for this compile:
+/// no memory retry counts toward the bound on processes. After
+/// MaxRecoveries memory retries in a row that moved nothing the next process runs one thread, and the item it still moves no
+/// further is skipped for this compile. A work folder
 /// with a pass file (<see cref="WarmPasses"/>) runs one process per pass, in order,
 /// with the crash keys found so far; Done and StartAt then count the whole warm's items
 /// (<see cref="WarmPasses.Overall"/>), so a stopped careful warm resumes in its pass. A process started with --aftermath that
@@ -464,9 +479,9 @@ sealed class WarmRun : IWarmRun
     const string StuckVariable = "SCSKILLER_WARM_STUCK_S";
     // under StalledAfter: an item given up on still moves the warm before the app calls it stalled
     const int MaxStuckS = 300;
-    // "memory" retries in one run: a restart every few hours on a 10 h compile (Marvel Rivals grew 2.4 GB/h), each needs
-    // the PC low on memory for 10 min after a third of the budget's growth, so it can't loop fast.
-    const int MaxMemoryRestarts = 8;
+    // a memory restart whose process moved fewer items grew back from what the next items build on (NVIDIA frees a state
+    // object only at exit): the next process restarts only at the 60% bound
+    const int MinRestartItems = 1000;
     IWarmProcess _p = null!;
     readonly IWarmHost _host;
     readonly object _lock = new();
@@ -502,7 +517,9 @@ sealed class WarmRun : IWarmRun
         var (pass, from) = passes?.Locate(o.StartAt) ?? (0, o.StartAt);
         var rt = 0;   // the ray tracing threads of the last process
         IReadOnlyList<long> isolated = [];   // the items it created alone first
-        var memoryRestarts = 0;
+        var hardOnly = false;   // the next process restarts for memory only at the 60% bound
+        bool one = false, single = false;   // the next process runs one thread, the last one ran one
+        long completed = 0;
         // the proxy's per-item limit: hung items that compile alone were slow on many threads (Phantom Blade Zero on NVIDIA)
         var stuckS = int.TryParse(System.Environment.GetEnvironmentVariable(StuckVariable), out var s0) && s0 > 0 ? s0 : 60;
         long Whole(long done) => passes?.Overall(pass, done) ?? done;
@@ -510,12 +527,13 @@ sealed class WarmRun : IWarmRun
         {
             (from, rt, isolated) = (start, rtThreads, isolate);
             _retried = false;
-            var threads = passes != null && !passes.IsFast(pass) && o.CarefulThreads > 0 ? o.CarefulThreads : o.Threads;
+            var threads = one ? 1 : passes != null && !passes.IsFast(pass) && o.CarefulThreads > 0 ? o.CarefulThreads : o.Threads;
+            (single, one) = (threads == 1, false);
             List<string> args = [host.WarmPath(workDir), Path.GetFileName(game.ExePath), "--threads", threads.ToString(),
                 "--priority", o.Priority == WarmPriority.Idle ? "idle" : "below", "--start", start.ToString(),
                 .. host.StopArgs, .. host.AdapterArgs(gpu)];
             if (o.MemoryMB > 0) { args.Add("--memory-mb"); args.Add(o.MemoryMB.ToString()); }
-            if (o.MemoryMB > 0 && !o.Vulkan && memoryRestarts < MaxMemoryRestarts) { args.Add("--memory-restart"); args.Add("1"); }   // the D3D12 proxy's, the Linux Vulkan warmer takes no such option
+            if (o.MemoryMB > 0 && !o.Vulkan) { args.Add("--memory-restart"); args.Add(hardOnly ? "2" : "1"); }   // the D3D12 proxy's, the Linux Vulkan warmer takes no such option
             if (rtThreads > 0) { args.Add("--rt-threads"); args.Add(rtThreads.ToString()); }
             if (skip.Count > 0) { args.Add("--skip"); args.Add(string.Join(',', skip)); }
             if (stagePath != null) { args.Add("--stage-path"); args.Add(stagePath); }
@@ -540,7 +558,7 @@ sealed class WarmRun : IWarmRun
             if (passes != null) { args.Add("--pass"); args.Add(passes.Number(pass).ToString()); }
             var all = new Dictionary<string, string>(env ?? new Dictionary<string, string>()) { [StuckVariable] = stuckS.ToString() };
             return host.Start(exe, args, all,
-                l => { stderr.Enqueue(l); log?.Report($"{game.Name}: compile: {l}"); });
+                l => { stderr.Enqueue(l); while (stderr.Count > 200) stderr.TryDequeue(out _); log?.Report($"{game.Name}: compile: {l}"); });   // the tail only: restarts may be many
         }
         _p = Launch(from, 0, [], []);
         Completion = Task.Run(async () =>
@@ -597,9 +615,10 @@ sealed class WarmRun : IWarmRun
                 var report = progress == null ? null : new Adjusted(progress, carried, carriedSkips, note, noteTill, passNote, passes?.Total);
                 var lastPass = passes == null || pass == passes.Count - 1;
                 stage = null;   // this process's, never an earlier one's
+                completed = from;
                 (last, done, error) = await WarmOutput.Pump(_p.Output, report, Growth, ReportEvery,
                     () => { if (lastPass || _stopping) _doneSeen.TrySetResult(); }, Whole, s => stage = host.HostPath(s), _p.Exited, OutputHeldAfter,
-                    o.Vulkan ? TimeSpan.Zero : StalledAfter, () => _paused || _stopping, () => Volatile.Read(ref _resumed), c => culprits.UnionWith(c), () => _retried = true);
+                    o.Vulkan ? TimeSpan.Zero : StalledAfter, () => _paused || _stopping, () => Volatile.Read(ref _resumed), c => culprits.UnionWith(c), () => _retried = true, d => completed = d);
                 if (error == Warmer.StalledError)
                 {
                     _ended = error;
@@ -609,13 +628,14 @@ sealed class WarmRun : IWarmRun
                 code = await _p.Exited;
                 var end = await host.AfterProcess(n => progress?.Report(new WarmProgress(Whole(last?.Done ?? from), passes?.Total ?? total,
                     carried + (last?.Failed ?? 0), 0, Growth(), Note: n, DriverSkipped: carriedSkips + (last?.DriverSkipped ?? 0), Invalid: last?.Invalid ?? 0,
-                    Unsupported: last?.Unsupported ?? 0)));
+                    Unsupported: last?.Unsupported ?? 0, Unbuilt: Math.Min(last?.Unbuilt ?? 0, last?.Failed ?? 0))));
                 added.UnionWith(end.Added);
                 lastCarried = false;
                 crashed.UnionWith(done?.Crashed ?? []);
                 if (done is { Event: "retry", Reason: "died" })
                 {
-                    unnamed = true;
+                    // the warm keeps a dead child's item states (warm.cpp): what it failed or skipped below the retry is named from them
+                    unnamed |= !NameNotCreated(workDir, Finished(stage, from), log, game.Name);
                     diedAlone.AddRange(done.Skip ?? []);
                 }
                 cached += last?.Cached ?? 0;
@@ -687,7 +707,9 @@ sealed class WarmRun : IWarmRun
                 var removed = r.Reason is "removed" or "fault" or "died";
                 var hung = r.Reason == "hang";
                 var freed = r.Reason == "memory";
-                if (freed) n--;   // not a recovery: MaxMemoryRestarts bounds these, the recovery guards below count the others
+                // a memory restart whose process moved nothing: the items then in flight go first, each alone
+                var aloneFirst = freed && r.From == from && r.Isolate is { Count: > 0 };
+                if (freed) n--;   // bounded by removals, the one-thread process and its skip: never by the process count, whatever the game's size
                 if (removed) crashers += fresh;
                 var rtThreads = r.RtThreads;
                 if (r.FailedItem >= 0 && ++knownSkips > MaxKnownSkips) rtThreads = Math.Max(1, rtThreads / 4);
@@ -695,27 +717,38 @@ sealed class WarmRun : IWarmRun
                 {
                     // an item that died alone is skipped for this run only: no key, yet progress all the same
                     if (removed || hung) removals = skipKeys.Count > blamed || r.Culprits is { Count: > 0 } || r.Reason == "died" && r.Skip is { Count: > 0 } ? 0 : removals + 1;
+                    else if (freed) removals = aloneFirst || r.From == from ? removals + 1 : 0;   // progress ends the run of them, none bounds it
+                    // too many in a row: the next process runs one thread, and the item that one still makes no progress on is skipped
+                    // for this run, which is progress (in the D3D11 phase its batch, as the D3D11 phase resumes at one)
+                    var stuck = freed && removals > maxRecoveries && single && r.From == from && !skip.Contains(r.From);
+                    if (stuck) { skip.Add(r.From); removals = 0; }
+                    one = freed && removals > maxRecoveries && !single;
                     // an item that crashes the driver costs at most two processes: the removal, then the one that blames it alone
                     var storm = removed && crashers >= crashFloor && crashers * Warmer.CrashShare > passed;
-                    if (_stopping || n > 2 * r.Total + maxRecoveries || removals > maxRecoveries || !created && n > maxRecoveries || storm)
+                    if (_stopping || n > 2 * r.Total + maxRecoveries || removals > maxRecoveries && !one || !created && n > maxRecoveries || storm)
                     {
                         error = _stopping ? null
                             : storm ? Warmer.CrashStormError
                             : removed ? Warmer.CrashedError(crashed.Count)
                             : hung ? Warmer.HungError
+                            : freed ? Warmer.MemoryError
                             : Warmer.FaultingError;
                         resumable = !_stopping;
                         break;
                     }
                     if (freed)
                     {
-                        memoryRestarts++;
+                        // what the process completed (its last progress, the retry event's Done is From): an unfinished item early on holds the resume point back
+                        // one that resumes where it started with nothing in flight to create alone would only restart there again
+                        hardOnly = r.From == from && !aloneFirst || Math.Max(completed, r.From) - from < MinRestartItems;
                         log?.Report($"{game.Name}: compile: restarted to free memory (private memory {r.PrivateMB:N0} MB, {r.FreeMB:N0} MB of RAM free), going on from item {Whole(r.From):N0}"
-                            + (memoryRestarts == MaxMemoryRestarts ? $", the last of {MaxMemoryRestarts} restarts this compile may make" : ""));
+                            + (stuck ? $", item {Whole(r.From):N0} skipped for this compile: it made no progress on one thread either" : one ? ", the next process on one thread" : "")
+                            + (aloneFirst ? $", the {r.Isolate!.Count:N0} pipelines in flight first, each alone" : "")
+                            + (hardOnly && System.Environment.GetEnvironmentVariable("SCSKILLER_TEST_WARM_MEM_RESTART_AT") == null ? ", the next restart only at 60% of RAM" : ""));   // the hook restarts whatever the bound (proxy.cpp)
                     }
-                    note = removed ? "recovering from a GPU driver crash" + (crashed.Count > 0 ? $", {crashed.Count:N0} skipped so far" : "")
+                    note = removed ? (r.Reason == "died" ? "continuing after the compile process stopped" : "recovering from a GPU driver crash") + (crashed.Count > 0 ? $", {crashed.Count:N0} skipped so far" : "")
                         : hung ? "retrying the pipelines that hung the GPU driver, each alone"
-                        : freed ? "restarted to free memory"
+                        : freed ? one ? "restarted to free memory, going on with one thread" : aloneFirst ? "restarted to free memory, creating the pipelines in flight each alone" : "restarted to free memory"
                         : r.FailedItem >= 0 ? $"skipping a ray tracing state object that crashed ({rtThreads} {(rtThreads == 1 ? "thread" : "threads")})"
                         : $"retrying ray tracing with fewer threads ({rtThreads})";
                     if (hung && isolated.Count > 0 && freshKeys == 0 && r.Culprits is not { Count: > 0 } && stuckS < MaxStuckS)
@@ -725,7 +758,7 @@ sealed class WarmRun : IWarmRun
                     }
                     noteTill = removed || hung || freed ? Whole(r.From) : long.MaxValue;
                     progress?.Report(new WarmProgress(Whole(r.Done), passes?.Total ?? r.Total, carried, 0, Growth(), Note: note, DriverSkipped: carriedSkips));
-                    _p = Launch(r.From, rtThreads, skip, removed || hung ? r.Isolate ?? [] : []);
+                    _p = Launch(r.From, rtThreads, skip, removed || hung || aloneFirst ? r.Isolate ?? [] : []);
                 }
             }
             host.Dispose();
@@ -743,38 +776,50 @@ sealed class WarmRun : IWarmRun
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { log?.Report($"{game.Name}: the pipelines its compile died on alone can't be named ({e.Message}): they aren't remembered"); }
             }
             var reached = last?.Done ?? from;
-            if (_ended != null)
+            // a process that died, exited without a done or reported an error ends the warm as an ended one does: what the earlier
+            // processes finished stays done
+            var unclean = outcome == WarmOutcome.Failed && !resumable;   // its failed-keys file, written at the end, may be missing too
+            long? diedAt = null;   // the ended process's first unfinished item, by its own item states
+            if (_ended != null || unclean)
             {
-                (outcome, error, resumable) = (WarmOutcome.Failed, _ended, true);
+                (outcome, error, resumable) = (WarmOutcome.Failed, _ended ?? error, true);
+                var finished = o.Vulkan ? null : Finished(stage, from);
+                if (!NameNotCreated(workDir, finished, log, game.Name)) finished = null;   // unnamed: what it created can't be told from what it didn't
+                if (finished is { } fin && fin.From < fin.End) diedAt = Whole(fin.From);   // past the D3D12 items the states don't say which one
                 // NVIDIA from 621 keeps what it created in the staged D3DSCache dbs, which outlive the kill and whose fold checks
-                // them: the ended process's items below its first unfinished one stay done. Elsewhere the driver writes its cache
-                // at exit, so the next compile goes on from where that process started.
-                var (at, f, s) = !o.D3DSCacheNoFlush || o.Vulkan ? (from, lastCarried ? -(done?.Failed ?? 0) : 0, lastCarried ? -(done?.DriverSkipped ?? 0) : 0)
+                // them, AMD's D3D12 driver writes its DxcCache as it creates and reads what a killed process wrote, and the Linux
+                // drivers append each pipeline to their caches as it's created (a write queue may lose the last few): the ended
+                // process's items below its first unfinished one stay done. Elsewhere the driver writes its cache at exit, so the
+                // next compile goes on from where that process started.
+                var (at, f, s) = !o.D3DSCacheNoFlush && !OperatingSystem.IsLinux() && vendor.Vendor != GpuVendor.Amd || o.Vulkan ? (from, lastCarried ? -(done?.Failed ?? 0) : 0, lastCarried ? -(done?.DriverSkipped ?? 0) : 0)
                     : done switch
                     {
                         { Event: "done" } d => (d.Done, d.Failed, d.DriverSkipped),
                         { Event: "retry" } r => lastCarried ? (r.From, 0, 0) : (r.From, r.Failed, r.DriverSkipped),
-                        _ => Finished(stage, from) ?? (from, 0, 0),
+                        _ => finished is { } x ? (x.From, x.Failed, x.Skipped) : (from, 0, 0),
                     };
                 (reached, failed, skips) = (at, carried + f, carriedSkips + s);
             }
             if (outcome == WarmOutcome.Failed)
             {
-                var tail = stderr.IsEmpty ? "" : ": " + string.Join(" | ", stderr.TakeLast(3));
-                error ??= code == null ? Warmer.DiedError + tail : code != 0 ? $"scskiller_warm exited with code {code}{tail}" : Warmer.NoDoneError;
+                var shown = stderr.Where(l => !l.StartsWith(Warmer.EnvPrefix, StringComparison.Ordinal) && !Warmer.DxvkDeviceLine(l)).TakeLast(3).ToList();
+                var tail = shown.Count == 0 ? "" : ": " + string.Join(" | ", shown);
+                error ??= code == null ? Warmer.DiedError + tail : code != 0 ? $"{Warmer.ExitedError}{code}{tail}" : Warmer.NoDoneError;
             }
             return new WarmResult(outcome, Whole(reached), passes?.Total ?? total, failed, clock.Elapsed, growth,
-                Path.Combine(stage ?? Path.Combine(workDir, "stage"), "scskiller.log"), outcome == WarmOutcome.Failed ? error : null,
+                Path.Combine(stage ?? Path.Combine(workDir, "stage"), "scskiller.log"), outcome == WarmOutcome.Failed ? _host.Explain(error) : null,
                 Crashed: crashed.Count > 0 ? crashed : null, DriverSkipped: skips, Resumable: resumable && outcome == WarmOutcome.Failed,
                 AftermathDropped: dropped, CacheKeysAdded: added.Count > 0 ? added : null, Full: outcome == WarmOutcome.Completed ? full : null,
                 Invalid: last?.Invalid ?? 0, Unsupported: last?.Unsupported ?? 0, D3DSCacheNoFlush: done is { Event: "done", NoFlush: true }, Cached: cached,
-                Known: Math.Min(known, skips), Culprits: culprits.Count > 0 ? culprits : null, Unnamed: unnamed || _ended != null);   // each Linux Vulkan process replays the whole archive: the last one's count is the run's
+                Known: Math.Min(known, skips), Culprits: culprits.Count > 0 ? culprits : null, Unnamed: unnamed || _ended != null || unclean, Unclean: (unclean && _ended == null || _ended == Warmer.StalledError) && !_stopping, DiedAt: diedAt, DiedUnnamed: unnamed,   // each Linux Vulkan process replays the whole archive: the last one's count is the run's
+                Stderr: outcome == WarmOutcome.Failed && !stderr.IsEmpty ? [.. stderr.TakeLast(20)] : null);
         }
     }
 
     /// <summary>The first unfinished item of a process started at <paramref name="start"/>, with the failures and skips below it,
-    /// from the item states it left under its staging folder (proxy/warm_items.h); null when there are none to go by.</summary>
-    internal static (long From, long Failed, long Skipped)? Finished(string? stage, long start)
+    /// from the item states it left under its staging folder (proxy/warm_items.h), the end of its D3D12 items, the items below the
+    /// first unfinished one it failed or skipped, and the folder of the states; null when there are none to go by.</summary>
+    internal static (long From, long Failed, long Skipped, long End, List<long> NotCreated, string Dir)? Finished(string? stage, long start)
     {
         const int header = 40;   // magic, pid, first, n12, total
         try
@@ -791,12 +836,36 @@ sealed class WarmRun : IWarmRun
                 var (magic, first, n12) = (v.ReadUInt64(0), v.ReadInt64(16), v.ReadInt64(24));
                 if (magic != 0x31534D4554494B53 || first != start || n12 < first || file.Length != header + n12) continue;
                 long from = first, failed = 0, skipped = 0;
-                for (byte s; from < n12 && (s = v.ReadByte(header + from)) is 1 or 2 or 5; from++) (failed, skipped) = (failed + (s == 2 ? 1 : 0), skipped + (s == 5 ? 1 : 0));
-                return (from, failed, skipped);
+                var notCreated = new List<long>();
+                for (byte s; from < n12 && (s = v.ReadByte(header + from)) is 1 or 2 or 5; from++)
+                {
+                    (failed, skipped) = (failed + (s == 2 ? 1 : 0), skipped + (s == 5 ? 1 : 0));
+                    if (s != 1) notCreated.Add(from);
+                }
+                return (from, failed, skipped, n12, notCreated, Path.GetDirectoryName(path)!);
             }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return null;
+    }
+
+    /// <summary>An ended process writes no failed-keys file: one from its item states, as the proxy writes at its end (what it
+    /// failed or skipped below its first unfinished item), so a resumed compile's record counts its created items and no others.</summary>
+    static bool NameNotCreated(string workDir, (long From, long Failed, long Skipped, long End, List<long> NotCreated, string Dir)? finished, IProgress<string>? log, string game)
+    {
+        if (finished is not { } fin) return false;
+        var file = Path.Combine(fin.Dir, App.Recordings.FailedFile);
+        try
+        {
+            // added to a file the process may have been writing when it ended: the keys are a set
+            File.AppendAllBytes(file, [.. WarmPasses.KeysOf(workDir, fin.NotCreated).SelectMany(Convert.FromHexString)]);
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            log?.Report($"{game}: what the ended compile process didn't create can't be named ({e.Message}): the next compile goes on from where it started");
+            return false;
+        }
     }
 
     /// <summary>A later process's progress, as the whole warm's: its failures and skips plus the earlier ones', with the retry
@@ -856,6 +925,7 @@ sealed class WarmRun : IWarmRun
 public static class WarmOutput
 {
     static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(10);
+    static readonly TimeSpan StallConfirm = TimeSpan.FromSeconds(60);   // a healthy warm moves within it after the PC wakes or the process resumes
 
     /// <summary>The reader only parses lines and keeps the latest progress; another loop reports it every
     /// <paramref name="every"/> (and every 10 s unchanged, so a silent warm still shows as stalled). A slow listener then
@@ -875,7 +945,7 @@ public static class WarmOutput
     public static async Task<(WarmEvent? Last, WarmEvent? Done, string? Error)> Pump(TextReader stdout, IProgress<WarmProgress>? progress,
         Func<long> cacheGrowth, TimeSpan every, Action? onDone = null, Func<long, long>? whole = null, Action<string>? onStage = null,
         Task? exited = null, TimeSpan held = default, TimeSpan stalled = default, Func<bool>? paused = null, Func<long>? resumed = null,
-        Action<IReadOnlyList<string>>? onCulprits = null, Action? onRetry = null)
+        Action<IReadOnlyList<string>>? onCulprits = null, Action? onRetry = null, Action<long>? onProgress = null)
     {
         whole ??= d => d;
         WarmEvent? last = null, done = null, latest = null;
@@ -903,7 +973,7 @@ public static class WarmOutput
                 else if (e.Event is "done" or "retry" or "stopping" or "error") Volatile.Write(ref moved, 0);
                 else if (e.Event == "progress" && counts != (counts = (e.Done, e.Failed, e.Work)) && Volatile.Read(ref moved) != 0) Volatile.Write(ref moved, Stopwatch.GetTimestamp());
                 if (e.Event is "start" or "progress" or "done" or "retry") last = e;
-                if (e.Event is "progress" or "done") Volatile.Write(ref latest, e);
+                if (e.Event is "progress" or "done") { Volatile.Write(ref latest, e); onProgress?.Invoke(e.Done); }
             }
         });
         var clock = Stopwatch.StartNew();
@@ -917,10 +987,11 @@ public static class WarmOutput
             rate.Add(clock.Elapsed, d);
             if (progress == null || (e == reported && !final && since.Elapsed < KeepAlive)) return;
             (reported, since) = (e, Stopwatch.StartNew());
-            progress.Report(new WarmProgress(d, e.Total, e.Failed, rate.PerSecond ?? e.Rate, cacheGrowth(), Workers: e.Workers, Threads: e.Threads, DriverSkipped: e.DriverSkipped,
+            progress.Report(new WarmProgress(d, e.Total, e.Failed, rate.PerSecond ?? e.Rate, cacheGrowth(), Workers: e.Workers, Threads: e.Threads, DriverSkipped: e.DriverSkipped, Unbuilt: Math.Min(e.Unbuilt, e.Failed),
                 Invalid: e.Invalid, Unsupported: e.Unsupported));
         }
         long? gone = null;   // when the process was seen exited with its stdout still open
+        long? stalledSince = null;   // the first turn that found the counts stalled, since they last moved
         while (await Task.WhenAny(reader, Task.Delay(every)) != reader)
         {
             Report(false);
@@ -928,7 +999,10 @@ public static class WarmOutput
             {
                 // a paused run (suspended, or stopping: Stop bounds that itself) isn't stalled, and a resume starts the wait again
                 bool Stalled() => paused?.Invoke() != true && Stopwatch.GetElapsedTime(Math.Max(at, resumed?.Invoke() ?? 0)) >= stalled;
-                if (Stalled())
+                // the turn that first finds it stalled may be the first after the PC woke (Stopwatch may count the sleep): the warm then
+                // has StallConfirm to move again before it is ended
+                if (!Stalled()) stalledSince = null;
+                else if (Stopwatch.GetElapsedTime(stalledSince ??= Stopwatch.GetTimestamp()) >= StallConfirm)
                 {
                     (WarmEvent? Last, WarmEvent? Done, string? Error) given = default;
                     lock (gate)

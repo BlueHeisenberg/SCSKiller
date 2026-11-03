@@ -25,18 +25,33 @@ public sealed partial class ScsKiller
     /// in Steam's own cache folder for it (<see cref="MesaLinux.SteamFolder"/>), which Steam's environment points the driver at.
     /// A Vulkan game's is what the native replayer wrote, on NVIDIA under the same app name and folder as a D3D12 warm's
     /// (<see cref="ProtonWarmHost"/>), on Mesa in the game's own file (<see cref="MesaLinux.Caps"/>). Its data folder, the
-    /// warm's app name, that folder and the app id; null for any other game.</summary>
+    /// warm's app name, that folder and the app id; null for any other game. A launcher's game (<see cref="LauncherPlaced"/>):
+    /// no Steam folder ("") and app 0.</summary>
     (string GameDir, string AppName, string SteamDir, uint App)? SteamPlaceScope(GameState s)
     {
         if (Vendor.Caps.Profile is not (NvidiaLinux.Profile or MesaLinux.Profile) || Vendor is UnsupportedVendor || s.Status == GameStatus.Unsupported
-            || !(s.Game.ExePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || PlaceNativeVulkan && VulkanRoute(s.Game, s.Engine))
-            || MesaLinux.SteamFolder(s.Game, PlaceSteamRoot) is not var (apps, app))
+            || !(s.Game.ExePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || PlaceNativeVulkan && VulkanRoute(s.Game, s.Engine)))
             return null;
-        return (Store.GameDir(s.Game.Id), Wine.WarmAppName(Path.GetFileName(s.Game.ExePath)), Path.Combine(apps, "shadercache", app.ToString(CultureInfo.InvariantCulture)), app);
+        var (gameDir, appName) = (Store.GameDir(s.Game.Id), Wine.WarmAppName(Path.GetFileName(s.Game.ExePath)));
+        if (MesaLinux.SteamFolder(s.Game, PlaceSteamRoot) is var (apps, app))
+            return (gameDir, appName, Path.Combine(apps, "shadercache", app.ToString(CultureInfo.InvariantCulture)), app);
+        return LauncherPlaced(s) ? (gameDir, appName, "", 0) : null;
     }
 
+    /// <summary>A Windows game of Heroic, Lutris or Faugus on NVIDIA's driver, outside a Flatpak: its compile goes only into the
+    /// game's own file in the driver's default folder, once the game was seen reading it (<see cref="LearnWhere"/>), never
+    /// into a Steam folder, and vkd3d-proton's cache isn't placed.</summary>
+    bool LauncherPlaced(GameState s) =>
+        Vendor.Caps.Profile == NvidiaLinux.Profile && !VulkanRoute(s.Game, s.Engine) && s.Game.ExePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+        && LauncherPrefix.Is(s.Game) && LauncherPrefix.Of(s.Game, out _) is { CacheHome: null };
+
+    /// <summary>A launcher's game on NVIDIA's driver in a Flatpak: the sandbox's paths aren't the host's, so its compile stays
+    /// in the game's own folder.</summary>
+    bool LauncherFlatpak(GameState s) =>
+        Vendor.Caps.Profile == NvidiaLinux.Profile && LauncherPrefix.Is(s.Game) && LauncherPrefix.Of(s.Game, out _) is { CacheHome: not null };
+
     /// <summary>A native Linux game on the Vulkan route gets its cache in Steam's folder too, taking Steam's environment for
-    /// it to be the one Steam gives a game under Proton; false: it keeps the launch line (<see cref="LaunchLineOf"/>).</summary>
+    /// it to be the one Steam gives a game under Proton.</summary>
     const bool PlaceNativeVulkan = true;
 
     string PlaceSteamRoot => (_warmer as Warmer)?.SteamRoot ?? SteamSource.Root();
@@ -56,8 +71,9 @@ public sealed partial class ScsKiller
             .Select(p => $"{p[1]}/{p[2]}").Distinct().Order(StringComparer.Ordinal).FirstOrDefault();
         var vkd3d = Path.Combine(Wine.CacheRoot(gameDir, make: false), "vkd3d");
         var vulkan = VulkanRoute(s.Game, s.Engine);   // its pipelines reach the driver without vkd3d-proton
+        var launcher = steamDir.Length == 0;
         string? off = null;
-        var work = vulkan ? null : WorkingFolder(s.Game, root, app, gameDir, out off);
+        var work = vulkan || launcher ? null : WorkingFolder(s.Game, root, app, gameDir, out off);
         bool tell;
         lock (_placeLock)
         {
@@ -68,13 +84,15 @@ public sealed partial class ScsKiller
         if (tell) Log?.Report($"{s.Game.Name}: {off}");
         bool otherDriver, background;
         lock (_lock) (otherDriver, background) = (_driverStale.GetValueOrDefault(s.Game.Id), Background || _whenIdle.Contains(s.Game.Id));
-        var sandbox = SteamSource.SandboxHome(root);
+        var sandbox = launcher ? null : SteamSource.SandboxHome(root);
         var where = sandbox != null ? null : WhereOf(s.Game.Id);   // what a sandbox's processes show isn't taken (LearnWhere)
-        var outside = OutsideOf(where);
+        // a launcher's set the game was seen reading stays the target with no room left: the all-or-none placement then
+        // takes an earlier one's entries out (NotGiven), as a removal does
+        var outside = OutsideOf(where, anyRoom: launcher);
         return new SteamCachePlace(gameDir, appName, steamDir)
         {
             SandboxHome = sandbox,
-            Targets = outside is var (_, _, t) ? [t] : !remove && Unplaceable(where) != null ? [] : PlaceTargets,
+            Targets = outside is var (_, _, t) ? [t] : launcher || !remove && Unplaceable(where) != null ? [] : PlaceTargets,
             NvidiaRoot = outside?.Root ?? Path.Combine(steamDir, "nvidiav1"),
             Outside = outside != null,
             ReadLeaf = outside?.Leaf,
@@ -82,9 +100,9 @@ public sealed partial class ScsKiller
             Leaf = leaf,
             Priority = background ? WarmPriority.Idle : Settings.Priority,
             WarmForOtherDriver = otherDriver,
-            SteamConfig = outside != null ? null : Path.Combine(root, "config", "config.vdf"),
+            SteamConfig = outside != null || launcher ? null : Path.Combine(root, "config", "config.vdf"),
             // vkd3d-proton names its files in a folder of VKD3D_SHADER_CACHE_PATH after the exe, as Windows spells it
-            Vkd3dSource = !vulkan && Directory.Exists(vkd3d) ? new DirectoryInfo(vkd3d).EnumerateFiles("vkd3d-proton.*")
+            Vkd3dSource = !vulkan && !launcher && Directory.Exists(vkd3d) ? new DirectoryInfo(vkd3d).EnumerateFiles("vkd3d-proton.*")
                 .Select(f => f.Name.EndsWith(".write", StringComparison.Ordinal) ? f.FullName[..^".write".Length] : f.FullName)
                 .FirstOrDefault(f => Path.GetFileName(f).Equals($"vkd3d-proton.{exe}.cache", StringComparison.OrdinalIgnoreCase)) : null,
             Vkd3dDir = work?.Dir,
@@ -110,27 +128,84 @@ public sealed partial class ScsKiller
     /// in its data folder and logged when it changes. A process that doesn't tell yet leaves what was seen before.</summary>
     void LearnWhere(GameState s)
     {
+        if (SteamPlaceScope(s) is not var (gameDir, _, steamDir, app)) return;
+        var launcher = steamDir.Length == 0;
         // a Flatpak Steam's game says what its sandbox wants: its cache goes in Steam's folder alone
-        if (SteamPlaceScope(s) is not var (gameDir, _, steamDir, app) || SteamSource.SandboxHome(PlaceSteamRoot) != null) return;
+        if (!launcher && SteamSource.SandboxHome(PlaceSteamRoot) != null) return;
         var exe = Path.GetFileName(s.Game.ExePath);
         var mesa = MesaLinux.Is(Vendor.Caps);
         var id = app.ToString(CultureInfo.InvariantCulture);
         var shortcut = SteamShortcuts.Is(s.Game.Id);
+        var gameId = shortcut ? SteamShortcuts.GameId(app).ToString(CultureInfo.InvariantCulture) : id;
+        HashSet<string> prefixes = launcher && LauncherPrefix.Of(s.Game, out _) is { } lp ? PrefixPaths(lp)
+            : shortcut && ProtonContext.ShortcutData(PlaceSteamRoot, app) is var data ? [.. new[] { data, Path.Combine(data, "pfx") }.Select(Libc.RealPath).OfType<string>()] : [];
         GameCacheWhere? seen = null;
         foreach (var p in AppCacheFiles.Processes().Where(p => p.Exe.Equals(exe, StringComparison.OrdinalIgnoreCase)))
-            // Steam gives every launch its app id: another game's exe of the same name isn't this one
-            if (ProcessTree.StartEnvironment(p.Pid) is { } env && (shortcut || env.GetValueOrDefault("SteamAppId") == id || env.GetValueOrDefault("SteamGameId") == id)
-                && (mesa ? GameCacheWhere.Mesa(env, steamDir, Libc.RealPath) : GameCacheWhere.Nvidia(env, ProcessTree.OpenPaths(p.Pid), Path.Combine(steamDir, "nvidiav1"), Libc.RealPath)) is { } where)
+            // Steam gives every launch its app id, a shortcut's its 64-bit game id or prefix, a launcher its prefix: another game's exe of the same name isn't this one
+            if (ProcessTree.StartEnvironment(p.Pid) is { } env
+                && (launcher ? InPrefix(env, prefixes)
+                    : env.GetValueOrDefault("SteamGameId") == gameId || (shortcut ? InPrefix(env, prefixes) : env.GetValueOrDefault("SteamAppId") == id))
+                && (mesa ? GameCacheWhere.Mesa(env, steamDir, Libc.RealPath)
+                    : GameCacheWhere.Nvidia(env, ProcessTree.OpenPaths(p.Pid), launcher ? "" : Path.Combine(steamDir, "nvidiav1"), Libc.RealPath)) is { } where)
             {
-                seen = where;
-                if (where.Off == null) break;
+                seen = launcher ? Shared(where, env) : where with { OwnProcess = shortcut };
+                if (seen.Off == null) break;
             }
-        if (seen == null || seen == WhereOf(s.Game.Id)) return;
+        // a foreign record stays until what was placed by it is out (ForgetForeignWhere)
+        if (seen == null || seen == WhereOf(s.Game.Id) || ForeignWhere(s.Game.Id)) return;
         try { seen.Save(gameDir); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{s.Game.Name}: keeping where its cache is read: {e.Message}"); }
         lock (_placeLock) _where[s.Game.Id] = seen;
         Log?.Report($"{s.Game.Name}: " + (seen.Steam ? "the game reads Steam's shader cache folder"
             : seen.Set is { } set ? $"the game reads its shader cache from {set} (no Steam variables), up to {Format.Bytes(seen.Size)}" : $"the game's shader cache can't be reached: {seen.Off}"));
+    }
+
+    /// <summary>A launcher game's set as the placer may take it: only in the driver's default folder of the game's environment
+    /// ($XDG_CACHE_HOME/nvidia, else ~/.cache/nvidia), never one its variables move elsewhere, and under the default cap with
+    /// the folder's other files counted whatever the game sets: a program run without a size deletes the oldest sets of a
+    /// folder past it.</summary>
+    internal static GameCacheWhere Shared(GameCacheWhere where, IReadOnlyDictionary<string, string> env)
+    {
+        if (where.Set is not { } set) return where;
+        var cache = env.GetValueOrDefault("XDG_CACHE_HOME") is { } x && Path.IsPathFullyQualified(x) ? x
+            : env.GetValueOrDefault("HOME") is { } h && Path.IsPathFullyQualified(h) ? Path.Combine(h, ".cache") : null;
+        return env.ContainsKey("__GL_SHADER_DISK_CACHE_PATH") || cache == null || Libc.RealPath(Path.Combine(cache, "nvidia", "GLCache")) is not { } root
+            || !set.StartsWith(root + "/", StringComparison.Ordinal)
+            ? new(Off: GameCacheWhere.NvidiaElsewhere)
+            : where with { Size = Math.Min(where.Size, GameCacheWhere.NvidiaDefaultSize), SkipCleanup = false, Shared = true };
+    }
+
+    /// <summary>The launcher's prefix folder and its Wine prefix, links resolved: Proton's script and umu take the first as
+    /// STEAM_COMPAT_DATA_PATH and give Wine the second (a link to the first under umu), a Wine build takes the first.</summary>
+    internal static HashSet<string> PrefixPaths(LauncherPrefix p) => [.. new[] { p.Prefix, p.WineDir }.Select(Libc.RealPath).OfType<string>()];
+
+    /// <summary>A process started in one of <paramref name="prefixes"/> (<see cref="PrefixPaths"/>): its WINEPREFIX or
+    /// STEAM_COMPAT_DATA_PATH resolves to one.</summary>
+    internal static bool InPrefix(IReadOnlyDictionary<string, string> env, IReadOnlySet<string> prefixes) =>
+        new[] { "WINEPREFIX", "STEAM_COMPAT_DATA_PATH" }.Any(n => env.GetValueOrDefault(n) is { Length: > 0 } v && Libc.RealPath(v) is { } real && prefixes.Contains(real));
+
+    /// <summary>A non-Steam game's record of where its cache is read that wasn't seen in its own process
+    /// (<see cref="GameCacheWhere.OwnProcess"/>): it may be another game's of the same exe name.</summary>
+    bool ForeignWhere(string gameId) => SteamShortcuts.Is(gameId) && WhereOf(gameId) is { Steam: false, OwnProcess: false };
+
+    /// <summary>Forgets a <see cref="ForeignWhere"/> record, to be learned again at the game's next launch, once what was placed
+    /// by it is taken out (the removal's all-or-none, SCSKiller's entries alone). False while that can't be done yet; null for
+    /// no such record. Under the game's compile lock.</summary>
+    bool? ForgetForeignWhere(GameState s, CancellationToken ct)
+    {
+        if (!ForeignWhere(s.Game.Id)) return null;
+        var where = WhereOf(s.Game.Id)!;
+        if (where.Set != null && (SteamPlacer(s, remove: true) is not { } placer || LowIo(() => placer.Remove(ct)).State is not (SteamPlaceState.Removed or SteamPlaceState.Nothing)))
+            return false;
+        try { File.Delete(GameCacheWhere.FileOf(Store.GameDir(s.Game.Id))); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log?.Report($"{s.Game.Name}: keeping where its cache is read: {e.Message}");
+            return false;
+        }
+        lock (_placeLock) _where[s.Game.Id] = null;
+        Log?.Report($"{s.Game.Name}: forgot where its shader cache is read ({where.Set ?? where.Off}): it may have been another game's process of the same exe name. It's learned again at the game's next launch");
+        return true;
     }
 
     /// <summary>Why the compile can't go where the game reads: <see cref="GameCacheWhere.Off"/>, or no room under its cache
@@ -144,28 +219,34 @@ public sealed partial class ScsKiller
 
     /// <summary>The driver's folder outside Steam's whose GLCache the game reads, its "&lt;driver&gt;/&lt;gpu&gt;" folder and the
     /// game's own file there as a target: the game's entries kept first, the warm's after them; null for none or no room.</summary>
-    static (string Root, string Leaf, SteamTarget Target)? OutsideOf(GameCacheWhere? where)
+    static (string Root, string Leaf, SteamTarget Target)? OutsideOf(GameCacheWhere? where, bool anyRoom = false)
     {
-        if (where is not { Set: { } set } || Unplaceable(where) != null) return null;
+        if (where is not { Set: { } set } || !anyRoom && Unplaceable(where) != null) return null;
         var gpu = Path.GetDirectoryName(set)!;
         var driver = Path.GetDirectoryName(gpu)!;
         return (Path.GetDirectoryName(Path.GetDirectoryName(driver))!, $"{Path.GetFileName(driver)}/{Path.GetFileName(gpu)}",
-            new(Path.GetFileName(set), OutsideLimit(where), SteamFirst: true));
+            new(Path.GetFileName(set), anyRoom ? Math.Max(OutsideLimit(where), GlCacheFile.HeaderSize + 1) : OutsideLimit(where), SteamFirst: true));
     }
 
     /// <summary>What the game's own file may hold: under what its .toc indexes and its cache size, the folder's other files
-    /// counted unless the driver skips its cleanup, less what one session of the game adds (<see cref="NvidiaLinux.SlotHeadroom"/>).</summary>
+    /// counted unless the driver skips its cleanup, less what one session of the game adds: in a launcher game's shared default
+    /// folder <see cref="GameCacheWhere.Headroom"/>, else <see cref="NvidiaLinux.SlotHeadroom"/>, which keeps a Steam game's
+    /// file, often under a larger cap, within what its .toc indexes.</summary>
     static long OutsideLimit(GameCacheWhere where)
     {
-        long others = 0;
+        long others = 0, target = 0;
         if (!where.SkipCleanup && Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(where.Set))) is { } glCache)
             try
             {
-                others = new DirectoryInfo(glCache).EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint })
-                    .Where(f => f.FullName != where.Set + ".toc" && f.FullName != where.Set + ".bin").Sum(f => f.Length);
+                var all = new DirectoryInfo(glCache).EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint }).ToList();
+                others = all.Where(f => f.FullName != where.Set + ".toc" && f.FullName != where.Set + ".bin").Sum(f => f.Length);
+                target = all.Sum(f => f.Length) - others;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return 0; }   // the driver's cleanup may take what can't be counted
-        return Math.Min(NvidiaLinux.CacheFileIndexed, where.Size - others) - NvidiaLinux.SlotHeadroom;
+        // a shared folder holds the target's old files beside the new .bin and .toc until they take its name; the .toc's
+        // 32 bytes an entry are at most a 32nd of the .bin with entries of 1 KiB or more (8.7 KB measured on average)
+        return where.Shared ? Math.Min(NvidiaLinux.CacheFileIndexed, (where.Size - others - Math.Max(GameCacheWhere.Headroom, target)) / 33 * 32)
+            : Math.Min(NvidiaLinux.CacheFileIndexed, where.Size - others) - NvidiaLinux.SlotHeadroom;
     }
 
     /// <summary>Of Steam's steamapp_shader_cache&lt;n&gt; files of a folder, the n of the one the game's own process has open, by
@@ -189,7 +270,8 @@ public sealed partial class ScsKiller
     /// what it found or why it found none; null when nothing is placed.</summary>
     string? LearnSlot(GameState s)
     {
-        if (SteamPlaceScope(s) is not var (gameDir, appName, steamDir, _)) return null;
+        // a launcher's game has no slot of Steam's
+        if (SteamPlaceScope(s) is not var (gameDir, appName, steamDir, _) || steamDir.Length == 0) return null;
         var exe = Path.GetFileName(s.Game.ExePath);
         var said = new SteamCachePlace(gameDir, appName, steamDir) { Targets = PlaceTargets, GameSlot = files => SlotHeld(exe, files) }.LearnSlot();
         lock (_placeLock)
@@ -289,11 +371,12 @@ public sealed partial class ScsKiller
     // a game on SCSKiller's old launch line reads the compile's folder itself, with the line's size
     partial void CompileCacheCap(GameState s, ref long? cap)
     {
-        if (Vendor.Caps.Profile == NvidiaLinux.Profile && !VulkanRoute(s.Game, s.Engine) && SteamPlaceScope(s) is var (gameDir, appName, steamDir, app) && !OldLaunchLine(s.Game, app))
+        if (Vendor.Caps.Profile == NvidiaLinux.Profile && !VulkanRoute(s.Game, s.Engine) && SteamPlaceScope(s) is var (gameDir, appName, steamDir, app)
+            && (steamDir.Length == 0 || !OldLaunchLine(s.Game, app)))
             // outside Steam's folder the warm's stored entries go into the game's own file after its entries: the plan's budget is the room left
             cap = WhereOf(s.Game.Id) is { Set: { } set } where && OutsideOf(where) is var (_, _, t)
                 ? t.Limit + (1L << 30) - Math.Max(0, (File.Exists(set + ".bin") ? new FileInfo(set + ".bin").Length : 0) - (new SteamCachePlace(gameDir, appName, steamDir).Last()?.Bytes ?? 0))
-                : NvidiaLinux.PlacedCacheSize;
+                : steamDir.Length == 0 ? cap : NvidiaLinux.PlacedCacheSize;
     }
 
     /// <summary>The game's Steam launch options (a non-Steam game's own) still point the driver or vkd3d-proton at SCSKiller's
@@ -310,7 +393,17 @@ public sealed partial class ScsKiller
 
     partial void SteamCacheNoteOf(string gameId, ref string? note)
     {
-        if (Games.FirstOrDefault(x => x.Game.Id == gameId) is not { WarmedAt: not null } s || SteamPlaceScope(s) is not var (gameDir, appName, steamDir, app)) return;
+        if (Games.FirstOrDefault(x => x.Game.Id == gameId) is not { WarmedAt: not null } s) return;
+        if (SteamPlaceScope(s) is not var (gameDir, appName, steamDir, app))
+        {
+            if (LauncherFlatpak(s)) note = LauncherFlatpakNote;
+            return;
+        }
+        if (steamDir.Length == 0)
+        {
+            note = LauncherNote(gameId, gameDir, appName);
+            return;
+        }
         if (OldLaunchLine(s.Game, app))
         {
             note = "Remove SCSKiller's line from the game's Steam launch options";
@@ -321,10 +414,44 @@ public sealed partial class ScsKiller
         lock (_placeLock) (last, placing, due) = (_placeLast.GetValueOrDefault(gameId), _placing == gameId, _placeDue.ContainsKey(gameId));
         last ??= new SteamCachePlace(gameDir, appName, steamDir).Last();
         note = placing || last == null && due ? PlacingNote : last is { } r ? NoteOf(r) : null;
-        if (note == SteamReadsNote && WhereOf(gameId) is { Set: not null }) note = "The game reads this cache from its own cache file";
+        if (note == SteamReadsNote && WhereOf(gameId) is { Set: not null }) note = OwnFileNote;
     }
 
     const string PlacingNote = "Putting this cache in Steam's folder", SteamReadsNote = "Steam reads this cache with no launch options";
+
+    internal const string LauncherFlatpakNote = "The compile is kept, but SCSKiller can't reach the cache of a Flatpak launcher's game yet",
+        LauncherUnseenNote = "The compile is kept. Launch the game once so SCSKiller can find its cache file",
+        LauncherNoRoomNote = "The compile is kept, but the game's driver cache has no room for it",
+        LauncherCacheOffNote = "The compile is kept, but the game's driver cache is turned off",
+        LauncherSeveralNote = "The compile is kept, but the game uses several driver cache files",
+        LauncherElsewhereNote = "The compile is kept, but the game's driver cache is in a folder of its own",
+        OwnFileNote = "The game reads this cache from its own cache file",
+        SharedFileNote = "The game reads this cache from the driver's cache file, which other games share";
+
+    /// <summary>The game page's line for a launcher's game (<see cref="LauncherPlaced"/>): where its compile is, and when the
+    /// game can't use it, why.</summary>
+    string? LauncherNote(string gameId, string gameDir, string appName)
+    {
+        SteamPlaceResult? last;
+        bool placing;
+        lock (_placeLock) (last, placing) = (_placeLast.GetValueOrDefault(gameId), _placing == gameId);
+        if (placing) return "Putting this cache in the game's cache file";
+        var where = WhereOf(gameId);
+        if (where is { Off: { } off })
+            return off == GameCacheWhere.NvidiaOff ? LauncherCacheOffNote : off == GameCacheWhere.NvidiaElsewhere ? LauncherElsewhereNote : LauncherSeveralNote;
+        if (where is not { Set: not null }) return LauncherUnseenNote;
+        if (Unplaceable(where) != null) return LauncherNoRoomNote;
+        return (last ?? new SteamCachePlace(gameDir, appName, "").Last())?.State switch
+        {
+            SteamPlaceState.Placed or SteamPlaceState.UpToDate => SharedFileNote,
+            SteamPlaceState.NotGiven => LauncherNoRoomNote,
+            SteamPlaceState.GameRunning => "Waiting for the game to close to update its cache file",
+            SteamPlaceState.NoSpace => "Not enough free disk space to update the game's cache file",
+            SteamPlaceState.NextCompile => "The game's cache file is updated after the next compile",
+            SteamPlaceState.Failed or SteamPlaceState.SteamBusy => "Couldn't update the game's cache file yet",
+            _ => null,
+        };
+    }
 
     internal const string NotGivenNote = "Steam isn't giving this game its shader cache. Turn on Shader Pre-caching in Steam's Settings > Downloads, then restart Steam.";
 
@@ -350,6 +477,13 @@ public sealed partial class ScsKiller
 
     partial void SteamPlaceSoon(string gameId, bool exited) => PlaceDue(gameId, exited ? PlaceSettle : TimeSpan.Zero);
 
+    /// <summary>The entries a set's .toc lists and its .bin's length; null when they can't be read.</summary>
+    static (long Entries, long Bytes)? InFile(string set)
+    {
+        try { return GlCacheFile.ReadToc(File.ReadAllBytes(set + ".toc"), out _, v4: true) is var (_, records) ? (records.Count, new FileInfo(set + ".bin").Length) : null; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+    }
+
     // the driver opens the game's own file once the game starts rendering
     partial void SteamPlaceStarted(string gameId) => PlaceDue(gameId, PlaceSettle);
 
@@ -371,7 +505,7 @@ public sealed partial class ScsKiller
         {
             while (Volatile.Read(ref _listed) == 0) await Task.Delay(WatchInterval, ct);
             foreach (var s in Games)
-                if (SteamPlaceScope(s) is var (gameDir, _, _, _) && (Store.LoadGame(s.Game.Id).WarmedAt != null || File.Exists(SteamCachePlace.ManifestOf(gameDir))))
+                if (SteamPlaceScope(s) is var (gameDir, _, _, _) && (Store.LoadGame(s.Game.Id).WarmedAt != null || File.Exists(SteamCachePlace.ManifestOf(gameDir)) || ForeignWhere(s.Game.Id)))
                     PlaceDue(s.Game.Id, TimeSpan.Zero, sooner: true);
             while (!ct.IsCancellationRequested)
             {
@@ -434,6 +568,11 @@ public sealed partial class ScsKiller
         using (var own = CompileLock(id))
         {
             var remove = Store.LoadGame(id).WarmedAt == null;
+            if (own != null && !PlaceAside(id) && ForgetForeignWhere(s, ct) == false)
+            {
+                PlaceDue(id, TimeSpan.FromMinutes(2));
+                return;
+            }
             if (own == null || PlaceAside(id) || SteamPlacer(s, () => Remember(id, null, placing: true), remove) is not { } placer)
             {
                 PlaceDue(id, PlaceSettle);
@@ -453,7 +592,7 @@ public sealed partial class ScsKiller
             };
             if (retry is { } after) PlaceDue(id, after, sooner: true);
             if (remove || r.State is SteamPlaceState.Nothing) Unwatch(id);
-            else Watch(id, r.Leaf is { } leaf && !placer.Outside ? Path.Combine(placer.NvidiaRoot, "GLCache", leaf) : null, placer.Vkd3dDir);
+            else Watch(id, r.Leaf is { } leaf && !placer.Outside && placer.SteamDir.Length > 0 ? Path.Combine(placer.NvidiaRoot, "GLCache", leaf) : null, placer.Vkd3dDir);
         }
     }
 
@@ -532,20 +671,39 @@ public sealed partial class ScsKiller
             report = (false, $"{s.Game.Name}'s cache is set aside for its before and after recording", []);
             return;
         }
+        switch (ForgetForeignWhere(s, ct))
+        {
+            case false:
+                report = (false, $"{s.Game.Name}: where its cache is read may be another game's, and what was placed there can't be taken out yet", []);
+                return;
+            case true:
+                placer = SteamPlacer(s, remove: remove)!;
+                break;
+        }
         var r = NotGiven(remove ? placer.Remove(ct) : placer.Place(ct), remove ? null : WhereOf(s.Game.Id));
         Remember(s.Game.Id, r);
         List<string> details = [$"state: {r.State}"];
         if (!remove && r.State == SteamPlaceState.GameRunning && LearnSlot(s) is { } slot) details.Add($"own slot: {slot}");
         if (r.Leaf != null) details.Add($"{(placer.Outside ? "the game's folder" : "Steam's folder")}: {Path.Combine(placer.NvidiaRoot, "GLCache", r.Leaf)}");
+        var shared = placer.SteamDir.Length == 0;
         foreach (var f in r.Files ?? [])
+        {
+            // another program's take-out changes what's before SCSKiller's after the record was saved: counted from the file now
+            var (before, beforeBytes) = shared && !remove && r.Leaf != null && InFile(Path.Combine(placer.NvidiaRoot, "GLCache", r.Leaf, f.Name)) is var (n, bytes)
+                ? (n - f.Pipelines, bytes - GlCacheFile.HeaderSize - f.Bytes) : (f.SteamPipelines, f.SteamBytes);
             details.Add(f.SteamOwns ? $"{f.Name}: Steam's own, left as it is"
-                : $"{f.Name}: {f.Pipelines:N0} pipelines, {f.Bytes:N0} bytes" + (f.SteamPipelines > 0 ? $", after Steam's {f.SteamPipelines:N0} pipelines, {f.SteamBytes:N0} bytes" : ""));
+                : $"{f.Name}: {f.Pipelines:N0} pipelines, {f.Bytes:N0} bytes" + (before <= 0 ? ""
+                    : shared ? $", with {before:N0} other pipelines in the file, {beforeBytes:N0} bytes" : $", after Steam's {before:N0} pipelines, {beforeBytes:N0} bytes"));
+        }
         if (r.Files != null && !remove) details.Add($"didn't fit: {r.Left:N0} pipelines, {r.LeftBytes:N0} bytes");
         string? off;
         lock (_placeLock) off = placer.Vkd3dDir == null && !remove ? _vkd3dOff.GetValueOrDefault(s.Game.Id) : null;
         details.Add(off ?? $"vkd3d-proton: {(placer.Vkd3dDir is { } dir ? $"{dir}: " : "")}{r.Vkd3d ?? "nothing to place"}");
         if (r.Why != null) details.Add($"why: {r.Why}");
         var done = r.State is SteamPlaceState.Placed or SteamPlaceState.UpToDate or SteamPlaceState.Removed || remove && r.State == SteamPlaceState.Nothing;
-        report = (done, NoteOf(r) ?? (r.State == SteamPlaceState.Removed ? "Taken out of Steam's folder" : remove ? "Nothing of SCSKiller's in Steam's folder" : "Nothing to put in Steam's folder"), details);
+        var status = placer.SteamDir.Length > 0 ? NoteOf(r) ?? (r.State == SteamPlaceState.Removed ? "Taken out of Steam's folder" : remove ? "Nothing of SCSKiller's in Steam's folder" : "Nothing to put in Steam's folder")
+            : (remove ? null : LauncherNote(s.Game.Id, Store.GameDir(s.Game.Id), Wine.WarmAppName(Path.GetFileName(s.Game.ExePath))))
+                ?? (r.State == SteamPlaceState.Removed ? "Taken out of the game's cache file" : remove ? "Nothing of SCSKiller's in the game's cache file" : "Nothing to put in the game's cache file");
+        report = (done, status, details);
     }
 }

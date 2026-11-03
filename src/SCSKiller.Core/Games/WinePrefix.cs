@@ -4,10 +4,18 @@ using System.Text.RegularExpressions;
 namespace SCSKiller.Core.Games;
 
 /// <summary>A Wine prefix by its folder <paramref name="Dir"/> (system.reg, user.reg, drive_c, dosdevices), read from its files
-/// only: a Proton prefix (compatdata's pfx), a launcher's on Linux (Heroic, Lutris), a CrossOver bottle on macOS.</summary>
+/// only: a Proton prefix (compatdata's pfx), a launcher's on Linux (Heroic, Lutris, Faugus), a CrossOver bottle on macOS.</summary>
 public sealed record WinePrefix(string Dir)
 {
     public string DriveC => Path.Combine(Dir, "drive_c");
+
+    /// <summary>The folder of the drive_c nearest above <paramref name="path"/>; null when none is.</summary>
+    public static string? Holding(string path)
+    {
+        for (var d = Path.GetDirectoryName(Path.GetFullPath(path)); d != null; d = Path.GetDirectoryName(d))
+            if (Path.GetFileName(d) == "drive_c") return Path.GetDirectoryName(d);
+        return null;
+    }
 
     /// <summary>A prefix Wine has set up: its system.reg is there.</summary>
     public bool Made => File.Exists(Path.Combine(Dir, "system.reg"));
@@ -112,20 +120,50 @@ static class WineReg
 /// Wine prefix <paramref name="Prefix"/>, the folder it sets WINEPREFIX to, on <paramref name="Bin"/>: a Wine build's wine,
 /// or with <paramref name="Proton"/> a Proton build's folder, which takes the folder as its compat data (the prefix its pfx,
 /// a link to the folder itself under umu). <paramref name="CacheHome"/>: the XDG_CACHE_HOME the game runs with (a
-/// Flatpak's), null for the user's own.</summary>
-public sealed record LauncherPrefix(string Launcher, string Prefix, string Bin, bool Proton, string? CacheHome)
+/// Flatpak's), null for the user's own. <paramref name="Env"/>: the variables the launcher's settings give the game, a later
+/// one of a name over an earlier. <paramref name="Umu"/>: a Proton build runs under umu's Steam Linux Runtime, else the
+/// launcher runs its proton script itself (Heroic without umu). <paramref name="Args"/>: the arguments the launcher's settings
+/// give the game's exe (a -dx11 or -vulkan), as Steam's launch options do (<see cref="Unreal.UnrealRhi.LaunchOptions(Game)"/>).</summary>
+public sealed record LauncherPrefix(string Launcher, string Prefix, string Bin, bool Proton, string? CacheHome, IReadOnlyList<(string Name, string Value)>? Env = null,
+    bool Umu = true, string? Args = null)
 {
-    /// <summary>A game Heroic or Lutris lists: Linux's alone, where epic: and gog: ids are Heroic's.</summary>
-    public static bool Is(Game g) => OperatingSystem.IsLinux() && (HeroicSource.RunnerOf(g.Id) != null || LutrisSource.Is(g.Id));
+    /// <summary>A game Heroic, Lutris or Faugus lists, or one added by hand: Linux's alone, where epic: and gog: ids are Heroic's.</summary>
+    public static bool Is(Game g) => OperatingSystem.IsLinux() && (g.Store == Store.Manual || HeroicSource.RunnerOf(g.Id) != null || LutrisSource.Is(g.Id) || FaugusSource.Is(g.Id));
 
     /// <summary>The prefix the game's launcher runs it in, read now; null with the reason when it can't be told.</summary>
     public static LauncherPrefix? Of(Game g, out string? why)
     {
-        if (Is(g)) return HeroicSource.RunnerOf(g.Id) != null ? HeroicSource.PrefixOf(g, out why) : LutrisSource.PrefixOf(g, out why);
-        why = "it isn't a game of Heroic or Lutris";
+        if (Is(g)) return g.Store == Store.Manual ? Added(g, out why) : HeroicSource.RunnerOf(g.Id) != null ? HeroicSource.PrefixOf(g, out why)
+            : FaugusSource.Is(g.Id) ? FaugusSource.PrefixOf(g, out why) : LutrisSource.PrefixOf(g, out why);
+        why = "it isn't a game of Heroic, Lutris or Faugus";
         return null;
     }
 
+    /// <summary>A game added by hand runs in the Wine prefix that holds its exe (<see cref="WinePrefix.Holding"/>), on the
+    /// Proton its compat data's config_info names; null with the reason for any other prefix, or none.</summary>
+    public static LauncherPrefix? Added(Game g, out string? why) => GameFiles.AddedPrefix(g, out why);
+
+    /// <summary>Linux refuses an exe outside a Wine prefix: nothing would tell where or on what it runs.</summary>
+    public const string OutsidePrefix = "add it to Steam as a non-Steam game, or pick an exe inside its Wine prefix";
+
     /// <summary>The Wine prefix's own folder.</summary>
     public string WineDir => Proton ? Path.Combine(Prefix, "pfx") : Prefix;
+
+    /// <summary>What a launcher game in <paramref name="prefix"/> starts with that can name it: <paramref name="env"/> (the
+    /// launcher's settings), a Wine's WINEPREFIX, or a Proton's STEAM_COMPAT_DATA_PATH and the WINEPREFIX Proton makes of it
+    /// (its pfx/), under umu the prefix's path on disk too, and unless <paramref name="env"/> sets it STEAM_COMPAT_INSTALL_PATH:
+    /// <paramref name="install"/> (the launcher's own), else umu's, the exe's folder. The prefix as written and without a
+    /// trailing /, for a twin check (<see cref="HeroicSource.Twin"/>) that would rather find one too many.</summary>
+    public static List<(string Name, string Value)> Exports(string prefix, bool proton, bool umu, string? exe, string? install, IReadOnlyList<(string Name, string Value)> env)
+    {
+        List<(string Name, string Value)> list = [.. env];
+        List<string> spellings = [prefix, Path.TrimEndingDirectorySeparator(prefix)];
+        if (proton && umu && GameFiles.FinalPath(prefix) is { } real) spellings.Add(real);   // umu resolves WINEPREFIX before it hands it on
+        foreach (var p in spellings.Distinct())
+            if (proton) list.AddRange([("STEAM_COMPAT_DATA_PATH", p), ("WINEPREFIX", p + "/pfx/")]);
+            else list.Add(("WINEPREFIX", p));
+        if (proton && !env.Any(e => e.Name == "STEAM_COMPAT_INSTALL_PATH") && (install ?? (umu && exe != null ? HeroicSource.PathlibParent(exe) : null)) is { } folder)
+            list.Add(("STEAM_COMPAT_INSTALL_PATH", folder));
+        return list;
+    }
 }

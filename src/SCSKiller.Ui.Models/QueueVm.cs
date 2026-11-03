@@ -56,6 +56,7 @@ public sealed class QueueVm : Bindable
     public string Summary { get; private set; } = "";
     public string? PlanChecks { get; private set; }   // ScsKiller.PlanCheckLine
     public bool HasPlanChecks => PlanChecks != null;
+    public bool CanCheckNow => !Host.Core.Compiling && Host.Core.Queue.Any(q => q is { PlanCheck: true, Note: ScsKiller.WhenIdleNote });
 
     public string CurrentDetail => cur is null ? "" : Fmt.Stage(cur) + (Fmt.ProgressText(cur) is { } p ? " · " + p : "") + (Fmt.Started(cur) is { } at ? " · " + at : "");
     public bool Indeterminate => Fmt.Indeterminate(cur);

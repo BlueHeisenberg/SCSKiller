@@ -370,13 +370,15 @@ public sealed class ReEngineReader(string dataDir, Func<string, string?>? downlo
 
     static readonly Regex Capability = new(@"^\s*Capability\s*=\s*DirectX(1[12])", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
-    /// <summary>config.ini's [Render] Capability (the game writes it on first run: DirectX12 / DirectX11), else D3D12 when
-    /// its shaders include DXIL (SM6 runs on DX12 only), else "D3D11 or D3D12".</summary>
+    /// <summary>config.ini's [Render] Capability (the game writes it on first run: DirectX12 / DirectX11; older games name it
+    /// &lt;game&gt;_config.ini, as res_config.ini), else D3D12 when its shaders include DXIL (SM6 runs on DX12 only), else "D3D11 or D3D12".</summary>
     static string Api(string dir, bool? dxil)
     {
         try
         {
-            if (Capability.Match(File.ReadAllText(GameFiles.Find(dir, "config.ini"))) is { Success: true } m) return "D3D" + m.Groups[1].Value;
+            var ini = GameFiles.Find(dir, "config.ini");
+            if (!File.Exists(ini)) ini = GameFiles.EnumerateFiles(dir, "*_config.ini").FirstOrDefault(f => f.EndsWith("_config.ini", StringComparison.OrdinalIgnoreCase));
+            if (ini != null && Capability.Match(File.ReadAllText(ini)) is { Success: true } m) return "D3D" + m.Groups[1].Value;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return dxil == true ? "D3D12" : UnrealRhi.Ambiguous;

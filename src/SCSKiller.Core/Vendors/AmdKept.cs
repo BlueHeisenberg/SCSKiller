@@ -15,9 +15,10 @@ public sealed class AmdKept(string dxcDir, string keptDir)
 
     /// <summary>The last put-back: when, whether the game had already started, the files no link could be made for, the
     /// driver the files were kept under, and the file id of each link made (name: id). Dropping: a drop left links that
-    /// were in use; they are neither kept nor put back, and the next keep or drop deletes them first.</summary>
+    /// were in use; they are neither kept nor put back, and the next keep or drop deletes them first. Denied: files a process
+    /// run as administrator wrote, which this one can't link (not the compile's, not counted as unkept).</summary>
     public sealed record State(DateTimeOffset? PutBackAt = null, bool Late = false, int Unkept = 0, string? HeldBy = null, string? Driver = null,
-        Dictionary<string, string>? Links = null, bool Dropping = false);
+        Dictionary<string, string>? Links = null, bool Dropping = false, int Denied = 0);
 
     public string Dir => keptDir;
 
@@ -41,7 +42,7 @@ public sealed class AmdKept(string dxcDir, string keptDir)
         if (Redirected(keptDir)) throw new IOException($"{keptDir} is reached through a link");
         Directory.CreateDirectory(keptDir);
         var links = Mine(was);
-        int unkept = 0;
+        int unkept = 0, denied = 0;
         string? heldBy = null;
         foreach (var name in links.Keys.Where(n => !keys.Contains(AmdAppCache.Key(n, true)!)).ToList())
             if (TryDelete(Path.Combine(keptDir, name))) links.Remove(name);
@@ -55,13 +56,22 @@ public sealed class AmdKept(string dxcDir, string keptDir)
             string from = Path.Combine(dxcDir, name), to = Path.Combine(keptDir, name);
             if (Id(from) is not { } now)
             {
-                if (File.Exists(from)) unkept++;   // there, but its id can't be read
+                // AMD labels a file with its writer's integrity: an elevated writer's may refuse even an attribute handle
+                var refused = Marshal.GetLastPInvokeError() == AccessDenied;
+                if (File.Exists(from)) _ = refused ? denied++ : unkept++;
                 continue;
             }
             var there = Id(to);
             if (there != null && !links.ContainsKey(name) || there == null && File.Exists(to)) { unkept++; continue; }   // not a link this class made: left alone
             if (there == now) continue;
-            if ((there == null || TryDelete(to)) && CreateHardLinkW(to, from, 0)) { links[name] = now; continue; }
+            var cleared = there == null || TryDelete(to);
+            if (cleared && CreateHardLinkW(to, from, 0)) { links[name] = now; continue; }
+            if (cleared && Marshal.GetLastPInvokeError() == AccessDenied)   // a link needs attribute writes, which an elevated writer's label refuses
+            {
+                if (there != null) links.Remove(name);
+                denied++;
+                continue;
+            }
             var stuck = there != null && File.Exists(to);   // the old link, open without delete sharing
             if (there != null && !stuck) links.Remove(name);
             unkept++;
@@ -69,7 +79,7 @@ public sealed class AmdKept(string dxcDir, string keptDir)
         }
         foreach (var (name, id) in was.Links ?? [])   // a recorded link whose id can't be read now stays on record, untouched
             if (!links.ContainsKey(name) && Named(name) && File.Exists(Path.Combine(keptDir, name)) && Id(Path.Combine(keptDir, name)) == null) links[name] = id;
-        var state = was with { Unkept = unkept, HeldBy = heldBy, Driver = driver ?? was.Driver, Links = links };
+        var state = was with { Unkept = unkept, HeldBy = heldBy, Driver = driver ?? was.Driver, Links = links, Denied = denied };
         Write(state);
         return state;
     }
@@ -152,6 +162,8 @@ public sealed class AmdKept(string dxcDir, string keptDir)
             JsonSerializer.Serialize(f, s);
         File.Move(tmp, StatePath, overwrite: true);
     }
+
+    const int AccessDenied = 5;
 
     static bool TryDelete(string path)
     {

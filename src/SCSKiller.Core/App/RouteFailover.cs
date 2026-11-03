@@ -48,6 +48,9 @@ public sealed class RouteFailover : DelegatingHandler
     /// budget: a blackholed primary then still leaves the fallback time.</summary>
     public static readonly HttpRequestOptionsKey<TimeSpan> AttemptTimeout = new("SCSKiller.AttemptTimeout");
 
+    /// <summary>Asked before each route's attempt: false withdraws the request (<see cref="RequestWithdrawnException"/>).</summary>
+    public static readonly HttpRequestOptionsKey<Func<bool>> StillWanted = new("SCSKiller.StillWanted");
+
     /// <summary>The running return probe, if any (tests await it).</summary>
     public Task Probe { get; private set; } = Task.CompletedTask;
 
@@ -116,6 +119,7 @@ public sealed class RouteFailover : DelegatingHandler
         Exception? last = null;
         for (var i = 0; i < Routes.Count; i++)
         {
+            if (request.Options.TryGetValue(StillWanted, out var wanted) && !wanted()) throw new RequestWithdrawnException();
             var at = (first + i) % Routes.Count;
             request.RequestUri = new Uri(Routes[at], path);
             bool sent;   // whether the failure can have happened after the request went out
@@ -160,3 +164,5 @@ public sealed class RouteFailover : DelegatingHandler
 }
 
 public sealed class ApiUnreachableException(Exception? inner) : HttpRequestException("Can't reach the SCSKiller server.", inner);
+
+public sealed class RequestWithdrawnException() : Exception("The request was withdrawn before it was sent.");   // not an HttpRequestException: HttpClient wraps those once its timeout fired

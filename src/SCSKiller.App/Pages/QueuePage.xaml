@@ -35,6 +35,7 @@
                     <TextBlock Text="{x:Bind Vm.Summary, Mode=OneWay}" Style="{StaticResource Secondary}" />
                     <TextBlock Text="{x:Bind Vm.PlanChecks, Mode=OneWay}" Visibility="{x:Bind Vm.HasPlanChecks, Mode=OneWay}" Style="{StaticResource Caption}"
                                ToolTipService.ToolTip="After an update SCSKiller rebuilds the plans of compiled games in the background, without compiling. A game with more to compile shows it in the Library." />
+                    <HyperlinkButton Content="Check now" Click="OnCheckNow" Padding="0" Visibility="{x:Bind Vm.HasPlanChecks, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanCheckNow, Mode=OneWay}" />
                     <TextBlock Text="Compiles run outside the game, under the game's name. Keep the game closed while it runs."
                                Style="{StaticResource Caption}" TextWrapping="Wrap" />
                 </StackPanel>

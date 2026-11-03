@@ -26,6 +26,9 @@ interface IWarmHost : IDisposable
     /// <summary>Runs after each process has exited, before the next starts. <paramref name="note"/> gets what it does when it
     /// does anything.</summary>
     Task<ProcessEnd> AfterProcess(Action<string> note) => Task.FromResult(ProcessEnd.None);
+
+    /// <summary>A failed run's <paramref name="error"/>, with what the host knows of its cause.</summary>
+    string? Explain(string? error) => error;
 }
 
 /// <summary>What a host says once a process has exited (<see cref="IWarmHost.AfterProcess"/>): the cache keys of the files it
@@ -64,13 +67,17 @@ interface IWarmProcess
 
 static partial class WarmHost
 {
+    /// <summary>The start of the Proton host's "no GPU adapter" when the game's Wine prefix sets a DXVK device filter (<see cref="IWarmHost.Explain"/>).</summary>
+    public const string PrefixGpuFilter = "no GPU adapter: this game's Wine prefix sets ";
+
     /// <param name="gpu">the adapter the run is for</param>
     /// <param name="steamRoot">the Steam folder of a Steam game (default: <see cref="Games.SteamSource.Root"/>)</param>
     /// <param name="vulkan">the run is a Vulkan warm (<see cref="WarmOptions.Vulkan"/>)</param>
     /// <param name="cacheCap">what the compile's cache folder may hold (<see cref="WarmOptions.CacheCap"/>)</param>
     /// <param name="mesa">the backend is Mesa's (<see cref="Vendors.MesaLinux.Is"/>)</param>
+    /// <param name="launchGpu">the game's own GPU variables (<see cref="WarmOptions.LaunchGpu"/>)</param>
     public static partial IWarmHost For(Game game, string workDir, GpuInfo gpu, IProgress<string>? log, string? steamRoot = null, bool vulkan = false, long? cacheCap = null,
-        bool mesa = false);
+        bool mesa = false, IReadOnlyList<(string Name, string Value)>? launchGpu = null);
 
     /// <summary>Why <paramref name="game"/>'s warm can't run here, as a queue item fails with it; null when it can. Starts
     /// nothing.</summary>

@@ -1,12 +1,14 @@
 using System.Diagnostics;
 using System.Reflection.PortableExecutable;
 using CUE4Parse.Encryption.Aes;
+using CUE4Parse.UE4.Objects.Core.Misc;
 using SCSKiller.Core.App;
 
 namespace SCSKiller.Core.Unreal;
 
-/// <summary>The pak AES key of an encrypted Unreal game. Kept only locally, in %LOCALAPPDATA%\SCSKiller\games\&lt;id&gt;\aes.key
-/// (hex; the user may also put a key there by hand), never in plans, logs or anything meant to be shared. Found statically
+/// <summary>The pak AES keys of an encrypted Unreal game: its own, and keys of single containers (Fortnite's per-item ones).
+/// Kept only locally, in %LOCALAPPDATA%\SCSKiller\games\&lt;id&gt;\aes.key (hex, one per line; the user may also put keys
+/// there by hand), never in plans, logs or anything meant to be shared. Found statically
 /// in the game's own exe file (<see cref="Scan"/>; an anti-cheat game's too: the file on disk, never the running process),
 /// once per exe build: a failed scan is remembered in aes.scan with the exe's size and write time. Every key is checked
 /// against an encrypted container before it is used or stored.</summary>
@@ -18,18 +20,18 @@ public sealed class UnrealKeys(string dataDir)
     const int ScanVersion = 4;
     static string Stamp(string exe) => new FileInfo(exe) is { Exists: true } f ? $"{ScanVersion}:{f.Length}:{f.LastWriteTimeUtc.Ticks}" : "";
 
-    /// <summary>A key that <paramref name="opens"/> the game's encrypted containers: the stored one, else a static scan of
-    /// the exe file. <paramref name="why"/> says how, without the key.</summary>
-    public FAesKey? Get(Game game, Func<FAesKey, bool> opens, out string why)
+    /// <summary>The keys that <paramref name="opens"/> the game's encrypted containers: the stored ones, else a static scan of
+    /// the exe file. <paramref name="why"/> says how, without the keys.</summary>
+    public IReadOnlyList<UnrealKey> Get(Game game, Func<FAesKey, bool> opens, out string why)
     {
-        if (File.Exists(KeyFile(game)) && Parse(File.ReadAllText(KeyFile(game))) is { } stored)
+        if (Stored(game) is { Count: > 0 } stored)
         {
-            if (opens(stored)) { why = "stored key"; return stored; }
-            why = $"the key in {KeyFile(game)} doesn't open the game's files";
-            return null;
+            var open = stored.Where(k => opens(k.Aes)).ToList();
+            why = open.Count == 0 ? $"the key in {KeyFile(game)} doesn't open the game's files" : stored.Count == 1 ? "stored key" : $"{open.Count} of {stored.Count} stored keys open the game's files";
+            return open;
         }
         var stamp = Stamp(game.ExePath);
-        if (File.Exists(ScanFile(game)) && File.ReadAllLines(ScanFile(game)) is [var s, var reason, ..] && s == stamp) { why = reason; return null; }
+        if (File.Exists(ScanFile(game)) && File.ReadAllLines(ScanFile(game)) is [var s, var reason, ..] && s == stamp) { why = reason; return []; }
         var sw = Stopwatch.StartNew();
         FAesKey? key;
         string how;
@@ -37,45 +39,88 @@ public sealed class UnrealKeys(string dataDir)
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) // Xbox app games: the exe is encrypted at rest
         {
             why = "encrypted; the game's exe can't be read, so it isn't scanned for the key: give the key by hand";
-            return null;
+            return [];
         }
         catch (BadImageFormatException) { (key, how) = (null, "not found: the exe's headers don't read as a PE image (a protector's?)"); }
         why = $"{how} ({sw.Elapsed.TotalSeconds:F1} s)";
         Directory.CreateDirectory(Path.GetDirectoryName(KeyFile(game))!);
         if (key != null) File.WriteAllText(KeyFile(game), key.KeyString);
         else File.WriteAllLines(ScanFile(game), [stamp, why]);
-        return key;
+        return key != null ? [new UnrealKey(key, null)] : [];
     }
 
     /// <summary>The stored key file's write time, "" if none: a key added or changed re-runs detection.</summary>
     public string KeyStamp(Game game) => File.Exists(KeyFile(game)) ? File.GetLastWriteTimeUtc(KeyFile(game)).Ticks.ToString() : "";
 
-    /// <summary>The stored key, unchecked (a full mount checks it: SubmitKey mounts only what it opens).</summary>
-    public FAesKey? Stored(Game game) => File.Exists(KeyFile(game)) ? Parse(File.ReadAllText(KeyFile(game))) : null;
+    /// <summary>The stored keys in the order they were given, unchecked (a full mount checks each: SubmitKeys mounts only
+    /// what it opens). A line that isn't a key is skipped.</summary>
+    public IReadOnlyList<UnrealKey> Stored(Game game) =>
+        File.Exists(KeyFile(game)) ? [.. Lines(File.ReadAllText(KeyFile(game))).Select(l => l.Key).OfType<UnrealKey>().Distinct()] : [];
 
     public bool Has(Game game) => File.Exists(KeyFile(game));
 
-    /// <summary>Forgets the stored key and the failed-scan note: the next detection scans the exe again.</summary>
+    /// <summary>Forgets the stored keys and the failed-scan note: the next detection scans the exe again.</summary>
     public void Remove(Game game)
     {
         File.Delete(KeyFile(game));
         File.Delete(ScanFile(game));
     }
 
-    /// <summary>A key the user supplies (hex, "0x" optional): stored if it opens the game's files.</summary>
-    public bool Set(Game game, string key, Func<FAesKey, bool> opens)
+    /// <summary>Keys the user supplies, one per line (hex, "0x" optional), each optionally after the GUID of the container it
+    /// is for: a key is kept if it opens one of the game's encrypted containers (<paramref name="opened"/>: the GUIDs of
+    /// those it opens), that one when a GUID is given (<paramref name="present"/>: the GUIDs the game's encrypted containers have, null when one can't be read).
+    /// Kept keys go after the stored ones that still open something.
+    /// Refused: each line that isn't kept and why, never its text.</summary>
+    public (bool Stored, IReadOnlyList<string> Refused) Set(Game game, string text, Func<FAesKey, IReadOnlyCollection<FGuid>> opened, IReadOnlyCollection<FGuid>? present)
     {
-        if (Parse(key) is not { } k || !opens(k)) return false;
+        var lines = Lines(text).ToList();
+        if (lines.Count == 0) return (false, ["no key given"]);
+        if (lines.Count > MaxKeys) return (false, [$"more than {MaxKeys} keys"]);
+        var add = new List<UnrealKey>();
+        var refused = new List<string>();
+        foreach (var (n, key) in lines)
+        {
+            var guids = key != null ? opened(key.Aes) : [];
+            var why = key == null ? "not a key (0x and 64 hex digits)"
+                : key.Guid is { } g && present?.Contains(g) == false ? "no archive in this game has that GUID"
+                : key.Guid is { } h && !guids.Contains(h) ? "it doesn't open the archives with that GUID"
+                : guids.Count == 0 ? "it doesn't open this game's files" : null;
+            if (why == null) add.Add(key!);
+            else refused.Add(lines.Count > 1 ? $"line {n}: {why}" : why);
+        }
+        if (add.Count == 0) return (false, refused);
+        var keep = Stored(game).Where(k => opened(k.Aes).Count > 0);
         Directory.CreateDirectory(Path.GetDirectoryName(KeyFile(game))!);
-        File.WriteAllText(KeyFile(game), k.KeyString);
+        File.WriteAllLines(KeyFile(game), keep.Concat(add).Distinct().Select(k => k.Line));
         File.Delete(ScanFile(game));
-        return true;
+        return (true, refused);
     }
 
-    static FAesKey? Parse(string text)
+    /// <summary>A paste of a season's keys stays well below this; each key is tried on every encrypted container.</summary>
+    const int MaxKeys = 512;
+
+    // "[GUID][ :,=]key": the GUID as UE prints it (32 hex digits) or with dashes and braces, the key with "0x" optional
+    static readonly System.Text.RegularExpressions.Regex Line = new(@"^(?:\{?(?<g>[0-9A-Fa-f]{8}-?[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{12})\}?\s*[:,=\s]\s*)?(?:0[xX])?(?<k>[0-9A-Fa-f]{64})$",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
+    /// <summary>The non-empty lines of a key text, numbered from 1: Key null when the line isn't one.</summary>
+    static IEnumerable<(int Line, UnrealKey? Key)> Lines(string text)
     {
-        var hex = text.Trim().Replace("0x", "", StringComparison.OrdinalIgnoreCase);
-        return hex.Length == 64 && hex.All(Uri.IsHexDigit) ? new FAesKey("0x" + hex) : null;
+        var n = 0;
+        foreach (var raw in text.ReplaceLineEndings("\n").Split('\n'))   // a WinUI TextBox separates lines with a bare \r
+        {
+            n++;
+            var line = raw.Trim();
+            if (line.Length == 0) continue;
+            if (line.Length > 200 || Line.Match(line) is not { Success: true } m) { yield return (n, null); continue; }
+            FGuid? guid = null;
+            if (m.Groups["g"].Success)
+            {
+                var h = m.Groups["g"].Value.Replace("-", "");
+                guid = new FGuid(Convert.ToUInt32(h[..8], 16), Convert.ToUInt32(h[8..16], 16), Convert.ToUInt32(h[16..24], 16), Convert.ToUInt32(h[24..], 16));
+            }
+            yield return (n, new UnrealKey(new FAesKey("0x" + m.Groups["k"].Value.ToUpperInvariant()), guid));
+        }
     }
 
     /// <summary>Static key search, the way AESDumpster works: UE's key callback (UE_REGISTER_ENCRYPTION_KEY) writes the 32 bytes
@@ -242,4 +287,15 @@ public sealed class UnrealKeys(string dataDir)
         else if (mod == 2) { disp = BitConverter.ToInt32(b, q); q += 4; }
         return q - p;
     }
+}
+
+/// <summary>An AES key, and the key GUID of the containers it is for when the user named one.</summary>
+public sealed record UnrealKey(FAesKey Aes, FGuid? Guid)
+{
+    /// <summary>Its line in aes.key: "&lt;GUID&gt;:0x&lt;key&gt;", or the key alone.</summary>
+    public string Line => (Guid is { } g ? $"{g.A:X8}{g.B:X8}{g.C:X8}{g.D:X8}:" : "") + Aes.KeyString.ToUpperInvariant().Replace("0X", "0x");
+
+    public bool Equals(UnrealKey? other) => other != null && Line == other.Line;
+    public override int GetHashCode() => Line.GetHashCode();
+    public override string ToString() => "UnrealKey";   // never the key
 }

@@ -95,7 +95,8 @@ public sealed partial class AppLog : IProgress<string>
             .SelectMany(p => new[] { p, ShortPath(p), p.StartsWith("/var/home/") ? p[4..] : null })   // Fedora Atomic: /home links to /var/home
             .Select(p => (Rooted: p?.StartsWith('/') == true, Parts: (p ?? "").Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries)))
             .Where(p => p.Parts.Length >= (p.Rooted ? 1 : 2))   // never a bare Windows drive
-            .Select(p => (p.Rooted ? @"[\\/]" : "") + string.Join(@"[\\/]+", p.Parts.Select(Spelled)))   // + : doubled or JSON-escaped separators
+            // a rooted (Linux) profile seen through Wine's drive (Z:\home\bob) takes the drive with it
+            .Select(p => (p.Rooted ? $@"(?:(?<!{Word})[A-Za-z]:[\\/]+|[\\/])" : "") + string.Join(@"[\\/]+", p.Parts.Select(Spelled)))   // + : doubled or JSON-escaped separators
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var p = spellings.Count == 0 ? null
             : new Regex(@"(?:[\\/]{2}\?[\\/])?(?:" + string.Join("|", spellings) + $@")(?![\p{{L}}\p{{N}}_\-]|\.{Word})", Options);

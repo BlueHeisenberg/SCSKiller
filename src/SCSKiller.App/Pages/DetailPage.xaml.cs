@@ -182,7 +182,7 @@ public sealed partial class DetailPage : Page
             ("Status", $"{vm.StatusTitle}. {vm.StatusReason}"),
             ("Coverage", vm.CoverageHeadline),
             (vm.TimeLabel, vm.HasTimeValue ? vm.TimeValue : ""),
-            (vm.DiskLabel, vm.HasDiskValue ? vm.DiskValue : ""),
+            (vm.DiskLabel, vm.HasDiskValue ? vm.DiskValue + (vm.HasDiskInUse ? ", " + vm.DiskInUse : "") : ""),
             (vm.StuttersLabel, vm.HasStutterTile ? vm.StuttersValue : ""),
             (vm.CompileTitle, vm.HasCompileCard ? vm.CompileText : ""),
             ("Last session", vm.FramesVerdict),
@@ -305,13 +305,15 @@ public sealed partial class DetailPage : Page
     {
         var game = Vm.Row.State.Game;
         if (await GameFolderDialog.ShowAsync(XamlRoot, game, $"{game.Name}'s folder", "Save") is not { } folder) return;
-        try { await Task.Run(() => App.Core.AddManualGame(game.ExePath, folder)); }   // checks the folder again, then the game
+        ManualAdd added;
+        try { added = await Task.Run(() => App.Core.AddManualGame(game.ExePath, folder)); }   // checks the folder again, then the game
         catch (Exception ex)
         {
             await App.ShowAsync(new ContentDialog { XamlRoot = XamlRoot, Title = "Couldn't set the game folder", Content = ex.Message, CloseButtonText = "OK" });
             return;
         }
-        Vm.Refresh();
+        if (added.Game.Id != game.Id) App.Main.Navigate(typeof(LibraryPage));   // a moved exe is another game id
+        else Vm.Refresh();
     }
 
     async void OnGameExe(object _, RoutedEventArgs __)
@@ -428,6 +430,13 @@ public sealed partial class DetailPage : Page
         }
         App.Core.CompileMax(id);
         vm.Refresh();
+    }
+
+    void OnRtOnlyCompile(object _, RoutedEventArgs __)
+    {
+        try { App.Core.CompileRtOnly(Vm.Row.Id); }
+        catch (InvalidOperationException ex) { Vm.Error = ex.Message; }
+        Vm.Refresh();
     }
 
     // Toggled also fires when the binding sets IsOn: only a user's flip differs from the view model.
@@ -559,9 +568,11 @@ public sealed partial class DetailPage : Page
             try
             {
                 var all = await Task.Run(() => App.Core.GameCaches(id, gamePrecache: true));
+                var shared = await Task.Run(() => App.Core.SharedCacheNote(id));
                 static bool Own(CachePart p) => p.Name is Core.App.ScsKiller.PipelinePart or Core.App.ScsKiller.PrecachePart;
                 var (parts, own) = (all.Where(p => !Own(p)).ToList(), all.Where(Own).ToList());
-                text.Text = (parts.Count > 0 ? string.Join(" · ", parts.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}")) : "No cache files on disk now") + ".\n\n" + note;
+                text.Text = (parts.Count > 0 ? string.Join(" · ", parts.Select(p => $"{p.Name} {Format.Bytes(p.Bytes)}")) : "No cache files on disk now") + ".\n\n"
+                    + (shared != null ? shared + "\n\n" : "") + note;
                 ownText.Text = $"Also delete the game's own shader cache ({Format.Bytes(own.Sum(p => p.Bytes))}). It rebuilds it at its next start, which then takes longer.";
                 alsoOwn.Visibility = own.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             }
@@ -637,14 +648,15 @@ public sealed partial class DetailPage : Page
         vm.AlwaysPending = true;   // the switch stays on, and off for a second toggle, until the dialog is answered
         vm.Refresh();
         AntiCheat shown;
-        try { shown = await App.Core.CheckAntiCheatAsync(id); }
+        bool open;
+        try { (shown, open) = await App.Core.CheckAntiCheatAsync(id); }
         catch (Exception ex)
         {
             (vm.Error, vm.AlwaysPending) = (Describe(ex), null);
             vm.Refresh();
             return;
         }
-        var fresh = vm.Row.State with { AntiCheat = shown };   // VAC stays the state's: the check only names a client anti-cheat
+        var fresh = vm.Row.State with { AntiCheat = shown, AntiCheatUnfinished = open };   // VAC stays the state's: the check only names a client anti-cheat
         var ok = await App.ConfirmAsync(this, $"Always record {vm.Name} at your own risk?",
             new TextBlock { TextWrapping = TextWrapping.Wrap, Text = DetailVm.RiskText(fresh) + (ScsKiller.VulkanPickWarning(fresh) is { } pick ? "\n\n" + pick : "") }, "Always record");
         vm.AlwaysPending = null;
@@ -684,14 +696,15 @@ public sealed partial class DetailPage : Page
         vm.OfflineStarting = true;   // before the check: the button stays off until the dialog is answered
         vm.Refresh();
         AntiCheat shown;
-        try { shown = await App.Core.CheckAntiCheatAsync(id); }
+        bool open;
+        try { (shown, open) = await App.Core.CheckAntiCheatAsync(id); }
         catch (Exception ex)
         {
             (vm.Error, vm.OfflineStarting) = (Describe(ex), false);
             vm.Refresh();
             return;
         }
-        var fresh = vm.Row.State with { AntiCheat = shown };   // VAC stays the state's: the check only names a client anti-cheat
+        var fresh = vm.Row.State with { AntiCheat = shown, AntiCheatUnfinished = open };   // VAC stays the state's: the check only names a client anti-cheat
         var ok = await App.ConfirmAsync(this, $"Record {vm.Name} at your own risk?",
             new TextBlock { TextWrapping = TextWrapping.Wrap, Text = RiskConfirmText(fresh) },
             "Record session");

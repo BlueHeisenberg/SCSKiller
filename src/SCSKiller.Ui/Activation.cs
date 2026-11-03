@@ -20,6 +20,9 @@ static class Activation
 
     public static bool DriverUpdated(string[] args) => args.Contains(DriverUpdatedArg);
 
+    /// <summary>Started with nobody at the PC: the driver-update task, or a CLI run's notification (<see cref="ScsKiller.NoticeArg"/>).</summary>
+    public static bool Unattended(string[] args) => DriverUpdated(args) || args.Contains(ScsKiller.NoticeArg);
+
     /// <summary>Game folders are this instance's to manage (<see cref="InstanceIdentity.GameFolders"/>, <see cref="SingleInstance.Held"/>).</summary>
     public static bool ManagesRecorders => SingleInstance.Held && Program.Identity.GameFolders && !OperatingSystem.IsMacOS();   // no recorder for macOS yet
 
@@ -56,6 +59,11 @@ static class Activation
         {
             // no window unless the user picks Compile now or the toast body
             NotifyDriverUpdate(exitIfNothing: true);
+            return false;
+        }
+        if (args.Contains(ScsKiller.NoticeArg))
+        {
+            ShowHanded(k => k.HandedNotice(args), exitIfNothing: true);
             return false;
         }
         ShowDriverToast();
@@ -116,8 +124,17 @@ static class Activation
     {
         if (line.Contains(DriverUpdatedArg)) NotifyDriverUpdate(exitIfNothing: false);
         else if (line.Contains(MemoryArg)) LogMemory();
+        else if (line.Contains(ScsKiller.NoticeArg)) ShowHanded(k => k.HandedNotice(line), exitIfNothing: false);
         else if (!line.Contains(WindowsStartup.TrayArg)) App.ShowWindow();
     }
+
+    /// <summary>A CLI run's notification, once a scan listed the games it names. Nothing to show: the unattended start leaves.</summary>
+    static void ShowHanded(Func<ScsKiller, (string Id, (string Title, string Text) Notice)?> notice, bool exitIfNothing) =>
+        Host.Core.ScanAsync(CancellationToken.None).ContinueWith(_ => Host.Ui.TryEnqueue(() =>
+        {
+            if (Host.Core is ScsKiller k && notice(k) is { } n && Notifications.Available) Notifications.Show(Toasts.Ended(n.Id, n.Notice));
+            else if (exitIfNothing && !App.Main.IsVisible) _ = quit();
+        }));
 
     static void LogMemory()
     {
@@ -155,6 +172,11 @@ static class Activation
     /// <summary><paramref name="relaunched"/>: the click started the app, which only stays for what the click queued.</summary>
     static void OnToast(IDictionary<string, string> args, bool relaunched = false)
     {
+        if (Program.Identity.RefusesToast(args))
+        {
+            if (relaunched) _ = quit();
+            return;
+        }
         var core = Host.Core;
         // called after the scan: a driver toast names no games, they are the stale ones
         string[] Ids() => args.TryGetValue("games", out var list) ? list.Split('|') : core.DriverStaleGames().Select(g => g.Game.Id).ToArray();

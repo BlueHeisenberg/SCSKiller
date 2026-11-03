@@ -5,7 +5,7 @@
 //
 //   scskiller_warm <workdir> <game exe file name> [--threads N] [--priority below|idle] [--start N]
 //                  [--stop-event <name>] [--adapter-luid <hex>] [--rt-threads N] [--skip i,j,...]
-//                  [--memory-mb N] [--memory-restart 1] [--package <app user model id>] [--stage-path <install folder>\<dir>\<exe>]
+//                  [--memory-mb N] [--memory-restart 1|2] [--package <app user model id>] [--stage-path <install folder>\<dir>\<exe>]
 //                  [--skip-keys <sha1 hex>,...|@<file>] [--known-keys <sha1 hex>,...|@<file>] [--isolate i,j,...]
 //                  [--ags <amd_ags_x64.dll> --ags-app <name> --ags-engine <name> [--ags-version <app hex>,<engine hex>]]
 //                  [--pass K] [--layer <folder>]
@@ -40,7 +40,8 @@
 // hasn't printed its last line SCSKILLER_WARM_EXIT_S after that: a stopping replay abandons a call stuck for 2 s, so by
 // then it hung. These five are this process's own, never passed to the child.
 // --memory-restart 1: the child may end with a "memory" retry when the PC has stayed low on memory while it grew
-// (proxy.cpp warm_restart_tick), so a new process starts without what the driver kept.
+// (proxy.cpp warm_restart_tick), so a new process starts without what the driver kept. 2: only past 60% of RAM, which
+// stops the child with or without this option.
 // --d3dscache-noflush 1: the child's d3dscache.dll (NVIDIA from 621 keeps compiled pipelines in its SQLite dbs) skips its
 // FlushFileBuffers while it creates, since those fsyncs under its writer lock cap the compile; they flush again before the
 // exit's checkpoint.
@@ -91,12 +92,33 @@ struct __declspec(uuid("F158268A-D5A5-45CE-99CF-00D6C3F3FC0A")) IDesktopAppXActi
     virtual HRESULT STDMETHODCALLTYPE ActivateWithOptionsArgsWorkingDirectoryShowWindow(LPCWSTR aumid, LPCWSTR exe, LPCWSTR args,
         DWORD options, DWORD parent_pid, IUnknown*, LPCWSTR dir, DWORD show, HANDLE* process) = 0;
 };
+// Windows 10's (1809 to 22H2), in twinui.dll: no working directory or show-window parameter.
+struct __declspec(uuid("72E3A5B0-8FEA-485C-9F8B-822B16DBA17F")) IDesktopAppXActivator10 : IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE Activate(LPCWSTR, LPCWSTR, LPCWSTR, HANDLE*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE ActivateWithOptions(LPCWSTR aumid, LPCWSTR exe, LPCWSTR args, DWORD options, DWORD parent_pid, HANDLE* process) = 0;
+};
 static const CLSID CLSID_DesktopAppXActivator = {0x168EB462, 0x775F, 0x42AE, {0x91, 0x11, 0xD7, 0x14, 0xB2, 0x30, 0x6C, 0x2E}};
+
+// A console exe gets its console before wmain, and Windows 10's activator can't start one hidden: its staged copy runs as a
+// GUI exe (the same header field build/publish.ps1 sets for scskillerw.exe).
+static bool set_subsystem(const std::wstring& path, WORD subsystem) {
+    SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    LONG pe = 0;
+    DWORD n = 0;
+    bool ok = SetFilePointer(f, offsetof(IMAGE_DOS_HEADER, e_lfanew), nullptr, FILE_BEGIN) != INVALID_SET_FILE_POINTER && ReadFile(f, &pe, 4, &n, nullptr) && n == 4 &&
+              SetFilePointer(f, pe + (LONG)offsetof(IMAGE_NT_HEADERS64, OptionalHeader.Subsystem), nullptr, FILE_BEGIN) != INVALID_SET_FILE_POINTER &&
+              WriteFile(f, &subsystem, 2, &n, nullptr) && n == 2;
+    CloseHandle(f);
+    return ok;
+}
 
 static std::wstring beat_name(DWORD parent) { return L"Local\\SCSKiller.Beat." + std::to_wstring(parent); }
 static std::wstring final_name(DWORD parent) { return L"Local\\SCSKiller.Final." + std::to_wstring(parent); }
 static std::wstring started_name(DWORD parent) { return L"Local\\SCSKiller.Started." + std::to_wstring(parent); }
 static std::wstring loading_name(DWORD parent) { return L"Local\\SCSKiller.Loading." + std::to_wstring(parent); }
+static std::wstring entered_name(DWORD parent) { return L"Local\\SCSKiller.Entered." + std::to_wstring(parent); }
 static std::wstring stop_name(DWORD parent) { return L"Local\\SCSKiller.Stop." + std::to_wstring(parent); }
 static std::wstring pipe_name(DWORD parent, int fd) { return L"\\\\.\\pipe\\SCSKiller.Warm." + std::to_wstring(parent) + L"." + std::to_wstring(fd); }
 
@@ -112,7 +134,7 @@ struct Opts {
     std::wstring stop_event;
     int rt_threads = 0;          // a retry: concurrent ray tracing state object creates
     uint32_t memory_mb = 0;      // the staged process's private memory budget (0 = none)
-    bool memory_restart = false;
+    int memory_restart = 0;      // the staged warm may stop to free memory: 1 at a third of RAM or 60% of it, 2 only at 60%
     std::vector<uint64_t> skip;  // a retry: items an earlier run found faulting alone
     std::vector<uint8_t> skip_keys;  // 20 bytes each: items that removed the device in an earlier run
     std::vector<uint8_t> known_keys;  // 20 bytes each: items that crashed or hung this driver in an earlier compile
@@ -153,7 +175,7 @@ static bool parse(int argc, wchar_t** argv, int i, Opts& o) {
         else if (k == L"--stop-event") o.stop_event = v;
         else if (k == L"--rt-threads") o.rt_threads = (int)wcstol(v.c_str(), &end, 10);
         else if (k == L"--memory-mb") o.memory_mb = (uint32_t)wcstoul(v.c_str(), &end, 10);
-        else if (k == L"--memory-restart") o.memory_restart = v == L"1";
+        else if (k == L"--memory-restart") o.memory_restart = _wtoi(v.c_str());
         else if (k == L"--package") o.package = v;
         else if (k == L"--stage-path") o.stage_path = v;
         else if (k == L"--ags") o.ags = v;
@@ -354,6 +376,199 @@ static std::wstring ags_device(const Opts& o, IDXGIAdapter* adapter, ID3D12Devic
     return rp.extensions & AGS_APP_REGISTRATION ? L"" : L"the driver doesn't support AGS app registration";
 }
 
+static const wchar_t* const NoGpu = L"no GPU adapter: only a software renderer was found";
+
+// Whether physical device gpu of instance inst is a CPU renderer, through the loader DXVK and vkd3d-proton load
+// (winevulkan.dll first). False when it can't be read.
+static bool vk_cpu(VkInstance inst, VkPhysicalDevice gpu, bool* cpu) {
+    HMODULE m = GetModuleHandleW(L"winevulkan.dll");
+    if (!m) m = GetModuleHandleW(L"vulkan-1.dll");
+    auto gpa = m ? (PFN_vkGetInstanceProcAddr)GetProcAddress(m, "vkGetInstanceProcAddr") : nullptr;
+    auto props = gpa && inst && gpu ? (PFN_vkGetPhysicalDeviceProperties)gpa(inst, "vkGetPhysicalDeviceProperties") : nullptr;
+    if (!props) return false;
+    VkPhysicalDeviceProperties p{};
+    props(gpu, &p);
+    *cpu = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU || p.vendorID == 0x10005;
+    return true;
+}
+
+// DXVK's interop interfaces (src/dxgi/dxgi_interfaces.h, vkd3d-proton's include/vkd3d_device_vkd3d_ext.idl up to
+// GetVulkanHandles): the Vulkan device under a DXGI adapter and under a D3D12 device.
+MIDL_INTERFACE("3a6d8f2c-b0e8-4ab4-b4dc-4fd24891bfa5") IDXGIVkInteropAdapter : public IUnknown {
+    virtual void STDMETHODCALLTYPE GetVulkanHandles(VkInstance* instance, VkPhysicalDevice* physical) = 0;
+};
+MIDL_INTERFACE("39da4e09-bd1c-4198-9fae-86bbe3be41fd") ID3D12DXVKInteropDevice : public IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE GetDXGIAdapter(REFIID iid, void** object) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetInstanceExtensions(UINT* count, const char** extensions) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetDeviceExtensions(UINT* count, const char** extensions) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetDeviceFeatures(const VkPhysicalDeviceFeatures2** features) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetVulkanHandles(VkInstance* instance, VkPhysicalDevice* physical, VkDevice* device) = 0;
+};
+
+// A CPU renderer, never compiled on. DXVK lists Mesa's llvmpipe and lavapipe without DXGI_ADAPTER_FLAG_SOFTWARE and an app
+// profile may give them another vendor id and name, so a DXVK adapter is judged by its Vulkan device, and refused when
+// that can't be read.
+static bool software(IDXGIAdapter1* a, const DXGI_ADAPTER_DESC1& d) {
+    if ((d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) || d.VendorId == 0x10005) return true;
+    std::wstring name = d.Description;
+    for (auto& c : name) c = towlower(c);
+    for (const wchar_t* cpu : {L"llvmpipe", L"lavapipe", L"swiftshader", L"microsoft basic render driver"})
+        if (name.find(cpu) != std::wstring::npos) return true;
+    IDXGIVkInteropAdapter* x = nullptr;
+    if (FAILED(a->QueryInterface(__uuidof(IDXGIVkInteropAdapter), (void**)&x))) return false;
+    VkInstance inst = VK_NULL_HANDLE;
+    VkPhysicalDevice gpu = VK_NULL_HANDLE;
+    x->GetVulkanHandles(&inst, &gpu);
+    x->Release();
+    bool cpu = true;
+    return !vk_cpu(inst, gpu, &cpu) || cpu;
+}
+
+// The Vulkan device under vkd3d-proton's D3D12 device is a CPU renderer, or can't be read: vkd3d-proton finds its own
+// device for the DXGI adapter and takes its first one when none matches. False on a native D3D12 runtime.
+static bool cpu_device(ID3D12Device* dev) {
+    ID3D12DXVKInteropDevice* x = nullptr;
+    if (!dev || FAILED(dev->QueryInterface(__uuidof(ID3D12DXVKInteropDevice), (void**)&x))) return false;
+    VkInstance inst = VK_NULL_HANDLE;
+    VkPhysicalDevice gpu = VK_NULL_HANDLE;
+    VkDevice vd = VK_NULL_HANDLE;
+    bool cpu = true;
+    const bool read = SUCCEEDED(x->GetVulkanHandles(&inst, &gpu, &vd)) && vk_cpu(inst, gpu, &cpu);
+    x->Release();
+    return !read || cpu;
+}
+
+// The adapter by --adapter-luid, else the GPU with the most dedicated VRAM (the game's), never a CPU renderer (sw: one was
+// listed).
+static IDXGIAdapter1* find_adapter(const Opts& o, DXGI_ADAPTER_DESC1* out, bool* sw) {
+    IDXGIFactory1* f = nullptr;
+    IDXGIAdapter1 *best = nullptr, *a;
+    DXGI_ADAPTER_DESC1 bd{}, d;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&f)))) return nullptr;  // DXVK fails it when no device passes its filter
+    for (UINT i = 0; f->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; ++i) {
+        a->GetDesc1(&d);
+        uint64_t luid = (uint64_t)(uint32_t)d.AdapterLuid.HighPart << 32 | d.AdapterLuid.LowPart;
+        const bool cpu = software(a, d);
+        *sw = *sw || cpu;
+        if (!cpu && (o.luid ? luid == o.luid : !best || d.DedicatedVideoMemory > bd.DedicatedVideoMemory)) {
+            if (best) best->Release();
+            best = a, bd = d;
+        } else a->Release();
+    }
+    f->Release();
+    if (best) *out = bd;
+    return best;
+}
+
+// The Vulkan GPUs this process sees, as DXVK's device filters match them: deviceName, deviceUUID in lowercase hex.
+static std::vector<std::pair<std::wstring, std::wstring>> vk_gpus() {
+    std::vector<std::pair<std::wstring, std::wstring>> all;
+    HMODULE m = LoadLibraryExW(L"vulkan-1.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    auto gpa = m ? (PFN_vkGetInstanceProcAddr)GetProcAddress(m, "vkGetInstanceProcAddr") : nullptr;
+    auto create = gpa ? (PFN_vkCreateInstance)gpa(nullptr, "vkCreateInstance") : nullptr;
+    VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+    app.apiVersion = VK_API_VERSION_1_1;
+    VkInstanceCreateInfo ci{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    ci.pApplicationInfo = &app;
+    VkInstance inst = VK_NULL_HANDLE;
+    if (create && create(&ci, nullptr, &inst) == VK_SUCCESS) {
+        auto list = (PFN_vkEnumeratePhysicalDevices)gpa(inst, "vkEnumeratePhysicalDevices");
+        auto props = (PFN_vkGetPhysicalDeviceProperties2)gpa(inst, "vkGetPhysicalDeviceProperties2");
+        uint32_t n = 0;
+        std::vector<VkPhysicalDevice> gpus;
+        if (list && props && list(inst, &n, nullptr) == VK_SUCCESS && (gpus.resize(n), list(inst, &n, gpus.data())) >= 0)
+            for (uint32_t i = 0; i < n; ++i) {
+                VkPhysicalDeviceIDProperties id{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+                VkPhysicalDeviceProperties2 p{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &id};
+                props(gpus[i], &p);
+                if (p.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU || p.properties.vendorID == 0x10005) continue;
+                wchar_t name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE] = L"", uuid[2 * VK_UUID_SIZE + 1] = L"";
+                MultiByteToWideChar(CP_UTF8, 0, p.properties.deviceName, -1, name, VK_MAX_PHYSICAL_DEVICE_NAME_SIZE);
+                for (int b = 0; b < VK_UUID_SIZE; ++b) swprintf_s(uuid + 2 * b, 3, L"%02x", id.deviceUUID[b]);
+                all.emplace_back(name, uuid);
+            }
+        if (auto destroy = (PFN_vkDestroyInstance)gpa(inst, "vkDestroyInstance")) destroy(inst, nullptr);
+    }
+    if (m) FreeLibrary(m);
+    return all;
+}
+
+// find_adapter. Under Proton (SCSKILLER_WARM_GPU set) DXVK reads its device filters from this process's environment, where
+// Wine's registry [Environment] overrides SCSKiller's, and no factory may follow a failed one: DXVK's instance singleton
+// stays taken and the next factory dereferences null. So before the only factory, filters no Vulkan GPU passes give way to
+// SCSKiller's pick, or to none when the pick passes none either (its name differs in this container). A filter that passes
+// a GPU stays in charge: the game renders on that one.
+static IDXGIAdapter1* pick_adapter(const Opts& o, DXGI_ADAPTER_DESC1* d, bool* sw) {
+    wchar_t pick[MAX_PATH], name[MAX_PATH] = L"", uuid[MAX_PATH] = L"";
+    const DWORD n = o.luid ? 0 : GetEnvironmentVariableW(L"SCSKILLER_WARM_GPU", pick, MAX_PATH);
+    const wchar_t* took = nullptr;
+    if (n && n < MAX_PATH) {
+        // as DXVK reads them (util_env.cpp): a value of MAX_PATH characters or more counts as none
+        const DWORD nl = GetEnvironmentVariableW(L"DXVK_FILTER_DEVICE_NAME", name, MAX_PATH), ul = GetEnvironmentVariableW(L"DXVK_FILTER_DEVICE_UUID", uuid, MAX_PATH);
+        if (nl >= MAX_PATH) name[0] = 0;
+        if (ul >= MAX_PATH) uuid[0] = 0;
+        const auto gpus = vk_gpus();
+        auto passes = [&](const wchar_t* by_name, const wchar_t* by_uuid) {
+            return std::any_of(gpus.begin(), gpus.end(), [&](const auto& g) {
+                return (!*by_name || wcsstr(g.first.c_str(), by_name)) && (!*by_uuid || wcsstr(g.second.c_str(), by_uuid));
+            });
+        };
+        if (!gpus.empty() && !passes(name, uuid)) {
+            took = passes(pick, L"") ? L"by SCSKiller's pick" : L"unfiltered";
+            SetEnvironmentVariableW(L"DXVK_FILTER_DEVICE_NAME", passes(pick, L"") ? pick : nullptr);
+            SetEnvironmentVariableW(L"DXVK_FILTER_DEVICE_UUID", nullptr);
+        }
+    }
+    IDXGIAdapter1* a = find_adapter(o, d, sw);
+    if (a && took) err_printf(L"no GPU passes the DXVK device filter \"%ls%ls%ls\": %ls %ls\n", name, *name && *uuid ? L"\", \"" : L"", uuid, d->Description, took);
+    return a;
+}
+
+// --ags-probe: a device through AGS under --ags-app and one compute pipeline no cache holds yet (a constant unique to the
+// run), kept until --stop-event (at most 20 s): the app reads which DxcCache key's files the driver wrote for that name.
+// Nothing of a plan is compiled.
+static int ags_probe(const Opts& o) {
+    // AGS loads d3d12.dll by name: the system's, never a proxy that happens to sit beside this exe
+    HMODULE d3d12 = LoadLibraryExW(L"d3d12.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    HMODULE dc = LoadLibraryExW(L"d3dcompiler_47.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    auto serialize = d3d12 ? (PFN_D3D12_SERIALIZE_ROOT_SIGNATURE)GetProcAddress(d3d12, "D3D12SerializeRootSignature") : nullptr;
+    auto compile = dc ? (HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**,
+                                          ID3DBlob**))GetProcAddress(dc, "D3DCompile") : nullptr;
+    if (!serialize || !compile) return fail(L"d3d12.dll or d3dcompiler_47.dll not usable");
+    // the adapter as a warm picks it
+    DXGI_ADAPTER_DESC1 ad{};
+    bool sw = false;
+    IDXGIAdapter1* a = pick_adapter(o, &ad, &sw);
+    if (!a) return fail(o.luid ? L"no adapter with that LUID" : sw ? NoGpu : L"no GPU adapter");
+    ID3D12Device* dev = nullptr;
+    std::wstring why = ags_device(o, a, &dev);
+    if (!dev) return fail(L"AGS app " + o.ags_app + L": " + why);
+    if (cpu_device(dev)) return fail(NoGpu);
+    // a pipeline already in the cache writes nothing (measured), so the shader stores a value no earlier run used
+    static const char cs[] = "RWByteAddressBuffer b : register(u0); [numthreads(1,1,1)] void main() { b.Store(0, SALT); }";
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    char salt[16];
+    sprintf_s(salt, "0x%08xu", (unsigned)(t.QuadPart ^ t.QuadPart >> 32) ^ GetCurrentProcessId() << 16);
+    const D3D_SHADER_MACRO defines[] = {{"SALT", salt}, {nullptr, nullptr}};
+    D3D12_ROOT_PARAMETER rp = {};
+    rp.ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    D3D12_ROOT_SIGNATURE_DESC rd = {1, &rp};
+    ID3DBlob *rsb = nullptr, *csb = nullptr;
+    ID3D12RootSignature* rs = nullptr;
+    ID3D12PipelineState* pso = nullptr;
+    HRESULT hr = serialize(&rd, D3D_ROOT_SIGNATURE_VERSION_1, &rsb, nullptr);
+    if (SUCCEEDED(hr)) hr = dev->CreateRootSignature(0, rsb->GetBufferPointer(), rsb->GetBufferSize(), IID_PPV_ARGS(&rs));
+    if (SUCCEEDED(hr)) hr = compile(cs, sizeof cs - 1, "probe", defines, nullptr, "main", "cs_5_0", 0, 0, &csb, nullptr);
+    D3D12_COMPUTE_PIPELINE_STATE_DESC c = {rs};
+    if (SUCCEEDED(hr)) c.CS = {csb->GetBufferPointer(), csb->GetBufferSize()}, hr = dev->CreateComputePipelineState(&c, IID_PPV_ARGS(&pso));
+    emit("{\"event\":\"agsdevice\",\"registered\":%s,\"pipeline\":\"0x%08x\",\"salt\":\"%s\"}", why.empty() ? "true" : "false", (unsigned)hr, salt);
+    if (HANDLE stop = o.stop_event.empty() ? nullptr : CreateEventW(nullptr, TRUE, FALSE, o.stop_event.c_str())) WaitForSingleObject(stop, 20000);
+    for (IUnknown* u : {(IUnknown*)pso, (IUnknown*)rs, (IUnknown*)csb, (IUnknown*)rsb, (IUnknown*)dev})
+        if (u) u->Release();
+    return 0;
+}
+
 // NVIDIA Aftermath (GFSDK_Aftermath.h, GFSDK_Aftermath_GpuCrashDump.h): the callbacks drop what the driver hands over,
 // so nothing is written anywhere
 static void am_drop(const void*, uint32_t, void*) {}
@@ -452,20 +667,29 @@ static std::wstring asd_register(const Opts& o, const std::wstring& exe_path, st
 }
 
 static int child(DWORD parent_pid, const Opts& o) {
+    if (HANDLE e = OpenEventW(EVENT_MODIFY_STATE, FALSE, entered_name(parent_pid).c_str())) SetEvent(e), CloseHandle(e);
     for (int fd : {1, 2}) {  // a packaged child's output goes through the parent's pipes
         HANDLE h = CreateFileW(pipe_name(parent_pid, fd).c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
         if (h == INVALID_HANDLE_VALUE) continue;
         SetStdHandle(fd == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE, h);
-        _dup2(_open_osfhandle((intptr_t)h, _O_WRONLY), fd);
+        FILE *s = fd == 1 ? stdout : stderr, *r;
+        if (_fileno(s) < 0) freopen_s(&r, "NUL", "w", s);  // a GUI exe without std handles starts with its streams closed
+        _dup2(_open_osfhandle((intptr_t)h, _O_WRONLY), _fileno(s));
     }
-    SetPriorityClass(GetCurrentProcess(), o.idle ? IDLE_PRIORITY_CLASS : BELOW_NORMAL_PRIORITY_CLASS);  // the driver's own compile threads start at the class's normal
+    wchar_t arm[16] = {};  // throttled: the class without the opt-out, normal: the Normal class without it
+    GetEnvironmentVariableW(L"SCSKILLER_TEST_WARM_PRIORITY", arm, 16);
+    bool normal = !o.idle && !wcscmp(arm, L"normal"), opt_out = o.idle || (!normal && wcscmp(arm, L"throttled"));
+    SetPriorityClass(GetCurrentProcess(), o.idle ? IDLE_PRIORITY_CLASS : normal ? NORMAL_PRIORITY_CLASS : BELOW_NORMAL_PRIORITY_CLASS);  // the driver's own compile threads start at the class's normal
+    // Windows 11 runs a throttled low-priority process on the E-cores of Intel hybrid CPUs only. Fails on older Windows 10
+    PROCESS_POWER_THROTTLING_STATE fast = {PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED, 0};
+    if (opt_out) SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &fast, sizeof fast);
     HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, parent_pid), beat_map = OpenFileMappingW(FILE_MAP_READ, FALSE, beat_name(parent_pid).c_str());
     wchar_t self[MAX_PATH];
     GetModuleFileNameW(nullptr, self, MAX_PATH);
     std::wstring dir = self, exe = dir.substr(dir.find_last_of(L'\\') + 1);
     dir.resize(dir.size() - exe.size());
     SetEnvironmentVariableW(L"SCSKILLER_MODE", L"warm");
-    SetEnvironmentVariableW(L"SCSKILLER_WARM_MEM_RESTART", o.memory_restart ? L"1" : nullptr);
+    SetEnvironmentVariableW(L"SCSKILLER_WARM_MEM_RESTART", o.memory_restart == 2 ? L"2" : o.memory_restart ? L"1" : nullptr);
     if (o.ds_noflush) {
         std::wstring why = ds_noflush();
         if (!why.empty()) err_printf(L"D3DSCache flushes stay on, so the compile runs at normal speed: %ls\n", why.c_str());
@@ -490,6 +714,7 @@ static int child(DWORD parent_pid, const Opts& o) {
     auto hung = (BOOL(WINAPI*)(const char**))proc("SCSKiller_Hung");
     auto passed_over = (uint64_t(WINAPI*)(uint64_t))proc("SCSKiller_PassedOver");  // -1 below: a proxy without it
     auto unsupported = (uint64_t(WINAPI*)())proc("SCSKiller_Unsupported");  // optional: then 0
+    auto unbuilt = (uint64_t(WINAPI*)())proc("SCSKiller_Unbuilt");  // optional: then 0
     auto items12 = (uint64_t(WINAPI*)())proc("SCSKiller_D3D12Items");
     auto start11 = (void(WINAPI*)(LUID))proc("SCSKiller_StartWarm11");
     auto load = (void(WINAPI*)())proc("SCSKiller_WarmLoad");
@@ -520,17 +745,11 @@ static int child(DWORD parent_pid, const Opts& o) {
     }
 
     // The game renders on the discrete GPU: default to the adapter with the most dedicated VRAM.
-    IDXGIFactory1* f = nullptr;
-    IDXGIAdapter1 *best = nullptr, *a;
-    DXGI_ADAPTER_DESC1 bd{}, d;
-    CreateDXGIFactory1(IID_PPV_ARGS(&f));
-    for (UINT i = 0; f && f->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; ++i) {
-        a->GetDesc1(&d);
-        uint64_t luid = (uint64_t)(uint32_t)d.AdapterLuid.HighPart << 32 | d.AdapterLuid.LowPart;
-        if (o.luid ? luid == o.luid : !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) && (!best || d.DedicatedVideoMemory > bd.DedicatedVideoMemory)) best = a, bd = d;
-    }
+    DXGI_ADAPTER_DESC1 bd{};
+    bool sw = false;
+    IDXGIAdapter1* best = pick_adapter(o, &bd, &sw);
     ID3D12Device* dev = nullptr;
-    if (!best) return fail(o.luid ? L"no adapter with that LUID" : L"no GPU adapter");
+    if (!best) return fail(o.luid ? L"no adapter with that LUID" : sw ? NoGpu : L"no GPU adapter");
     options(o.threads, o.idle, o.start);
     warm_rt(o.rt_threads, o.skip.data(), (uint32_t)o.skip.size());
     memory(o.memory_mb);
@@ -557,6 +776,7 @@ static int child(DWORD parent_pid, const Opts& o) {
         swprintf_s(why, L" (0x%08X)", (unsigned)hr);
         return fail(L"D3D12 device creation failed on " + std::wstring(bd.Description) + why);
     }
+    if (cpu_device(dev)) return fail(NoGpu);
     // every return from here on sets it after the last line: the driver may write its cache at exit
     HANDLE final_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, final_name(parent_pid).c_str());
     auto ended = [final_event](int code) {
@@ -606,9 +826,9 @@ static int child(DWORD parent_pid, const Opts& o) {
         uint32_t w[2] = {0, 0};
         if (workers) workers(w);
         skipped(s);
-        emit("{\"event\":\"progress\",\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"driverSkipped\":%llu,\"rate\":%.1f,\"workers\":%u,\"threads\":%u,\"work\":%llu,\"unsupported\":%llu,\"cached\":%llu}",
+        emit("{\"event\":\"progress\",\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"driverSkipped\":%llu,\"rate\":%.1f,\"workers\":%u,\"threads\":%u,\"work\":%llu,\"unsupported\":%llu,\"cached\":%llu,\"unbuilt\":%llu}",
              p[0], p[1], p[2], s[0], (p[0] - first) * 1000.0 / (now - t0), w[0], w[1], work ? work() : 0ull, unsupported ? unsupported() : 0ull,
-             cached ? cached() : 0ull);
+             cached ? cached() : 0ull, unbuilt ? unbuilt() : 0ull);
     }
     g_ds_noflush = false;  // d3dscache's checkpoints from here on, its last at exit too, reach the disk
     uint64_t r[5];  // needed, from, ray tracing threads, failed before from, the item that failed alone (~0: none)
@@ -637,9 +857,10 @@ static int child(DWORD parent_pid, const Opts& o) {
     const uint64_t done = r[0] ? r[1] : p[0], failed = r[0] ? r[3] : p[2], skips = r[0] ? s[1] : s[0];
     // noflush: d3dscache.dll's flushes were skipped while it created (ds_noflush hooked them)
     emit("{\"event\":\"done\",\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"driverSkipped\":%llu,\"seconds\":%.1f,\"stopped\":%s,\"crashed\":[%s],\"noflush\":%s,\"passedOver\":%lld,\"unsupported\":%llu,\"cached\":%llu,"
-         "\"known\":%llu,\"culprits\":[%s]}", done,
+         "\"known\":%llu,\"culprits\":[%s],\"unbuilt\":%llu}", done,
          p[1], failed, skips, (GetTickCount64() - t0) / 1000.0, done < p[1] ? "true" : "false", crashed, g_ds_flush ? "true" : "false",
-         passed_over ? (long long)passed_over(done) : -1ll, unsupported ? unsupported() : 0ull, cached ? cached() : 0ull, r[0] ? kn[1] : kn[0], culprits);
+         passed_over ? (long long)passed_over(done) : -1ll, unsupported ? unsupported() : 0ull, cached ? cached() : 0ull, r[0] ? kn[1] : kn[0], culprits,
+         unbuilt ? unbuilt() : 0ull);
     return ended(0);  // a normal exit: the driver writes its cache now
 }
 
@@ -767,6 +988,24 @@ static int vulkan_warm(const Opts& o, const std::wstring& work, const std::wstri
     SetEnvironmentVariableW(L"VK_LOADER_LAYERS_DISABLE", L"~all~");  // overlays and recorders, Steam's Fossilize layer among them
     SetEnvironmentVariableW(L"DISABLE_VK_LAYER_VALVE_steam_fossilize_1", L"1");
     using Ids = std::set<std::pair<unsigned, Hash>>;
+    // the plan item's key (VulkanPlan.Key): SHA-1 of 'V' and the archive entry's 40-character name, empty if it can't be hashed
+    auto key_of = [](unsigned tag, Hash h) {
+        char rec[42];
+        snprintf(rec, sizeof rec, "V%024x%016llx", tag, (unsigned long long)h);
+        UCHAR sha[20];
+        return BCryptHash(BCRYPT_SHA1_ALG_HANDLE, nullptr, 0, (PUCHAR)rec, 41, sha, 20) ? std::string() : std::string((const char*)sha, 20);
+    };
+    Ids known;  // --skip-keys: never replayed, named again in the done event's crashed
+    if (!o.skip_keys.empty()) {
+        std::set<std::string> skip;
+        for (size_t i = 0; i + 20 <= o.skip_keys.size(); i += 20) skip.insert(std::string((const char*)o.skip_keys.data() + i, 20));
+        for (int k = 0; k < 3; ++k)
+            for (Hash h : all[k]) {
+                const std::string key = key_of((unsigned)kinds[k], h);
+                if (key.empty()) return fail(L"hashing a pipeline's key failed");
+                if (skip.count(key)) known.insert({(unsigned)kinds[k], h});
+            }
+    }
     auto lists = [&](const wchar_t* what, bool remove) {  // the patch's <what>.<pid>.txt files of the stage
         Ids got;
         WIN32_FIND_DATAW fd;
@@ -789,6 +1028,11 @@ static int vulkan_warm(const Opts& o, const std::wstring& work, const std::wstri
     const std::wstring stop_event = o.stop_event.empty() ? stop_name(GetCurrentProcessId()) : o.stop_event;
     SetEnvironmentVariableW(L"SCSKILLER_REPLAY_STOP", stop_event.c_str());
     SetEnvironmentVariableW(L"SCSKILLER_REPLAY_CREATED", flat.substr(0, flat.size() - 1).c_str());
+    // a later pass's faulty pipelines, so a pipeline whose library is one of them isn't listed invalid (relative: the
+    // replayer reads it with an ANSI path from this folder)
+    const std::wstring faulty_path = flat + L"scskiller_faulty.txt";
+    unstage.files.push_back(faulty_path);
+    SetEnvironmentVariableW(L"SCSKILLER_REPLAY_FAULTY", nullptr);
     std::string driver;
     const int device = vk_device_index(o.luid, &driver);
     if (device < 0) return fail(L"no Vulkan device has that adapter's LUID");
@@ -816,13 +1060,13 @@ static int vulkan_warm(const Opts& o, const std::wstring& work, const std::wstri
 
     // The archive is replayed in passes, each by a fresh replayer: Fossilize's own recovery leaves out more than the
     // faulty pipeline (what shares its shaders, what it hadn't reached yet), so a pass with a fault is followed by one
-    // without every faulty, suspect and refused pipeline so far. Created ones replay as cache hits (about 0.1 ms each).
+    // without every faulty, suspect, refused, invalid and unsupported pipeline so far. Created ones replay as cache hits (about 0.1 ms each).
     wchar_t lim[16] = {};
     const unsigned hang_s = GetEnvironmentVariableW(L"SCSKILLER_REPLAY_TIMEOUT_S", lim, 16) && _wtoi(lim) > 0 ? _wtoi(lim) : 300;
     constexpr int max_passes = 16;
     // A crash reports its one pipeline, a hang every one in flight: a pass's lone new fault is confirmed, several are
     // suspects, each replayed later without the other suspects and confirmed only if it faults again.
-    Ids created, confirmed, suspects, refused, unparsed;
+    Ids created, confirmed, suspects, refused, unparsed, invalid, unsupported;
     std::pair<unsigned, Hash> trying{};
     bool alone = false;
     const ULONGLONG t0 = GetTickCount64();
@@ -831,17 +1075,27 @@ static int vulkan_warm(const Opts& o, const std::wstring& work, const std::wstri
     int code = 0;
     for (int pass = 1;; ++pass) {
         std::string archive = "scskiller.foz";
-        if (pass > 1) {
+        if (pass > 1 || !known.empty()) {
             archive = "pass" + std::to_string(pass) + ".foz";
             const std::wstring to = flat + std::wstring(archive.begin(), archive.end());
             unstage.files.push_back(to);
             Ids out = confirmed;
+            out.insert(known.begin(), known.end());
             out.insert(suspects.begin(), suspects.end());
             out.insert(refused.begin(), refused.end());
+            out.insert(invalid.begin(), invalid.end());
+            out.insert(unsupported.begin(), unsupported.end());
             if (alone) out.erase(trying);
             if (!foz_without(foz, to, out)) return fail(L"writing " + to + L" failed");
+            FILE* f = _wfopen(faulty_path.c_str(), L"wb");
+            bool ok = f != nullptr;
+            for (const auto& id : out)
+                if (ok && (confirmed.count(id) || suspects.count(id) || known.count(id))) ok = fprintf(f, "%u %016llx\n", id.first, (unsigned long long)id.second) > 0;
+            if (f && fclose(f)) ok = false;
+            if (!ok) return fail(L"writing " + faulty_path + L" failed");
+            SetEnvironmentVariableW(L"SCSKILLER_REPLAY_FAULTY", L"scskiller_faulty.txt");
         }
-        lists(L"failed", true), lists(L"unparsed", true);  // this pass's own
+        lists(L"failed", true), lists(L"unparsed", true), lists(L"invalid", true), lists(L"unsupported", true);  // this pass's own
 
         // the replayer's output goes to the stage's log, never into these JSON lines
         SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
@@ -894,8 +1148,9 @@ static int vulkan_warm(const Opts& o, const std::wstring& work, const std::wstri
             uint64_t done = std::min<uint64_t>(total, sum(&ExternalReplayer::TypeProgress::completed) + sum(&ExternalReplayer::TypeProgress::skipped) +
                                                           sum(&ExternalReplayer::TypeProgress::cached));
             shown = std::max(shown, done);
-            emit("{\"event\":\"progress\",\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"driverSkipped\":%llu,\"rate\":%.1f}", shown, total,
-                 (uint64_t)(refused.size() + refusals_seen), (uint64_t)(confirmed.size() + suspects.size()) + faulty_now(false, nullptr), shown * 1000.0 / (now - t0));
+            emit("{\"event\":\"progress\",\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"driverSkipped\":%llu,\"invalid\":%llu,\"unsupported\":%llu,\"rate\":%.1f}",
+                 shown, total, (uint64_t)(refused.size() + refusals_seen), (uint64_t)(confirmed.size() + suspects.size()) + faulty_now(false, nullptr),
+                 (uint64_t)invalid.size(), (uint64_t)unsupported.size(), shown * 1000.0 / (now - t0));
         }
         if (driver_gone(true)) return fail(L"The graphics driver changed or reset during the compile, compile again");
         refusals_seen = 0;
@@ -909,16 +1164,20 @@ static int vulkan_warm(const Opts& o, const std::wstring& work, const std::wstri
         const bool fault = !fresh.empty();
         if (fresh.size() == 1) confirmed.insert(*fresh.begin());
         else suspects.insert(fresh.begin(), fresh.end());
-        const Ids made_now = lists(L"created", false), refused_now = lists(L"failed", false);
+        const Ids made_now = lists(L"created", false), refused_now = lists(L"failed", false), invalid_now = lists(L"invalid", false),
+                  unsupported_now = lists(L"unsupported", false);
         created.insert(made_now.begin(), made_now.end());
         refused.insert(refused_now.begin(), refused_now.end());
+        invalid.insert(invalid_now.begin(), invalid_now.end());
+        unsupported.insert(unsupported_now.begin(), unsupported_now.end());
         unparsed = lists(L"unparsed", false);
         if (stopped || code != 0) break;
         bool left = false;
         for (int k = 0; k < 3 && !left; ++k)
             for (Hash h : all[k]) {
                 const std::pair<unsigned, Hash> id{(unsigned)kinds[k], h};
-                if (!created.count(id) && !confirmed.count(id) && !suspects.count(id) && !refused.count(id)) { left = true; break; }
+                if (!created.count(id) && !confirmed.count(id) && !suspects.count(id) && !refused.count(id) && !invalid.count(id) &&
+                    !unsupported.count(id) && !known.count(id)) { left = true; break; }
             }
         alone = !(fault && left) && !suspects.empty();  // a pass with a new fault first replays what it left out
         if (alone) trying = *suspects.begin();
@@ -932,33 +1191,53 @@ static int vulkan_warm(const Opts& o, const std::wstring& work, const std::wstri
     Ids faulty = confirmed;
     faulty.insert(suspects.begin(), suspects.end());
 
-    // Not created: refused by the driver, or unparsable in a replay without any fault, is failed (deterministic); every
-    // other one is skipped by the driver (faulty or still a suspect, behind a faulty shader or library, not reached at the pass cap). On a
-    // stop only the faulty ones count as skipped: the rest is what the stop left.
-    uint64_t made = 0, failed = 0, skipped = 0;
-    std::string keys;
+    // Not created: refused by the driver, or unparsable in a replay without any fault, is failed (deterministic). A confirmed
+    // or known one crashed or hung the driver (crashed, its key kept for later compiles). One the replayer left out before
+    // creating it is invalid (a module or library that wasn't created) or unsupported (needing a feature the device lacks).
+    // Every other one is skipped by the driver (still a suspect, behind a faulty shader or library, not reached at the pass
+    // cap). On a stop only the faulty ones count as skipped: the rest is what the stop left. Faulty before invalid: a
+    // thread's current pipeline outlives a skip, so a fault right after one names the skipped pipeline.
+    uint64_t made = 0, failed = 0, skipped = 0, invalids = 0, unsupporteds = 0, crashes = 0;
+    std::string keys, crashed;
     for (int k = 0; k < 3; ++k)
         for (Hash h : all[k]) {
             const std::pair<unsigned, Hash> id{(unsigned)kinds[k], h};
             if (created.count(id)) { ++made; continue; }
+            const std::string key = key_of((unsigned)kinds[k], h);
+            if (key.empty()) return fail(L"hashing a failed pipeline's key failed");
             if (refused.count(id) || faulty.empty() && unparsed.count(id)) ++failed;
-            else if (!stopped || faulty.count(id)) ++skipped;
-            // the plan item's key (VulkanPlan.Key): SHA-1 of 'V' and the archive entry's 40-character name
-            char rec[42];
-            snprintf(rec, sizeof rec, "V%024x%016llx", (unsigned)kinds[k], (unsigned long long)h);
-            UCHAR sha[20];
-            if (BCryptHash(BCRYPT_SHA1_ALG_HANDLE, nullptr, 0, (PUCHAR)rec, 41, sha, 20)) return fail(L"hashing a failed pipeline's key failed");
-            keys.append((const char*)sha, 20);
+            else if (confirmed.count(id) || known.count(id)) {
+                ++crashes;
+                crashed += crashed.empty() ? "\"" : ",\"";
+                for (unsigned char c : key) crashed += "0123456789abcdef"[c >> 4], crashed += "0123456789abcdef"[c & 15];
+                crashed += '"';
+            } else if (suspects.count(id)) ++skipped;
+            else if (invalid.count(id)) ++invalids;
+            else if (unsupported.count(id)) ++unsupporteds;
+            else if (!stopped) ++skipped;
+            keys += key;
         }
     if (!keys.empty()) {
         FILE* f = _wfopen((flat + L"scskiller_failed.keys").c_str(), L"wb");
         if (!f || fwrite(keys.data(), 1, keys.size(), f) != keys.size()) return fail(L"writing scskiller_failed.keys failed");
         fclose(f);
     }
-    if (total && !made && faulty.empty() && refused.empty() && !stopped) return fail(L"fossilize-replay created no pipeline, see stage\\scskiller.log");
-    emit("{\"event\":\"done\",\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"driverSkipped\":%llu,\"seconds\":%.1f,\"stopped\":%s,\"crashed\":[]}",
-         stopped ? made + failed + skipped : total, total, failed, skipped, (GetTickCount64() - t0) / 1000.0, stopped ? "true" : "false");
+    if (total && !made && faulty.empty() && known.empty() && refused.empty() && invalid.empty() && unsupported.empty() && !stopped)
+        return fail(L"fossilize-replay created no pipeline, see stage\\scskiller.log");
+    emit("{\"event\":\"done\",\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"driverSkipped\":%llu,\"invalid\":%llu,\"unsupported\":%llu,\"seconds\":%.1f,"
+         "\"stopped\":%s,\"crashed\":[%s]}", stopped ? made + failed + skipped + invalids + unsupporteds + crashes : total, total, failed, skipped, invalids,
+         unsupporteds, (GetTickCount64() - t0) / 1000.0, stopped ? "true" : "false", crashed.c_str());
     return 0;
+}
+
+// IFEO UseLargePages on the game's exe name applies to our copy too, which can then fail fast in the CRT's startup
+static bool large_pages(const std::wstring& exe) {
+    std::wstring key = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\" + exe;
+    for (DWORD view : {RRF_SUBKEY_WOW6464KEY, RRF_SUBKEY_WOW6432KEY}) {
+        DWORD v = 0, n = sizeof v;
+        if (!RegGetValueW(HKEY_LOCAL_MACHINE, key.c_str(), L"UseLargePages", RRF_RT_REG_DWORD | view, nullptr, &v, &n) && v) return true;
+    }
+    return false;
 }
 
 static int parent(int argc, wchar_t** argv, bool vulkan) {
@@ -1024,6 +1303,7 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
         DWORD err = DeleteFileW(p.c_str()) ? 0 : GetLastError();
         if (err && err != ERROR_FILE_NOT_FOUND) err_printf(L"removing the staged %ls failed (error %lu)\n", p.c_str(), err);
     };
+    bool died = false;  // a retry after the child's death: its item states stay, so the app names what it failed or skipped
     struct Unstage {
         std::function<void()> f;
         ~Unstage() { f(); }
@@ -1035,9 +1315,9 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
         if (!o.d3d11.empty()) unput(L"d3d11.dll");
         if (!o.d3d12.empty() && !RemoveDirectoryW((stage + L"D3D12").c_str()))
             err_printf(L"removing the staged %lsD3D12 failed (error %lu)\n", stage.c_str(), GetLastError());
-        DeleteFileW((stage + kItemsFile).c_str());
+        if (!died) DeleteFileW((stage + kItemsFile).c_str());
         if (stage == flat) return;
-        for (auto n : {L"scskiller.log", L"scskiller_creates.csv", L"scskiller_warm_times.csv", L"scskiller_failed.keys"})
+        for (auto n : {L"scskiller.log", L"scskiller_creates.csv", L"scskiller_warm_times.csv", L"scskiller_failed.keys", kItemsFile})
             MoveFileExW((stage + n).c_str(), (flat + n).c_str(), 0);
         for (auto d = dirs.rbegin(); d != dirs.rend(); ++d) RemoveDirectoryW(d->c_str());  // only if empty
     }};
@@ -1116,6 +1396,8 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
     // set by the child once its device exists: a layer's code (--layer) runs before that, and may hang
     HANDLE started = CreateEventW(nullptr, TRUE, FALSE, started_name(me).c_str());
     HANDLE loading = CreateEventW(nullptr, TRUE, FALSE, loading_name(me).c_str());  // set while the child reads the dbs
+    // still unset when the child dies: the loader or the CRT ended it before our code, as a setting keyed on the exe name can
+    HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, entered_name(me).c_str());
     // ReShade reads these before the child runs: RESHADE_BASE_PATH_OVERRIDE would load its config and add-ons from elsewhere
     if (wchar_t* env = GetEnvironmentStringsW()) {
         std::vector<std::wstring> reshade;
@@ -1137,6 +1419,7 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
         if (stop_file()) SetEvent(stop);
         DeleteFileW((stage + kItemsFile).c_str());  // a child that dies before its items leaves none to go by
         if (loading) ResetEvent(loading);  // a child that died reading the dbs left it set
+        if (entered) ResetEvent(entered);
         fflush(stdout);
         // joined on every return: a joinable std::thread's destructor calls std::terminate, which fails fast (0xC0000409)
         struct Relays : std::vector<std::thread> {
@@ -1163,13 +1446,25 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
                 });
             }
             IDesktopAppXActivator* act = nullptr;
+            IDesktopAppXActivator10* act10 = nullptr;
             HANDLE h = nullptr;
+            bool gui = false;
             CoInitializeEx(nullptr, COINIT_MULTITHREADED);
             HRESULT hr = CoCreateInstance(CLSID_DesktopAppXActivator, nullptr, CLSCTX_ALL, __uuidof(IDesktopAppXActivator), (void**)&act);
             // 0x24: DAXAO_NONPACKAGED_EXE_PROCESS_TREE | DAXAO_CENTENNIAL_PROCESS (Invoke-CommandInDesktopPackage's, minus its App Installer check)
             if (SUCCEEDED(hr))
                 hr = act->ActivateWithOptionsArgsWorkingDirectoryShowWindow(o.package.c_str(), (stage + exe).c_str(), args.c_str(), 0x24, 0, nullptr, stage.c_str(), SW_HIDE, &h);
+            else {  // Windows 10's, from twinui.dll directly: CoCreateInstance fails there with REGDB_E_CLASSNOTREG
+                IClassFactory* f = nullptr;
+                HMODULE m = LoadLibraryExW(L"twinui.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+                auto get = m ? (LPFNGETCLASSOBJECT)GetProcAddress(m, "DllGetClassObject") : nullptr;
+                hr = get ? get(CLSID_DesktopAppXActivator, IID_IClassFactory, (void**)&f) : HRESULT_FROM_WIN32(GetLastError());
+                if (f) hr = f->CreateInstance(nullptr, __uuidof(IDesktopAppXActivator10), (void**)&act10), f->Release();
+                gui = act10 && set_subsystem(stage + exe, IMAGE_SUBSYSTEM_WINDOWS_GUI);
+                if (act10) hr = act10->ActivateWithOptions(o.package.c_str(), (stage + exe).c_str(), args.c_str(), 0x24, 0, &h);
+            }
             if (act) act->Release();
+            if (act10) act10->Release();
             if (SUCCEEDED(hr) && h) {
                 pi.dwProcessId = GetProcessId(h);
                 CloseHandle(h);
@@ -1182,6 +1477,7 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
                     TerminateProcess(pi.hProcess, 1), pi.hProcess = nullptr;
             }
             if (!pi.hProcess) err_printf(L"running in the package %ls failed (0x%08X): warming under the exe name only\n", o.package.c_str(), (unsigned)hr);
+            if (!pi.hProcess && gui) set_subsystem(stage + exe, IMAGE_SUBSYSTEM_WINDOWS_CUI);
         }
         if (!pi.hProcess) {
             std::wstring cmd = L"\"" + stage + exe + L"\" " + args;
@@ -1255,7 +1551,13 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
             return 0;  // the caller goes by the line: done, retry or error
         }
         if (code > 1 && (code != 3 || !last_line)) {  // it printed no error line
-            if (retry_after_death(stage + kItemsFile, pi.dwProcessId, o, hex, turns / 10.0)) return 3;
+            if (entered && WaitForSingleObject(entered, 0) == WAIT_TIMEOUT) {
+                err_printf(L"the warm process ended before its code ran (exit code %ls)\n", hex);
+                if (large_pages(exe))
+                    return fail(L"Windows' large-page setting for " + exe + L" (Image File Execution Options) can stop SCSKiller's copy of the game from starting.");
+                return fail(L"Windows stopped SCSKiller's copy of " + exe + L" as it started. A Windows setting or another program for " + exe + L" can block it.");
+            }
+            if (retry_after_death(stage + kItemsFile, pi.dwProcessId, o, hex, turns / 10.0)) return died = true, 3;
             return fail(L"the warm process died (exit code " + std::wstring(hex) + L")");
         }
         return (int)code;
@@ -1272,6 +1574,10 @@ int wmain(int argc, wchar_t** argv) {
         return v;
     });
     argc = (int)args.size(), argv = args.data();
+    if (argc >= 2 && !wcscmp(argv[1], L"--ags-probe")) {
+        Opts o;
+        return parse(argc, argv, 2, o) && !o.ags.empty() ? ags_probe(o) : fail(L"bad --ags-probe arguments");
+    }
     if (argc >= 3 && !wcscmp(argv[1], L"--child")) {  // --child <parent process id> <options>
         Opts o;
         return parse(argc, argv, 3, o) ? child((DWORD)wcstoul(argv[2], nullptr, 10), o) : fail(L"bad child arguments");
@@ -1289,7 +1595,9 @@ int wmain(int argc, wchar_t** argv) {
                 break;
             }
             SetStdHandle(fd == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE, h);
-            _dup2(_open_osfhandle((intptr_t)h, _O_WRONLY), fd);
+            FILE *s = fd == 1 ? stdout : stderr, *r;
+            if (_fileno(s) < 0) freopen_s(&r, "NUL", "w", s);  // the GUI copy Linux runs can start with its streams closed
+            _dup2(_open_osfhandle((intptr_t)h, _O_WRONLY), _fileno(s));
             out = out || fd == 1;
         }
     if (code < 0) code = parent(argc, argv, vulkan);

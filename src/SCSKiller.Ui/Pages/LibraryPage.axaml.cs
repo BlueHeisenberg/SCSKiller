@@ -1,8 +1,10 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using SCSKiller.Core;
 using SCSKiller.Core.App;
@@ -21,13 +23,33 @@ public sealed partial class LibraryPage : UserControl
     {
         InitializeComponent();
         DataContext = Vm;
-        refresh = new(Host.Ui, Vm.Refresh);
-        step = new(Host.Ui, Vm.ScanStep);
+        refresh = new(Host.Ui, () => { Vm.Refresh(); FitRowsSoon(); });
+        step = new(Host.Ui, () => { Vm.ScanStep(); FitRowsSoon(); });
         // MenuFlyout's presenter keeps the list Items holds when it is first built, before Opening: create it now
         ((MenuFlyout)FoldersButton.Flyout!).Items.Clear();
         // a refresh's Shift: the press's, by mouse or keyboard
         RefreshButton.AddHandler(PointerPressedEvent, (_, e) => shiftOnPress = e.KeyModifiers.HasFlag(KeyModifiers.Shift), RoutingStrategies.Tunnel, handledEventsToo: true);
         RefreshButton.AddHandler(KeyDownEvent, (_, e) => shiftOnPress = e.KeyModifiers.HasFlag(KeyModifiers.Shift), RoutingStrategies.Tunnel, handledEventsToo: true);
+        Columns.SizeChanged += (_, e) => { if (e.WidthChanged) FitRowsSoon(); };
+        Rows.SizeChanged += (_, _) => FitRowsSoon();
+        PropertyChanged += (_, e) => { if (e.Property == FontSizeProperty) FitRowsSoon(); };
+    }
+
+    void FitRowsSoon() => Dispatcher.UIThread.Post(FitRows, DispatcherPriority.Loaded);
+
+    /// <summary>Narrow when beside the game and its numbers a row's buttons would leave its status under 8 em.</summary>
+    void FitRows()
+    {
+        Page.VerticalScrollBarVisibility = FontSize > 14 ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
+        Toolbar.Classes.Set("Stacked", Toolbar.Bounds.Width < FontSize * 56);   // 100% never stacks, even at the minimum window width
+        var c = Columns.ColumnDefinitions;
+        var buttons = Table.GetVisualDescendants().OfType<StackPanel>().Where(p => p.Classes.Contains("RowButtons"))
+            .Select(p => p.Children.Where(b => b.IsVisible).Sum(b => b.DesiredSize.Width + p.Spacing)).DefaultIfEmpty().Max();
+        var need = c[0].MinWidth + c.Skip(1).Take(4).Sum(d => d.ActualWidth) + 5 * Columns.ColumnSpacing + 12 + buttons + 12 + FontSize * 8;
+        bool narrow = need > Columns.Bounds.Width;
+        if (narrow == Table.Classes.Contains("Narrow")) return;
+        Table.Classes.Set("Narrow", narrow);
+        (Table.Resources["StatusWidth"], Table.Resources["StatusMinWidth"]) = narrow ? (new GridLength(0), 0.0) : (new GridLength(4.1, GridUnitType.Star), 355.0);
     }
 
     void OnChanged(GameState _) => refresh.Request();
@@ -59,13 +81,15 @@ public sealed partial class LibraryPage : UserControl
 
     /// <summary>--screenshots: a search typed, and the list scrolled to its last section or to a game.</summary>
     public string SearchText { set => Search.Text = value; }
-    public void ScrollToEnd() { if (Vm.Games.Count > 0) List.ScrollToEnd(); }
-    public void ScrollToTop() => List.Offset = default;
+    public void ScrollToEnd() { if (Vm.Games.Count > 0) Scroller.ScrollToEnd(); }
+    public void ScrollToTop() => Scroller.Offset = default;
     public void ScrollTo(string id)
     {
-        if (RowButtons().FirstOrDefault(b => ((GameRow)b.DataContext!).Id == id) is { } row && row.TranslatePoint(default, (Visual)List.Content!) is { } at)
-            List.Offset = new(0, at.Y);
+        if (RowButtons().FirstOrDefault(b => ((GameRow)b.DataContext!).Id == id) is { } row && row.TranslatePoint(default, (Visual)Scroller.Content!) is { } at)
+            Scroller.Offset = new(0, at.Y);
     }
+
+    ScrollViewer Scroller => Page.VerticalScrollBarVisibility == ScrollBarVisibility.Disabled ? List : Page;
 
     IEnumerable<Button> RowButtons() => List.GetVisualDescendants().OfType<Button>().Where(b => b.Classes.Contains("Row") && b.DataContext is GameRow);
 
@@ -93,6 +117,7 @@ public sealed partial class LibraryPage : UserControl
         e.Handled = true;
         Host.Core.Enqueue(RowOf(sender).Id);
         Vm.Refresh();
+        FitRowsSoon();
     }
 
     void OnDismissGpuNotice(object? _, RoutedEventArgs __) => Vm.DismissGpuNotice();
@@ -254,5 +279,6 @@ public sealed partial class LibraryPage : UserControl
         try { await Task.Run(() => Host.Core.InstallRecorder(row.Id)); }   // file IO and the game's re-evaluation
         catch (Exception ex) { await App.ShowAsync(new ContentDialog { Title = "Couldn't add the recorder", Content = ex.Message, CloseButtonText = "OK" }); }
         Vm.Refresh();
+        FitRowsSoon();
     }
 }

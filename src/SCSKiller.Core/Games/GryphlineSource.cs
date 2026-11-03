@@ -7,9 +7,11 @@ namespace SCSKiller.Core.Games;
 /// games folder (&lt;launcher root&gt;\games\EndField Game) that holds a game exe. The launcher is found through the URL
 /// protocols it registers (HKCU or HKLM Software\Classes\gryphlinelauncher* or hypergryphlauncher*, shell\open\command),
 /// its root being the command's folder or that folder's parent. A game installed elsewhere is added by hand.</summary>
-public sealed class GryphlineSource(IEnumerable<string>? launcherExes = null) : IGameSource
+public sealed class GryphlineSource(IEnumerable<string>? launcherExes = null) : IGameSource, ILeavesOut
 {
     public Store Store => Store.Other;
+
+    public Func<string, bool> LeftOut { get; set; } = _ => false;
 
     static readonly Dictionary<string, string> Names = new(StringComparer.OrdinalIgnoreCase) { ["Endfield"] = "Arknights: Endfield" };
 
@@ -23,14 +25,14 @@ public sealed class GryphlineSource(IEnumerable<string>? launcherExes = null) : 
             foreach (var root in new[] { dir, Path.GetDirectoryName(dir ?? "") }.OfType<string>().Where(r => r.Length > 0))
             {
                 var folder = Path.Combine(root, "games");
-                if (!Directory.Exists(folder)) continue;
+                if (LeftOut(folder) || !Directory.Exists(folder)) continue;
                 string[] installs;
                 try { installs = Directory.GetDirectories(folder); }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
                 foreach (var install in installs)
                     try
                     {
-                        if (!seen.Add(GameFiles.DirKey(install)) || GameFiles.FindExe(install) is not { } game) continue;
+                        if (!seen.Add(GameFiles.DirKey(install)) || LeftOut(install) || GameFiles.FindExe(install) is not { } game) continue;
                         var name = Path.GetFileNameWithoutExtension(game);
                         games.Add(new Game($"gryphline:{name.ToLowerInvariant()}", Names.GetValueOrDefault(name) ?? Path.GetFileName(install), Store.Other, install, game));
                     }

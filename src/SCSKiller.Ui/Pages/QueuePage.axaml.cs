@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using SCSKiller.Core;
 using SCSKiller.Core.App;
@@ -23,6 +24,24 @@ public sealed partial class QueuePage : UserControl
         WaitingList.AddHandler(PointerMovedEvent, OnRowMoved, RoutingStrategies.Tunnel);
         WaitingList.AddHandler(PointerReleasedEvent, OnRowReleased, RoutingStrategies.Tunnel);
         WaitingList.AddHandler(PointerCaptureLostEvent, (_, e) => { if (e.Source == WaitingList) EndDrag(drop: false); });
+        Columns.SizeChanged += (_, e) => { if (e.WidthChanged) FitRowsSoon(); };
+        WaitingList.SizeChanged += (_, _) => FitRowsSoon();
+        PropertyChanged += (_, e) => { if (e.Property == FontSizeProperty) FitRowsSoon(); };
+    }
+
+    void FitRowsSoon() => Dispatcher.UIThread.Post(FitRows, DispatcherPriority.Loaded);
+
+    /// <summary>Narrow when a row's buttons don't fit beside its game, time and cache.</summary>
+    void FitRows()
+    {
+        var c = Columns.ColumnDefinitions;
+        var actions = Table.GetVisualDescendants().OfType<Panel>().Where(p => p.Classes.Contains("Actions"))
+            .Select(p => p.Children.Where(b => b.IsVisible).Sum(b => b.DesiredSize.Width + 2)).DefaultIfEmpty().Max();
+        var need = c.Take(3).Sum(d => d.ActualWidth) + c[3].MinWidth + c[4].ActualWidth + c[5].ActualWidth + 6 * Columns.ColumnSpacing + actions;
+        bool narrow = need > Columns.Bounds.Width;
+        if (narrow == Table.Classes.Contains("Narrow")) return;
+        Table.Classes.Set("Narrow", narrow);
+        Table.Resources["ActionsMinWidth"] = narrow ? 0.0 : 320.0;
     }
 
     void OnChanged(QueueItem _) => refresh.Request();
@@ -55,6 +74,7 @@ public sealed partial class QueuePage : UserControl
         Vm.Refresh();
         foreach (var row in Vm.Waiting)
             if (keep.Contains(row.Id) && !WaitingList.SelectedItems!.Contains(row)) WaitingList.SelectedItems.Add(row);
+        FitRowsSoon();
     }
 
     HashSet<string> Selected() => WaitingList.SelectedItems!.Cast<QueueRow>().Select(r => r.Id).ToHashSet();
@@ -73,6 +93,7 @@ public sealed partial class QueuePage : UserControl
     void OnStart(object? _, RoutedEventArgs __) => Act(App.CompileQueue);
     void OnPause(object? _, RoutedEventArgs __) => Act(Vm.PauseOrResume);
     void OnStop(object? _, RoutedEventArgs __) => Act(Host.Core.StopQueue);
+    void OnCheckNow(object? _, RoutedEventArgs __) => Act(Host.Core.CheckPlansNow);
     void OnRemove(object? sender, RoutedEventArgs e) { e.Handled = true; Act(() => Host.Core.Remove(RowOf(sender).Id)); }
     void OnRemoveCurrent(object? _, RoutedEventArgs __) => Act(() => Host.Core.Remove(Vm.Current.Id));
     void OnClearFinished(object? _, RoutedEventArgs __) => Act(() => { foreach (var r in Vm.Finished.ToList()) Host.Core.Remove(r.Id); });

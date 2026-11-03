@@ -12,7 +12,7 @@
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="MinWidth" Value="32" />
-            <Setter Property="Height" Value="32" />
+            <Setter Property="MinHeight" Value="32" />
             <Setter Property="Padding" Value="8,0" />
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -104,9 +104,10 @@
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                 <StackPanel Spacing="4">
                     <TextBlock Text="Compile queue" Classes="Title" />
-                    <TextBlock Text="{Binding Summary}" Classes="Secondary" />
-                    <TextBlock Text="{Binding PlanChecks}" IsVisible="{Binding HasPlanChecks}" Classes="Caption"
+                    <TextBlock Text="{Binding Summary}" Classes="Secondary" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding PlanChecks}" IsVisible="{Binding HasPlanChecks}" Classes="Caption" TextWrapping="Wrap"
                                ToolTip.Tip="After an update SCSKiller rebuilds the plans of compiled games in the background, without compiling. A game with more to compile shows it in the Library." />
+                    <HyperlinkButton Content="Check now" Click="OnCheckNow" Padding="0" IsVisible="{Binding HasPlanChecks}" IsEnabled="{Binding CanCheckNow}" />
                     <TextBlock Text="Compiles run outside the game, under the game's name. Keep the game closed while it runs."
                                Classes="Caption" TextWrapping="Wrap" />
                 </StackPanel>
@@ -130,27 +131,43 @@
                 </c:InfoBar.ActionButton>
             </c:InfoBar>
 
-            <Border Classes="Card" Padding="0">
+            <Border x:Name="Table" Classes="Card" Padding="0" Grid.IsSharedSizeScope="True">
+                <Border.Resources>
+                    <x:Double x:Key="ActionsMinWidth">320</x:Double>
+                </Border.Resources>
+                <Border.Styles>
+                    <!-- Narrow: the row buttons go under the game, as with a large Text size -->
+                    <Style Selector="Grid.QueueRow > :is(Panel).Actions">
+                        <Setter Property="Grid.Column" Value="6" />
+                        <Setter Property="HorizontalAlignment" Value="Right" />
+                    </Style>
+                    <Style Selector="Border.Narrow Grid.QueueRow > :is(Panel).Actions">
+                        <Setter Property="Grid.Row" Value="1" />
+                        <Setter Property="Grid.Column" Value="3" />
+                        <Setter Property="HorizontalAlignment" Value="Left" />
+                        <Setter Property="Margin" Value="0,0,0,8" />
+                    </Style>
+                </Border.Styles>
                 <StackPanel>
-                    <Grid Height="40" Margin="16,0" ColumnSpacing="12">
+                    <Grid x:Name="Columns" Classes="QueueRow" MinHeight="40" Margin="16,0" ColumnSpacing="12" RowDefinitions="*,Auto">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="16" />
                             <ColumnDefinition Width="24" />
                             <ColumnDefinition Width="32" />
                             <ColumnDefinition MinWidth="160" />
-                            <ColumnDefinition Width="96" />
-                            <ColumnDefinition Width="80" />
-                            <ColumnDefinition Width="320" />
+                            <ColumnDefinition Width="Auto" MinWidth="96" SharedSizeGroup="QueueTime" />
+                            <ColumnDefinition Width="Auto" MinWidth="80" SharedSizeGroup="QueueCache" />
+                            <ColumnDefinition Width="Auto" MinWidth="{DynamicResource ActionsMinWidth}" SharedSizeGroup="QueueActions" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="1" Grid.ColumnSpan="3" Text="Game (in run order)" Classes="Caption" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="4" Text="Time" Classes="Caption" TextAlignment="Right" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="5" Text="Cache" Classes="Caption" TextAlignment="Right" VerticalAlignment="Center" />
-                        <StackPanel Grid.Column="6" Orientation="Horizontal" HorizontalAlignment="Right" IsVisible="{Binding CanClear}">
+                        <StackPanel Classes="Actions" Orientation="Horizontal" IsVisible="{Binding CanClear}">
                             <!-- tooltip on a hit-testable wrapper: a disabled button shows none -->
                             <Panel Background="Transparent" ToolTip.Tip="Ctrl+click or Shift+click to select several games">
-                                <HyperlinkButton x:Name="RemoveSelected" Content="Remove selected" FontSize="12" IsEnabled="False" Click="OnRemoveSelected" />
+                                <HyperlinkButton x:Name="RemoveSelected" Content="Remove selected" FontSize="{DynamicResource TextSize.12}" IsEnabled="False" Click="OnRemoveSelected" />
                             </Panel>
-                            <HyperlinkButton Content="Clear queue" FontSize="12" Click="OnClearQueue" ToolTip.Tip="Removes every game but the one compiling" />
+                            <HyperlinkButton Content="Clear queue" FontSize="{DynamicResource TextSize.12}" Click="OnClearQueue" ToolTip.Tip="Removes every game but the one compiling" />
                         </StackPanel>
                     </Grid>
                     <Rectangle Height="1" Fill="{DynamicResource CardStrokeColorDefaultBrush}" />
@@ -168,9 +185,9 @@
                             <ColumnDefinition Width="24" />
                             <ColumnDefinition Width="32" />
                             <ColumnDefinition MinWidth="160" />
-                            <ColumnDefinition Width="96" />
-                            <ColumnDefinition Width="80" />
-                            <ColumnDefinition Width="320" />
+                            <ColumnDefinition Width="Auto" MinWidth="96" SharedSizeGroup="QueueTime" />
+                            <ColumnDefinition Width="Auto" MinWidth="80" SharedSizeGroup="QueueCache" />
+                            <ColumnDefinition Width="Auto" MinWidth="{DynamicResource ActionsMinWidth}" SharedSizeGroup="QueueActions" />
                         </Grid.ColumnDefinitions>
                         <Border Grid.Column="1" Classes="Number" Background="{DynamicResource AccentFillColorDefaultBrush}">
                             <TextBlock Text="1" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"
@@ -185,7 +202,7 @@
                         <StackPanel Grid.Column="3" VerticalAlignment="Center" Spacing="2">
                             <TextBlock Text="{Binding Current.Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                             <TextBlock Text="{Binding CurrentDetail}" Classes="Caption" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}"
-                                       TextTrimming="CharacterEllipsis" TextWrapping="Wrap" MaxLines="2" />
+                                       TextTrimming="CharacterEllipsis" TextWrapping="Wrap" MaxLines="{Binding $self.FontSize, Converter={x:Static ui:Converters.CaptionLines}, ConverterParameter=2}" ToolTip.Tip="{Binding CurrentDetail}" />
                         </StackPanel>
                         <TextBlock Grid.Column="4" Text="{Binding Current.Time}" TextAlignment="Right" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="5" Text="{Binding Current.Cache}" TextAlignment="Right" VerticalAlignment="Center" />
@@ -207,9 +224,9 @@
                                             <ColumnDefinition Width="24" />
                                             <ColumnDefinition Width="32" />
                                             <ColumnDefinition MinWidth="160" />
-                                            <ColumnDefinition Width="96" />
-                                            <ColumnDefinition Width="80" />
-                                            <ColumnDefinition Width="320" />
+                                            <ColumnDefinition Width="Auto" MinWidth="96" SharedSizeGroup="QueueTime" />
+                                            <ColumnDefinition Width="Auto" MinWidth="80" SharedSizeGroup="QueueCache" />
+                                            <ColumnDefinition Width="Auto" MinWidth="{DynamicResource ActionsMinWidth}" SharedSizeGroup="QueueActions" />
                                         </Grid.ColumnDefinitions>
                                         <Panel Grid.Column="2" Width="32" Height="32">
                                             <Border Classes="Tile" Background="{Binding Tile, Converter={x:Static ui:Converters.ArgbBrush}}" IsVisible="{Binding NoIcon}">
@@ -219,7 +236,7 @@
                                         </Panel>
                                         <StackPanel Grid.Column="3" VerticalAlignment="Center" Spacing="2">
                                             <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Text="{Binding Note}" Classes="Caption" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding Note}" Classes="Caption" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" TextWrapping="Wrap" />
                                         </StackPanel>
                                         <TextBlock Grid.Column="4" Text="{Binding Time}" TextAlignment="Right" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="5" Text="{Binding Cache}" TextAlignment="Right" VerticalAlignment="Center" />
@@ -240,15 +257,15 @@
                             </ListBox.ItemsPanel>
                             <ListBox.ItemTemplate>
                                 <DataTemplate x:DataType="m:QueueRow">
-                                    <Grid ColumnSpacing="12" MinHeight="56" AutomationProperties.Name="{Binding StringFormat='{}{0}'}">
+                                    <Grid Classes="QueueRow" ColumnSpacing="12" MinHeight="56" RowDefinitions="*,Auto" AutomationProperties.Name="{Binding StringFormat='{}{0}'}">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="16" />
                                             <ColumnDefinition Width="24" />
                                             <ColumnDefinition Width="32" />
                                             <ColumnDefinition MinWidth="160" />
-                                            <ColumnDefinition Width="96" />
-                                            <ColumnDefinition Width="80" />
-                                            <ColumnDefinition Width="320" />
+                                            <ColumnDefinition Width="Auto" MinWidth="96" SharedSizeGroup="QueueTime" />
+                                            <ColumnDefinition Width="Auto" MinWidth="80" SharedSizeGroup="QueueCache" />
+                                            <ColumnDefinition Width="Auto" MinWidth="{DynamicResource ActionsMinWidth}" SharedSizeGroup="QueueActions" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Reorder}" FontSize="20" VerticalAlignment="Center" HorizontalAlignment="Center"
                                                    Foreground="{DynamicResource TextFillColorTertiaryBrush}" ToolTip.Tip="Drag to reorder" />
@@ -267,10 +284,10 @@
                                         </StackPanel>
                                         <TextBlock Grid.Column="4" Text="{Binding Time}" TextAlignment="Right" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="5" Text="{Binding Cache}" TextAlignment="Right" VerticalAlignment="Center" />
-                                        <StackPanel Grid.Column="6" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="2">
-                                            <Button Content="Move to top" Classes="RowButton" FontSize="13" IsEnabled="{Binding CanUp}" Click="OnTop"
+                                        <WrapPanel Classes="Actions" ItemSpacing="2" LineSpacing="2" VerticalAlignment="Center">
+                                            <Button Content="Move to top" Classes="RowButton" FontSize="{DynamicResource TextSize.13}" IsEnabled="{Binding CanUp}" Click="OnTop"
                                                     AutomationProperties.Name="{Binding TopLabel}" />
-                                            <Button Content="Move to bottom" Classes="RowButton" FontSize="13" IsEnabled="{Binding CanDown}" Click="OnBottom"
+                                            <Button Content="Move to bottom" Classes="RowButton" FontSize="{DynamicResource TextSize.13}" IsEnabled="{Binding CanDown}" Click="OnBottom"
                                                     AutomationProperties.Name="{Binding BottomLabel}" />
                                             <Button Classes="RowButton" Padding="0" IsEnabled="{Binding CanUp}" Click="OnUp"
                                                     AutomationProperties.Name="{Binding UpLabel}" ToolTip.Tip="Move up">
@@ -284,7 +301,7 @@
                                                     AutomationProperties.Name="{Binding RemoveLabel}" ToolTip.Tip="Remove">
                                                 <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Dismiss}" />
                                             </Button>
-                                        </StackPanel>
+                                        </WrapPanel>
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
@@ -298,7 +315,7 @@
                         <Rectangle Height="1" Fill="{DynamicResource CardStrokeColorDefaultBrush}" />
                         <Grid Margin="16,6,16,0">
                             <TextBlock Text="Finished" Classes="Caption" VerticalAlignment="Center" />
-                            <HyperlinkButton Content="Clear finished" HorizontalAlignment="Right" FontSize="12" Click="OnClearFinished" />
+                            <HyperlinkButton Content="Clear finished" HorizontalAlignment="Right" FontSize="{DynamicResource TextSize.12}" Click="OnClearFinished" />
                         </Grid>
                         <ItemsControl ItemsSource="{Binding Finished}" AutomationProperties.Name="Finished games">
                             <ItemsControl.ItemTemplate>
@@ -310,9 +327,9 @@
                                                 <ColumnDefinition Width="24" />
                                                 <ColumnDefinition Width="32" />
                                                 <ColumnDefinition MinWidth="160" />
-                                                <ColumnDefinition Width="96" />
-                                                <ColumnDefinition Width="80" />
-                                                <ColumnDefinition Width="320" />
+                                                <ColumnDefinition Width="Auto" MinWidth="96" SharedSizeGroup="QueueTime" />
+                                                <ColumnDefinition Width="Auto" MinWidth="80" SharedSizeGroup="QueueCache" />
+                                                <ColumnDefinition Width="Auto" MinWidth="{DynamicResource ActionsMinWidth}" SharedSizeGroup="QueueActions" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Grid.Column="1" Classes="Icon" Text="{Binding Stage, Converter={x:Static ui:Converters.StageGlyph}}" FontSize="14"
                                                        HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />

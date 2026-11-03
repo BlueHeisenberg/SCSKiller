@@ -64,6 +64,7 @@ sealed class PlanBuilder
     long fallbackSets;
     byte[]? ruleSamplers;   // the static samplers of the first recorded root signature the rule rebuilt
     string plat = "";
+    string? plat2;   // a second platform whose stage sets are planned too: ES3_1 beside SM6 when the feature level isn't known
     int embeddedRs;
     string? plat11;
     List<string> d3d11 = [];
@@ -140,7 +141,7 @@ sealed class PlanBuilder
                 if (dx12 && UnitPolicy.For(caps) is { } policy) PerStage(policy);
                 else
                 {
-                    StageSets(Emit);
+                    AllStageSets(Emit);
                     if (crossLeftOut.Count > 0) stats["cross_product"] = crossLeftOut.Count;
                     if (caps.WarmCacheBudget != null) WithinWarmBudget();
                 }
@@ -178,8 +179,8 @@ sealed class PlanBuilder
     {
         var dlls = Middleware.Detect(game);
         if (dlls.Count == 0) return;
-        // a game the user added, by hand, to Steam or to Lutris, never fills a pack: packs are shared, and its recording's origin is unknown
-        if (recs.Count > 0 && packs != null && game.Store != Store.Manual && !SteamShortcuts.Is(game.Id) && !LutrisSource.Is(game.Id))
+        // a game the user added, by hand, to Steam, Heroic, Lutris or Faugus, never fills a pack: packs are shared, and its recording's origin is unknown
+        if (recs.Count > 0 && packs != null && game.Store != Store.Manual && !SteamShortcuts.Is(game.Id) && !LutrisSource.Is(game.Id) && !FaugusSource.Is(game.Id) && !HeroicSource.Sideload(game.Id))
             foreach (var p in packs.Promote(recs, recBlobs, bc, dlls, game.Id, caps.Profile.StartsWith("amd") ? "amd" : caps.Profile.StartsWith("nvidia") ? "nvidia" : null, layered))
                 log?.Report($"middleware: {p.Records} recorded PSOs are {p.Dll.Name}'s ({p.Dll.Vendor}, {p.ContentHash[..12]}), {p.New} new in its pack");
         var seen = new HashSet<string>();
@@ -236,10 +237,15 @@ sealed class PlanBuilder
     {
         maps.Clear();
         maps.AddRange(from.Select(m => (m.Platform, Pooled: false, Shas: m.Shaders, m.IsPipeline, Rs: m.RootSignature)));
-        maps.AddRange(from.Where(m => m.Library == "Global").GroupBy(m => m.Platform)
+        maps.AddRange(from.Where(m => IsGlobal(m.Library, m.Platform)).GroupBy(m => m.Platform)
             .Select(g => (g.Key, true, (IReadOnlyList<string>)g.SelectMany(m => m.Shaders).Distinct().ToList(), false, (string?)null)));
         mapRoots = maps.Any(m => m.Rs != null);
     }
+
+    /// <summary>Unreal's global shader library: "Global", or "Global-&lt;format&gt;" when the archive's format name spells its platform
+    /// without underscores (ShaderArchive-Global-PCD3D_ES31-PCD3D_ES3_1, see UnrealReader.Libraries).</summary>
+    static bool IsGlobal(string library, string platform) => library == "Global"
+        || library.StartsWith("Global-", StringComparison.Ordinal) && library[7..].Replace("_", "") == platform.Replace("_", "");
 
     /// <summary>A library with copies at one path (<see cref="ShaderIndex.OtherCopies"/>) is planned from the copy that holds the
     /// most recorded pipelines whole (their stages in that library), the mount order's pick on a tie: the recording is what the
@@ -302,14 +308,14 @@ sealed class PlanBuilder
         }
         // the game's own recorded root signatures decide: Returnal binds space 1001 in its ray tracing libraries only (0 of 9,652 raster ones carry it),
         // without them only a rule naming the game (Gears of War: E-Day) keeps it: the shader test alone also fires on games that bind it in ray tracing only
-        if (nvExtension) nvExtension = recs.Where(r => !layered.Contains(r.Key) && Parse(r).Stages.Values.All(bc.ContainsKey)).Select(r => Parse(r).Rs).Distinct()
+        var injecting = LayerInjects(game, engine);
+        bool Foreign(Pso p) => !injecting && recBlobs.TryGetValue(p.Rs, out var blob) && RenoDx(p.Rs, blob, Infos(p.Stages));
+        if (nvExtension) nvExtension = recs.Select(r => (r, p: Parse(r))).Where(x => !layered.Contains(x.r.Key) && x.p.Stages.Values.All(bc.ContainsKey) && !Foreign(x.p)).Select(x => x.p.Rs).Distinct()
                 .Select(h => recBlobs.TryGetValue(h, out var blob) ? blob : null).OfType<byte[]>().ToList() is { Count: > 0 } recorded
                 ? 2 * recorded.Count(blob => RootSig.Parse(blob).Slots.Any(x => x is { Type: 1, Space: 1001 })) > recorded.Count
                 : rule.RootSignature?.Stock?.NvExtensionEverywhere == true;
         var unbuilt = 0;
         long checkedRecs = 0;
-        // compiles run through a copy of the game's layer, whose add-on injects into the rule's root signatures as into the game's
-        var injecting = Games.ReShade.Detect(game, engine) is { Layered: true, ShaderMod.Kind: Games.AddonKind.LayoutInjecting };
         foreach (var r in recs)
         {
             Steps?.Invoke("recorded pipelines checked", ++checkedRecs, recs.Count);
@@ -323,7 +329,16 @@ sealed class PlanBuilder
                 if (own == pso.Rs) ownOk++;
             }
             // recorded through the add-on with no 'W' pair: ReShade re-serializes what it changes, so its bytes never match the rule
-            if (recBlobs.TryGetValue(pso.Rs, out var rsBlob) && !(injecting && Injected(rsBlob, st)))
+            var addon = recBlobs.TryGetValue(pso.Rs, out var rsBlob) && (injecting ? Injected(rsBlob, st) : RenoDx(pso.Rs, rsBlob, st));
+            if (addon && !injecting)   // another player's RenoDX: replayed as recorded, never a rule check, a learned root signature nor a template
+            {
+                have.Add(pso.Tuple);
+                foreach (var h in pso.Stages.Values)
+                    if (recordedShaders.Add(h)) recordedFaces.Add(Face(bc[h]));
+                foreach (var p in pso.Stages.Values.Where(platOfSha.ContainsKey).Select(h => platOfSha[h].Split(" wave")[0])) plats[p] = plats.GetValueOrDefault(p) + 1;
+                continue;
+            }
+            if (rsBlob != null && !addon)
             {
                 // the rule's rebuild with these samplers the runtime won't serialize (its ranges overlap them): the rule
                 // doesn't reproduce this one, which still replays as recorded
@@ -401,31 +416,43 @@ sealed class PlanBuilder
     byte[]? TemplateViews(string key) => templateViews.TryGetValue(key, out var v) ? v : templateViews[key] = ParseState(recByKey[key])?.ViewInstancing;
     static bool SameViews(byte[]? a, byte[]? b) => a == null ? b == null : b != null && a.AsSpan().SequenceEqual(b);
 
-    RtCollections.Nv? rasterNv;   // the NVAPI state every synthesized PSO is created with (an 'N' record each); null = none
-    bool nvComputeOnly;   // rasterNv is the extension fallback's: it goes on compute PSOs only
+    RtCollections.Nv? rasterNv, computeNv;   // the NVAPI state synthesized graphics / compute PSOs are created with (an 'N' record each); null = none
     uint RtOptions => RtCollections.RecordedOptions(stateObjects.Concat(nvRecs));   // the recorded state objects' NVAPI creation options
 
-    /// <summary>The NVAPI state a game creates its PSOs with: NVIDIA keys a compile on the shader-extension slot (selftest
-    /// nvext), so a PSO warmed without the game's slot is a miss. From a recording: the slot and space at least 99% of its
-    /// raster records ('G' / 'C' / 'S') share, with their most common creation options (The Witcher 3: 841 of 843 at slot
-    /// 12 space 1, options 0 on 789 and 17 on 52). Otherwise, for REDengine 3, its slot 12 space 1, as its recording has it:
-    /// also when the recording has none (made on AMD, where the recorder captures no NVAPI state). A game whose shaders bind
-    /// the NVIDIA extension UAV without Unreal's flag (<see cref="RootSig.NvExtensionEverywhere"/>) gets u0 space 1001 the same
-    /// way. NVIDIA only: AMD's runtime has no NVAPI state.</summary>
-    internal static RtCollections.Nv? RasterNv(VendorCaps caps, string family, IReadOnlyCollection<Rec> recs, IEnumerable<Rec> nvRecs, bool nvExtension = false) =>
-        !caps.Profile.StartsWith("nvidia") ? null : LearnedRasterNv(recs, nvRecs)
-            ?? (family == RedEngine.RedEngineReader.Family ? new RtCollections.Nv(12, 1, 0) : nvExtension ? new RtCollections.Nv(0, 1001, 0) : null);
-
-    /// <summary>The recording's part of <see cref="RasterNv"/>: the slot and space at least 99% of the raster records' final
-    /// states share (a record's last 'N' is what the warm applies), with their most common options; null otherwise.</summary>
-    internal static RtCollections.Nv? LearnedRasterNv(IEnumerable<Rec> recs, IEnumerable<Rec> nvRecs)
+    /// <summary>The NVAPI state a game creates its graphics and its compute PSOs with: NVIDIA keys a compile on the
+    /// shader-extension slot (selftest nvext), so a PSO warmed without the game's slot is a miss. From a recording, per class
+    /// (<see cref="LearnedRasterNv"/>; The Witcher 3: 841 of 843 at slot 12 space 1, options 0 on 789 and 17 on 52; Gears of
+    /// War: E-Day: 12,867 of its 12,883 compute creates at slot 0 space 1001, none of its graphics ones). Otherwise, for
+    /// REDengine 3, its slot 12 space 1, as its recording has it: also when the recording has none (made on AMD, where the
+    /// recorder captures no NVAPI state). A game whose shaders bind the NVIDIA extension UAV without Unreal's flag
+    /// (<see cref="RootSig.NvExtensionEverywhere"/>) gets u0 space 1001 on its compute PSOs the same way. NVIDIA only: AMD's
+    /// runtime has no NVAPI state.</summary>
+    internal static (RtCollections.Nv? Graphics, RtCollections.Nv? Compute) NvStates(VendorCaps caps, string family, IReadOnlyCollection<Rec> recs, IEnumerable<Rec> nvRecs, bool nvExtension = false)
     {
-        var keys = recs.Where(r => r.Tag is 'G' or 'C' or 'S').Select(r => r.Key).ToHashSet();
-        var states = nvRecs.Where(r => r.Tag == 'N').Select(NvState.Parse).Where(n => keys.Contains(n.Target))
-            .GroupBy(n => n.Target).Select(g => g.Last()).Where(n => n.Slot != uint.MaxValue).ToList();
-        var top = states.GroupBy(n => (n.Slot, n.Space)).MaxBy(g => g.Count());
-        return top != null && top.Count() >= 0.99 * keys.Count
-            ? new RtCollections.Nv(top.Key.Slot, top.Key.Space, top.GroupBy(n => n.Options).MaxBy(g => g.Count())!.Key) : null;
+        if (!caps.Profile.StartsWith("nvidia")) return (null, null);
+        var nv = nvRecs.ToList();
+        RtCollections.Nv? red = family == RedEngine.RedEngineReader.Family ? new(12, 1, 0) : null;
+        return (LearnedRasterNv(recs, nv, compute: false) ?? red, LearnedRasterNv(recs, nv, compute: true) ?? red ?? (nvExtension ? new(0, 1001, 0) : null));
+    }
+
+    /// <summary><see cref="NvStates"/> as one: the graphics PSOs' state, else the compute ones'.</summary>
+    internal static RtCollections.Nv? RasterNv(VendorCaps caps, string family, IReadOnlyCollection<Rec> recs, IEnumerable<Rec> nvRecs, bool nvExtension = false) =>
+        NvStates(caps, family, recs, nvRecs, nvExtension) is var s ? s.Graphics ?? s.Compute : null;
+
+    /// <summary>The recording's part of <see cref="NvStates"/> for its compute or its graphics records ('G' / 'C' / 'S'): the
+    /// slot and space that more than half of them end on (a record's last 'N' is what the warm applies), and at least 99% of
+    /// those ending on any 'N', with their most common options; null otherwise. A record without an 'N' counts only toward
+    /// the half: a shared recording mixes in records only AMD or Intel players sent, which carry none (more than 1% of them
+    /// dropped the state from every synthesized PSO), while a slot on a few records alone isn't the game's (FF7 Rebirth's
+    /// community recording: 836 of 42,390, at several slots).</summary>
+    internal static RtCollections.Nv? LearnedRasterNv(IEnumerable<Rec> recs, IEnumerable<Rec> nvRecs, bool compute)
+    {
+        var keys = recs.Where(r => r.Tag is 'G' or 'C' or 'S' && IsCompute(Parse(r).Stages) == compute).Select(r => r.Key).ToHashSet();
+        var states = nvRecs.Where(r => r.Tag == 'N').Select(NvState.Parse).Where(n => keys.Contains(n.Target)).GroupBy(n => n.Target).Select(g => g.Last()).ToList();
+        var top = states.Where(n => n.Slot != uint.MaxValue).GroupBy(n => (n.Slot, n.Space))
+            .OrderByDescending(g => g.Count()).ThenBy(g => g.Key.Slot).ThenBy(g => g.Key.Space).FirstOrDefault();
+        return top != null && top.Count() > keys.Count / 2 && top.Count() >= 0.99 * states.Count
+            ? new RtCollections.Nv(top.Key.Slot, top.Key.Space, top.GroupBy(n => n.Options).OrderByDescending(g => g.Count()).ThenBy(g => g.Key).First().Key) : null;
     }
 
     void Decide()
@@ -451,13 +478,22 @@ sealed class PlanBuilder
         dx12 = engine.GraphicsApi.Contains("D3D12");
         plat = !dx12 ? "" : plats.Count > 0 ? plats.MaxBy(p => p.Value).Key // "": no map matches, no PSOs
             : new[] { "PCD3D_SM6", "PCD3D_SM5" }.FirstOrDefault(index.Platforms.Contains) ?? index.Platforms.FirstOrDefault() ?? "";
+        // the user's feature level picks the shaders the game runs when no recorded PSO names them (Fortnite's Performance mode)
+        if (dx12 && plats.Count == 0 && index.Platforms.Contains(Es31) && engine.FeatureLevel is { } level)
+        {
+            // not known: ES3_1 material shaders, not only global ones, show the game runs it (Fortnite's config saying so is encrypted)
+            var materials = indexMaps.Any(m => m.Platform == Es31 && !m.IsPipeline && !IsGlobal(m.Library, m.Platform));
+            if (level == "ES3_1") plat = Es31;
+            else if (plat != Es31 && materials) plat2 = Es31;
+            log?.Report($"{game.Name}: feature level {(level == "ES3_1" ? "ES3_1 (user setting)" : "not known (no [D3DRHIPreference])")}: D3D12 PSOs from {plat}{(plat2 != null ? $" and {plat2}" : "")}"
+                + (level != "ES3_1" && !materials ? " (ES3_1 ships in global shaders only)" : ""));
+        }
         embeddedRs = bc.Values.Count(s => s.RootSignature != null);
         LearnPassRoots();
         if (!build && !ruleFallback && embeddedRs == 0 && (!mapRoots || passRoots > 0) && !maps.Any(m => m.Pooled)) Learned();
-        rasterNv = RasterNv(caps, engine.Family, recs, nvRecs, nvExtension);
-        // Gears of War: E-Day's recording sets the slot around 12,867 of its 12,883 compute creates and no graphics one
-        nvComputeOnly = rasterNv != null && nvExtension && LearnedRasterNv(recs, nvRecs) == null;
-        if (rasterNv is { } nvs) log?.Report($"NVAPI: synthesized {(nvComputeOnly ? "compute " : "")}PSOs get shader-extension slot {nvs.Slot} space {nvs.Space} (options {nvs.Options})");
+        (rasterNv, computeNv) = NvStates(caps, engine.Family, recs, nvRecs, nvExtension);
+        foreach (var (what, nvs) in new[] { ("graphics", rasterNv), ("compute", computeNv) })
+            if (nvs is { } n) log?.Report($"NVAPI: synthesized {what} PSOs get shader-extension slot {n.Slot} space {n.Space} (options {n.Options})");
         var ownOnly = embeddedRs > 0 && ownN == builtN; // every recorded PSO the rule was checked on carries its own: the rule plans nothing
         if (dx12) log?.Report($"{game.Name}: recorded: {recs.Count} PSOs{(stateObjects.Count > 0 ? $" + {stateObjects.Count} ray tracing state objects (replayed as recorded)" : "")}, platform {plat}; "
             + (ownOnly ? "" : $"root sigs rebuilt from shader counts: {builtOk}/{builtN} exact -> " + (build ? "building" : ruleFallback ? "learned lookup, the rule for the rest" : "learned lookup")) + (maxSrvs > 0 ? $" (SRV tables of {maxSrvs}, not Unreal {engine.Version}'s {rule.RootSignature!.Stock?.MaxSrvs}: {(maxSrvs == 128 ? "the bindless fork's" : "its shaders bind more")})" : "")
@@ -467,9 +503,11 @@ sealed class PlanBuilder
         // D3D11: every shader of the game's DXBC platforms once (Unreal PCD3D_SM5, and PCD3D_ES3_1, the feature level a D3D11
         // game may run instead, as Fortnite's Performance mode does; the carver's DXBC containers), no pairing;
         // hull and domain shaders as HS+DS pairs of one map (the warm needs both to draw), every one in at least one pair
-        string[] plats11 = [.. new[] { "PCD3D_SM5", "PCD3D_ES3_1" }.Where(index.Platforms.Contains)];
+        string[] plats11 = [.. (engine.FeatureLevel == "ES3_1" ? new[] { Es31 } : new[] { "PCD3D_SM5", Es31 }).Where(index.Platforms.Contains)];
         plat11 = plats11.Length > 0 ? string.Join('/', plats11) : null;
         if (!engine.GraphicsApi.StartsWith("D3D11") || Planner.D3D11Stages(caps) is not { } stages11) return;
+        if (engine.FeatureLevel != null && index.Platforms.Contains(Es31))
+            log?.Report($"{game.Name}: feature level {(engine.FeatureLevel == "ES3_1" ? "ES3_1 (user setting)" : "not known (no [D3DRHIPreference])")}: D3D11 shaders from {string.Join(" and ", plats11)}");
         var maps11 = indexMaps.Where(m => plats11.Length == 0 || plats11.Contains(m.Platform)).Select(m => m.Shaders.Where(h => bc.TryGetValue(h, out var s) && Planner.IsD3D11(s)).Select(h => bc[h]).ToList()).ToList();
         // a VS without vertex input needs no layout: its '1' item draws it as the game does (a triangle list behind a PS)
         d3d11 = maps11.SelectMany(m => m).Where(s => s.Stage is not (Stage.Hull or Stage.Domain)
@@ -584,6 +622,20 @@ sealed class PlanBuilder
         }
         catch (Exception e) when (e is ArgumentException or InvalidDataException) { return false; }
     }
+
+    /// <summary>RenoDX's <see cref="Injected"/> constants (its shader_injection buffer, space 50): a recording of another
+    /// player's add-on, a root signature the game here never creates unless it runs RenoDX too (Phantom Blade Zero's community
+    /// entry: 130,849 of 202,781 PSOs).</summary>
+    internal static bool RenoDx(string hash, byte[] rs, IReadOnlyDictionary<Stage, ShaderInfo> stages)
+    {
+        if (stages.Values.Any(s => s.RootSignature == hash)) return false;   // the one a shader carries is the game's
+        try { return RootSig.LastRootValue(rs) is (_, _, 50) && Injected(rs, stages); }
+        catch (Exception e) when (e is ArgumentException or InvalidDataException) { return false; }
+    }
+
+    /// <summary>Compiles run through a copy of the game's layer, whose add-on injects into the rule's root signatures as into the game's.</summary>
+    internal static bool LayerInjects(Game game, EngineInfo engine) =>
+        Games.ReShade.Detect(game, engine) is { Layered: true, ShaderMod.Kind: Games.AddonKind.LayoutInjecting };
 
     /// <summary>The share of a recording's root signatures the rule must rebuild exactly to plan, in a learned lookup, the stage
     /// sets the recording has none for: a guess that is right that often beats leaving them out. 0.5 until measured.</summary>
@@ -800,13 +852,13 @@ sealed class PlanBuilder
         var shapes = new Dictionary<string, Resolved<List<string>>>();
         var topos = new Dictionary<string, List<uint>>();
         var cands = new List<(UnitCover.Candidate C, Provenance Vs, Provenance Ps, bool Cross, int Rank)>();
-        var shipped = maps.Where(m => m.IsPipeline && OnPlatform(m.Platform) && m.Shas.All(bc.ContainsKey)).Select(m => ShaderSet(m.Shas)).ToHashSet();
+        var shipped = maps.Where(m => m.IsPipeline && (OnPlatform(m.Platform) || m.Platform == plat2) && m.Shas.All(bc.ContainsKey)).Select(m => ShaderSet(m.Shas)).ToHashSet();
         var known = shipped.Count > 0 || have.Count > 0;   // without a pairing the game is known to use, the order stays
         int pairs = 0, fromCache = 0;
         Resolved<List<List<LayoutElem>>> none = new([], Provenance.Exact);
         var pairedElsewhere = new HashSet<string>();   // stage sets an ordinary pool pairs too, seen first in a cross-product one
         var perShader = !policy.NextStage && !policy.PartnerReads;   // AMD keys a VS on its PS: Cyberpunk's cross pool, 182,784 VS units of 4,500 VS
-        StageSets((stages, _, _) =>
+        AllStageSets((stages, _, _) =>
         {
             // a cross-product pool's stage set only for a shader no kept stage set has, as Emit, where a unit doesn't depend on
             // the other stages: enumerating them all outgrows the plan's memory (FF XVI: 15.4 GB at 28.5M of 32,732 VS x 42,525 PS)
@@ -906,7 +958,7 @@ sealed class PlanBuilder
 
         // how much of the library's vertex input the recording pins down: recorded for the VS (L0), no vertex input (L0'),
         // recorded for a VS with the same input signature (L1)
-        var libVs = maps.Where(m => m.Platform == plat).SelectMany(m => m.Shas).Distinct().Where(h => bc.TryGetValue(h, out var v) && v.Stage == Stage.Vertex).Select(h => bc[h]).ToList();
+        var libVs = maps.Where(m => m.Platform == plat || m.Platform == plat2).SelectMany(m => m.Shas).Distinct().Where(h => bc.TryGetValue(h, out var v) && v.Stage == Stage.Vertex).Select(h => bc[h]).ToList();
         var l0 = libVs.Count(v => facts.ReadLayouts.ContainsKey(v.Sha1));
         var l0b = libVs.Count(v => !facts.ReadLayouts.ContainsKey(v.Sha1) && v.Inputs.All(i => i.SysValue != 0));
         var l1 = libVs.Count(v => !facts.ReadLayouts.ContainsKey(v.Sha1) && v.Inputs.Any(i => i.SysValue == 0) && facts.LayoutsBySig.ContainsKey(ExactLayouts.SigKey(v)));
@@ -930,7 +982,8 @@ sealed class PlanBuilder
         HashSet<Unit> recorded, Dictionary<UnitCover.Candidate, (Provenance Vs, Provenance Ps)> prov, IReadOnlyDictionary<UnitCover.Candidate, int> ranks)
     {
         var filtering = 1 + OtherSamplerSets().Count;
-        var room = (int)Math.Clamp((budgetPsos - recs.Count(Replays)) / filtering, 0, int.MaxValue);
+        var rt = RtCharge();
+        var room = (int)Math.Clamp((budgetPsos - recs.Count(Replays) - rt) / filtering, 0, int.MaxValue);
         cacheLeftOut = Math.Max(0, picks.Count - room);
         extrasRoom = Math.Max(0, room - picks.Count);
         if (cacheLeftOut == 0) return picks;
@@ -966,7 +1019,7 @@ sealed class PlanBuilder
         {
             stats["cache_budget"] = (int)cacheLeftOut;
             log?.Report($"cache budget ({caps.Profile}): {kept.Count} of {picks.Count} cover PSOs kept ({first} compile a shader the first time)"
-                + (filtering > 1 ? $" at {filtering} texture filtering settings" : "") + $" beside the recorded ones, {cacheLeftOut} left out: "
+                + (filtering > 1 ? $" at {filtering} texture filtering settings" : "") + $" beside the recorded ones{RtNote(rt)}, {cacheLeftOut} left out: "
                 + $"at {PsoBytesOf(caps) >> 10} KiB a PSO the plan stays under the {App.Format.Bytes(budgetPsos * PsoBytesOf(caps))} {(caps.WarmCacheBudget != null ? "the game's compile size limit allows" : caps.PerGameCacheCap != null ? "the driver keeps for one game" : "the driver's whole cache holds")}");
             return kept;
         }
@@ -979,7 +1032,8 @@ sealed class PlanBuilder
     void WithinWarmBudget()
     {
         var filtering = 1 + OtherSamplerSets().Count;
-        var room = (int)Math.Clamp((budgetPsos - recs.Count(Replays)) / filtering - synthesized.Count, 0, int.MaxValue);
+        var rt = RtCharge();
+        var room = (int)Math.Clamp((budgetPsos - recs.Count(Replays) - rt) / filtering - synthesized.Count, 0, int.MaxValue);
         cacheLeftOut = Math.Max(0, items.Count - room);
         if (cacheLeftOut == 0) return;
         var order = Enumerable.Range(0, items.Count).OrderBy(i => itemRanks[i]).Take(room).ToList();   // stable
@@ -990,7 +1044,7 @@ sealed class PlanBuilder
         items.AddRange(keep);
         stats["cache_budget"] = (int)cacheLeftOut;
         log?.Report($"cache budget ({caps.Profile}): {room} of {room + cacheLeftOut} generated PSOs kept (shaders recorded / signatures recorded / guessed: {string.Join('/', byTier)})"
-            + (filtering > 1 ? $" at {filtering} texture filtering settings" : "") + $" beside the recorded ones, {cacheLeftOut} left out: "
+            + (filtering > 1 ? $" at {filtering} texture filtering settings" : "") + $" beside the recorded ones{RtNote(rt)}, {cacheLeftOut} left out: "
             + $"at {PsoBytesOf(caps) >> 10} KiB a PSO the plan stays under the {App.Format.Bytes(budgetPsos * PsoBytesOf(caps))} the compile's cache holds for the game");
     }
 
@@ -1008,6 +1062,9 @@ sealed class PlanBuilder
     /// Unmeasured on Intel, which uses it too. NVIDIA on Linux, the warm's files rewritten without a dictionary: REANIMAL
     /// 24,410.</summary>
     public const long PsoBytes = 28 << 10;
+    /// <summary>A replayed ray tracing state object's share of an AMD budget before the game's bytes per pipeline are measured.
+    /// Measured on AMD: Darwin's Paradox grew the cache 128 MiB for 868 state objects, about 151 KiB each.</summary>
+    public const long RtStateObjectBytes = 160 << 10;
     /// <summary>What one game's plan may take where state is in the cache key: AMD's whole DxcCache, at <see cref="PsoBytes"/>
     /// a PSO (599,186 PSOs). Only a plan the cache can't hold at all is trimmed: Ratchet &amp; Clank's 404,918 fit.</summary>
     public const long CacheBudget = Vendors.AmdAppCache.DxcCacheCap;
@@ -1027,6 +1084,13 @@ sealed class PlanBuilder
 
     /// <summary>What a PSO takes of <see cref="CacheBudgetOf"/>: the game's measured bytes (<see cref="VendorCaps.PsoBytes"/>), else <see cref="PsoBytes"/>.</summary>
     public static long PsoBytesOf(VendorCaps caps) => caps.PsoBytes is { } b && b > 0 ? b : PsoBytes;
+
+    /// <summary>The recorded state objects the warm replays, in PSOs of the budget: one each where the game's measured bytes
+    /// per pipeline (<see cref="VendorCaps.PsoBytes"/>) already average them in or the driver isn't AMD's, else
+    /// <see cref="RtStateObjectBytes"/> each.</summary>
+    long RtCharge() => ReplayableStateObjects().Count * (caps.PsoBytes is > 0 || !caps.Profile.StartsWith("amd") ? 1 : (RtStateObjectBytes + PsoBytes - 1) / PsoBytes);
+
+    static string RtNote(long rt) => rt > 0 ? $" and the ray tracing state objects (as {rt} PSOs)" : "";
 
     /// <summary>A stage set's first candidates (what <see cref="UnitCover.Cover"/> zips from).</summary>
 
@@ -1052,11 +1116,27 @@ sealed class PlanBuilder
         return uint.TryParse(r[0], out var min) && uint.TryParse(r[^1], out var max) && min <= 64 && max >= 64;
     }
 
+    /// <summary><see cref="StageSets"/> on the platform in use, then on <see cref="plat2"/>: each platform's pairings
+    /// stay inside it (a PSO can't mix DXIL and DXBC stages).</summary>
+    void AllStageSets(Action<SortedDictionary<int, string>, string, string> sink)
+    {
+        StageSets(sink);
+        if (plat2 == null) return;
+        var first = plat;
+        plat = plat2;
+        try { StageSets(sink); }
+        finally { plat = first; }
+    }
+
+    const string Es31 = "PCD3D_ES3_1";
+
     /// <summary>Every stage set of the library on the platform in use, in a fixed order (may repeat one: shaders shared
     /// across maps): every compute shader; every VS/MS alone and VS->GS (depth passes); AS->MS(->PS); every VS->PS, MS->PS, VS->GS->PS and VS->HS->DS
     /// (->GS) (->PS) chain inside a shader map (Global: pooled) whose signatures link; a pipeline the game ships as is; global VS->GS chains feeding
     /// any material PS; global VSs feeding a material PS nothing in its own map feeds; pairs across maps with a default
-    /// material's shader (<see cref="SharedAcrossMaps"/>). <paramref name="sink"/> gets (stages, shape, the PS's output signature or "").</summary>
+    /// material's shader (<see cref="SharedAcrossMaps"/>); a PS nothing feeds with its exact signature behind the VS, GS or DS of
+    /// its map that writes the same registers plus more (<see cref="Planner.SameRegisters"/>). <paramref name="sink"/> gets
+    /// (stages, shape, the PS's output signature or "").</summary>
     void StageSets(Action<SortedDictionary<int, string>, string, string> sink)
     {
         // AMD's AGS intrinsics (a UAV in AGS_DX12_SHADER_INSTRINSICS_SPACE_ID): an AMD-only permutation, and no UE 4 root
@@ -1078,6 +1158,14 @@ sealed class PlanBuilder
         }
         var fed = new HashSet<string>();
         var unfed = new List<ShaderInfo>();
+        var pairedOtherwise = new HashSet<string>();   // PSs a shipped pipeline, a DS of their map or a global GS chain pairs
+        // by PS: its maps' stage sets through a source writing more than it reads, each with its map's root signature. DXBC
+        // only: no DXIL game's such pairs have been created on a GPU yet
+        var supersets = new Dictionary<string, List<(string? Rs, SortedDictionary<int, string> Stages)>>();
+        void Superset(ShaderInfo p, SortedDictionary<int, string> st)
+        {
+            if (p.ShaderModel.Split('_') is [_, "4" or "5", ..]) (supersets.TryGetValue(p.Sha1, out var l) ? l : supersets[p.Sha1] = []).Add((mapRs, st));
+        }
         var lanes = new HashSet<string>();   // shaders whose [WaveSize] this GPU doesn't run (the runtime: E_INVALIDARG)
         long paired = 0;
         foreach (var (mapPlat, pooled, shas, isPipeline, root) in maps)
@@ -1098,6 +1186,7 @@ sealed class PlanBuilder
                 var st = new SortedDictionary<int, string>();
                 foreach (var d in ds) st[(int)d.Stage] = d.Sha1;
                 if (!RootSig.InStageSets(rule, st.Keys.Select(k => (Stage)k))) continue; // a set the rule doesn't list: not in the plan nor its counts
+                if (st.TryGetValue((int)Stage.Pixel, out var shippedPs)) pairedOtherwise.Add(shippedPs);
                 mapRs = root;
                 if (st.Count > 0 && Planner.Positioned(st.ToDictionary(x => (Stage)x.Key, x => bc[x.Value]))) sink(st, Planner.Shape(st), PsOut(st));
                 else if (st.Count > 0 && FirstVisit(st, out var rs))   // a stage set like any other, counted once
@@ -1138,6 +1227,7 @@ sealed class PlanBuilder
             var sameSig = pss.Sum(p => (long)fanIn.GetValueOrDefault(Planner.Sig(p.Inputs)));
             var vsCount = srcs.Values.Sum(l => l.Count);
             if (sameSig > CrossProductRatio * (long)(vsCount + pss.Count)) crossPools.Add((crossPool = (sameSig, vsCount, pss.Count)).Value);
+            var unfedHere = new List<ShaderInfo>();   // this map's PSs no VS or GS feeds
             foreach (var p in pss)
             {
                 budget.Tick();
@@ -1157,7 +1247,20 @@ sealed class PlanBuilder
                             Planner.Shape(Stage.Vertex, Stage.Pixel, Stage.Geometry), Planner.Sig(p.Outputs, false));
                     }
                 if (n > 0) fed.Add(p.Sha1);
-                else if (!pooled) unfed.Add(p);
+                else if (!pooled)
+                {
+                    unfed.Add(p);
+                    unfedHere.Add(p);
+                    if (learnedParts == null || walking != null)
+                    {
+                        // a VS or GS of its map writing the same registers plus outputs it doesn't declare (UE 4.25: an unread TEXCOORD6)
+                        foreach (var v in srcs.Values.SelectMany(l => l).Where(v => Planner.Rasterizable(v) && Planner.Links(v, p) && Planner.SameRegisters(v, p) && Planner.SameRs(v, p)))
+                            Superset(p, new() { [(int)Stage.Vertex] = v.Sha1, [(int)Stage.Pixel] = p.Sha1 });
+                        foreach (var g in gss.Where(x => x.Key != pin).SelectMany(x => x.Value).Where(g => Planner.Links(g, p) && Planner.SameRegisters(g, p)))
+                            foreach (var v in srcs.GetValueOrDefault(Planner.Sig(g.Inputs), []).Where(v => v.Stage == Stage.Vertex && Planner.Links(v, g) && Planner.SameRs(v, g, p)))
+                                Superset(p, new() { [(int)Stage.Vertex] = v.Sha1, [(int)Stage.Geometry] = g.Sha1, [(int)Stage.Pixel] = p.Sha1 });
+                    }
+                }
             }
             crossPool = null;
             // VS -> GS with no PS (depth passes: UE's one-pass point-light shadows draw opaque casters into a cube map's
@@ -1179,25 +1282,40 @@ sealed class PlanBuilder
             // a HS writes no SV_Position; a DS without it feeds a GS taking triangles: UE's one-pass cube shadows)
             var pixel = ds.Where(d => d.Stage == Stage.Pixel).ToLookup(d => Planner.Sig(d.Inputs));
             var gsIn = ds.Where(d => d.Stage == Stage.Geometry && Planner.TopologyType(d.GsInputPrimitive) == 3).ToLookup(d => Planner.Sig(d.Inputs));
+            var tess = new List<(ShaderInfo H, ShaderInfo D, List<(ShaderInfo? Gs, ShaderInfo? Ps, bool Superset)> Tails)>();
             foreach (var (h, d) in Planner.TessPairs(ds))
             {
-                var tails = new List<(ShaderInfo? Gs, ShaderInfo? Ps)>(); // after the DS: nothing or a GS (depth passes), then a PS
+                var tails = new List<(ShaderInfo? Gs, ShaderInfo? Ps, bool Superset)>(); // after the DS: nothing or a GS (depth passes), then a PS
                 foreach (var g in (Planner.Rasterizable(d) ? [null] : Array.Empty<ShaderInfo?>()).Concat(gsIn[Planner.Sig(d.Outputs)].Where(g => Planner.Links(d, g) && Planner.Rasterizable(g))))
                 {
                     budget.Tick();
                     var last = g ?? d;
-                    tails.Add((g, null));
-                    tails.AddRange(pixel[Planner.Sig(last.Outputs)].Where(p => Planner.Links(last, p)).Select(p => (g, (ShaderInfo?)p)));
+                    tails.Add((g, null, false));
+                    tails.AddRange(pixel[Planner.Sig(last.Outputs)].Where(p => Planner.Links(last, p)).Select(p => (g, (ShaderInfo?)p, false)));
                 }
+                tess.Add((h, d, tails));
+            }
+            var exactBehindDs = tess.SelectMany(t => t.Tails).Select(t => t.Ps?.Sha1).OfType<string>().ToHashSet();
+            pairedOtherwise.UnionWith(exactBehindDs);
+            // a DS (or the GS after it) of its map writing the same registers plus outputs the PS doesn't declare
+            if (learnedParts == null || walking != null)
+                foreach (var (_, d, tails) in tess)
+                    foreach (var g in tails.Where(t => t.Ps == null).Select(t => t.Gs).ToList())
+                    {
+                        var last = g ?? d;
+                        foreach (var p in unfedHere.Where(p => !exactBehindDs.Contains(p.Sha1) && Planner.Links(last, p) && Planner.SameRegisters(last, p)))
+                            tails.Add((g, p, true));
+                    }
+            foreach (var (h, d, tails) in tess)
                 foreach (var v in srcs.GetValueOrDefault(Planner.Sig(h.Inputs), []).Where(v => v.Stage == Stage.Vertex && Planner.Links(v, h) && Planner.SameRs(v, h, d)))
-                    foreach (var (g, p) in tails.Where(t => Planner.SameRs([v, h, d, .. new[] { t.Gs, t.Ps }.OfType<ShaderInfo>()])))
+                    foreach (var (g, p, superset) in tails.Where(t => Planner.SameRs([v, h, d, .. new[] { t.Gs, t.Ps }.OfType<ShaderInfo>()])))
                     {
                         var st = new SortedDictionary<int, string> { [(int)Stage.Vertex] = v.Sha1, [(int)Stage.Hull] = h.Sha1, [(int)Stage.Domain] = d.Sha1 };
                         if (g != null) st[(int)Stage.Geometry] = g.Sha1;
                         if (p != null) st[(int)Stage.Pixel] = p.Sha1;
-                        sink(st, Planner.Shape(st), p != null ? Planner.Sig(p.Outputs, false) : "");
+                        if (superset) Superset(p!, st);
+                        else sink(st, Planner.Shape(st), p != null ? Planner.Sig(p.Outputs, false) : "");
                     }
-            }
             mapRs = null;
         }
 
@@ -1217,8 +1335,11 @@ sealed class PlanBuilder
             {
                 budget.Tick();
                 foreach (var v in vss.Where(v => Planner.SameRs(v, g, p)))
+                {
+                    pairedOtherwise.Add(p.Sha1);
                     sink(new() { [(int)Stage.Vertex] = v.Sha1, [(int)Stage.Geometry] = g.Sha1, [(int)Stage.Pixel] = p.Sha1 },
                         Planner.Shape(Stage.Vertex, Stage.Pixel, Stage.Geometry), Planner.Sig(p.Outputs, false));
+                }
             }
         }
 
@@ -1235,6 +1356,7 @@ sealed class PlanBuilder
             }
             if (n == 0) orphans.Add(p);
         }
+        var unpairedPs = orphans.ToList();
 
         // a per-stage cache compiles the PS on its own, keyed with its root signature: a PS still unpaired that carries its own
         // (so no VS changes it) gets the first VS of any map that feeds it. Elden Ring draws gxflvershader's pixel shaders
@@ -1248,13 +1370,28 @@ sealed class PlanBuilder
                 if (vss[Planner.Sig(p.Inputs)].FirstOrDefault(v => Planner.Links(v, p) && Planner.SameRs(v, p)) is { } v)
                 {
                     Count("orphan_ps_paired");
+                    unpairedPs.Remove(p);
                     sink(new() { [(int)Stage.Vertex] = v.Sha1, [(int)Stage.Pixel] = p.Sha1 }, Planner.Shape(Stage.Vertex, Stage.Pixel), Planner.Sig(p.Outputs, false));
                 }
         }
 
+        // a PS still in no stage set: the sources of its maps that write the same registers plus more
+        foreach (var p in unpairedPs.Where(p => !pairedOtherwise.Contains(p.Sha1)))
+            foreach (var (rs, st) in supersets.GetValueOrDefault(p.Sha1, []).DistinctBy(x => x.Rs + "|" + string.Join(',', x.Stages)))
+            {
+                Count("superset_source");
+                mapRs = rs;
+                sink(st, Planner.Shape(st), Planner.Sig(p.Outputs, false));
+                mapRs = null;
+            }
+
         if (engine.Family == "Unreal" && engine.Version.StartsWith("5.")) SharedAcrossMaps(sink, Usable);
         // once per shader, as a stage set left out (the plan's StageSets and LeftOut): its stage sets aren't enumerated
-        if ((unpaired = unpairedShaders.Count) > 0) stats["no_rs"] = stats.GetValueOrDefault("no_rs") + unpaired;
+        if (unpairedShaders.Count is > 0 and var u)
+        {
+            unpaired += u;   // AllStageSets' second platform adds to the first's
+            stats["no_rs"] = stats.GetValueOrDefault("no_rs") + u;
+        }
     }
 
     /// <summary>A shader in at least 1 of every <see cref="SharedMaps"/> material maps doesn't depend on the material (a default
@@ -1316,6 +1453,10 @@ sealed class PlanBuilder
         if (rtRule?.Rt?.Select?.Contains("red3HitGroups") == true) { Red3HitGroups(libs.Count); return; }
         if (rtRule?.Rt?.Select?.Contains("soulsHitGroups") == true) { SoulsHitGroups(libs.Count); return; }
         var learned = stateObjects.Select(RtCollections.Read).OfType<RtCollections.Recorded>().ToList();
+        // RenoDX's constants in a root signature (Foreign's PSOs): never a rule check, replayed as recorded (Phantom Blade Zero's
+        // community entry: 7,749 of 17,545 collections, each a recorded one's local root signature plus b13 space 50)
+        var renoDx = learned.RemoveAll(c => bc.TryGetValue(c.Library, out var lib) && new[] { c.Global, c.Local }.Any(h =>
+            recBlobs.TryGetValue(h, out var b) && RenoDx(h, b, new Dictionary<Stage, ShaderInfo> { [Stage.Library] = lib })));
         RtCollections.Rule rule;
         string? guessedLocal = null; // the rule's one local root signature, Northlight's (else UE's, per library)
         string how;
@@ -1341,7 +1482,7 @@ sealed class PlanBuilder
                 if (synth != null && recordedKeys.Contains(new Rec('R', synth).Key)) same++;
             }
             rule = rule with { Verified = n > 0 && same >= 0.99 * n };
-            how = $"learned from {learned.Count} recorded collections, {same}/{n} rebuilt byte for byte";
+            how = $"learned from {learned.Count} recorded collections, {same}/{n} rebuilt byte for byte{(renoDx > 0 ? $", {renoDx} with RenoDX's constants left out" : "")}";
             if (!rule.Verified) { log?.Report($"ray tracing: {libs.Count} DXIL libraries; collection rule {how}: not the engine's rule, none synthesized"); return; }
         }
         // a recording without state objects (ray tracing off as played) teaches nothing about them: the game's rule, as without one
@@ -1367,16 +1508,22 @@ sealed class PlanBuilder
         // game sets one around its creates, or a rule that knows the game's (ruleNv) when no NVAPI record names a recorded
         // collection: a collection's record without a slot is evidence of none
         var collections = stateObjects.Where(r => RtCollections.Read(r) != null).ToList();
-        var learnedNv = RtCollections.LearnedNv(collections, nvRecs);
+        var learnedNvs = RtCollections.LearnedNvs(collections, nvRecs, RtOptions);
         var collectionKeys = collections.Select(r => r.Key).ToHashSet();
-        var fromRule = learnedNv == null && ruleNv != null && !nvRecs.Any(r => r.Payload.Length == NvState.Size && collectionKeys.Contains(NvState.Parse(r).Target));
-        var nv = RtCollections.WithOptions(learnedNv ?? (fromRule ? ruleNv : null), RtOptions);
-        var nvHow = nv is { } x ? $"{(x.Slot == uint.MaxValue ? "no NVAPI extension slot" : $"NVAPI extension slot u{x.Slot} space {x.Space}")}{(x.Options != 0 ? $", creation flags 0x{x.Options:x}" : "")}, {(fromRule ? "as the rule sets it" : "as the recorded state objects")}"
+        var fromRule = learnedNvs.Count == 0 && ruleNv != null && !nvRecs.Any(r => r.Payload.Length == NvState.Size && collectionKeys.Contains(NvState.Parse(r).Target));
+        // a lone state without a slot or options is no state, as before; beside another it keeps its zero options
+        List<RtCollections.Nv?> nvs = learnedNvs.Count > 0 ? [.. learnedNvs.Select(n => learnedNvs.Count == 1 && n is { Slot: uint.MaxValue, Options: 0 } ? null : (RtCollections.Nv?)n)]
+            : [RtCollections.WithOptions(fromRule ? ruleNv : null, RtOptions)];
+        static string Shown(RtCollections.Nv? x) => x is not { } v ? "no NVAPI state"
+            : $"{(v.Slot == uint.MaxValue ? "no NVAPI extension slot" : $"NVAPI extension slot u{v.Slot} space {v.Space}")}{(v.Options != 0 ? $", creation flags 0x{v.Options:x}" : "")}";
+        var nvHow = nvs.Count > 1 || nvs[0] != null ? $"{string.Join(" / ", nvs.Select(Shown))}, {(fromRule ? "as the rule sets it" : nvs.Count > 1 ? "each as the recorded state objects, a collection per state" : "as the recorded state objects")}"
             : learned.Count > 0 ? "no NVAPI state recorded with the recorded collections"
             : "NVAPI state unknown without a recording of ray tracing (a game setting NVIDIA's shader-extension slot misses them all)";
         var recordedLibs = LocalStateObjects.SelectMany(r => ParseStateObject(r).Libraries).ToHashSet();
         var global =rsBlobs.TryGetValue(rule.GlobalRs, out var gb) || recBlobs.TryGetValue(rule.GlobalRs, out gb) ? RootSig.Parse(gb) : null;
         long rtDone = 0;
+        // one state's collections after another's: the warm creates state objects under one set of global options at a time
+        var byNv = nvs.Select(_ => new List<byte[]>()).ToList();
         foreach (var h in libs)
         {
             Steps?.Invoke("ray tracing libraries planned", ++rtDone, libs.Count);
@@ -1393,9 +1540,10 @@ sealed class PlanBuilder
                 uncoveredExample.TryAdd("ray tracing " + why, h);
                 continue;
             }
-            rtItems.Add(RtCollections.Item(h, rule.GlobalRs, lg, lo, rule, nv));
+            for (var i = 0; i < nvs.Count; i++) byNv[i].Add(RtCollections.Item(h, rule.GlobalRs, lg, lo, rule, nvs[i]));
             usedRs.UnionWith([rule.GlobalRs, lg, lo]);
         }
+        rtItems.AddRange(byNv.SelectMany(l => l));
         log?.Report($"ray tracing: {libs.Count} DXIL libraries, {rtItems.Count} collections synthesized (rule {how}; payload {(rule.Payload == 0 ? "each library's own" : rule.Payload)}, attributes {rule.Attributes}, depth {rule.Depth}; {nvHow})"
             + $", {stats.GetValueOrDefault("rt_recorded")} already recorded, {stats.GetValueOrDefault("rt_uncovered")} uncovered");
     }
@@ -1414,7 +1562,7 @@ sealed class PlanBuilder
             return;
         }
         var global = RootSig.Parse(gb);
-        var nv = RtCollections.WithOptions(rasterNv, RtOptions);
+        var nv = RtCollections.WithOptions(rasterNv ?? computeNv, RtOptions);
         foreach (var m in indexMaps.Where(m => m.Library == RedEngine.RedEngineReader.HitGroups && m.Shaders.All(bc.ContainsKey)))
         {
             var group = m.Shaders.Select(h => bc[h]).ToList();
@@ -1481,8 +1629,9 @@ sealed class PlanBuilder
     /// the runtime won't serialize it (that library is left out).</summary>
     string? LocalRs(ShaderInfo lib, bool rayGen)
     {
-        // UE 5 hit groups: 6 system root constants (HitGroupSystemRootConstants is 24 bytes in 5.1's and 5.4's libraries)
-        var d = RtCollections.LocalRs(lib.Counts, rayGen, lib.Bindings, engine.Family == "Unreal" && engine.Version.StartsWith("5.") ? 6u : 4u);
+        // UE 5 hit groups: 6 system root constants (HitGroupSystemRootConstants is 24 bytes in 5.1's and 5.4's libraries, 16 from 5.5)
+        var ue = engine.Family == "Unreal" && Version.TryParse(engine.Version, out var v) ? v : null;
+        var d = RtCollections.LocalRs(lib.Counts, rayGen, lib.Bindings, ue?.Major == 5 ? 6u : 4u, ue >= new Version(5, 5));
         if (!rsCache.TryGetValue(d.Key, out var h))
         {
             try
@@ -1589,16 +1738,14 @@ sealed class PlanBuilder
         body.AddRange(usedTemplates.Select(t => recByKey[t]));
         body.AddRange(synthesized.Concat(synthCopies));
         body.AddRange(items.Concat(itemCopies).Select(i => new Rec('P', i)));
-        if (rasterNv is { } nv)
-            body.AddRange(synthesized.Concat(synthCopies).Where(r => !nvComputeOnly || IsCompute(Parse(r).Stages))
-                .Concat(items.Concat(itemCopies).Where(i => !nvComputeOnly || IsCompute(ParseItem(i).Stages)).Select(i => new Rec('P', i)))
-                .Select(r => new NvState(r.Key, nv.Slot, nv.Space, 1, nv.Options).ToRec()));
-        else if (caps.Profile.StartsWith("nvidia"))
+        if (caps.Profile.StartsWith("nvidia"))
         {
-            var flagged = synthesized.Concat(synthCopies).Where(r => Parse(r) is var p && NvFlagged(p.Rs, p.Stages))
-                .Concat(items.Concat(itemCopies).Where(i => ParseItem(i) is var p && NvFlagged(p.Rs, p.Stages)).Select(i => new Rec('P', i))).ToList();
-            body.AddRange(flagged.Select(r => new NvState(r.Key, 0, 1001, 1, 0).ToRec()));
-            if (flagged.Count > 0) log?.Report($"NVAPI: {flagged.Count} compute PSOs whose shader uses NVIDIA's extensions get shader-extension slot 0 space 1001");
+            var flagged = 0;
+            foreach (var (r, rs, stages) in synthesized.Concat(synthCopies).Select(r => Parse(r) is var p ? (r, p.Rs, p.Stages) : default)
+                .Concat(items.Concat(itemCopies).Select(i => ParseItem(i) is var p ? (new Rec('P', i), p.Rs, p.Stages) : default)))
+                if ((IsCompute(stages) ? computeNv : rasterNv) is { } nv) body.Add(new NvState(r.Key, nv.Slot, nv.Space, 1, nv.Options).ToRec());
+                else if (NvFlagged(rs, stages)) { body.Add(new NvState(r.Key, 0, 1001, 1, 0).ToRec()); flagged++; }
+            if (flagged > 0) log?.Report($"NVAPI: {flagged} compute PSOs whose shader uses NVIDIA's extensions get shader-extension slot 0 space 1001");
         }
         body.AddRange(rtItems.Select(i => new Rec('Y', i)));
         body.AddRange(hitGroupItems.Select(i => new Rec('H', i)));
@@ -1631,7 +1778,7 @@ sealed class PlanBuilder
             .Select(h => bc.TryGetValue(h, out var s) ? s.ShaderModel.Split('_') is [_, "6", var m] && int.TryParse(m, out var minor) ? new Version(6, minor) : null
                 : recBlobs.TryGetValue(h, out var b) ? Carved.Dxbc.DxilShaderModel(b) : null)
             .Max();
-        var plan = new Plan(game.Id, index.ContentHash, string.Join(" + ", new[] { plat, n11 > 0 ? $"D3D11 {plat11 ?? "DXBC"}" : "" }.Where(p => p != "")), caps.Profile,
+        var plan = new Plan(game.Id, index.ContentHash, string.Join(" + ", new[] { plat, plat2 ?? "", n11 > 0 ? $"D3D11 {plat11 ?? "DXBC"}" : "" }.Where(p => p != "")), caps.Profile,
             new PlanStats(pipelines + replayable.Count, items.Count + synthesized.Count + rtItems.Count + hitGroupItems.Count, synthesized.Count, usedRs.Count, dx12 && (verified || embeddedRs > 0 || mapRoots),
                 unitsBy[(int)Provenance.Exact], unitsBy[(int)Provenance.Inferred], unitsBy[(int)Provenance.Guessed], layoutCoverage, n11, packNew,
                 stats.GetValueOrDefault("rs_uncovered"), rtLibs - rtUnbuilt, inlineOnly || engine.NoRtPipelines || !rayTracing ? 0 : rtLibs - rtCovered - rtUnbuilt,
