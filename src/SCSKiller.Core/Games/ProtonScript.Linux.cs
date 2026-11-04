@@ -150,7 +150,7 @@ sealed partial class ProtonScript
                         unknown = source;
                         return null;
                     }
-                    lines.Add((source, line.Value, line.Kind));
+                    lines.Add((element is [{ Text: "str" }, { Text: "(" }, { Kind: TokenKind.Name } name, { Text: ")" }] ? name.Text : source, line.Value, line.Kind));
                     element.Clear();
                 }
                 if (t.Text == ")") return lines;
@@ -178,7 +178,7 @@ sealed partial class ProtonScript
             return parts.Count == 0 ? null : (MtimeString(Join(parts)), Kind.File);
         }
         if (e is [{ Text: "str" }, { Text: "(" }, { Kind: TokenKind.Name } name, { Text: ")" }])
-            return Assignment(name.Text) is { } rhs && Settings.TryGetValue(Canonical(rhs), out var setting) && setting() is { } value ? (value, Kind.Setting) : null;
+            return Assignment(name.Text) is { } rhs && Settings.TryGetValue(Canonical(rhs), out var setting) && setting(this) is { } value ? (value, Kind.Setting) : null;
         if (e is [{ Kind: TokenKind.Name } variable] && Assignment(variable.Text) is { } assigned)
         {
             if (assigned is [{ Text: "os" }, { Text: "." }, { Text: "environ" }, { Text: "[" }, { Kind: TokenKind.Str, Text: "STEAM_COMPAT_CLIENT_INSTALL_PATH" }, { Text: "]" }])
@@ -193,15 +193,30 @@ sealed partial class ProtonScript
 
     /// <summary>The settings config_info records, by their assignment's tokens, as a compile's run computes them: no wined3d,
     /// no dxgi=b, no disablenvapi or forcenvapi, no dxvkd3d8 in its compatibility config or environment.</summary>
-    static readonly Dictionary<string, Func<string?>> Settings = new(StringComparer.Ordinal)
+    static readonly Dictionary<string, Func<ProtonScript, string?>> Settings = new(StringComparer.Ordinal)
     {
-        ["\"wined3d\" in g_session . compat_config"] = () => "False",
-        ["not use_wined3d and not ( \"WINEDLLOVERRIDES\" in g_session . env and \"dxgi=b\" in g_session . env [ \"WINEDLLOVERRIDES\" ] )"] = () => "True",
-        ["\"disablenvapi\" not in g_session . compat_config or \"forcenvapi\" in g_session . compat_config"] = () => "True",
+        ["\"wined3d\" in g_session . compat_config"] = _ => "False",
+        ["not use_wined3d and not ( \"WINEDLLOVERRIDES\" in g_session . env and \"dxgi=b\" in g_session . env [ \"WINEDLLOVERRIDES\" ] )"] = _ => "True",
+        ["\"disablenvapi\" not in g_session . compat_config or \"forcenvapi\" in g_session . compat_config"] = s => s.Nvapi(),
         ["( ( \"disablenvapi\" not in g_session . compat_config or \"forcenvapi\" in g_session . compat_config ) and g_proton . host_pe_arch != \"aarch64-windows\" )"] =
-            () => RuntimeInformation.OSArchitecture == Architecture.X64 ? "True" : null,
-        ["\"dxvkd3d8\" in g_session . compat_config"] = () => "False",
+            s => RuntimeInformation.OSArchitecture == Architecture.X64 ? s.Nvapi() : null,
+        ["\"dxvkd3d8\" in g_session . compat_config"] = _ => "False",
     };
+
+    /// <summary>use_nvapi for a compile's run. Proton Experimental's and GE-Proton's init_session add disablenvapi when
+    /// /proc/modules lists no nvidia, nouveau or nova driver, and keep nvapi when it can't be read. Null when the Proton's
+    /// user_settings.py names an NVAPI variable: a compile's run gets it whatever its launcher drops.</summary>
+    string? Nvapi()
+    {
+        if (!Names("self.compat_config.add(\"disablenvapi\")")) return "True";
+        try
+        {
+            if (File.ReadLines("/proc/modules").Any(l => l.Split(' ')[0] is "nvidia" or "nouveau" or "nova")) return "True";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return "True"; }
+        var settings = Path.Combine(_proton, "user_settings.py");
+        return File.Exists(settings) && SteamSource.Small(settings)?.Contains("NVAPI", StringComparison.Ordinal) != false ? null : "False";
+    }
 
     static string Canonical(List<Token> tokens) =>
         string.Join(' ', tokens.Select(t => t.Kind == TokenKind.Str ? $"\"{t.Text}\"" : t.Text));

@@ -29,10 +29,11 @@ static partial class Screenshots
         main.NavigateToPatreon();   // a game page's Patreon link
         await Task.Delay(1000);
         if (Shown(main).ScrolledBy == 0) throw new InvalidOperationException("Going to the Patreon card left Settings at the top");
-        foreach (var (name, ent) in new (string, string[]?)[] { ("signedout", null), ("db", ["db", "beta"]), ("signedout-again", null), ("nodb", ["beta"]) })
+        // beta last: the channel picks below need an account offered Beta
+        foreach (var (name, ent) in new (string, string[]?)[] { ("signedout", null), ("db", ["db", "beta"]), ("signedout-again", null), ("notmember", []), ("freemember", []), ("nodb", ["beta"]) })
         {
             if (ent == null) await App.Account.SignOutAsync();
-            else { FakeAccount.Ent = ent; await App.Account.SignInAsync(); }
+            else { (FakeAccount.Ent, FakeAccount.Reason) = (ent, name == "notmember" ? "no member" : name == "freemember" ? "not a patron" : "active"); await App.Account.SignInAsync(); }
             await Task.Delay(1000);
             Shown(main).ScrollToPatreon();
             await shot("settings-account-" + name, 400, "");

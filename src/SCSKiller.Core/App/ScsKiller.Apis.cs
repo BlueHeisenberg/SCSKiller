@@ -135,6 +135,6 @@ public sealed partial class ScsKiller
     public static string KeyName(string key) => key switch { "vk" => "Vulkan", "11" => "DirectX 11", "12" => "DirectX 12", _ => "DirectX 11 and 12" };
 
     /// <summary>The game page's line for the compiles kept for its other graphics APIs; null = none.</summary>
-    public static string? KeptApisNote(GameState s) => s.KeptApis is not { Count: > 0 } kept ? null
+    public static string? KeptApisNote(GameState s) => s.KeptApis is not { Count: > 0 } kept || s.Game.Id == FortniteId ? null
         : "Also compiled for " + string.Join(" and ", kept.Select(k => KeyName(k.Api) + (k.CurrentDriver ? "" : $" on an older driver ({k.DriverVersion})"))) + ".";
 }

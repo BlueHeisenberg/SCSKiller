@@ -208,7 +208,12 @@ static const wchar_t* const kAntiCheatMarkers[] = {  // GameFiles.Markers; "*x":
     L"NeacClient.exe", L"NeacSafe64.sys", L"NeacSafe64_ex.sys",
     L"NEP2.dll", L"NEPCleaner.exe",
     L"BlackCall.aes", L"BlackCall64.aes", L"BlackCat64.sys", L"HShield", L"PunkBuster", L"PnkBstrA.exe", L"pbsvc.exe", L"pbsv.dll",
-    L"equ8_conf.json", L".build.info", L".product.db", L"Warframe.x64.exe", L"ONCE_HUMAN.exe", L"forzahorizon5.exe", L"forzahorizon6.exe",
+    L"equ8_conf.json", L".build.info", L".product.db", L"Warframe.x64.exe", L"ONCE_HUMAN.exe",
+    L"Marvel-Win64-Shipping.exe", L"Marvel-Win64-Test.exe", L"Marvel.exe", L"MarvelRivals_Launcher.exe", L"FragPunk.exe", L"nshm.exe",
+    L"NarakaBladepoint.exe", L"Discovery.exe", L"Discovery-e.exe", L"Discovery-d.exe", L"DungeonCrawler.exe", L"ModernWarfare.exe", L"cod.exe",
+    L"forzahorizon5.exe", L"forzahorizon6.exe",
+    L"PathOfExile.exe", L"PathOfExile_x64.exe", L"PathOfExileSteam.exe", L"PathOfExile_x64Steam.exe", L"PathOfExileEGS.exe",
+    L"PathOfExile_x64EGS.exe", L"PathOfExile_KG.exe", L"PathOfExile_x64_KG.exe",
     L"RobloxPlayerBeta.exe", L"RobloxPlayerBeta.dll", L"RobloxPlayerLauncher.exe", L"RobloxPlayerInstaller.exe",
     L"arbiter.dll", L"gameguard.des", L"DenuvoAC", L"denuvo-anti-cheat.sys", L"denuvo-anti-cheat-runtime.dll",
     L"denuvo-anti-cheat-update-service.exe", L"Denuvo Anti-Cheat Installer.exe", L"Elytra", L"Elytra.exe", L"Elytra-Setup.exe", L"*.xem", L"*_BE.exe"};

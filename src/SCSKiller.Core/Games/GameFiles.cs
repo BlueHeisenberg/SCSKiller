@@ -785,7 +785,15 @@ public static partial class GameFiles
         (".build.info", AntiCheat.Other), (".product.db", AntiCheat.Other),   // Battle.net's install: a Blizzard game another store lists, or one added by hand
         ("Warframe.x64.exe", AntiCheat.Other),   // Digital Extremes' own client-side detection: no driver or folder of its own
         ("ONCE_HUMAN.exe", AntiCheat.Other),   // NetEase's anti-cheat installs outside the game folder (also AntiCheatIds)
+        ("Marvel-Win64-Shipping.exe", AntiCheat.Other), ("Marvel-Win64-Test.exe", AntiCheat.Other), ("Marvel.exe", AntiCheat.Other), ("MarvelRivals_Launcher.exe", AntiCheat.Other),
+        ("FragPunk.exe", AntiCheat.Other), ("nshm.exe", AntiCheat.Other), ("NarakaBladepoint.exe", AntiCheat.Other),   // NetEase's too: Marvel Rivals, FragPunk, Sword of Justice, NARAKA: BLADEPOINT (also AntiCheatIds)
+        ("Discovery.exe", AntiCheat.Other), ("Discovery-e.exe", AntiCheat.Other), ("Discovery-d.exe", AntiCheat.Other),   // THE FINALS: Elytra installs outside its folder (also AntiCheatIds)
+        ("DungeonCrawler.exe", AntiCheat.Other),   // Dark and Darker: Ironmace's IronShield leaves no file of its own (also AntiCheatIds)
+        ("ModernWarfare.exe", AntiCheat.Other), ("cod.exe", AntiCheat.Other),   // Call of Duty: Ricochet's driver isn't always in the folder (also AntiCheatIds)
         ("forzahorizon5.exe", AntiCheat.Other), ("forzahorizon6.exe", AntiCheat.Other),   // Playground's own detection leaves no file of its own (also AntiCheatIds)
+        ("PathOfExile.exe", AntiCheat.Other), ("PathOfExile_x64.exe", AntiCheat.Other), ("PathOfExileSteam.exe", AntiCheat.Other),
+        ("PathOfExile_x64Steam.exe", AntiCheat.Other), ("PathOfExileEGS.exe", AntiCheat.Other), ("PathOfExile_x64EGS.exe", AntiCheat.Other),
+        ("PathOfExile_KG.exe", AntiCheat.Other), ("PathOfExile_x64_KG.exe", AntiCheat.Other),   // GGG's own client-side detection, no file of its own (also AntiCheatIds)
         ("RobloxPlayerBeta.exe", AntiCheat.Other), ("RobloxPlayerBeta.dll", AntiCheat.Other), ("RobloxPlayerLauncher.exe", AntiCheat.Other),
         ("RobloxPlayerInstaller.exe", AntiCheat.Other),   // Hyperion is built into the player, no file of its own
         ("arbiter.dll", AntiCheat.Other),   // Arbiter, Halo Infinite's own anti-cheat, in the game's root
@@ -795,6 +803,10 @@ public static partial class GameFiles
         ("Elytra", AntiCheat.Other), ("Elytra.exe", AntiCheat.Other), ("Elytra-Setup.exe", AntiCheat.Other),   // WARDOGS: its service installs under Program Files
         ("*.xem", AntiCheat.Other), ("*_BE.exe", AntiCheat.BattlEye),
     ];
+
+    /// <summary><see cref="Markers"/> too common a name to count anywhere in an install: only in the install's or a walked root's own
+    /// entries and in the folders from the exe's up, as the proxy reads them all.</summary>
+    internal static readonly string[] ExeMarkers = ["Marvel.exe", "Discovery.exe", "cod.exe"];
 
     /// <summary>The marker names as the proxy's built-in list has them (its check beside the exe): "*x" matches a name ending in x.</summary>
     public static IEnumerable<string> MarkerNames => Markers.Select(m => m.Name);
@@ -832,11 +844,15 @@ public static partial class GameFiles
     /// <paramref name="late"/>: called when the time ran out or a read failed, an Other that isn't a finding. A WeGame game
     /// (<see cref="WeGameId"/>) is found only by a marker under its install folder; any other Other, and a clean walk unless its id is
     /// confirmed clean (<see cref="GameVerdicts.NoAntiCheat"/>), is held: Other with <paramref name="late"/> called.
-    /// <paramref name="unreadable"/>: given the error when a read failed (after <paramref name="late"/>).</summary>
+    /// <paramref name="unreadable"/>: given the error when a read failed (after <paramref name="late"/>).
+    /// An "anti-cheat" game verdict (<see cref="GameVerdicts.HasAntiCheat(Game)"/>) is Other by the game's or its WeGame id or
+    /// its exe's name, and its names count in the walk as a marker's do, also for a WeGame game with a no-anti-cheat entry.</summary>
     public static AntiCheat DetectAntiCheat(Game game, bool quick = false, TimeSpan? budget = null, AntiCheat ignore = AntiCheat.None, Action<string>? at = null,
         string? steamRoot = null, Action? late = null, Action<Exception>? unreadable = null)
     {
+        if (GameVerdicts.Current.HasAntiCheat(game)) return AntiCheat.Other;
         if (WeGameId(game) is not { } wegame) return Walked(game, quick, budget, ignore, at, steamRoot, late, unreadable);
+        if (GameVerdicts.Current.HasAntiCheat(wegame)) return AntiCheat.Other;
         string? marker = null;
         var wasLate = false;
         string install;
@@ -863,7 +879,8 @@ public static partial class GameFiles
     /// <summary><see cref="DetectAntiCheat"/> before a WeGame game's hold.</summary>
     static AntiCheat Walked(Game game, bool quick, TimeSpan? budget, AntiCheat ignore, Action<string>? at, string? steamRoot, Action? late, Action<Exception>? unreadable)
     {
-        AntiCheat Marker(string name) => GameFiles.Marker(name) is var kind && kind == ignore ? AntiCheat.None : kind;
+        var listed = GameVerdicts.Current;
+        AntiCheat Marker(string name) => GameFiles.Marker(name) is var kind && kind != AntiCheat.None && kind != ignore ? kind : listed.HasAntiCheat(name) ? AntiCheat.Other : AntiCheat.None;
         void Unread(Exception e) { late?.Invoke(); unreadable?.Invoke(e); }
         if (game.Id.StartsWith("battlenet:", StringComparison.Ordinal) || game.Id.StartsWith("hoyoplay:", StringComparison.Ordinal)) return AntiCheat.Other;
         if (game.Id.StartsWith("riot:", StringComparison.Ordinal) || RiotGames(game.InstallDir) || RiotGames(game.ExePath)) return AntiCheat.Other;
@@ -875,6 +892,8 @@ public static partial class GameFiles
         // off Windows a folder spelled otherwise is another folder, and one reached twice has one real path
         var named = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         bool Inside(string d) => d.Equals(install, named) || d.StartsWith(install + Path.DirectorySeparatorChar, named);
+        // an exe outside the install as spelled may be under it through a link or a short name: nothing is known off its path
+        bool OnExePath(string d) => !Inside(exeDir) || exeDir.Equals(d, named) || exeDir.StartsWith(d + Path.DirectorySeparatorChar, named);
         var visited = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var seen = 0;
         var clock = Stopwatch.StartNew();
@@ -905,7 +924,7 @@ public static partial class GameFiles
                 {
                     var e = entries.Current;
                     if (++seen > MaxEntries || Late()) return AntiCheat.Other;
-                    if (Marker(e.Name) is var kind and not AntiCheat.None)
+                    if (Marker(e.Name) is var kind and not AntiCheat.None && (dir == root || OnExePath(dir) || !ExeMarkers.Contains(e.Name, StringComparer.OrdinalIgnoreCase)))
                     {
                         at?.Invoke(e.FullName);
                         return kind;
@@ -1015,12 +1034,13 @@ public static partial class GameFiles
 
     /// <summary>Games whose anti-cheat leaves no file in the install. NetEase's: Once Human, Marvel Rivals, FragPunk, Sword of
     /// Justice, NARAKA: BLADEPOINT. Elytra's, whose service installs under Program Files: THE FINALS. Playground's own (online
-    /// checks, hardware bans): Forza Horizon 5 and 6 on Steam and the Xbox app. Ironmace's IronShield, no marker for it yet: Dark and Darker.
+    /// checks, hardware bans): Forza Horizon 5 and 6 on Steam and the Xbox app. Ironmace's IronShield: Dark and Darker. Grinding Gear Games' own: Path of Exile and Path of Exile 2.
     /// Activision's Ricochet: Call of Duty: Modern Warfare (2019) on Steam, whose install has no randgrid.sys, and Call of Duty
     /// HQ and Warzone, should their driver leave the game folder.</summary>
     internal static readonly string[] AntiCheatIds = ["steam:2139460", "steam:2767030", "steam:2943650", "steam:2782500", "steam:1203220",
         "steam:2483190", "steam:2073850", "steam:2016590", "xbox:Microsoft.ForteBaseGame_8wekyb3d8bbwe",
-        "steam:1551360", "xbox:Microsoft.624F8B84B80_8wekyb3d8bbwe", "steam:2000950", "steam:1938090", "steam:1962663"];
+        "steam:1551360", "xbox:Microsoft.624F8B84B80_8wekyb3d8bbwe", "steam:2000950", "steam:1938090", "steam:1962663",
+        "steam:238960", "steam:2694490"];
 
     /// <summary>The game's folder or exe, as given or as it is on disk, lies in the install folder, as named or as it is on disk,
     /// of a Steam app on <see cref="AntiCheatIds"/>: in a library Steam lists or the one the game's path is in. Such an app's
@@ -1041,7 +1061,7 @@ public static partial class GameFiles
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
         }
         foreach (var lib in libraries.Select(Path.TrimEndingDirectorySeparator).Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal))
-            foreach (var id in AntiCheatIds.Where(i => i.StartsWith("steam:", StringComparison.Ordinal)))
+            foreach (var id in AntiCheatIds.Concat(GameVerdicts.Current.AntiCheatIds).Distinct(StringComparer.OrdinalIgnoreCase).Where(i => i.StartsWith("steam:", StringComparison.Ordinal)))
             {
                 var common = Path.Combine(lib, "steamapps", "common");
                 string? dir;

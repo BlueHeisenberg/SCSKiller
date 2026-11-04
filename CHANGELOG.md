@@ -4,6 +4,43 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-11-04
+
+**Improved**
+
+- On Windows with NVIDIA, Maximum mode no longer adds pipeline pairings the driver already has, so plans and compiles
+  with it on are much smaller.
+- The time left on a compile follows the compile's overall speed, so a slow stretch no longer shows hours or days left.
+- On Windows, Fortnite's graphics choice is Normal or Performance, both on DirectX 12, and Performance compiles the
+  shaders Performance mode runs.
+- The Settings account card shows a short line with a Join for free link when you're signed in and not on the SCSKiller
+  Patreon.
+- On Linux, the app runs on .NET 10.0.14, which has the latest security fixes.
+- Games with anti-cheat can be added from the server, by store id or exe name, without an app update. SCSKiller takes its
+  recorder out of them.
+
+**Fixed**
+
+- Path of Exile and Path of Exile 2 are marked as games with anti-cheat. Enabling the recorder in a game with anti-cheat
+  is at your own risk, and SCSKiller isn't responsible for bans.
+- Marvel Rivals, FragPunk, Sword of Justice, NARAKA: BLADEPOINT, THE FINALS, Dark and Darker and Call of Duty are marked
+  as games with anti-cheat in any copy, also added by hand or from another store, so SCSKiller takes its recorder out of
+  them. Enabling the recorder in a game with anti-cheat is at your own risk, and SCSKiller isn't responsible for bans.
+- A game added by hand from an exe outside its Unreal project folder, such as Phantom Blade Zero's
+  `platform\steam\PBZ.exe`, gets the game's whole folder, so its shaders are found. Games added that way before move to
+  it on their own.
+- The compile leaves out ray tracing shaders the game's root signatures can't bind, so Phantom Blade Zero no longer
+  reports 25 pipelines the driver refused.
+- A game played on 1.4.3 since its last compile no longer compiles every pipeline again.
+- On Windows, heavy ray tracing pipelines no longer get skipped as GPU driver hangs when the compile runs them on many
+  threads.
+- A compile that keeps restarting to free memory through a stretch of heavy pipelines runs it on fewer threads, so it
+  gets through instead of stalling.
+- On Windows with NVIDIA, DirectX 12 games no longer crash at start with the recorder on under the newest DirectX
+  runtime of Windows Insider builds.
+- On Linux with AMD, games that last ran on Proton Experimental or GE-Proton11-12 compile again instead of stopping with
+  a Proton prefix error.
+
 ## [1.4.4] - 2026-11-02
 
 Linux support is no longer experimental: Heroic, Lutris and Faugus Launcher join Steam. Get the AppImage from the

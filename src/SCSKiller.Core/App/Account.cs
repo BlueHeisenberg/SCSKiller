@@ -90,6 +90,10 @@ public sealed class Account
     public string? Problem { get; private set; }
     /// <summary>Signed in by <see cref="SignInAsync"/> in this session (not read back from auth.dat at start).</summary>
     public bool JustSignedIn { get; private set; }
+    /// <summary>The server says this Patreon user isn't in the campaign, free or paid, and no benefit comes from elsewhere. False while unknown.</summary>
+    public bool NotMember { get; private set; }
+    public const string JoinLine = "You're not on the SCSKiller Patreon yet.";
+    public const string JoinLink = "Join for free";
 
     /// <summary>Settings' Account card asks once, right after a sign-in, to share recordings: only while sharing is off
     /// and the user hasn't said "Not now".</summary>
@@ -127,6 +131,7 @@ public sealed class Account
                 JustSignedIn = true;
                 if (inFile) Problem = KeptInFile;
             });
+            await ReadMembershipAsync(any.Token);
             return true;
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested && !mine.IsCancellationRequested)
@@ -155,13 +160,38 @@ public sealed class Account
         if (kept == null) return;
         (Busy, Problem) = (true, null);
         Raise();
-        try { await NewAccessTokenAsync(ct); }
-        catch (Exception e) when (!ct.IsCancellationRequested) { Problem = Plain(e); }
+        try
+        {
+            await NewAccessTokenAsync(ct);
+            await ReadMembershipAsync(ct);
+        }
+        catch (Exception e) when (!ct.IsCancellationRequested) { (Problem, NotMember) = (Plain(e), false); }
         finally
         {
             Busy = false;
             Raise();
         }
+    }
+
+    /// <summary>GET /v1/me for <see cref="NotMember"/>. Any failure, or a server without these fields, reads as unknown. Never throws.</summary>
+    public async Task ReadMembershipAsync(CancellationToken ct = default)
+    {
+        string? token = null;
+        var notMember = false;
+        try
+        {
+            token = await GetAccessTokenAsync(ct);
+            if (token != null)
+            {
+                using var r = await SendAsync(HttpMethod.Get, "v1/me", token, ct);
+                // the entitlement rule's "no member": a free member reads "not a patron", a past payer "former"
+                notMember = r.IsSuccessStatusCode && Status?.Ent.Count == 0 && (await r.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("entitlements")
+                    .EnumerateArray().Any(e => e.GetProperty("source").GetString() == "patreon" && e.GetProperty("reason").GetString() == "no member");
+            }
+        }
+        catch (Exception e) when (e is HttpRequestException or AccountException or OperationCanceledException or JsonException or KeyNotFoundException or InvalidOperationException) { notMember = false; }
+        if (token == accessToken) NotMember = notMember;   // else signed out or in again meanwhile: the answer is about another sign-in
+        Raise();
     }
 
     /// <summary>The access token for the edge (community DB, beta feed), renewed once half its life is gone (12 h of a
@@ -301,7 +331,7 @@ public sealed class Account
     // only the sign-in it was about: one that landed meanwhile, while the keyring answered, stays
     async Task ForgetAsync(TokenFile<Stored>.Kept which)
     {
-        if (kept is { } now && TokenFile<Stored>.Same(now, which)) (kept, accessToken, Status, JustSignedIn) = (null, null, null, false);
+        if (kept is { } now && TokenFile<Stored>.Same(now, which)) (kept, accessToken, Status, JustSignedIn, NotMember) = (null, null, null, false, false);
         await file.DeleteAsync(which);
     }
 }

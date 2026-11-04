@@ -229,7 +229,7 @@
                 <!-- WinUI's template keeps it 32 tall and its glyph 14 px from the text -->
                 <ComboBox x:Name="ApiBox" ItemsSource="{Binding ApiItems}" SelectedIndex="{Binding ApiIndex, Mode=OneWay}" SelectionChanged="OnApiPicked"
                           IsVisible="{Binding ShowApiPicker}" IsEnabled="{Binding CanPickApi}" FontSize="{DynamicResource TextSize.12}" MinHeight="32" Padding="10,2,6,3"
-                          AutomationProperties.Name="DirectX" ToolTip.Tip="The DirectX SCSKiller compiles for. Auto uses the detected one." />
+                          AutomationProperties.Name="DirectX" ToolTip.Tip="{Binding ApiTip}" />
                 <Border Classes="Chip" IsVisible="{Binding HasMiddleware}" ToolTip.Tip="{Binding MiddlewareTip}">
                     <TextBlock Text="{Binding MiddlewareChip}" Classes="ChipText" />
                 </Border>

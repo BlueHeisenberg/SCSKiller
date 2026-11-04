@@ -179,6 +179,7 @@ static double now_ms() { return std::chrono::duration<double, std::milli>(std::c
 // supervisor adds to it (D3D11's starts after D3D12's ends): a gap of over 5 s between its passes (50-100 ms apart) is
 // a suspension, and counting it would wake every item in flight stuck for the pause's length.
 static std::atomic<double> g_frozen_ms;
+static std::atomic<double> g_pass_ms;  // now_ms() at the running supervisor's last pass
 static double live_ms() { return now_ms() - g_frozen_ms; }
 // A stamp later than a pass's now was made after a resume, before the pass counted the gap: it carries the pause, so
 // the item counts from that now, or a hang in it would be found the pause's length late.
@@ -195,7 +196,7 @@ static double live_pass(double& last) {
         g_frozen_ms = g_frozen_ms + (now - last);
         logf("warm: suspended for %.1f s (a pause): not counted toward the stuck limits", (now - last) / 1000);
     }
-    last = now;
+    last = now, g_pass_ms = now;
     return now - g_frozen_ms;
 }
 static std::wstring exe_name() {
@@ -1670,6 +1671,10 @@ static void so_untime() {
 // A create links every state object it builds on. NVIDIA compiled Jedi Survivor's recorded collections in 42.7 ms each,
 // so 250 ms per one named (about 6x) on top of the hang limit: a 400-collection addition gets 100 s more.
 static constexpr double kSoLinkMs = 250;
+// Many creates at once stretch each one (PBZ's ray generation collections: 4.4 s at most in play, past 60 s on 32 warm
+// threads, done on the retry), so the limit is 16x the recent mean per state object, from the hang limit up to 300 s.
+static std::atomic<double> g_so_ms{0};
+static double so_limit() { return std::clamp(16 * g_so_ms.load(), g_stuck_ms, std::max(g_stuck_ms, 300000.0)); }
 static std::vector<char> g_so_keep;
 
 // After a fault or a hang in a state object call this process's driver can't be trusted (the NVIDIA case at g_parked). The
@@ -1920,9 +1925,14 @@ static void so_create(size_t j, SoSlot& s) {
     {
         std::shared_lock gate(g_rt_gate);  // taken out here: so_call catches any fault, so this always unlocks
         NvScope nv(nvext_of(rec.tag, rec.payload), true);  // may wait for the state objects under other options
-        so_time(g_stuck_ms + kSoLinkMs * linked);
-        if (!nv.why) s.hr = so_call(rec, &desc, base, &obj, j, linked);
-        else s.hr = E_INVALIDARG, s.why = nv.why;
+        const double frozen = g_frozen_ms, t = now_ms();  // in this order, as the checks below: live_pass writes frozen first
+        so_time(so_limit() + kSoLinkMs * linked);
+        if (!nv.why) {
+            s.hr = so_call(rec, &desc, base, &obj, j, linked);
+            // a suspension the supervisor counted meanwhile, or hasn't counted yet, isn't the driver's time
+            if (const double end = now_ms(), ms = (end - t) / (linked + 1); end - g_pass_ms < 5000 && g_frozen_ms == frozen)
+                for (double m = g_so_ms; !g_so_ms.compare_exchange_weak(m, m + (ms - m) / 8);) {}
+        } else s.hr = E_INVALIDARG, s.why = nv.why;
     }
     if (g_rt_sem) ReleaseSemaphore(g_rt_sem, 1, nullptr);
     if (s.hr == E_OUTOFMEMORY) s.skipped = true, note_oom(j);
@@ -2469,6 +2479,12 @@ static void warm_main() {
     g_start_mb = private_mb();
     if (g_mem_mb && private_mb() > g_mem_mb)  // the dbs' records alone are over it: start with one worker
         g_allowed = 1, logf("warm: private memory %.0f MB over the %u MB budget at the start: 1 worker", private_mb(), g_mem_mb);
+    // SCSKILLER_WARM_BAND_WORKERS=N (the app, after a memory restart that moved little): N workers for this process's first
+    // 1,000 items. Heavy compiles hold their memory while in flight (Phantom Blade Zero: ~300 compute PSOs at ~10 s each)
+    wchar_t band_env[8] = {};
+    int band = env(L"SCSKILLER_WARM_BAND_WORKERS", band_env) ? _wtoi(band_env) : 0;
+    if (band > 0 && band < g_threads) g_allowed = std::min<int>(g_allowed, band), logf("warm: %d of %d workers for the first 1000 items (the last process grew back to its memory restart)", band, g_threads);
+    else band = 0;
     if (g_rt_threads > 0 && g_rt_threads < g_threads) {
         g_rt_sem = CreateSemaphoreW(nullptr, g_rt_threads, g_rt_threads, nullptr);
         logf("warm: ray tracing on %d thread%s (a retry after a driver fault or hang)", g_rt_threads, g_rt_threads == 1 ? "" : "s");
@@ -2830,7 +2846,7 @@ static void warm_main() {
     });
     // progress every 5 s from the last 5 s's rate; a stall (nothing done for 30 s) says what is in flight, and no eta
     double last_done = double(first), last_t = t0, moved_t = t0, moved_done = double(first), peak_mb = 0, mem_released = t0;
-    WarmMemory wm{double(g_mem_mb), g_threads, g_allowed, t0};
+    WarmMemory wm{double(g_mem_mb), band ? band : g_threads, g_allowed, t0};  // the band's count caps the tick's raises too
     WarmRestart wr;
     wchar_t restart_env[8] = {}, restart_at_env[24] = {};
     const bool may_restart = env(L"SCSKILLER_WARM_MEM_RESTART", restart_env) && (restart_env[0] == L'1' || restart_env[0] == L'2');
@@ -2865,6 +2881,12 @@ static void warm_main() {
             double held = std::max<double>(g_held_mb, wm.kept), limit = g_mem_mb + held;
             if (g_mem_mb && mb > limit && parked && now - mem_released > 1000 && !releasing.exchange(true))
                 mem_released = now, std::thread([] { release_parked("over the memory budget"), releasing = false; }).detach();
+            if (band && warm_done() >= 1000) {  // 1000: Warmer.cs MinRestartItems
+                wm.threads = g_threads;
+                if (g_allowed == band && mb <= limit) g_allowed = g_threads, logf("warm: 1000 items done: %d workers again", g_threads);
+                else logf("warm: 1000 items done: the %d-worker cap is lifted, %d workers while over the memory budget", band, g_allowed.load());
+                band = 0;
+            }
             wm.allowed = g_allowed;
             char step = g_mem_mb ? warm_memory_tick(wm, mb, held, low, now) : 0;
             g_allowed = wm.allowed;
@@ -3120,6 +3142,18 @@ static bool dd_on() {
 }
 
 static thread_local int t_dd;  // this create: 1 a dedupe hit, 2 its kept pipeline was still held
+// A module's file version from its own VS_VERSION_INFO (no version.dll: the preloader may be loaded under that name).
+// The root block: wLength, wValueLength, wType, L"VS_VERSION_INFO", padding to 40, VS_FIXEDFILEINFO.
+static std::string file_version(HMODULE m) {
+    HRSRC r = FindResourceA(m, MAKEINTRESOURCEA(VS_VERSION_INFO), RT_VERSION);
+    const BYTE* p = r ? (const BYTE*)LockResource(LoadResource(m, r)) : nullptr;
+    VS_FIXEDFILEINFO f;
+    if (!p || SizeofResource(m, r) < 40 + sizeof f || ((const WORD*)p)[1] != sizeof f || memcmp(p + 6, L"VS_VERSION_INFO", 32)) return "of unknown version";
+    memcpy(&f, p + 40, sizeof f);
+    if (f.dwSignature != VS_FFI_SIGNATURE) return "of unknown version";
+    return std::format("{}.{}.{}.{}", HIWORD(f.dwFileVersionMS), LOWORD(f.dwFileVersionMS), HIWORD(f.dwFileVersionLS), LOWORD(f.dwFileVersionLS));
+}
+static std::atomic<bool> g_dd_decided;  // the first pipeline's runtime was looked at: g_pso_vt set or dedupe off
 template <class F> static HRESULT dd_create(ID3D12Device* dev, const Writer& w, const Hash& rk, REFIID riid, void** pp, F& call) {
     if (rk == kZero || w.no_dedupe || !dd_on()) return call();
     const Hash blob = w.cached.pCachedBlob && w.cached.CachedBlobSizeInBytes ? sha1(w.cached.pCachedBlob, w.cached.CachedBlobSizeInBytes) : kZero;
@@ -3152,19 +3186,28 @@ template <class F> static HRESULT dd_create(ID3D12Device* dev, const Writer& w, 
     ID3D12PipelineState* o = nullptr;
     if (FAILED(hr) || !*pp || FAILED(((IUnknown*)*pp)->QueryInterface(IID_PPV_ARGS(&o)))) return hr;
     std::vector<ID3D12PipelineState*> drop;
+    // outside g_ddmx: these take the loader lock, and a device create holding it waits for g_ddmx (dd_flush)
+    void** vt = *(void***)o;
+    HMODULE m = nullptr;
+    wchar_t name[MAX_PATH] = {};
+    const UINT* sdk = nullptr;
+    bool core = false;
+    if (!g_dd_decided) {
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)vt, &m);
+        if (m) GetModuleFileNameW(m, name, MAX_PATH);
+        const wchar_t* base = wcsrchr(name, L'\\');
+        if ((core = base && !_wcsicmp(base + 1, L"D3D12Core.dll"))) sdk = (const UINT*)GetProcAddress(m, "D3D12SDKVersion");
+    }
+    int off = 0;  // 1 the runtime's SDK, 2 not D3D12Core's own or not hooked
     {
         std::lock_guard l(g_ddmx);
-        if (!g_pso_vt) {
+        if (!g_pso_vt && !g_dd_decided.exchange(true)) {
             // only D3D12Core's own pipelines: one count for the whole object, which the claim's AddRef reads
-            void** vt = *(void***)o;
-            HMODULE m = nullptr;
-            wchar_t name[MAX_PATH] = {};
-            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)vt, &m);
-            if (m) GetModuleFileNameW(m, name, MAX_PATH);
-            const wchar_t* base = wcsrchr(name, L'\\');
-            if (base && !_wcsicmp(base + 1, L"D3D12Core.dll")) patch(vt, OBJ_SETPD, (void*)hk_setpd, o_setpd), patch(vt, OBJ_SETPDI, (void*)hk_setpdi, o_setpdi);
+            // measured: games crash at their first pipelines with dedupe on the 620 runtime (dedupe=1 still forces it)
+            const bool gated = sdk && *sdk >= 620 && g_dd_mode != 1;
+            if (core && !gated) patch(vt, OBJ_SETPD, (void*)hk_setpd, o_setpd), patch(vt, OBJ_SETPDI, (void*)hk_setpdi, o_setpdi);
             if (vt[OBJ_SETPD] == (void*)hk_setpd && vt[OBJ_SETPDI] == (void*)hk_setpdi) g_pso_vt = vt;
-            else g_dd_mode = 0, logf("dedupe: off, the pipelines aren't D3D12Core's own or their private data methods couldn't be hooked");
+            else g_dd_mode = 0, off = gated ? 1 : 2;
         }
         // a holder still has the kept one, or another thread made the same at once: the first stays
         if (!g_pso_vt || *(void***)o != g_pso_vt || g_dd_mode == 0 || g_dd.count(k)) drop.push_back(o);
@@ -3172,6 +3215,8 @@ template <class F> static HRESULT dd_create(ID3D12Device* dev, const Writer& w, 
         while (g_dd.size() > g_dd_cap) dd_drop(g_dd.find(g_ddlru.front()), drop);
     }
     for (auto* x : drop) x->Release();
+    if (off == 1) logf("dedupe: off, D3D12 runtime %s (SDK %u, %s): from SDK 620 games crash with it", file_version(m).c_str(), *sdk, shown(name).c_str());
+    if (off == 2) logf("dedupe: off, the pipelines aren't D3D12Core's own or their private data methods couldn't be hooked");
     return hr;
 }
 

@@ -42,6 +42,7 @@ public sealed class ManualSource(AppStore store) : IGameSource, ILeavesOut
     /// the user gave it.</summary>
     public IReadOnlyList<Game> Discover()
     {
+        Climb();
         var entries = Entries();
         var added = store.LoadAddedLibrary();
         var games = entries.Where(e => File.Exists(e.Exe)).Select(ToGame).ToList();
@@ -171,6 +172,28 @@ public sealed class ManualSource(AppStore store) : IGameSource, ILeavesOut
     /// <summary>A copy of the game from before its folder changed: its state is for another folder than the list's.</summary>
     public bool Stale(Game g) => _roots.TryGetValue(g.Id, out var r) && !Same(r.Root, GameFiles.DirKey(g.InstallDir));
 
+    /// <summary>An entry saved with its exe's own folder before <see cref="InstallRoot"/> climbed gets the climbed root, written
+    /// back; no add flow tells that folder from a user's pick of it. Climbed outside the mutex: a drive that hangs stalls this
+    /// scan, never arming (<see cref="ConfirmedNow"/>).</summary>
+    void Climb()
+    {
+        static bool Own(ManualEntry e) => Valid(e) && Path.GetDirectoryName(e.Exe) is { } dir && Same(GameFiles.DirKey(e.InstallDir), dir) && Same(InstallRoot(e.Exe, climb: false), dir);
+        try
+        {
+            var moved = store.LoadManualGames().Where(e => Own(e) && File.Exists(e.Exe)).Select(e => (e.Exe, Root: InstallRoot(e.Exe, climb: true)))
+                .Where(m => !Same(m.Root, Path.GetDirectoryName(m.Exe)!)).DistinctBy(m => m.Exe, StringComparer.OrdinalIgnoreCase).ToDictionary(m => m.Exe, m => m.Root, StringComparer.OrdinalIgnoreCase);
+            if (moved.Count > 0)
+                Locked(() =>
+                {
+                    // read again: an entry whose folder changed since keeps it
+                    store.SaveManualGames(store.LoadManualGames().Select(e => Own(e) && moved.TryGetValue(e.Exe, out var root) ? e with { InstallDir = root } : e).ToList());
+                    return true;
+                });
+        }
+        // the entries stay as they are, the next scan tries again
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { GameFiles.Skip("Added games", "moving to the game's folder", e); }
+    }
+
     static bool Valid(ManualEntry e) =>
         e is { Exe.Length: > 0, InstallDir.Length: > 0 } && e.Exe.IndexOfAny(Path.GetInvalidPathChars()) < 0 && Path.IsPathFullyQualified(e.Exe)
         && e.InstallDir.IndexOfAny(Path.GetInvalidPathChars()) < 0 && Path.IsPathFullyQualified(e.InstallDir);
@@ -232,10 +255,12 @@ public sealed class ManualSource(AppStore store) : IGameSource, ILeavesOut
         if (!pick.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) throw new ArgumentException($"{file} isn't a program: pick the game's .exe file.");
         if (!File.Exists(pick)) throw new ArgumentException($"{pick} doesn't exist.");
         CheckX64(pick, file);
-        var root = InstallRoot(pick);
+        var root = InstallRoot(pick, climb: false);
+        // the exe is resolved in the exe's own install root: a climbed one may hold another project's Shipping exe
+        var top = found ? root : InstallRoot(pick, climb: true);
         if (Path.GetPathRoot(root) == root) throw new ArgumentException($"{file} is at the root of a drive: SCSKiller needs the game in a folder of its own.");
         // as discovery: no import table is read in an install with anti-cheat
-        var clean = GameFiles.DetectAntiCheat(new Game("", "", Store.Manual, root, pick)) == AntiCheat.None;
+        var clean = GameFiles.DetectAntiCheat(new Game("", "", Store.Manual, top, pick)) == AntiCheat.None;
         var graphics = clean ? GameFiles.ImportsGraphics(pick) : null;
         var exe = graphics == true || GameFiles.IsShipping(pick) ? GameFiles.GameExe(root, pick) : GameFiles.FindExe(root, GameFiles.Rel(root, pick)) ?? pick;
         if (Same(exe, pick) && graphics == false && !GameFiles.IsShipping(pick))   // a launcher FindExe kept: the one exe of the install that loads D3D, if there is one
@@ -249,7 +274,7 @@ public sealed class ManualSource(AppStore store) : IGameSource, ILeavesOut
             }
         if (!Same(exe, pick)) CheckX64(exe, Path.GetFileName(exe));   // what is added is the game's exe, not the pick
         if (found && clean && GameSign(exe) == null) throw new ArgumentException($"nothing in the folder of {Path.GetFileName(exe)} looks like a game");
-        return new ManualEntry(exe, root, NameOf(exe, pick, root));
+        return new ManualEntry(exe, top, NameOf(exe, pick, top));
     }
 
     static bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
@@ -310,9 +335,12 @@ public sealed class ManualSource(AppStore store) : IGameSource, ILeavesOut
     }
 
     /// <summary>The folder suggested as the game's (the user confirms or changes it): Unreal's, holding Engine\ and the project
-    /// (the project's own folder when Engine\ isn't beside it); bin*\ or bin\x64*\: the folder above bin. Else the exe's
-    /// folder. Nothing above it is read: the folders beside it may be other games.</summary>
-    static string InstallRoot(string exe)
+    /// (the project's own folder when Engine\ isn't beside it); bin*\ or bin\x64*\: the folder above bin. Else, with
+    /// <paramref name="climb"/> and no Engine\ or &lt;Project&gt;\Content\Paks in the exe's folder, the nearest of the 3 folders
+    /// above it that holds Engine\ (Phantom Blade Zero's, above platform\steam\PBZ.exe), when it holds no other game's folder and passes
+    /// <see cref="RootProblem"/>, never at or past a drive's root or a folder of many (<see cref="IsLibrary"/>), by any of their
+    /// names. Else the exe's folder.</summary>
+    static string InstallRoot(string exe, bool climb)
     {
         var dir = Path.GetDirectoryName(exe)!;
         var root = dir;
@@ -324,6 +352,24 @@ public sealed class ManualSource(AppStore store) : IGameSource, ILeavesOut
                 root = game;
             else if (Path.GetFileName(dir).StartsWith("bin", StringComparison.OrdinalIgnoreCase)) root = parent;
         }
+        if (!climb || !Same(root, dir)) return root;
+        try
+        {
+            bool Engine(string d) => Directory.Exists(GameFiles.Find(d, "Engine"));
+            // by every name: a junction may lead into a library or a drive's root
+            bool Edge(string d) => GameFiles.Spellings(d).Any(s => IsLibrary(s) || Path.GetPathRoot(s) == s);
+            if (Edge(dir) || Engine(dir) || GameFiles.EnumerateDirectories(dir).Any(p => Directory.Exists(GameFiles.Find(p, @"Content\Paks")))) return root;
+            // beside the way down to the exe, a folder with a program of its own is another game's (the launcher stub is named like the game's exe)
+            bool Alone(string up, string via) => !GameFiles.EnumerateDirectories(up).Any(d => !Same(GameFiles.DirKey(d), via) && !NotAGame.Any(n => Path.GetFileName(d).Contains(n, StringComparison.OrdinalIgnoreCase))
+                && GameFiles.EnumerateFiles(d, "*.exe").Any(f => !Same(Path.GetFileName(f), Path.GetFileName(exe))));
+            var (below, up) = (dir, Path.GetDirectoryName(dir));
+            // Engine\ only above: a games folder holds other games' <Project>\Content\Paks, never an Engine\ of its own
+            // each step up is one on disk too: a link (or a chain of them) below leads elsewhere, maybe out of a library
+            bool Step(string from, string to) => GameFiles.FinalPath(from) is { } f && GameFiles.FinalPath(to) is { } t && Path.GetDirectoryName(GameFiles.DirKey(f)) is { } p && Same(p, GameFiles.DirKey(t));
+            for (var n = 0; n < 3 && up != null && !Edge(up) && Step(below, up); n++, (below, up) = (up, Path.GetDirectoryName(up)))
+                if (Engine(up)) return Alone(up, GameFiles.DirKey(below)) && RootProblem(up, exe, []) == null ? up : root;   // the nearest Engine\ is the game's or none is
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return root;
     }
 

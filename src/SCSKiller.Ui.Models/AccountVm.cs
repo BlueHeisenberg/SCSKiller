@@ -13,7 +13,7 @@ public sealed class AccountVm : Bindable
     // The app sets Updater.Host once it runs the updater: until then, nothing reads the state that needs it.
     static bool Wired => Updater.Host.Core != null;
 
-    /// <summary>While the page is shown. Signed in with nothing read yet this session: reads the status.</summary>
+    /// <summary>While the page is shown. Signed in: reads the status if nothing was read yet this session, and the membership on every visit.</summary>
     public void Watch(bool on)
     {
         A.Changed -= changed.Request;
@@ -22,7 +22,7 @@ public sealed class AccountVm : Bindable
         A.Changed += changed.Request;
         Updater.Changed += changed.Request;
         Changed();
-        if (A.SignedIn && A.Status == null && !A.Busy) _ = A.RefreshAsync();
+        if (A.SignedIn && !A.Busy) _ = A.Status == null ? A.RefreshAsync() : A.ReadMembershipAsync();
     }
 
     // Failures show in the card (Account.Problem), so these never throw.
@@ -50,6 +50,9 @@ public sealed class AccountVm : Bindable
     public bool Idle => !A.Busy;
     public string? Problem => A.Problem;
     public bool HasProblem => A.Problem != null;
+    public bool NotMember => A.NotMember;
+    public string JoinLine => Account.JoinLine;
+    public string JoinLink => Account.JoinLink;
     public bool OffersSharing => A.OffersSharing(Host.Core.Settings);
     public void Refresh() => Changed();   // the settings changed (OffersSharing)
 

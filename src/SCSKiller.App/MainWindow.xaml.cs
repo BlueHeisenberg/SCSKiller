@@ -730,10 +730,10 @@ public sealed partial class MainWindow : Window
             // The Patreon card: signed out, signed in with "db" (the share prompt), signed out again (the download checkbox
             // turns off live, on the same page), signed in without "db".
             Navigate(typeof(SettingsPage));
-            foreach (var (name, ent) in new (string, string[]?)[] { ("signedout", null), ("db", ["db", "beta"]), ("signedout-again", null), ("nodb", ["beta"]) })
+            foreach (var (name, ent) in new (string, string[]?)[] { ("signedout", null), ("db", ["db", "beta"]), ("signedout-again", null), ("nodb", ["beta"]), ("notmember", []), ("freemember", []) })
             {
                 if (ent == null) await App.Account.SignOutAsync();
-                else { FakeAccount.Ent = ent; await App.Account.SignInAsync(); }
+                else { (FakeAccount.Ent, FakeAccount.Reason) = (ent, name == "notmember" ? "no member" : name == "freemember" ? "not a patron" : "active"); await App.Account.SignInAsync(); }
                 await Task.Delay(1000);
                 ((SettingsPage)ContentFrame.Content).ScrollToPatreon();
                 await Shot("settings-account-" + name, 400);
@@ -779,14 +779,14 @@ public sealed partial class MainWindow : Window
                                                    ("ran-other-exe", "ubisoft:13504"), ("game-changed", "steam:3900030"), ("never-loaded", "steam:3900040"), ("other-exe", "steam:3900050"),
                                                    ("foreign", "steam:3900060"), ("foreign-on", "steam:3900060"), ("foreign-off", "steam:3900060"), ("optiscaler", "steam:3900400"), ("optiscaler-on", "steam:3900400"),
                                                    ("guess-picked", "xbox:CoffeeStainStudios.DeepRockGalactic"), ("guess-overruled", "steam:3900020"), ("sure-picked", "steam:1139900"),
-                                                   ("dx11-frames", "steam:3900300"), ("learned", "steam:4115450") })
+                                                   ("dx11-frames", "steam:3900300"), ("learned", "steam:4115450"), ("fortnite-performance", "epic:Fortnite") })
                 {
                     if (name is "guess-both" or "guess-dx" or "ghostrunner") { fake.ProveApi(id, null); fake.SetApiOverride(id, null); }
                     if (name == "guess-picked") fake.SetApiOverride(id, DxApi.D3D12);
                     if (name == "foreign") fake.MakeForeign(id); if (name == "optiscaler-on") fake.SetRecordAlongsideMod(id, true);
                     if (name == "foreign-on") fake.SetRecorderOverride(id, RecorderOverride.On);   // what the switch's one click calls
                     if (name == "foreign-off") fake.SetRecorderOverride(id, RecorderOverride.Off);
-                    if (name == "sure-picked") fake.SetApiOverride(id, DxApi.D3D11);
+                    if (name is "sure-picked" or "fortnite-performance") fake.SetApiOverride(id, DxApi.D3D11);
                     if (name == "guess-overruled") { fake.SetApiOverride(id, DxApi.D3D11); fake.ProveApi(id, "D3D12"); }
                     Navigate(typeof(DetailPage), id);
                     string file = $"d-{name}-{size}";

@@ -1051,9 +1051,9 @@ sealed class PlanBuilder
     /// <summary>A per-stage cache whose state is in the key (AMD, Intel) holds every pairing Maximum adds, at about
     /// <see cref="ExtraBytes"/> each, in a cache all games share (AMD's 16 GiB) or the game's own (Intel). Maximum adds at
     /// most as many as the plan replays otherwise (cover + recorded), and no more than <see cref="ExtraBudget"/> or the
-    /// per-game cap.</summary>
+    /// per-game cap. None where state isn't in the key (NVIDIA): a pairing of stages cached in others is an exact hit.</summary>
     public static int MaximumExtras(VendorCaps caps, long planned) =>
-        caps.StateIndependentCache ? int.MaxValue : (int)Math.Min(planned, Math.Min(ExtraBudget, caps.PerGameCacheCap ?? long.MaxValue) / ExtraBytes);
+        caps.StateIndependentCache ? 0 : (int)Math.Min(planned, Math.Min(ExtraBudget, caps.PerGameCacheCap ?? long.MaxValue) / ExtraBytes);
     /// <summary>An eighth of AMD's shared cache: FF7 Rebirth's 60k extra pairings (1.3 GiB) fit, Plague Tale's 289k don't.</summary>
     public const long ExtraBudget = 2L << 30;
     /// <summary>Measured on AMD: 1,500 extra pairings of FF7 Rebirth grew the cache 32 MiB.</summary>
@@ -1534,7 +1534,7 @@ sealed class PlanBuilder
                 rtUnbuildable.Add(h);
                 continue;
             }
-            if (global != null && RootSig.Uncovered(new RootSig.Ranges(0, [.. global.Slots, .. RootSig.Parse(rsBlobs[lo]).Slots]), Stage.Library, bc[h]) is { } why)
+            if (global != null && RootSig.Uncovered(new RootSig.Ranges(0, [.. global.Slots, .. RootSig.Parse(rsBlobs[bc[h].RayGeneration ? lg : lo]).Slots]), Stage.Library, bc[h]) is { } why)
             {
                 Count("rt_uncovered");
                 uncoveredExample.TryAdd("ray tracing " + why, h);

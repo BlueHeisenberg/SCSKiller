@@ -46,6 +46,8 @@ $versionArgs = if ($Version) { @("-p:Version=$Version", "-p:IncludeSourceRevisio
 $versionArgs += "-p:DebugType=None", "-p:DebugSymbols=false"
 Write-Host "version: $(if ($Version) { $Version } else { '0.0.0-internal.0 (dev)' })"
 $dotnet = Join-Path $env:LOCALAPPDATA "Microsoft\dotnet\dotnet.exe"   # .NET 10 SDK is per user; PATH may have an older one
+# setup-dotnet's SDK sets the shipped runtime: a runner account's per-user SDK can be older
+if ($env:DOTNET_ROOT -and (Test-Path (Join-Path $env:DOTNET_ROOT "dotnet.exe"))) { $dotnet = Join-Path $env:DOTNET_ROOT "dotnet.exe" }
 if (-not (Test-Path $dotnet)) { $dotnet = "dotnet" }
 $dist = Join-Path $repo "dist"
 $out = Join-Path $dist "SCSKiller"

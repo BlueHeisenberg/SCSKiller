@@ -17,7 +17,9 @@ set -euo pipefail
 die() { echo "ci-linux-package: $*" >&2; exit 1; }
 
 # the SDK that builds the package, and the .NET runtime the package must carry
-dotnet_dir=${CI_LINUX_DOTNET:-/root/.dotnet} sdk_version=10.0.402 runtime_version=10.0.13
+sdk_version=10.0.403 runtime_version=10.0.14
+# a folder per SDK: a second SDK beside the first would win global.json's roll-forward on every other branch
+dotnet_dir=${CI_LINUX_DOTNET:-/root/.dotnet-$sdk_version}
 lock=${CI_LINUX_LOCK:-/var/lock/scskiller-linux-build} lock_wait=${CI_LINUX_LOCK_WAIT:-3600}
 export SCSK_MAKE_JOBS=16
 

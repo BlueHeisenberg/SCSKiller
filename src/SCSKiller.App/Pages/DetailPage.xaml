@@ -221,7 +221,7 @@
                 </Border>
                 <ComboBox ItemsSource="{x:Bind Vm.ApiItems, Mode=OneWay}" SelectedIndex="{x:Bind Vm.ApiIndex, Mode=OneWay}" SelectionChanged="OnApiPicked"
                           Visibility="{x:Bind Vm.ShowApiPicker, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanPickApi, Mode=OneWay}" FontSize="12" MinHeight="0" Padding="10,2,0,3"
-                          AutomationProperties.Name="DirectX" ToolTipService.ToolTip="The DirectX SCSKiller compiles for. Auto uses the detected one." />
+                          AutomationProperties.Name="DirectX" ToolTipService.ToolTip="{x:Bind Vm.ApiTip, Mode=OneWay}" />
                 <Border Style="{StaticResource Chip}" Visibility="{x:Bind Vm.HasMiddleware, Mode=OneWay}" ToolTipService.ToolTip="{x:Bind Vm.MiddlewareTip, Mode=OneWay}">
                     <TextBlock Text="{x:Bind Vm.MiddlewareChip, Mode=OneWay}" Style="{StaticResource ChipText}" />
                 </Border>

@@ -1129,12 +1129,20 @@ public sealed partial class ScsKiller : IScsKiller
         {
             changed = Games.Where(s => list.NoStutter(s.Game, s.Engine) != was.NoStutter(s.Game, s.Engine)
                 || list.Unsupported(s.Game, s.Engine) != was.Unsupported(s.Game, s.Engine)
-                || s.WeGame && GameFiles.WeGameId(s.Game) is { } wegame && list.NoAntiCheat(wegame) != was.NoAntiCheat(wegame)).Select(s => s.Game.Id).ToList();   // never reads a game no evaluation read (HDD mode)
+                || list.HasAntiCheat(s.Game) != was.HasAntiCheat(s.Game)
+                || s.WeGame && GameFiles.WeGameId(s.Game) is { } wegame && (list.NoAntiCheat(wegame) != was.NoAntiCheat(wegame) || list.HasAntiCheat(wegame) != was.HasAntiCheat(wegame))).Select(s => s.Game.Id).ToList();   // never reads a game no evaluation read (HDD mode)
             foreach (var s in Games.Where(s => changed.Contains(s.Game.Id))) Refresh(s.Game);
         }
         if (ManageRecorders)
             foreach (var id in changed) ReconcileRecorders(id);
         if (changed.Count > 0) KeepList();   // a start without a scan restores the kept states
+        // a recorder kept rests on a full walk, and a listed exe can be anywhere in an install
+        if (ManageRecorders && list.AntiCheatStamp != was.AntiCheatStamp)
+            Task.Run(() =>
+            {
+                try { ReconcileRecorders(); }
+                catch (Exception e) { Log?.Report($"reconciling recorders failed: {e.Message}"); }
+            });
     }
 
     void UseMaximum(MaximumMode list)
@@ -2254,6 +2262,9 @@ public sealed partial class ScsKiller : IScsKiller
     {
         // a Vulkan game on a vendor without a Vulkan warm has nothing to choose
         if (ApiKey(e.GraphicsApi) is not { } key || key == "vk" && Vendor.Caps.VulkanKey == null && choice == null) return (e, null);
+        if (g.Id == FortniteId && choice is { } mode)
+            return (e with { GraphicsApi = DxApi.D3D12 + ChoiceSuffix, ApiGuessed = false, FeatureLevel = mode == DxApi.D3D11 ? "ES3_1" : null }, e.GraphicsApi);
+        if (g.Id == FortniteId && key != "12") return (e with { GraphicsApi = "D3D12", ApiGuessed = false }, e.GraphicsApi);
         // a game that runs either API (CarvedReader's OffersVulkan) records what the user played last: their pick wins
         var proved = e.ApiGuessed && !(choice != null && e.OffersVulkan && CarvedReader.Carved(e)) ? RecordedApi(g.Id) : null;
         if (proved == "Vulkan" && Vendor.Caps.VulkanKey == null) proved = null;
@@ -2262,6 +2273,12 @@ public sealed partial class ScsKiller : IScsKiller
     }
 
     public const string RecordingSuffix = " (recording)", ChoiceSuffix = " (your choice)";
+
+    public const string FortniteId = "epic:Fortnite";
+
+    /// <summary>The Fortnite picker's item, always on D3D12: Normal (SM6) is the stored <see cref="DxApi.D3D12"/>, Performance
+    /// (ES3_1) the stored <see cref="DxApi.D3D11"/>, a choice from when it offered DirectX 11. No choice: what detection saw.</summary>
+    public static bool FortnitePerformance(GameState s) => s.ApiOverride == DxApi.D3D11 || s.ApiOverride == null && s.Engine?.FeatureLevel is "ES3_1";
 
     /// <summary>The game page's line for a Vulkan game whose exe name another listed Vulkan game has (Star Citizen's LIVE and
     /// PTU) on a vendor that keys its Vulkan cache on the exe name: one cache file serves both. Null: none.</summary>
@@ -2898,7 +2915,7 @@ public sealed partial class ScsKiller : IScsKiller
             }
     }
 
-    /// <summary>The store's build, the anti-cheat markers (a build that knows more walks the game again), the exes Steam's launch
+    /// <summary>The store's build, the anti-cheat markers and game verdicts (a list that knows more walks the game again), the exes Steam's launch
     /// options start (<see cref="Vac.LaunchExes"/>, which Steam updates without touching the install) and the own entries of
     /// the install root and the exe's folder (files by name, size and write time, the exe among them; folders by name),
     /// hashed: what a game update or an anti-cheat install changes, read without walking the tree. The recorder's files and
@@ -2908,7 +2925,7 @@ public sealed partial class ScsKiller : IScsKiller
         string launches;
         try { launches = string.Join('|', Vac.LaunchExes(g)); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException) { return null; }
-        return Stamp(g.Version + "|" + GameFiles.MarkersStamp + "|" + launches, GameFiles.DirKey(g.InstallDir), GameFiles.DirKey(Path.GetDirectoryName(g.ExePath)!));
+        return Stamp(g.Version + "|" + GameFiles.MarkersStamp + "|" + GameVerdicts.Current.AntiCheatStamp + "|" + launches, GameFiles.DirKey(g.InstallDir), GameFiles.DirKey(Path.GetDirectoryName(g.ExePath)!));
     }
 
     static string? Stamp(string? version, params string[] dirs)
@@ -3093,7 +3110,7 @@ public sealed partial class ScsKiller : IScsKiller
         if (d3d11 != null && !BothApis(p)) return d3d11;
         return !File.Exists(Path.Combine(Store.GameDir(g.Id), CompiledItems.File)) || ColdWarm(r, snap.Id) || ReplayAgain(r) != null
             || CacheFilesChangedNow(g.Id, r, snap) ? "the whole game"
-            : IsPartlyWarmed(r.FirstLaunch) && r.FirstLaunch!.WarmedCold is > 0 and var c ? File.Exists(Path.Combine(Store.GameDir(g.Id), ColdFile)) ? d3d11 ?? $"the {c:N0} pipelines its launch still compiled" : "the whole game"
+            : IsPartlyWarmed(r.FirstLaunch) && r.FirstLaunch!.WarmedCold is > 0 and var c ? File.Exists(Path.Combine(Store.GameDir(g.Id), ColdFile)) ? d3d11 ?? $"the {c:N0} pipelines its launch still compiled" : WarmHeld(r.FirstLaunch) ? d3d11 : "the whole game"
             : d3d11;
     }
 
@@ -4312,7 +4329,7 @@ public sealed partial class ScsKiller : IScsKiller
         Store.SaveGame(gameId, rec);
         Refresh(s.Game, prompt: true);   // the evaluation's key has the choice: detected again with it, the plan checked
         // planned but never compiled: NeedsPlanCheck covers compiled games only
-        if (CheckPlans && Store.LoadGame(gameId) is { Plan: not null, WarmedAt: null } planned && Find(gameId).Engine is { } e && OtherApi(planned, e))
+        if (CheckPlans && Store.LoadGame(gameId) is { Plan: not null, WarmedAt: null } planned && Find(gameId).Engine is { } e && (OtherApi(planned, e) || gameId == FortniteId && OtherEngine(planned, e)))
             CheckPlan(gameId, prompt: true);
         lock (_recorderLock)
             if (!Reconcile(Find(gameId))) Refresh(s.Game);   // the recorder may go in or out, or as d3d11.dll on AMD; a running game's waits
@@ -11642,14 +11659,22 @@ public sealed partial class ScsKiller : IScsKiller
                 else if (!vulkan && options.StartAt < SteamFirstRun.Pipelines(work)) (rec.ResumeFailed, rec.ResumeDriverSkipped, rec.ResumeInvalid, rec.ResumeUnsupported, rec.ResumeKnown) = (0, 0, 0, 0, 0);
                 if (options.StartAt == 0) File.Delete(stoppedFailed);
                 var staged = game with { ExePath = Path.Combine(Path.GetDirectoryName(game.ExePath)!, exe) };
+                long? from = null;   // the count at the warm's first report: a fold wait and the db load before it aren't compile time
+                var running = new Stopwatch();
                 var reporter = new Reporter<WarmProgress>(p =>
                 {
                     var was = progress?.Done;
+                    // a replay from zero (Steam's pipelines, the Aftermath fallback) counts again from there
+                    if (from == null || p.Done < from) (from, running) = (p.Done, new Stopwatch());
                     // paused: the warm's recent rate falls with the count frozen, so the rate and the time left stay as they were
-                    var rate = progress != null && (!_go.IsSet || _pauseWhy != null) ? progress.PerSecond : p.PerSecond;
+                    var paused = progress != null && (!_go.IsSet || _pauseWhy != null);
+                    if (paused) running.Stop(); else running.Start();
+                    var rate = paused ? progress!.PerSecond : p.PerSecond;
+                    // 30 s in: the start's first rates are noise
+                    var whole = running.Elapsed.TotalSeconds >= 30 && p.Done - from is > 0 and var ran ? ran / running.Elapsed.TotalSeconds : 0;
                     // the end line's split: what SCSKiller can't build counts as skipped, a stopped earlier compile's share stays failed
                     progress = p with { Done = p.Done + resumedCount, Total = p.Total + resumedCount, Failed = p.Failed - p.Unbuilt + rec.ResumeFailed, DriverSkipped = p.DriverSkipped + rec.ResumeDriverSkipped, Invalid = p.Invalid + rec.ResumeInvalid,
-                        Unsupported = p.Unsupported + rec.ResumeUnsupported, Skipped = skipped, PerSecond = rate };
+                        Unsupported = p.Unsupported + rec.ResumeUnsupported, Skipped = skipped, PerSecond = rate, WholePerSecond = whole };
                     if (savingRun?.LastDone is { } next && next != armed) ArmSaving(null);   // a segment's next process: its own done event ends the warm
                     if (saving == null || was != progress.Done) Stage(QueueStage.Warming);   // the done event's repeats while the process exits stay in Saving
                 });
@@ -13230,7 +13255,12 @@ public sealed partial class ScsKiller : IScsKiller
     /// <summary>What a compile creates again of what earlier compiles created: the warm's own pipelines its partly warmed first
     /// launch created cold (<see cref="ColdFile"/>); empty: none. Null: not on record.</summary>
     HashSet<string>? ColdAgain(string id, GameRecord r) =>
-        IsPartlyWarmed(r.FirstLaunch) && r.FirstLaunch!.WarmedCold > 0 ? CompiledItems.Load(Path.Combine(Store.GameDir(id), ColdFile)) : [];
+        !(IsPartlyWarmed(r.FirstLaunch) && r.FirstLaunch!.WarmedCold > 0) ? []
+        : Path.Combine(Store.GameDir(id), ColdFile) is var p && File.Exists(p) ? CompiledItems.Load(p) : WarmHeld(r.FirstLaunch) ? [] : null;
+
+    /// <summary>The launch's cold creates of the warm's own pipelines stayed within <see cref="PartlyWarmedShare"/>: what it
+    /// still compiled were pipelines the warm didn't have. A launch judged before <see cref="ColdFile"/> existed is judged so.</summary>
+    static bool WarmHeld(LaunchCheck? l) => l is { Warmed: { } n and >= MinJudgedCreates, WarmedCold: { } cold } && cold <= PartlyWarmedShare * n;
 
     /// <summary><see cref="FullReplayReason"/>'s reasons the game's record alone tells.</summary>
     static string? ReplayAgain(GameRecord r) => r.PlanPerStage != r.WarmedPerStage ? "the plan settings changed"

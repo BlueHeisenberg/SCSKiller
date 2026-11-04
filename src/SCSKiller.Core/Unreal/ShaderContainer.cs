@@ -247,7 +247,8 @@ public static class ShaderContainer
         else return null;
 
         var kind = (int)(version >> 16);
-        if (kind == 6 && bindings.Count == 0) bindings.AddRange(Rdat(c).Resources); // a DXIL library has no PSV0: its resources are in RDAT
+        var rdat = kind == 6 ? Rdat(c) : default;
+        if (kind == 6 && bindings.Count == 0) bindings.AddRange(rdat.Resources); // a DXIL library has no PSV0: its resources are in RDAT
         Stage? stage = kind switch
         {
             0 => Stage.Pixel, 1 => Stage.Vertex, 2 => Stage.Geometry, 3 => Stage.Hull, 4 => Stage.Domain, 5 => Stage.Compute,
@@ -260,7 +261,8 @@ public static class ShaderContainer
         if (stage == Stage.Pixel && sigs.TryGetValue("IS", out var ins) && InputInterpolation(c) is { Count: > 0 } modes) // DXIL only
             sigs["IS"] = ins.Select(e => modes.TryGetValue((e.Semantic, e.Index), out var m) ? e with { Interpolation = m } : e).ToList();
         return new ShaderInfo(sha1, stage.Value, $"{prefix[kind]}_{(version >> 4) & 0xF}_{version & 0xF}", c.Length, counts, bindings,
-            sigs.GetValueOrDefault("IS") ?? [], sigs.GetValueOrDefault("OS") ?? [], stage == Stage.Geometry ? gsInput : 0, InlineRayTracing: Dxbc.InlineRayTracing(c), Payload: payload, ViewId: Dxbc.ViewId(c));
+            sigs.GetValueOrDefault("IS") ?? [], sigs.GetValueOrDefault("OS") ?? [], stage == Stage.Geometry ? gsInput : 0, InlineRayTracing: Dxbc.InlineRayTracing(c), Payload: payload, ViewId: Dxbc.ViewId(c),
+            RayGeneration: rdat.Functions?.Any(f => f.Kind == 7) == true);
     }
 
     /// <summary>A DXIL pixel shader's interpolation mode per named input (PSV0 signature elements: (semantic, index), the

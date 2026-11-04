@@ -260,6 +260,10 @@
                                     <StackPanel Spacing="2">
                                         <TextBlock Text="Signed in with Patreon" />
                                         <TextBlock Text="{Binding Benefits}" Classes="Caption" TextWrapping="Wrap" />
+                                        <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding NotMember}">
+                                            <TextBlock Text="{Binding JoinLine}" Classes="Caption" VerticalAlignment="Center" />
+                                            <HyperlinkButton Content="{Binding JoinLink}" Classes="Link" NavigateUri="https://www.patreon.com/SCSKiller" />
+                                        </StackPanel>
                                     </StackPanel>
                                     <StackPanel Orientation="Horizontal" Spacing="12">
                                         <Button Content="Refresh status" Click="OnRefreshAccount" IsEnabled="{Binding Idle}" />

@@ -198,7 +198,7 @@ jobs:
         env:
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
-          dotnet-version: 10.0.402
+          dotnet-version: 10.0.403
 
       # squashfs-tools makes the AppImage, desktop-file-utils checks its .desktop: noble's own builds, as WSL's Ubuntu-24.04
       # has them. Lavapipe only runs the layer's selftest.

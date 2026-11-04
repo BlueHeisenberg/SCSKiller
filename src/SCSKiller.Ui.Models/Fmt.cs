@@ -96,7 +96,7 @@ public static class Fmt
     public static double Percent(QueueItem? q) => q?.Progress is { Total: > 0 } p ? 100.0 * p.Done / p.Total : 0;
     public static bool Indeterminate(QueueItem? q) => q != null && q.Progress is not { Total: > 0 };
     public static TimeSpan? Left(QueueItem q, GameState? g) => ScsKiller.Stalled(q) || Tail(q) || q.Stage is not (QueueStage.Planning or QueueStage.Materializing) && q.Progress is { Total: > 0 } d && d.Done >= d.Total ? null   // no estimate for a warm that stopped moving, nor once it's through
-        : q.Progress is { PerSecond: > 0 } p ? TimeSpan.FromSeconds((p.Total - p.Done) / p.PerSecond)
+        : q.Progress is { PerSecond: > 0 } p ? TimeSpan.FromSeconds((p.Total - p.Done) / (p.WholePerSecond > 0 ? p.WholePerSecond : p.PerSecond))
         : q.Stage is QueueStage.Merging or QueueStage.Saving or QueueStage.Finishing ? null   // no rate yet, or nothing to count down
         : g is not null ? g.EstimatedWarmTime ?? g.LastWarmTime : null;
 

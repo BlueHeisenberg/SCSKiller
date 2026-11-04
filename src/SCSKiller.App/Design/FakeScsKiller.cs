@@ -233,6 +233,9 @@ public sealed class FakeScsKiller : IScsKiller
                 Engine = new EngineInfo("Unity", "2021.3", null, "Vulkan" + ScsKiller.ChoiceSuffix, false, null, OffersVulkan: true),
                 SessionNote = ScsKiller.RanOnNote("D3D11", picked: true),
             },
+            // Normal and Performance in place of the DirectX choices
+            G("Fortnite", "Fortnite", "5.8", "FortniteClient-Win64-Shipping.exe", null, GameStatus.NeedsRecording, "needs a recording. The game contains anti-cheat", at: "epic") with
+                { AntiCheat = AntiCheat.EasyAntiCheat, ApiDetected = "D3D12 (last run)" },
             // its store has no launch a session can start
             G("nap_global", "Zenless Zone Zero", "2019.4", "ZenlessZoneZero.exe", null, GameStatus.Unsupported, "needs a recording. The game contains anti-cheat", at: "hoyoplay") with
                 { AntiCheat = AntiCheat.Other, Engine = new EngineInfo("Unity", "2019.4", null, "D3D12", false, null), RiskNoLaunch = true },

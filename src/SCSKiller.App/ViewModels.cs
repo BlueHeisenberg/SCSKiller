@@ -97,7 +97,7 @@ static class Fmt
     public static double Percent(QueueItem? q) => q?.Progress is { Total: > 0 } p ? 100.0 * p.Done / p.Total : 0;
     public static bool Indeterminate(QueueItem? q) => q != null && q.Progress is not { Total: > 0 };
     public static TimeSpan? Left(QueueItem q, GameState? g) => ScsKiller.Stalled(q) || Tail(q) || q.Stage is not (QueueStage.Planning or QueueStage.Materializing) && q.Progress is { Total: > 0 } d && d.Done >= d.Total ? null   // no estimate for a warm that stopped moving, nor once it's through
-        : q.Progress is { PerSecond: > 0 } p ? TimeSpan.FromSeconds((p.Total - p.Done) / p.PerSecond)
+        : q.Progress is { PerSecond: > 0 } p ? TimeSpan.FromSeconds((p.Total - p.Done) / (p.WholePerSecond > 0 ? p.WholePerSecond : p.PerSecond))
         : q.Stage is QueueStage.Merging or QueueStage.Saving or QueueStage.Finishing ? null   // no rate yet, or nothing to count down
         : g is not null ? g.EstimatedWarmTime ?? g.LastWarmTime : null;
 
@@ -1050,12 +1050,13 @@ public sealed class DetailVm(string id) : Bindable
     // or a carved game whose API nothing tells, packed shaders too: it may run Vulkan at run time (SDL)
     public bool ShowApiPicker => s is { ApiDetected: not null } or { ApiOverride: not null } && s.Engine is { Unsupported: null, Encrypted: false }
         || s.Engine is { Encrypted: false } e && SCSKiller.Core.Carved.CarvedReader.Carved(e) && s.ApiDetected == SCSKiller.Core.Unreal.UnrealRhi.Ambiguous;
+    public string ApiTip => id == ScsKiller.FortniteId ? "The Fortnite mode SCSKiller compiles for." : "The DirectX SCSKiller compiles for. Auto uses the detected one.";
     public bool? ApiPending { get; set; }
     public bool CanPickApi => ApiPending == null && !App.Core.Queue.Any(q => q.GameId == id && Format.Running(q));   // its plan check too: the core refuses a change meanwhile
     IReadOnlyList<DxApi> ApiChoices => ScsKiller.ApiChoices(s, App.Core.Vendor.Caps);
-    public int ApiIndex => s.ApiOverride is { } a ? ApiChoices.ToList().IndexOf(a) + 1 : 0;
+    public int ApiIndex => id == ScsKiller.FortniteId ? (ScsKiller.FortnitePerformance(s) ? 1 : 0) : s.ApiOverride is { } a ? ApiChoices.ToList().IndexOf(a) + 1 : 0;
     /// <summary>The API of the picker's item <paramref name="i"/>; null = Auto.</summary>
-    public DxApi? ApiAt(int i) => i <= 0 ? null : ApiChoices[i - 1];
+    public DxApi? ApiAt(int i) => id == ScsKiller.FortniteId ? (i == 1 ? DxApi.D3D11 : DxApi.D3D12) : i <= 0 ? null : ApiChoices[i - 1];
     string[]? apiItems;
     public string[] ApiItems
     {
@@ -1064,7 +1065,7 @@ public sealed class DetailVm(string id) : Bindable
             var auto = s.Engine?.GraphicsApi.EndsWith(ScsKiller.RecordingSuffix, StringComparison.Ordinal) == true ? $"Auto ({Dx(s.Engine.GraphicsApi)} from your recording)"
                 : s.ApiDetected == SCSKiller.Core.Unreal.UnrealRhi.Ambiguous ? "Auto (DirectX 11 and 12)"
                 : s.ApiDetected is { } d ? $"Auto ({Dx(d)})" : "Auto";
-            string[] items = [auto, .. ApiChoices.Select(ScsKiller.ApiName)];
+            string[] items = id == ScsKiller.FortniteId ? ["Normal", "Performance"] : [auto, .. ApiChoices.Select(ScsKiller.ApiName)];
             if (apiItems == null || !apiItems.SequenceEqual(items)) apiItems = items;   // the same array while the labels hold: a new one resets the selection
             return apiItems;
         }
@@ -1949,7 +1950,7 @@ public sealed class AccountVm : Bindable
     readonly Coalesced changed;
     public AccountVm() => changed = new(App.Main.DispatcherQueue, Changed);
 
-    /// <summary>While the page is shown. Signed in with nothing read yet this session: reads the status.</summary>
+    /// <summary>While the page is shown. Signed in: reads the status if nothing was read yet this session, and the membership on every visit.</summary>
     public void Watch(bool on)
     {
         A.Changed -= changed.Request;
@@ -1958,7 +1959,7 @@ public sealed class AccountVm : Bindable
         A.Changed += changed.Request;
         Updater.Changed += changed.Request;
         Changed();
-        if (A.SignedIn && A.Status == null && !A.Busy) _ = A.RefreshAsync();
+        if (A.SignedIn && !A.Busy) _ = A.Status == null ? A.RefreshAsync() : A.ReadMembershipAsync();
     }
 
     public bool SignedIn => A.SignedIn;
@@ -1968,6 +1969,9 @@ public sealed class AccountVm : Bindable
     public bool Idle => !A.Busy;
     public string? Problem => A.Problem;
     public bool HasProblem => A.Problem != null;
+    public bool NotMember => A.NotMember;
+    public string JoinLine => Account.JoinLine;
+    public string JoinLink => Account.JoinLink;
     public bool OffersSharing => A.OffersSharing(App.Core.Settings);
     public void Refresh() => Changed();   // the settings changed (OffersSharing)
 

@@ -11,6 +11,8 @@ static class FakeAccount
 {
     /// <summary>The entitlements the next token carries.</summary>
     public static string[] Ent = ["db", "beta"];
+    /// <summary>/v1/me's reason on the patreon row.</summary>
+    public static string Reason = "active";
 
     public static Account Create(string dir) => new(dir, new RouteFailover(new Server(), [new Uri("https://api.fake.invalid/")]), Approve);
 
@@ -27,7 +29,9 @@ static class FakeAccount
     sealed class Server : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct) => Task.FromResult(
-            r.RequestUri!.AbsolutePath is "/v1/auth/exchange" or "/v1/token"
+            r.RequestUri!.AbsolutePath == "/v1/me"
+                ? new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new { entitlements = new[] { new { source = "patreon", reason = Reason } } }) }
+                : r.RequestUri!.AbsolutePath is "/v1/auth/exchange" or "/v1/token"
                 ? new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = JsonContent.Create(new { device_token = "sd1_fake", access_token = "v4.public.fake", exp = DateTimeOffset.UtcNow.AddDays(1), ent = Ent, until = (string?)null }),

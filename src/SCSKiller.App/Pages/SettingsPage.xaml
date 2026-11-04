@@ -225,6 +225,10 @@
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="Signed in with Patreon" />
                                     <TextBlock Text="{x:Bind Patreon.Benefits, Mode=OneWay}" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                    <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind Patreon.NotMember, Mode=OneWay}">
+                                        <TextBlock Text="{x:Bind Patreon.JoinLine}" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                                        <HyperlinkButton Content="{x:Bind Patreon.JoinLink}" Padding="0" FontSize="12" NavigateUri="https://www.patreon.com/SCSKiller" />
+                                    </StackPanel>
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Spacing="12">
                                     <Button Content="Refresh status" Click="OnRefreshAccount" IsEnabled="{x:Bind Patreon.Idle, Mode=OneWay}" />

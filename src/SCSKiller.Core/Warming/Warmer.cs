@@ -481,7 +481,7 @@ sealed class WarmRun : IWarmRun
     const int MaxStuckS = 300;
     // a memory restart whose process moved fewer items grew back from what the next items build on (NVIDIA frees a state
     // object only at exit): the next process restarts only at the 60% bound
-    const int MinRestartItems = 1000;
+    const int MinRestartItems = 1000;   // also the items a halved process runs before all workers again (proxy.cpp)
     IWarmProcess _p = null!;
     readonly IWarmHost _host;
     readonly object _lock = new();
@@ -518,6 +518,7 @@ sealed class WarmRun : IWarmRun
         var rt = 0;   // the ray tracing threads of the last process
         IReadOnlyList<long> isolated = [];   // the items it created alone first
         var hardOnly = false;   // the next process restarts for memory only at the 60% bound
+        int band = 0, ran = 0;   // the workers the next process alone starts with for its first 1,000 items (0: all), the last one's
         bool one = false, single = false;   // the next process runs one thread, the last one ran one
         long completed = 0;
         // the proxy's per-item limit: hung items that compile alone were slow on many threads (Phantom Blade Zero on NVIDIA)
@@ -528,7 +529,8 @@ sealed class WarmRun : IWarmRun
             (from, rt, isolated) = (start, rtThreads, isolate);
             _retried = false;
             var threads = one ? 1 : passes != null && !passes.IsFast(pass) && o.CarefulThreads > 0 ? o.CarefulThreads : o.Threads;
-            (single, one) = (threads == 1, false);
+            var used = threads > 0 ? threads : Math.Max(1, System.Environment.ProcessorCount - 2);   // 0: the proxy's own default
+            (single, one, ran) = (threads == 1, false, band > 0 ? Math.Min(band, used) : used);
             List<string> args = [host.WarmPath(workDir), Path.GetFileName(game.ExePath), "--threads", threads.ToString(),
                 "--priority", o.Priority == WarmPriority.Idle ? "idle" : "below", "--start", start.ToString(),
                 .. host.StopArgs, .. host.AdapterArgs(gpu)];
@@ -557,6 +559,8 @@ sealed class WarmRun : IWarmRun
             if (isolate.Count > 0) { args.Add("--isolate"); args.Add(string.Join(',', isolate)); }
             if (passes != null) { args.Add("--pass"); args.Add(passes.Number(pass).ToString()); }
             var all = new Dictionary<string, string>(env ?? new Dictionary<string, string>()) { [StuckVariable] = stuckS.ToString() };
+            if (band > 0) all["SCSKILLER_WARM_BAND_WORKERS"] = band.ToString();
+            band = 0;
             return host.Start(exe, args, all,
                 l => { stderr.Enqueue(l); while (stderr.Count > 200) stderr.TryDequeue(out _); log?.Report($"{game.Name}: compile: {l}"); });   // the tail only: restarts may be many
         }
@@ -740,10 +744,13 @@ sealed class WarmRun : IWarmRun
                     {
                         // what the process completed (its last progress, the retry event's Done is From): an unfinished item early on holds the resume point back
                         // one that resumes where it started with nothing in flight to create alone would only restart there again
-                        hardOnly = r.From == from && !aloneFirst || Math.Max(completed, r.From) - from < MinRestartItems;
+                        var little = r.From == from && !aloneFirst || Math.Max(completed, r.From) - from < MinRestartItems;
+                        // memory held by heavy compiles in flight grows back on every thread: half the workers each time, the 60% bound only at one
+                        (band, hardOnly) = little ? (ran == 1 ? 0 : Math.Max(1, ran / 2), ran == 1) : (0, false);
                         log?.Report($"{game.Name}: compile: restarted to free memory (private memory {r.PrivateMB:N0} MB, {r.FreeMB:N0} MB of RAM free), going on from item {Whole(r.From):N0}"
                             + (stuck ? $", item {Whole(r.From):N0} skipped for this compile: it made no progress on one thread either" : one ? ", the next process on one thread" : "")
                             + (aloneFirst ? $", the {r.Isolate!.Count:N0} pipelines in flight first, each alone" : "")
+                            + (little && !hardOnly ? $", the next process on {band} workers for its first 1,000 items" : "")
                             + (hardOnly && System.Environment.GetEnvironmentVariable("SCSKILLER_TEST_WARM_MEM_RESTART_AT") == null ? ", the next restart only at 60% of RAM" : ""));   // the hook restarts whatever the bound (proxy.cpp)
                     }
                     note = removed ? (r.Reason == "died" ? "continuing after the compile process stopped" : "recovering from a GPU driver crash") + (crashed.Count > 0 ? $", {crashed.Count:N0} skipped so far" : "")

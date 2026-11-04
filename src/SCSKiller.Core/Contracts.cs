@@ -73,7 +73,8 @@ public sealed record ShaderInfo(string Sha1, Stage Stage, string ShaderModel, in
     bool InlineRayTracing = false,   // traces rays inline (RayQuery: Dxbc.InlineRayTracing)
     byte[]? EngineHeader = null,   // the engine's own header stored beside the shader, read by its root-signature rule (Dagor: dxil::ShaderHeader)
     int Payload = 0,   // amplification shaders: the payload bytes they send; mesh shaders: the bytes they take (PSV0); the runtime rejects a pair that differs
-    bool ViewId = false);   // reads SV_ViewID (Dxbc.ViewId): the game creates it with view instancing
+    bool ViewId = false,   // reads SV_ViewID (Dxbc.ViewId): the game creates it with view instancing
+    bool RayGeneration = false);   // a DXIL library exporting a ray generation shader (RDAT): its collection takes the ray generation local root signature
 
 /// <summary>A group of shaders that can combine. <see cref="IsPipeline"/>: the game shipped this exact stage set as one
 /// pipeline (e.g. a PSO cache record), so no pairing is needed. <see cref="RootSignature"/>: the root signature the game
@@ -317,7 +318,8 @@ public sealed record WarmProgress(long Done, long Total, long Failed, double Per
     long DriverSkipped = 0,    // see WarmResult.DriverSkipped
     long Invalid = 0,          // see WarmResult.Invalid
     long Unsupported = 0,      // see WarmResult.Unsupported
-    long Unbuilt = 0);         // of Failed: the running process's D3D11 items SCSKiller can't build yet (ScsKiller.Unbuilt11), at most its own failures (read a moment apart)
+    long Unbuilt = 0,          // of Failed: the running process's D3D11 items SCSKiller can't build yet (ScsKiller.Unbuilt11), at most its own failures (read a moment apart)
+    double WholePerSecond = 0); // the compile's rate since it started, pauses left out, for the time left: a slow stretch's recent rate isn't the rest's; 0 = none yet
 public enum WarmOutcome { Completed, Stopped, Failed }
 /// <param name="Failed">PSOs the driver rejected</param>
 /// <param name="Skipped">PSOs not replayed: a shader not in this install (see <see cref="WarmProgress.Skipped"/>)</param>

@@ -457,14 +457,14 @@ static partial class Screenshots
                                                    ("foreign", "steam:3900060"), ("foreign-on", "steam:3900060"), ("foreign-off", "steam:3900060"), ("optiscaler", "steam:3900400"), ("optiscaler-on", "steam:3900400"),
                                                    ("guess-picked", "xbox:CoffeeStainStudios.DeepRockGalactic"), ("guess-overruled", "steam:3900020"), ("sure-picked", "steam:1139900"),
                                                    ("vulkan-pick", "steam:3900170"), ("dx11-frames", "steam:3900300"), ("risk-checking", "steam:3900063"),
-                                                   ("learned", "steam:4115450") })
+                                                   ("learned", "steam:4115450"), ("fortnite-performance", "epic:Fortnite") })
                 {
                     if (name is "guess-both" or "guess-dx" or "ghostrunner") { fake.ProveApi(id, null); fake.SetApiOverride(id, null); }
                     if (name == "guess-picked") fake.SetApiOverride(id, DxApi.D3D12);
                     if (name == "foreign") fake.MakeForeign(id); if (name == "optiscaler-on") fake.SetRecordAlongsideMod(id, true);
                     if (name == "foreign-on") fake.SetRecorderOverride(id, RecorderOverride.On);   // what the switch's one click calls
                     if (name == "foreign-off") fake.SetRecorderOverride(id, RecorderOverride.Off);
-                    if (name == "sure-picked") fake.SetApiOverride(id, DxApi.D3D11);
+                    if (name is "sure-picked" or "fortnite-performance") fake.SetApiOverride(id, DxApi.D3D11);
                     if (name == "guess-overruled") { fake.SetApiOverride(id, DxApi.D3D11); fake.ProveApi(id, "D3D12"); }
                     main.Navigate(typeof(DetailPage), id);
                     string file = $"d-{name}-{size}";

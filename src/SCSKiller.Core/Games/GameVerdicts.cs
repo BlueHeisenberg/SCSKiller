@@ -11,7 +11,9 @@ namespace SCSKiller.Core.Games;
 /// "no-stutter": the game prepares its shaders itself, so SCSKiller never suggests compiling it (no bulk add, no
 /// driver-update rebuild, no recorder by default) but still allows it. "unsupported-yet" and "unsupported": the game is
 /// Unsupported ("Not supported yet", "Not supported"). "no-anti-cheat": a WeGame game confirmed to carry no anti-cheat,
-/// the only kind whose clean folder lets a recorder in (<see cref="GameFiles.WeGameId"/>). Each entry names a reason code the app has its own line for
+/// the only kind whose clean folder lets a recorder in (<see cref="GameFiles.WeGameId"/>). "anti-cheat": the game counts as
+/// one with anti-cheat, by store id and by the whole, case-insensitive names of its optional "exes" (<see cref="GameFiles.DetectAntiCheat"/>).
+/// A served list only adds to the markers, the built-in lists and the embedded list's entries, and engines or builds don't limit such an entry. Each entry names a reason code the app has its own line for
 /// (<see cref="Reasons"/>); an unknown code shows the entry's note, else a line for its verdict. Matched by store id, and
 /// only within the entry's engines and builds when it lists them. Read leniently, so later versions can add to the format:
 /// unknown top-level members are ignored, and an entry with an unknown member or verdict, or one this version finds
@@ -20,11 +22,11 @@ public sealed class GameVerdicts
 {
     public const string Name = "game-verdicts", FileName = Name + ".json";
     public const string NoStutterVerdict = "no-stutter", UnsupportedYetVerdict = "unsupported-yet", UnsupportedVerdict = "unsupported";
-    public const string NoAntiCheatVerdict = "no-anti-cheat";
+    public const string NoAntiCheatVerdict = "no-anti-cheat", AntiCheatVerdict = "anti-cheat";
     public const string OtherReason = "other";
     public const int MaxGames = 500;
-    static readonly string[] Verdicts = [NoStutterVerdict, UnsupportedYetVerdict, UnsupportedVerdict, NoAntiCheatVerdict];
-    static readonly string[] Members = ["name", "ids", "verdict", "reason", "note", "source", "date", "engines", "builds"];
+    static readonly string[] Verdicts = [NoStutterVerdict, UnsupportedYetVerdict, UnsupportedVerdict, NoAntiCheatVerdict, AntiCheatVerdict];
+    static readonly string[] Members = ["name", "ids", "verdict", "reason", "note", "source", "date", "engines", "builds", "exes"];
 
     /// <summary>The reason codes this version shows in its own words. Codes are [a-z0-9-]; "other" takes the entry's note.</summary>
     public static readonly IReadOnlyDictionary<string, string> Reasons = new Dictionary<string, string>
@@ -40,9 +42,10 @@ public sealed class GameVerdicts
     public sealed record Verdict(string Kind, string Text);
 
     sealed record Entry(string Name, string[] Ids, string Verdict, string Reason, string Source, string Date,
-        string? Note = null, string[]? Engines = null, string[]? Builds = null);
+        string? Note = null, string[]? Engines = null, string[]? Builds = null, string[]? Exes = null);
 
     readonly Dictionary<string, List<Entry>> byId = new(StringComparer.OrdinalIgnoreCase);
+    readonly List<string> antiCheat = [];   // ids and exe names: only an id has a ':'
 
     /// <summary>The entries this version applies.</summary>
     public int Count { get; }
@@ -52,6 +55,7 @@ public sealed class GameVerdicts
         foreach (var e in entries)
             foreach (var id in e.Ids)
                 (byId.TryGetValue(id, out var l) ? l : byId[id] = []).Add(e);
+        antiCheat.AddRange(entries.Where(e => e.Verdict == AntiCheatVerdict).SelectMany(e => e.Ids.Concat(e.Exes ?? [])));
         Count = entries.Count;
     }
 
@@ -82,11 +86,13 @@ public sealed class GameVerdicts
         && ContentFile.Text(e.Name, 100) && e.Ids is { Length: >= 1 and <= 8 } && e.Ids.All(IsId)
         && e.Reason is { Length: >= 1 and <= 40 } && e.Reason.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c == '-')
         && (e.Note == null || ContentFile.Text(e.Note, 120)) && (e.Source == "" || ContentFile.Text(e.Source, 500))
-        && Scope(e.Engines) && Scope(e.Builds)
+        && Scope(e.Engines) && Scope(e.Builds) && (e.Exes == null || e.Verdict == AntiCheatVerdict && Scope(e.Exes) && e.Exes.All(IsExe))
         && DateOnly.TryParseExact(e.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _);
 
     // any store: an id of a store this version doesn't know never matches
     internal static bool IsId(string? id) => id is { Length: <= 120 } && id.IndexOf(':') is > 0 and var c && c < id.Length - 1 && !id.Any(char.IsWhiteSpace);
+
+    static bool IsExe(string x) => x.Length > 4 && x.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && x.IndexOfAny(['/', '\\', ':', '*', '?']) < 0;
 
     internal static bool Scope(string[]? s) => s == null || s is { Length: >= 1 and <= 16 } && s.All(v => ContentFile.Text(v, 60));
 
@@ -108,6 +114,21 @@ public sealed class GameVerdicts
 
     /// <summary>A "no-anti-cheat" entry names the id; one limited to engines or builds never counts: the anti-cheat check knows neither.</summary>
     public bool NoAntiCheat(string id) => byId.GetValueOrDefault(id)?.Any(e => e.Verdict == NoAntiCheatVerdict && e.Engines == null && e.Builds == null) == true;
+
+    // this list's and the embedded one's: a served list can't take back what the app shipped with
+    HashSet<string> AntiCheatNames { get => field ??= new(antiCheat.Concat(Embedded.antiCheat), StringComparer.OrdinalIgnoreCase); }
+
+    /// <summary>An "anti-cheat" entry names this store id, or this exe by its file name.</summary>
+    public bool HasAntiCheat(string? idOrExe) => idOrExe != null && AntiCheatNames.Contains(idOrExe);
+
+    public bool HasAntiCheat(Game game) => HasAntiCheat(game.Id) || HasAntiCheat(Path.GetFileName(game.ExePath));
+
+    /// <summary>The store ids of the "anti-cheat" entries.</summary>
+    public IEnumerable<string> AntiCheatIds => AntiCheatNames.Where(n => n.Contains(':'));
+
+    /// <summary>The "anti-cheat" entries as a stamp: a clean verdict holds only for the list it was checked against.</summary>
+    // a newline: no name or id can hold one
+    public string AntiCheatStamp { get => field ??= string.Join('\n', AntiCheatNames.Select(n => n.ToLowerInvariant()).Order(StringComparer.Ordinal)); }
 
     Verdict? Find(Game game, EngineInfo? engine, string verdict) =>
         byId.GetValueOrDefault(game.Id)?.FirstOrDefault(e => e.Verdict == verdict && InScope(e.Engines, e.Builds, game, () => engine)) is { } hit
