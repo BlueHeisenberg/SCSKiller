@@ -230,6 +230,7 @@ public sealed partial class ScsKiller : IScsKiller
             (Luminous.LuminousReader.Family, new Luminous.LuminousReader()),
             (ForzaTech.ForzaTechReader.Family, new ForzaTech.ForzaTechReader()),
             (BlackSpace.BlackSpaceReader.Family, new BlackSpace.BlackSpaceReader(dataDir)),
+            (Aska.AskaReader.Family, new Aska.AskaReader()),
             (StarEngine.StarEngineReader.Family, new StarEngine.StarEngineReader()),
             (Swarm.SwarmReader.Family, new Swarm.SwarmReader()),
             (Snowdrop.SnowdropReader.Family, new Snowdrop.SnowdropReader(dataDir)),

@@ -4,6 +4,8 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+- Reads the ASKA shader libraries in Star Ocean: The Divine Force and Star Ocean: The Last Hope for DirectX 11 precompilation.
+
 ## [1.4.5] - 2026-11-04
 
 **Improved**
