@@ -4,7 +4,7 @@
 <h1 align="center">SCSKiller</h1>
 <p align="center">
   <strong>Shader Compilation Stutter Killer.</strong> SCSKiller compiles your games' shaders into your GPU driver's
-  cache before you play, so the game doesn't stop to compile them mid-game. Free and open source, for Windows.
+  cache before you play, so the game doesn't stop to compile them mid-game. Free and open source, for Windows and Linux.
 </p>
 
 <p align="center">
@@ -74,7 +74,7 @@ stutter only, not traversal or streaming stutter, and a shader it couldn't find 
 
 - **NVIDIA and AMD**, DirectX 12 games, and DirectX 11 games on NVIDIA.
 - **Finds your games** in Steam, Epic Games, EA app, GOG, Ubisoft Connect, Xbox (PC), Battle.net, PURPLE, HoYoPlay,
-  Gaijin and the Riot Client, plus games you add yourself.
+  Gaijin and the Riot Client, plus games you add yourself. On Linux: Steam, Heroic, Lutris and Faugus Launcher.
 - **Puts games known to stutter on top**, with the reason, and marks games whose engine prepares its shaders itself.
 - **Compiles again after a driver update**, which clears the shader cache, on its own if you let it.
 - **Optional recorder** for games whose pipelines its files don't give: play a few minutes with it on, then compile. It
@@ -93,7 +93,7 @@ stutter only, not traversal or streaming stutter, and a shader it couldn't find 
 
 | Requirement | |
 |---|---|
-| OS | Windows 10 (version 2004) or 11, 64-bit |
+| OS | Windows 10 (version 2004) or 11, 64-bit, or Linux x86-64 |
 | GPU | NVIDIA or AMD |
 | Games | DirectX 12, DirectX 11 on NVIDIA |
 
@@ -106,6 +106,10 @@ It installs for your user only, needs no admin rights and updates itself.
 Or unzip `SCSKiller-<version>-Portable.zip` to any folder you can write to and run `SCSKiller.exe`. It updates itself
 too, and keeps its settings and data in a `data` folder beside the exe. Turn recording off for your games before you
 delete the folder, so the recorder leaves the game folders.
+
+On Linux, download `SCSKiller-x86_64.AppImage` from
+[Releases](https://github.com/BlueHeisenberg/SCSKiller/releases/latest), make it executable
+(`chmod +x SCSKiller-x86_64.AppImage`) and run it. It updates itself too.
 
 <!-- UNSIGNED NOTICE: delete this block once releases are signed. -->
 > [!IMPORTANT]
@@ -150,7 +154,8 @@ PC crashed. If those files are still there when you start the game online, you c
 SCSKiller while the game runs.
 
 **What does it write, and where?** Settings and per-game plans go in `%LOCALAPPDATA%\SCSKiller\` (the `data` folder of
-a portable copy), and the compiled pipelines go in your driver's own shader cache. Game files are never modified. The
+a portable copy, `~/.local/share/SCSKiller/` on Linux), and the compiled pipelines go in your driver's own shader cache.
+Game files are never modified. The
 optional recorder adds `d3d12.dll` and `scskiller.cfg` to the folder of a game you turn it on for, and turning it off
 removes exactly those files. It never goes into a game with anti-cheat, and comes out the moment SCSKiller finds
 anti-cheat: when it scans, when the game exits or updates, and every 2 minutes while it runs. `scskiller.cfg` names the
