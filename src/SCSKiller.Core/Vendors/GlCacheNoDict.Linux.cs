@@ -22,7 +22,10 @@ namespace SCSKiller.Core.Vendors;
 /// back and checked against the original, listed with their lengths in a commit file, and given their free names (never
 /// replacing a file), each .bin before its .toc. Only then is the original deleted, its .toc first. So each .toc on disk
 /// always has its whole .bin, the new and the old set holding the same keys meanwhile. <see cref="Recover"/> settles a
-/// rewrite cut short before any warm process writes again (<see cref="Settle"/>), and drops temp files no commit lists.</summary>
+/// rewrite cut short before any warm process writes again (<see cref="Settle"/>), and drops temp files no commit lists.
+/// The sets of a game placed in Steam's files are read by <see cref="SteamCachePlace"/> alone, which decodes each with its own
+/// dictionary: <see cref="Run"/> gives them free numbers by hard links through the same commit, so the driver gives the next
+/// process a fresh file as a rewrite does, and no entry is written again.</summary>
 sealed class GlCacheNoDict(string gameDir, string appName)
 {
     /// <summary>The bytes a .bin may hold: its entries' offsets are u32. Tests: a smaller one.</summary>
@@ -110,10 +113,24 @@ sealed class GlCacheNoDict(string gameDir, string appName)
         return _unfinished;
     }
 
+    /// <summary>The sets are gone: a rewrite's commit and temp files go without being settled.</summary>
+    public void Forget()
+    {
+        if (!IsFolder(Path.Combine(gameDir, "proton-cache")) || !IsFolder(Work)) return;
+        foreach (var a in Folders(Work, 32))
+        {
+            foreach (var b in Folders(a.FullName, 16)) Clear(b);
+            Remove(a);
+        }
+        Remove(new DirectoryInfo(Work));
+    }
+
     /// <summary>Rewrites each of the warm's sets that holds a dictionary, after <see cref="Recover"/>: in every cache folder of
     /// the game, since a pass cut short by Core's exit leaves sets no later process writes. <paramref name="note"/> gets
-    /// <see cref="Note"/> before the first. Returns how many sets were rewritten.</summary>
-    public int Run(Action<string>? note = null)
+    /// <see cref="Note"/> before the first. With <paramref name="renumber"/>, only those of these .bin files that hold a
+    /// dictionary, and each just takes a free number, rewritten only where the file system makes no hard links. Returns how
+    /// many sets were rewritten or moved.</summary>
+    public int Run(Action<string>? note = null, IReadOnlySet<string>? renumber = null)
     {
         Recover();
         _left.Clear();
@@ -122,10 +139,10 @@ sealed class GlCacheNoDict(string gameDir, string appName)
         foreach (var live in Folders().Where(l => !_unfinished.ContainsKey(l)))
             foreach (var n in Sets(live))
             {
-                if (!HasDictionary(live, n)) continue;
-                if (!noted) note?.Invoke(Note);
+                if (renumber?.Contains(Path.Combine(live, Name(n) + ".bin")) == false || !HasDictionary(live, n)) continue;
+                if (!noted && renumber == null) note?.Invoke(Note);
                 noted = true;
-                var outcome = Rewrite(live, n);
+                var outcome = Rewrite(live, n, renumber != null);
                 if (outcome == Outcome.Done) done++;
                 if (outcome == Outcome.Blocked) break;   // its commit names files of this folder until it is settled
             }
@@ -197,7 +214,7 @@ sealed class GlCacheNoDict(string gameDir, string appName)
         Log?.Invoke($"{Name(n)}: left as it is, {why}");
     }
 
-    Outcome Rewrite(string live, int n)
+    Outcome Rewrite(string live, int n, bool renumber = false)
     {
         var name = Name(n);
         string toc = Path.Combine(live, name + ".toc"), bin = Path.Combine(live, name + ".bin");
@@ -205,11 +222,12 @@ sealed class GlCacheNoDict(string gameDir, string appName)
         var clock = Stopwatch.StartNew();
         List<Output> outputs = [];
         Source? source = null;
+        Plan? plan = null;
         var committed = false;
         try
         {
             if (Held(toc) || Held(bin)) throw new Refused("a process has it open");
-            if (NvidiaBytes() is var used && used > Budget) throw new Refused($"the game's NVIDIA cache holds {Format.Bytes(used)} already");
+            if (!renumber && NvidiaBytes() is var used && used > Budget) throw new Refused($"the game's NVIDIA cache holds {Format.Bytes(used)} already");
             if (new FileInfo(bin).Length > FileLimit) throw new Refused($"its .bin is past {Format.Bytes(FileLimit)}");   // the driver's offsets past it wrap
             source = Source.Read(toc, bin);
             foreach (var d in new[] { Work, Path.GetDirectoryName(temp)!, temp })
@@ -218,23 +236,28 @@ sealed class GlCacheNoDict(string gameDir, string appName)
                 if (!IsFolder(d)) throw new Refused($"{d} is a link");   // checked before the next one is made in it
             }
             if (Device(temp) is not { } t || t != Device(live)) throw new Refused($"{Work} isn't on the cache's file system");
-            if (FreeSpace(temp) < 2 * source.BinLength + (1L << 30)) throw new Refused("the disk has too little free space");
-            outputs = Write(source, live, temp, n);
-            Step?.Invoke("written");
-            var both = NvidiaBytes() + outputs.Sum(o => o.TocLength + o.BinLength);
-            var after = both - source.TocLength - source.BinLength;
-            if (after > Budget) throw new Refused($"rewritten, the game's NVIDIA cache would hold {Format.Bytes(after)}, more than {Format.Bytes(Budget)}");
-            if (both > Cap) throw new Refused($"with both copies there for a moment, the game's NVIDIA cache would hold {Format.Bytes(both)}, more than the driver keeps ({Format.Bytes(Cap)})");
-            Verify(source, outputs, temp);
+            if (renumber) plan = Linked(source, live, temp, n);
+            if (plan == null)
+            {
+                if (FreeSpace(temp) < 2 * source.BinLength + (1L << 30)) throw new Refused("the disk has too little free space");
+                outputs = Write(source, live, temp, n);
+                Step?.Invoke("written");
+                var both = NvidiaBytes() + outputs.Sum(o => o.TocLength + o.BinLength);
+                var after = both - source.TocLength - source.BinLength;
+                if (after > Budget) throw new Refused($"rewritten, the game's NVIDIA cache would hold {Format.Bytes(after)}, more than {Format.Bytes(Budget)}");
+                if (both > Cap) throw new Refused($"with both copies there for a moment, the game's NVIDIA cache would hold {Format.Bytes(both)}, more than the driver keeps ({Format.Bytes(Cap)})");
+                Verify(source, outputs, temp);
+                plan = new Plan(new(name, source.TocLength, source.BinLength), [.. outputs.Select(o => new Plan.Set(o.Name, o.TocLength, o.BinLength))]);
+            }
             if (Held(toc) || Held(bin)) throw new Refused("a process opened it meanwhile");
             if (!source.Unchanged()) throw new Refused("it changed meanwhile");
-            var plan = new Plan(new(name, source.TocLength, source.BinLength), [.. outputs.Select(o => new Plan.Set(o.Name, o.TocLength, o.BinLength))]);
             var commit = Commit(temp, plan);
             committed = true;
             Install(plan, commit, temp, live);
             Tidy(temp);
             var plain = outputs.Sum(o => o.Rewritten);
-            Log?.Invoke($"{name}: {plain:N0} of {source.Records.Count - 1:N0} entries no longer need its dictionary, {Format.Bytes(source.BinLength)} now "
+            Log?.Invoke(outputs.Count == 0 ? $"{name}: {Format.Bytes(source.BinLength)} is now {plan.New[0].Name}, its dictionary kept"
+                : $"{name}: {plain:N0} of {source.Records.Count - 1:N0} entries no longer need its dictionary, {Format.Bytes(source.BinLength)} now "
                 + string.Join(" and ", outputs.Select(o => $"{Format.Bytes(o.BinLength)} in {o.Name}")) + $", in {clock.Elapsed.TotalSeconds:0.0} s");
             return Outcome.Done;
         }
@@ -247,17 +270,40 @@ sealed class GlCacheNoDict(string gameDir, string appName)
                 Log?.Invoke($"{name}: rewriting it stopped part way, settled at the next compile: {e.Message}");
                 return Outcome.Blocked;
             }
-            Discard(temp, name, outputs);
+            Discard(temp, name, [.. outputs.Select(o => o.Name), .. plan?.New.Select(s => s.Name) ?? []]);
             LeftAs(live, n, e.Message);
             return Outcome.Left;
         }
         finally { source?.Dispose(); }
     }
 
-    List<Output> Write(Source s, string live, string temp, int n)
+    Queue<int> Free(string live, string temp, int n)
     {
         bool Taken(string dir, int i) => File.Exists(Path.Combine(dir, Name(i) + ".toc")) || File.Exists(Path.Combine(dir, Name(i) + ".bin"));
-        var free = new Queue<int>(Enumerable.Range(0, Files).Where(i => i != n && !Taken(live, i) && !Taken(temp, i)));
+        return new(Enumerable.Range(0, Files).Where(i => i != n && !Taken(live, i) && !Taken(temp, i)));
+    }
+
+    /// <summary>The set's files as hard links in the temp folder under the first free number, which <see cref="Install"/> and
+    /// <see cref="Settle"/> take as a rewrite's; null where the file system makes none.</summary>
+    Plan? Linked(Source s, string live, string temp, int n)
+    {
+        if (!Free(live, temp, n).TryDequeue(out var first)) throw new Refused($"no file of the {Files} the game reads is free for it");
+        var (name, to) = (Name(n), Name(first));
+        // as a rewrite's Close does: the set counts as done, and nothing else syncs what the driver or a copy-out wrote
+        foreach (var ext in new[] { ".bin", ".toc" }) Libc.SyncFile(Path.Combine(live, name + ext));
+        foreach (var ext in new[] { ".bin", ".toc" })
+            if (Libc.Link(Path.Combine(live, name + ext), Path.Combine(temp, to + ext)) is var errno and not 0)
+            {
+                File.Delete(Path.Combine(temp, to + ".bin"));
+                Log?.Invoke($"{name}: rewritten, as it can't be linked: {Marshal.GetPInvokeErrorMessage(errno)}");
+                return null;
+            }
+        return new(new(name, s.TocLength, s.BinLength), [new(to, s.TocLength, s.BinLength)]);
+    }
+
+    List<Output> Write(Source s, string live, string temp, int n)
+    {
+        var free = Free(live, temp, n);
         var outputs = new List<Output>();
         try
         {
@@ -286,7 +332,7 @@ sealed class GlCacheNoDict(string gameDir, string appName)
         catch
         {
             foreach (var o in outputs) o.Dispose();
-            Discard(temp, Name(n), outputs);
+            Discard(temp, Name(n), outputs.Select(o => o.Name));
             throw;
         }
     }
@@ -458,12 +504,12 @@ sealed class GlCacheNoDict(string gameDir, string appName)
         if (Libc.RenameNew(from, to) is var errno and not 0) throw new IOException($"naming {Path.GetFileName(to)} failed: {Marshal.GetPInvokeErrorMessage(errno)}");
     }
 
-    void Discard(string temp, string name, List<Output> outputs)
+    void Discard(string temp, string name, IEnumerable<string> sets)
     {
         if (!Directory.Exists(temp)) return;
         try
         {
-            foreach (var o in outputs) { File.Delete(Path.Combine(temp, o.Name + ".toc")); File.Delete(Path.Combine(temp, o.Name + ".bin")); }
+            foreach (var s in sets) { File.Delete(Path.Combine(temp, s + ".toc")); File.Delete(Path.Combine(temp, s + ".bin")); }
             File.Delete(Path.Combine(temp, name + ".commit.tmp"));
             Tidy(temp);
         }

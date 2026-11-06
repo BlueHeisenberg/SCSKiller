@@ -26,7 +26,9 @@ public static class PsoDiskCache
     /// <param name="Before">a graphics PSO's blend, sample mask, rasterizer and depth-stencil desc, as a 'G' record has them;
     /// null for compute</param>
     /// <param name="After">its IB strip cut, topology, RT count, 8 RT formats, DSV and sample desc, in a 'G' record's order</param>
-    public sealed record Pso(byte[][] Containers, IReadOnlyList<LayoutElem>? Layout, byte[]? Before, byte[]? After);
+    /// <param name="Stream">the game creates it as a pipeline stream, the first layout's (Hogwarts Legacy: 44,438 graphics and 11,158
+    /// compute in recordings, against 4 'G' and 69 'C')</param>
+    public sealed record Pso(byte[][] Containers, IReadOnlyList<LayoutElem>? Layout, byte[]? Before, byte[]? After, bool Stream = false);
 
     const uint RecordMagic = 0x342f3339; // "93/4"
     const int BeforeSize = BlendDescSize + 4 + 44 + 52, MaxContainer = 64 << 20, MaxRecord = 64 << 20; // far over any seen (Hogwarts: under 1 MB)
@@ -60,7 +62,7 @@ public static class PsoDiskCache
                 if (BinaryPrimitives.ReadUInt32LittleEndian(rec) != RecordMagic || size > MaxRecord || size > f.Length - f.Position) yield break;
                 var body = new byte[size];
                 f.ReadExactly(body);
-                if ((compute ? OneCs(Containers(body, 0)) : Graphics(body)) is { } pso) yield return pso;
+                if ((compute ? OneCs(Containers(body, 0)) : Graphics(body)) is { } pso) yield return pso with { Stream = true };
                 else rejected.Value++;
             }
         }
@@ -201,7 +203,9 @@ public static class PsoDiskCache
     public static Written ToRecording(IEnumerable<string> files, ShaderIndex index, EngineInfo engine, PlanRule rule, bool nvidia, string outDb, CancellationToken ct = default)
     {
         var maxSrvs = RootSig.MaxSrvsFor(rule, index.Shaders.Values);
-        var nvExtension = nvidia && RootSig.NvExtensionEverywhere(rule, index.Shaders.Values);
+        // no recorded root signatures to decide, as in PlanBuilder: the shader test also fires on games that bind space 1001 in ray
+        // tracing libraries only (Hogwarts Legacy: 0 of its 197 root signatures carry it)
+        var nvExtension = nvidia && rule.RootSignature?.Stock?.NvExtensionEverywhere == true;
         var samplers = RootSig.StaticSamplers(rule, engine);
         var platOf = new Dictionary<string, string>();
         foreach (var m in index.Maps) foreach (var h in m.Shaders) platOf[h] = m.Platform;
@@ -241,28 +245,34 @@ public static class PsoDiskCache
                     if (p.Before is not { } before || p.After is not { } after || p.Layout is not { } layout)
                     {
                         if (!stages.TryGetValue(Stage.Compute, out var cs)) { rejected.Value++; return; }
-                        payload = PsoDb.Compute(rsSha, cs.Sha);
+                        payload = p.Stream ? ComputeStream(rsSha, cs.Sha) : PsoDb.Compute(rsSha, cs.Sha);
                     }
                     else
                     {
                         if (stages.ContainsKey(Stage.Compute)) { rejected.Value++; return; }
+                        string Sha(Stage st) => stages.TryGetValue(st, out var v) ? v.Sha : Zero;
+                        if (p.Stream)
+                            payload = GraphicsStream(rsSha, [Sha(Stage.Vertex), Sha(Stage.Geometry), Sha(Stage.Hull), Sha(Stage.Domain), Sha(Stage.Pixel)], before, LayoutBytes(layout), after);
+                        else
+                        {
                         using var g = new MemoryStream();
                         g.Write(Convert.FromHexString(rsSha));
                         foreach (var st in new[] { Stage.Vertex, Stage.Pixel, Stage.Domain, Stage.Hull, Stage.Geometry })
-                            g.Write(Convert.FromHexString(stages.TryGetValue(st, out var v) ? v.Sha : Zero));
+                            g.Write(Convert.FromHexString(Sha(st)));
                         g.Write(before);
                         g.Write(LayoutBytes(layout));
                         g.Write(after);
                         g.Write(new byte[8]); // node mask, flags
                         payload = g.ToArray();
+                        }
                     }
-                    var rec = new Rec(p.Before == null ? 'C' : 'G', payload);
+                    var rec = new Rec(p.Stream ? 'S' : p.Before == null ? 'C' : 'G', payload);
                     try { Check(rec); }
                     catch (InvalidDataException) { rejected.Value++; return; }
                     if (!keys.Add(rec.Key)) return;
                     foreach (var (sha, b) in stages.Values) Blob(sha, b);
                     Write(f, rec.Tag, rec.Payload);
-                    if (rec.Tag == 'G') graphics++;
+                    if (p.Before != null) graphics++;
                     else compute++;
                 }
                 foreach (var path in files)
@@ -280,6 +290,53 @@ public static class PsoDiskCache
         }
         finally { File.Delete(tmp); }
         return new Written(graphics, compute, rejected.Value, notInIndex, noRs, unreadable);
+    }
+
+    static void Sub(MemoryStream s, uint type, ReadOnlySpan<byte> body)
+    {
+        Span<byte> t = stackalloc byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(t, type);
+        s.Write(t);
+        s.Write(body);
+    }
+
+    static readonly byte[] NodeMaskOne = [1, 0, 0, 0];
+
+    /// <summary>The compute stream the game creates: node mask 1, root signature, CS.</summary>
+    internal static byte[] ComputeStream(string rs, string cs)
+    {
+        using var s = new MemoryStream();
+        s.Write(BitConverter.GetBytes(3u));
+        Sub(s, 18, NodeMaskOne);
+        Sub(s, 0, Convert.FromHexString(rs));
+        Sub(s, 6, Convert.FromHexString(cs));
+        return s.ToArray();
+    }
+
+    /// <summary>The graphics stream the game creates, every subobject in its order, measured on recordings: an absent shader is
+    /// written as <see cref="Zero"/>. <paramref name="vgHdP"/>: VS, GS, HS, DS, PS.</summary>
+    internal static byte[] GraphicsStream(string rs, string[] vgHdP, ReadOnlySpan<byte> before, ReadOnlySpan<byte> layout, ReadOnlySpan<byte> after)
+    {
+        const int mask = BlendDescSize, raster = mask + 4, depth = raster + 44;
+        using var s = new MemoryStream();
+        s.Write(BitConverter.GetBytes(17u));
+        Sub(s, 18, NodeMaskOne);
+        Sub(s, 0, Convert.FromHexString(rs));
+        Sub(s, 12, layout);
+        Sub(s, 13, after[..4]);
+        Sub(s, 14, after[4..8]);
+        foreach (var (type, sha) in new uint[] { 1, 5, 4, 3, 2 }.Zip(vgHdP)) Sub(s, type, Convert.FromHexString(sha));
+        Sub(s, 8, before[..mask]);
+        Sub(s, 21, [.. before[depth..BeforeSize], 0, 0, 0, 0]);   // DESC1: depth bounds test off
+        Sub(s, 16, after[44..48]);
+        Sub(s, 10, before[raster..depth]);
+        // count, then 8 formats, the slots past the count zeroed (the writing process's memory), as the recorder writes them
+        var formats = after[8..44].ToArray();
+        formats.AsSpan(4 + 4 * (int)Math.Min(8u, BinaryPrimitives.ReadUInt32LittleEndian(formats))).Clear();
+        Sub(s, 15, formats);
+        Sub(s, 17, after[48..56]);
+        Sub(s, 9, before[mask..raster]);
+        return s.ToArray();
     }
 
     static Stage? StageOf(int kind) => kind switch { 0 => Stage.Pixel, 1 => Stage.Vertex, 2 => Stage.Geometry, 3 => Stage.Hull, 4 => Stage.Domain, 5 => Stage.Compute, _ => null };

@@ -18,7 +18,7 @@ public static class NewShaders
     public const int Jump = 20;
 
     /// <summary>A rebuilt plan's count (ScsKiller.PlannerChanged: "can now compile N more" or <see cref="ScsKiller.PlanReplacedReason"/>): told once per compile, whatever the
-    /// count and the day. Not countable ("can now compile more of this game"), its count is the last plan's.</summary>
+    /// day. Not countable ("can now compile more of this game"), its count is the last plan's.</summary>
     static bool PlannerChanged(GameState s) => s.Status == GameStatus.Stale && s.StatusReason.StartsWith(ScsKiller.PlanReplacedReason + " (", StringComparison.Ordinal)
         || s.Status == GameStatus.Stale && s.StatusReason.StartsWith("SCSKiller can now compile ", StringComparison.Ordinal)
         && !s.StatusReason.StartsWith("SCSKiller can now compile more", StringComparison.Ordinal);
@@ -70,7 +70,7 @@ public static class NewShaders
     /// waits for its exit, a game queued for a compile isn't told about, and one is told again only when its new pipelines
     /// grew by <see cref="Minimum"/> since it was told (since its compile, for a game compiled since), and not within a day of
     /// the last time unless they grew by <see cref="Jump"/> times the minimum. A rebuilt plan's (<see cref="PlannerChanged"/>)
-    /// is told once per compile whatever the count and the day.
+    /// is told once per compile whatever the day.
     /// A game whose <paramref name="mode"/> compiles automatically is compiled instead, unless it is partly compiled, its
     /// last automatic compile didn't lower its count, or the same pipelines were queued twice without a compile: it is told
     /// about then. While <paramref name="compiling"/>, it waits. One queued before <paramref name="session"/> that never

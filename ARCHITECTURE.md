@@ -373,7 +373,8 @@ Clear cache, the cache size and Before and after's clear take those files. `%LOC
 folder per exe path, not a driver cache.
 
 The Cache page (`ScsKiller.CacheInventory`) puts each driver cache file in one item, reading names, sizes and write
-times only. A learned key goes to its game, an installed one before an uninstalled game's record. On AMD the exe name's
+times only. A learned key goes to its game, an installed one before an uninstalled game's record, and a record the list
+left out because a listed game has its folder claims none of that game's keys. On AMD the exe name's
 hash counts as a learned key. An NVIDIA file last written before the active driver's DriverStore folder was created, or
 before the earliest compile under that driver, is an older driver's. A key only an earlier compile opened, and the D3DSCache folders of staged compile exes, are earlier
 compiles'. The other vendor's folders are listed whole. Keys nobody learned can't be named. Links below a cache folder
@@ -508,7 +509,9 @@ A D3D12 game under Proton runs on vkd3d-proton, which builds a Vulkan pipeline p
   environment Wine starts with; a variable a Windows process sets doesn't reach a process it starts.
 - **Dictionary:** past about 72 MiB a file gets a zstd dictionary, and a process decodes with one only, so a warm in two
   files left 10,805 of 11,312 pipelines to compile. `GlCacheNoDict` rewrites the warm's files without one after each warm
-  process: 95 left, the files 50 to 74% larger (`NvidiaLinux.WarmBudget`), 43 s for 5 GB.
+  process: 95 left, the files 50 to 74% larger (`NvidiaLinux.WarmBudget`), 43 s for 5 GB. A game placed in Steam's files
+  reads none of them: its sets keep their dictionaries and only take a free number, so the next process starts a fresh
+  file, and `SteamCachePlace` decodes each with its own.
 - **Granularity:** per stage, not state-independent: blend enable recompiles a fragment shader; formats and depth format
   mostly don't. Compute pipelines from the files are hits.
 - **vkd3d-proton's own cache** holds the DXIL->SPIR-V translation: `vkd3d-proton.<exe name>.cache` under

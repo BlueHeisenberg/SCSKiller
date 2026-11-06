@@ -42,6 +42,8 @@ sealed class ProtonWarmHost : IWarmHost
     readonly Timer _touch;
     readonly Dictionary<string, string> _copies = [];
     readonly GlCacheNoDict? _noDict;
+    readonly bool _placed;   // only the placer reads the warm's sets, which keep their dictionaries (GlCacheNoDict)
+    long _kept;              // what those sets hold, charged as rewritten
     readonly long _limit;
     readonly Lock _stopGate = new();
     bool _runStopped;
@@ -59,7 +61,7 @@ sealed class ProtonWarmHost : IWarmHost
     string _next = FlatpakExchange.NewName();   // the exchange the next process gets, which WarmPath names
     FlatpakExchange? _exchange;         // the running or last process's; under _stopGate
     readonly List<string> _earlier = [];   // the names of the exchanges processes ran in
-    readonly HashSet<string> _inputs = new(StringComparer.Ordinal) { "scskiller_pass.bin", "scskiller.db", "scskiller_gen.db" };   // of the work folder, which an exchange copies in
+    readonly HashSet<string> _inputs = new(StringComparer.Ordinal) { "scskiller_pass.bin", "scskiller.db", "scskiller_gen.db", Planning.GenRam.MemFile };   // of the work folder, which an exchange copies in
     long _exchangeIn;                   // what the running process's exchange holds of the NVIDIA folder's copied in
     FlatpakScopes? _scopes;             // the running process's
     FlatpakSandbox? _sandbox;           // the running or last process's
@@ -136,7 +138,8 @@ sealed class ProtonWarmHost : IWarmHost
             ? MesaLinux.CacheEnvironment(gameDir, game, steamRoot: ctx?.SteamRoot)
             : Wine.CacheEnvironment(Wine.CacheRoot(gameDir), Path.GetFileName(game.ExePath), cacheCap ?? NvidiaLinux.CacheSize).Warm);
         _mesaKey = _mesa && cache == null ? (SteamSource.AppId(game.Id) ?? SteamShortcuts.AppId(game.Id))?.ToString(CultureInfo.InvariantCulture) : null;
-        _limit = limit ?? (ctx == null && wine == null ? NvidiaLinux.VulkanLimit : NvidiaLinux.SegmentLimit);
+        _placed = cacheCap > NvidiaLinux.CacheSize;   // Steam's replay before a placed game's warm too: a Vulkan game's own warm has no such cap
+        _limit = limit ?? (ctx == null && wine == null ? NvidiaLinux.VulkanLimit : Stays ? NvidiaLinux.PlacedSegmentLimit : NvidiaLinux.SegmentLimit);
         if (!_mesa && cache == null)
         {
             _noDict = cacheCap is { } cap ? new GlCacheNoDict(gameDir, Wine.WarmAppName(Path.GetFileName(game.ExePath))) { Log = Job.Log, Cap = cap, Budget = NvidiaLinux.BudgetOf(cap) }
@@ -144,6 +147,7 @@ sealed class ProtonWarmHost : IWarmHost
             // a set at the limit with a dictionary is rewritten first: the first process could add to it
             if ((NoDict(() => { if (Full(null) != null) _noDict.Run(); else _noDict.Recover(); }) ?? Full(null)) is { } why)
                 throw new InvalidOperationException(why);
+            _kept = Kept();
             if (NoRoom() is { Why: { } none } room) throw room.Full ? new CacheFullException(none, _noDict.Keys()) : new InvalidOperationException(none);
         }
         (_stop, _alive, _launcherLog) = (Path.Combine(_work, "stop"), Path.Combine(_work, "alive"), Path.Combine(_work, "launcher.log"));
@@ -241,7 +245,8 @@ sealed class ProtonWarmHost : IWarmHost
         _sandbox?.Dispose();
     }
 
-    /// <summary>NVIDIA: rewrites the warm's cache files that hold a zstd dictionary (<see cref="GlCacheNoDict"/>). A rewrite it
+    /// <summary>NVIDIA: rewrites the warm's cache files that hold a zstd dictionary (<see cref="GlCacheNoDict"/>), or under
+    /// <see cref="_placed"/> gives those the process filled free numbers (<see cref="Stays"/>), so the next process starts a fresh file. A rewrite it
     /// can't settle, a file at the limit it leaves (<see cref="Full"/>) or a folder without room for another process
     /// (<see cref="NoRoom"/>) keeps every later process of the run from starting. A D3D12 process the watcher stopped goes on
     /// in the next one, from where it stopped. Mesa: the key of the game's folder that <see cref="MesaLinux.CacheEnvironment(string, Game, bool)"/>
@@ -265,12 +270,14 @@ sealed class ProtonWarmHost : IWarmHost
             if (reached != null && !Native && !_runStopped && _flatpak == null) File.Delete(_stop);   // the next process goes on, unless the run was stopped
         }
         var grown = Grown(_before, pass.Bins());   // before the pass: its own files are never among them
-        _halt ??= await Task.Run(() => NoDict(() => pass.Run(note)));
+        _halt ??= await Task.Run(() => NoDict(() => pass.Run(note, !_placed ? null : grown.Where(b => !Stays || b.Value.Length >= _limit).Select(b => b.Key).ToHashSet(StringComparer.Ordinal))));
+        _kept = Kept();
         _halt ??= reached?.Unmeasured;
         if (_halt == null)
             (_halt, _full) = reached is { } r && Native
                 ? r.Room ? NoRoom(always: true) : (string.Format(CultureInfo.InvariantCulture, VulkanFull, Path.GetFileNameWithoutExtension(r.Bin), Format.Bytes(_limit)), true)
-                : await Task.Run(() => Full(grown) is { } full ? (full, false) : NoRoom());
+                : await Task.Run(() => Full(grown) is not { } full ? NoRoom()
+                    : Stays && Sets() >= pass.Files ? (string.Format(CultureInfo.InvariantCulture, NoFileText, Sets()), true) : (full, false));
         // the native warm's replayer isn't named like the game, so Core never sees it hold its files: every set of the driver
         // folders it wrote to is the game's, as a process holds each set of its folder
         var wrote = Native ? grown.Keys.Select(b => Path.GetDirectoryName(b)!).ToHashSet(StringComparer.Ordinal) : [];
@@ -316,6 +323,7 @@ sealed class ProtonWarmHost : IWarmHost
         VulkanFull = "NVIDIA's cache file {0} reached {1}, the most a Vulkan compile may write to it, so the compile stopped",
         NoRoomText = "NVIDIA's cache folder holds {0}, which leaves a compile no room to add more and rewrite it within the {1} the driver keeps",
         NoFileText = "NVIDIA's cache folder holds {0} of the compile's files, which leaves none free to add more",
+        PlacedFullText = "the compile's cache holds {0}, about all that fits in Steam's cache files",
         CantMeasure = "NVIDIA's cache folder {0} can't be measured ({1}), so no compile may add to it",
         Unwatched = "watching NVIDIA's cache files failed ({0}), so no compile may add to them",
         Unstopped = "stopping the compile's process failed ({0}), so no compile may go on",
@@ -336,16 +344,20 @@ sealed class ProtonWarmHost : IWarmHost
         now.Where(b => !(before.TryGetValue(b.Key, out var was) && was.Inode == b.Value.Inode && was.Length >= b.Value.Length)).ToDictionary(StringComparer.Ordinal);
 
     /// <summary>Why no process may add to the warm's files: one at or past the limit that holds a dictionary, which the pass
-    /// left, or that the last process added to (<paramref name="grown"/>: those as it left them; null: before the first);
-    /// null when there's none.</summary>
+    /// left unless <see cref="_placed"/>, or that the last process added to (<paramref name="grown"/>: those as it left them;
+    /// null: before the first); null when there's none.</summary>
     string? Full(IReadOnlyDictionary<string, (long Length, ulong Inode)>? grown)
     {
         foreach (var (bin, (length, inode)) in _noDict!.Bins().OrderBy(b => b.Key, StringComparer.Ordinal))
-            if (length >= _limit && (grown != null && grown.TryGetValue(bin, out var was) && was == (length, inode) || !GlCacheNoDict.Plain(bin)))
+            if (length >= _limit && (grown != null && grown.TryGetValue(bin, out var was) && was == (length, inode) || !_placed && !GlCacheNoDict.Plain(bin)))
                 return string.Format(CultureInfo.InvariantCulture, TooFull, Path.GetFileNameWithoutExtension(bin), Format.Bytes(length),
                     _noDict.Left.TryGetValue(bin, out var why) ? why : "it holds no dictionary to drop");
         return null;
     }
+
+    /// <summary>The bytes of the warm's sets that keep a dictionary under <see cref="_placed"/>, which count as
+    /// <see cref="NvidiaLinux.PlacedGrowth"/> of them in <see cref="Room"/>.</summary>
+    long Kept() => _placed ? _noDict!.Bins().Where(b => !GlCacheNoDict.Plain(b.Key)).Sum(b => b.Value.Length) : 0;
 
     /// <summary>The game's NVIDIA folder's bytes, and what a process may still add to the warm's files it added to, which hold
     /// <paramref name="grown"/> bytes: rewriting them keeps the folder within the driver's cap while both copies are there,
@@ -361,22 +373,36 @@ sealed class ProtonWarmHost : IWarmHost
         {
             return (0, 0, string.Format(CultureInfo.InvariantCulture, CantMeasure, pass.NvidiaDir, e.Message));
         }
+        // nothing is rewritten, so no two copies to hold
+        if (_placed)
+        {
+            const double k = NvidiaLinux.PlacedGrowth;
+            return (used, (long)((pass.Budget - StopSlack - used - (k - 1) * (_kept + grown)) / k), null);
+        }
         const double g = NvidiaLinux.RewriteGrowth;
         return (used, (long)Math.Min((pass.Cap - StopSlack - used - g * grown) / (1 + g), (pass.Budget - StopSlack - used - (g - 1) * grown) / g), null);
     }
 
+    /// <summary>A set the process stopped short of the limit (a hang's or memory's retry) stays at its number, where the next
+    /// process goes on in it: a number per retry would end the compile with its budget unused. A Flatpak's process starts
+    /// in its exchange, and a native replay's set isn't the D3D12 warm's.</summary>
+    bool Stays => _placed && _flatpak == null && !Native;
+
+    /// <summary>The most sets of the warm's one folder holds of at least <paramref name="length"/> bytes.</summary>
+    int Sets(long length = 0) => _noDict!.Bins().Where(b => b.Value.Length >= length).GroupBy(b => Path.GetDirectoryName(b.Key)).Select(g => g.Count()).DefaultIfEmpty().Max();
+
     /// <summary>Why no process may start for want of room in the folder (<see cref="Room"/>) or of a free file number for
     /// its set's rewrite, <paramref name="always"/> even with room; null when there's room for one. Full: the folder holds no
-    /// more, as opposed to unmeasured.</summary>
+    /// more, as opposed to unmeasured. <see cref="Stays"/>: only filled sets count, the last one needn't move.</summary>
     (string? Why, bool Full) NoRoom(bool always = false)
     {
         var room = Room(0);
         if (room.Unmeasured is { } why) return (why, false);
         // a process takes a free number, its set's rewrite another (GlCacheNoDict)
-        var sets = _noDict!.Bins().GroupBy(b => Path.GetDirectoryName(b.Key)).Select(g => g.Count()).DefaultIfEmpty().Max();
-        if (sets >= _noDict.Files - 1) return (string.Format(CultureInfo.InvariantCulture, NoFileText, sets), true);
+        if ((Stays ? Sets(_limit) : Sets()) >= _noDict!.Files - 1) return (string.Format(CultureInfo.InvariantCulture, NoFileText, Sets()), true);
         return room.Room >= MinSegment && !always ? (null, false)
-            : (string.Format(CultureInfo.InvariantCulture, NoRoomText, Format.Bytes(room.Used), Format.Bytes(_noDict.Cap)), true);
+            : (_placed ? string.Format(CultureInfo.InvariantCulture, PlacedFullText, Format.Bytes(room.Used))
+                : string.Format(CultureInfo.InvariantCulture, NoRoomText, Format.Bytes(room.Used), Format.Bytes(_noDict.Cap)), true);
     }
 
     /// <summary>Stops the process once a .bin of the warm's that it added to reaches the limit (a process never moves on to
@@ -399,7 +425,9 @@ sealed class ProtonWarmHost : IWarmHost
                 var now = x == null ? Listed(last) : x.Bins(_appName);
                 var grown = Grown(before, now);
                 (bin, (length, _)) = grown.FirstOrDefault(b => b.Value.Length >= _limit);
-                room = Room(grown.Values.Sum(b => b.Length), x == null ? 0 : Math.Max(0, x.NvidiaBytes() - _exchangeIn));
+                // a set the process went on in counts in _kept already
+                room = Room(grown.Sum(b => b.Value.Length - (Stays && before.TryGetValue(b.Key, out var was) && was.Inode == b.Value.Inode ? was.Length : 0)),
+                    x == null ? 0 : Math.Max(0, x.NvidiaBytes() - _exchangeIn));
                 last = now;
             }
             catch (Exception e) { room = (0, 0, string.Format(CultureInfo.InvariantCulture, Unwatched, e.Message)); }
@@ -418,7 +446,8 @@ sealed class ProtonWarmHost : IWarmHost
                 _reached = (bin, bin == null && room.Unmeasured == null && unstopped == null, room.Unmeasured ?? unstopped);
             }
             Job.Log?.Invoke(unstopped ?? (bin != null ? $"{Path.GetFileNameWithoutExtension(bin)} reached {Format.Bytes(length)}"
-                    : room.Unmeasured ?? $"NVIDIA's cache folder holds {Format.Bytes(room.Used)}, all the room its rewrite leaves")
+                    : room.Unmeasured ?? (_placed ? string.Format(CultureInfo.InvariantCulture, PlacedFullText, Format.Bytes(room.Used))
+                        : $"NVIDIA's cache folder holds {Format.Bytes(room.Used)}, all the room its rewrite leaves"))
                 + ": stopping the compile's process" + (!Native && bin != null && room.Unmeasured == null ? ", the next one goes on in a fresh file" : ""));
             return;
         }

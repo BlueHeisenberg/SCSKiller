@@ -27,6 +27,9 @@ public sealed class NvidiaLinuxAppCache(string gamesDir) : IAppCache
 
     public IReadOnlySet<string> AllKeys() => All().Select(f => f.Key).ToHashSet(StringComparer.Ordinal);
 
+    /// <summary>The keys of every set in one game's folder, named as the games folder names it.</summary>
+    public IReadOnlySet<string> KeysOf(string game) => Files(game).Select(f => f.Key).ToHashSet(StringComparer.Ordinal);
+
     /// <summary>Bytes of every game's cache folders, the driver's and vkd3d-proton's: the files grow as they're written.</summary>
     public long Usage() => Games().Sum(g => Bytes(g, "nvidia") + Bytes(g, "vkd3d"));
 

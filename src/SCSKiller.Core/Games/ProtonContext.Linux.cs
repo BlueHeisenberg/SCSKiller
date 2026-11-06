@@ -91,13 +91,15 @@ public sealed record ProtonContext(uint AppId, string SteamRoot, string CompatDa
         return ctx;
     }
 
-    /// <summary>umu's Steam Linux Runtime ($XDG_DATA_HOME/umu/steamrt3, sniper), when it holds its entry point.</summary>
-    static string? UmuRuntime()
+    /// <summary>umu's Steam Linux Runtime for Proton <paramref name="proton"/>, the one holding its entry point: in $XDG_DATA_HOME/umu, steamrt4 or
+    /// steamrt2 (soldier) for a Proton that asks for it, else steamrt3 (sniper). Steamrt4 has no stand-in: GE-Proton 11's script needs a newer
+    /// Python than sniper's (measured).</summary>
+    static string? UmuRuntime(string proton)
     {
         var data = Environment.GetEnvironmentVariable("XDG_DATA_HOME") is { Length: > 0 } x && Path.IsPathRooted(x) ? x
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
-        var runtime = Path.Combine(data, "umu", "steamrt3");
-        return File.Exists(Path.Combine(runtime, SteamSource.EntryPoint)) ? runtime : null;
+        string[] names = SteamSource.RuntimeApp(proton) switch { SteamSource.Runtime4App => ["steamrt4"], SteamSource.SoldierApp => ["steamrt2", "steamrt3"], _ => ["steamrt3"] };
+        return names.Select(n => Path.Combine(data, "umu", n)).FirstOrDefault(r => File.Exists(Path.Combine(r, SteamSource.EntryPoint)));
     }
 
     /// <param name="data">the app's compatdata folder</param>
@@ -147,7 +149,7 @@ public sealed record ProtonContext(uint AppId, string SteamRoot, string CompatDa
         }
         var note = mapped == null && tool != null ? $"Steam runs it on {tool}, which wasn't found, so the compile runs on the Proton that last ran its prefix ({proton})" : null;
         why = null;
-        var runtime = noRuntime ? "" : SteamSource.RuntimeOf(steamRoot, proton, out why) ?? (umu ? UmuRuntime() : null);
+        var runtime = noRuntime ? "" : SteamSource.RuntimeOf(steamRoot, proton, out why) ?? (umu ? UmuRuntime(proton) : null);
         if (runtime == null) return null;
         why = null;
         var libraries = SteamSource.Libraries(steamRoot).Concat(library == null ? [] : [library])

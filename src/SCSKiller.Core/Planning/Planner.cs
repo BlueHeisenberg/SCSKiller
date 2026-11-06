@@ -22,6 +22,45 @@ namespace SCSKiller.Core.Planning;
 /// ponytail: a PS that reads none of its VS/GS outputs only pairs with sources without attribute outputs. Pairing it with
 /// every source would catch 2 more of FF7's 994 recorded PSOs for +22.8k plan PSOs (+19%, measured); revisit per game.
 /// DirectX 11 games (and games that may run on either) also get every D3D11 shader of the game once: see <see cref="D3D11Cache"/>.</summary>
+/// <summary>A compile of what <paramref name="compiled"/> doesn't hold (Planner.MaterializeTopUp), and what came of it.</summary>
+public sealed class TopUp(IReadOnlySet<string> compiled, IReadOnlySet<string> again)
+{
+    /// <summary>The generated file's records, for what they leave out to go before anything is written; its blobs go through <see cref="See"/>.</summary>
+    internal sealed class RecordsOnly(TopUp top) : MemoryStream
+    {
+        public TopUp Top => top;
+
+        public void Add(char tag, ReadOnlySpan<byte> payload)
+        {
+            if (tag == 'B') top.See(Hex(payload[..20]), payload[20..]);
+            else top.Generated.Add(new Rec(tag, payload.ToArray()));
+        }
+    }
+
+    internal IReadOnlySet<string> Compiled => compiled;
+    internal IReadOnlySet<string> Again => again;
+    internal readonly List<Rec> Generated = [];
+    internal readonly HashSet<string> RayQuery = [];
+    internal List<Rec> Before = [];
+    public readonly HashSet<string> Held = new(StringComparer.Ordinal), Redone = new(StringComparer.Ordinal);
+    public long LeftOut { get; internal set; }
+    public long SteamLeftOut { get; internal set; }
+    public bool Written { get; internal set; }
+
+    internal void See(string sha1, ReadOnlySpan<byte> bytes)
+    {
+        if (!bytes.IsEmpty && Dxbc.InlineRayTracing(bytes)) lock (RayQuery) RayQuery.Add(sha1);
+    }
+
+    /// <summary>SessionLog.WriteRayQueryKeys of the whole plan, which the work dbs no longer are.</summary>
+    public void WriteRayQueryKeys(string keysFile)
+    {
+        App.SessionLog.WriteRayQueryKeys(Before, RayQuery, keysFile);
+        Before = [];   // the warm runs on: the records are the work dbs' now
+        Generated.Clear();
+    }
+}
+
 public sealed class Planner(string? packDir = null, string? sharedPackDir = null) : IPlanner
 {
     /// <summary>Middleware packs (<see cref="MiddlewarePacks"/>): filled from recordings, seeding the plan of every game
@@ -394,7 +433,26 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         return body.Where(r => r.Tag is not ('B' or 'N')).Select(r => (nv.GetValueOrDefault(r.Key, r.Key), r));
     }
 
-    public void Materialize(Plan plan, Game game, EngineInfo engine, IEngineReader reader, Recording? recording, string workDir, CancellationToken ct)
+    /// <summary><see cref="Materialize"/> keeps the plan's shader blobs in memory where it can (<see cref="GenRam"/>).</summary>
+    internal bool GenInMemory { get; set; }
+
+    public void Materialize(Plan plan, Game game, EngineInfo engine, IEngineReader reader, Recording? recording, string workDir, CancellationToken ct) =>
+        Materialize(plan, game, engine, reader, recording, workDir, null, ct);
+
+    /// <summary>What <see cref="Materialize(Plan, Game, EngineInfo, IEngineReader, Recording?, string, CancellationToken)"/> then
+    /// CompiledItems.LeaveOut leave, the same records in the same order, written at once and with only the shaders those records
+    /// name: nothing of what <paramref name="topUp"/> left out reaches the disk. False: a shader didn't read a second time, no
+    /// work files are left, and a whole Materialize is the way on.</summary>
+    public bool MaterializeTopUp(Plan plan, Game game, EngineInfo engine, IEngineReader reader, Recording? recording, string workDir, TopUp topUp, CancellationToken ct)
+    {
+        Materialize(plan, game, engine, reader, recording, workDir, topUp, ct);
+        if (topUp.Written) return true;
+        GenRam.Drop(workDir);
+        foreach (var file in new[] { "scskiller.db", "scskiller_gen.db", SkippedFile }) File.Delete(Path.Combine(workDir, file));
+        return false;
+    }
+
+    void Materialize(Plan plan, Game game, EngineInfo engine, IEngineReader reader, Recording? recording, string workDir, TopUp? topUp, CancellationToken ct)
     {
         if (plan.Platform == Vulkan.VulkanPlan.Platform)
         {
@@ -403,14 +461,17 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         }
         Directory.CreateDirectory(workDir);
         var mainDb = Path.Combine(workDir, "scskiller.db");
-        if (recording != null && File.Exists(recording.DbPath)) CopyRaw(recording.DbPath, mainDb);
+        IEnumerable<Rec> Recorded() => topUp == null ? Read(mainDb) : recording?.Lazy?.Invoke() ?? (recording != null && File.Exists(recording.DbPath) ? Read(recording.DbPath) : []);
+        if (topUp != null) { }
+        else if (recording != null && File.Exists(recording.DbPath)) CopyRaw(recording.DbPath, mainDb);
         else File.WriteAllBytes(mainDb, []);
         var inMain = new HashSet<string>(); // blob hashes and PSO keys already in scskiller.db
         // 'L' (a community recording's): the record names a shader only a recording on this PC has, not for the proxy
         var localOnly = new HashSet<string>();
-        foreach (var r in Read(mainDb))
+        foreach (var r in Recorded())
         {
             inMain.Add(r.Tag == 'B' ? Hex(r.Payload.AsSpan(0, 20)) : r.Key);
+            if (r.Tag == 'B') topUp?.See(Hex(r.Payload.AsSpan(0, 20)), r.Payload.AsSpan(20));
             if (r.Tag == 'L') localOnly.Add(HashOnly.Target(r));
         }
 
@@ -419,7 +480,8 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         long skipped = 0;
         if (recording?.VulkanSources is { } steam && body.Any(r => r.Tag == Vulkan.VulkanPlan.Tag))
         {
-            Vulkan.VulkanPlan.Materialize(plan, steam, workDir);
+            var steamLeft = Vulkan.VulkanPlan.Materialize(plan, steam, workDir, compiled: topUp?.Compiled);
+            if (topUp != null) topUp.SteamLeftOut = steamLeft;
             skipped = SkippedIn(workDir);
         }
         else foreach (var f in new[] { Vulkan.VulkanPlan.WorkFile, Vulkan.VulkanPlan.ValidatedFile }) File.Delete(Path.Combine(workDir, f));
@@ -428,18 +490,42 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         var hitGroups = body.Where(r => r.Tag == 'H').Select(r => RedEngine.RedRayTracing.ParseItem(r.Payload)).ToList(); // REDengine 3's and FromSoftware's: need both libraries' exports
         var rtLibs = rt.Select(y => y.Library).Concat(hitGroups.SelectMany(h => new[] { h.ClosestHit, h.AnyHit }).OfType<string>()).ToHashSet();
         var rtBytes = new Dictionary<string, byte[]>();
-        if (rtLibs.Count > 0) foreach (var r in Read(mainDb)) if (r.Tag == 'B' && rtLibs.Contains(Hex(r.Payload.AsSpan(0, 20)))) rtBytes[Hex(r.Payload.AsSpan(0, 20))] = r.Payload[20..];
+        if (rtLibs.Count > 0) foreach (var r in Recorded()) if (r.Tag == 'B' && rtLibs.Contains(Hex(r.Payload.AsSpan(0, 20)))) rtBytes[Hex(r.Payload.AsSpan(0, 20))] = r.Payload[20..];
+        if (recording?.Lazy != null)   // Rehydrate.Run's outcome, without its file
+        {
+            var want = Rehydrate.References(Recorded().Where(r => r.Tag != 'B'));
+            want.ExceptWith(inMain);
+            var total = want.Count;
+            void Took(string h, ReadOnlySpan<byte> b)
+            {
+                inMain.Add(h);
+                want.Remove(h);
+                topUp!.See(h, b);
+                if (rtLibs.Contains(h)) rtBytes[h] = b.ToArray();
+                Steps.Value?.Invoke("recorded shaders read from the game", total - want.Count, total);
+            }
+            var asked = want.ToHashSet();
+            if (want.Count > 0) reader.ReadShaders(game, engine, asked, (h, b) => { lock (want) if (want.Contains(h)) Took(h, b); }, ct);
+            foreach (var (h, b) in Middleware.Blobs(game, want.ToHashSet()))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (want.Contains(h) && Hex(SHA1.HashData(b)) == h) Took(h, b);
+            }
+        }
         var shaders = templates.Select(Parse).SelectMany(t => t.Stages.Values.Append(t.Rs))
             .Concat(body.Where(r => r.Tag == 'P').Select(r => ParseItem(r.Payload)).SelectMany(i => i.Stages.Values.Append(i.Rs)))
             .Concat(rtLibs)
-            .Concat(Rehydrate.References(Read(mainDb).Where(r => IsStateObject(r.Tag)))).ToHashSet();   // the recorded state objects' libraries: a recording may leave out the install's
+            .Concat(Rehydrate.References(Recorded().Where(r => IsStateObject(r.Tag)))).ToHashSet();   // the recorded state objects' libraries: a recording may leave out the install's
         shaders.ExceptWith(inMain);
         shaders.ExceptWith(body.Where(r => r.Tag == 'B').Select(r => Hex(r.Payload.AsSpan(0, 20)))); // root signatures the plan doesn't carry are the game's own (RTS0): pulled like shaders
         shaders.UnionWith(Rehydrate.References(body.Where(r => r.Tag is '1' or '2' or '3'))); // a D3D11 item's blobs are in gen.db itself
         shaders.Remove(Zero);
 
         // blobs first, then templates, then items: the proxy resolves items against templates as it loads
-        using var gen = new BufferedStream(File.Create(Path.Combine(workDir, "scskiller_gen.db")), 1 << 20);
+        GenRam.Drop(workDir);
+        Stream genFile = topUp != null ? new TopUp.RecordsOnly(topUp) : new BufferedStream(File.Create(Path.Combine(workDir, "scskiller_gen.db")), 1 << 20);
+        using Stream gen = GenInMemory && topUp == null ? new GenRam(workDir, genFile, Log) : genFile;
+        if (!GenInMemory && topUp == null) Log?.Report("the plan's shaders: all in scskiller_gen.db");
         var planBlobs = body.Where(r => r.Tag == 'B').Select(r => Hex(r.Payload.AsSpan(0, 20))).ToHashSet();
         var written = new HashSet<string>(inMain);
         foreach (var r in body.Where(r => r.Tag == 'B' && !inMain.Contains(Hex(r.Payload.AsSpan(0, 20))))) { Write(gen, 'B', r.Payload); written.Add(Hex(r.Payload.AsSpan(0, 20))); }
@@ -480,7 +566,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         var recordedPayloads = new Dictionary<string, SortedSet<uint>>();   // per library
         var payloadCounts = new Dictionary<uint, int>();                    // recorded collections per payload
         var nvOfMain = new List<Rec>();   // its state objects and 'N' records: what the option fixes learn from (RtCollections.OptionFixes)
-        foreach (var r in Read(mainDb))
+        foreach (var r in Recorded())
         {
             if (RtCollections.Read(r) is { Payload: > 0 } c)
             {
@@ -535,7 +621,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         // the community recording's own state objects go last, so a crash storm in them can't keep the plan from compiling,
         // and are left out where the plan's collections compile their libraries
         var community = recording?.CommunityStateObjects;
-        var leftOut = CommunityLeftOut(Read(mainDb).Where(r => IsStateObject(r.Tag)), community, covered.Contains);
+        var leftOut = CommunityLeftOut(Recorded().Where(r => IsStateObject(r.Tag)), community, covered.Contains);
         var tail = new List<Rec>();
         bool Moved(Rec r) => community != null && IsStateObject(r.Tag) && community.Contains(r.Key);
         bool Stays(Rec r)
@@ -547,7 +633,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
             keptKeys.Add(r.Key);
             return true;
         }
-        foreach (var r in Read(mainDb))
+        foreach (var r in Recorded())
         {
             mainCount++;
             if (Stays(r)) keptCount++;
@@ -559,7 +645,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
             }
             else if (localOnly.Contains(r.Key)) needsRecording++;
         }
-        if (keptCount < mainCount)
+        if (keptCount < mainCount && topUp == null)
         {
             keptKeys.Clear();   // the same walk again, writing
             var tmp = mainDb + ".tmp";
@@ -599,9 +685,37 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         File.WriteAllText(Path.Combine(workDir, SkippedFile), $"{skipped} {needsRecording}");
         if (skipped > 0) Log?.Report($"{skipped} PSO{(skipped == 1 ? "" : "s")} skipped: a shader not in this install (not replayed, not counted as failed)"
             + (needsRecording > 0 ? $"; {needsRecording} of them flagged by the community recording: built at run time or by a mod, only a recording on this PC has them" : ""));
+        if (topUp == null) return;
+
+        keptKeys.Clear();   // the same walk again
+        var main = Recorded().Where(r => r.Tag != 'B' && Stays(r)).ToList();
+        var generated = topUp.Generated;
+        topUp.Before = [.. main, .. generated];
+        (var dropped, topUp.LeftOut) = App.CompiledItems.LeftOut(topUp.Before, topUp.Compiled, topUp.Held, topUp.Again, topUp.Redone);
+        bool Stay(Rec r) => r.Tag is not ('G' or 'C' or 'S' or 'P' or 'R' or 'A') || !dropped.Contains(r.Key);
+        var named = Rehydrate.References(topUp.Before.Where(Stay));
+        named.IntersectWith(written);
+        using (var f = new BufferedStream(File.Create(mainDb), 1 << 20))
+            foreach (var r in main.Where(Stay)) Write(f, r.Tag, r.Payload);
+        Stream kept = new BufferedStream(File.Create(Path.Combine(workDir, "scskiller_gen.db")), 1 << 20);
+        if (!GenInMemory) Log?.Report("the plan's shaders: all in scskiller_gen.db");
+        using (var f = GenInMemory ? new GenRam(workDir, kept, Log) : kept)
+        {
+            foreach (var r in Recorded())
+                if (r.Tag == 'B' && named.Remove(Hex(r.Payload.AsSpan(0, 20)))) Write(f, r.Tag, r.Payload);
+            foreach (var r in body.Where(r => r.Tag == 'B'))
+                if (named.Remove(Hex(r.Payload.AsSpan(0, 20)))) Write(f, r.Tag, r.Payload);
+            var rest = named.ToHashSet();
+            if (rest.Count > 0) reader.ReadShaders(game, engine, rest, (h, b) => { lock (named) if (named.Remove(h)) WriteBlob(f, h, b); }, ct);
+            foreach (var (h, b) in Middleware.Blobs(game, named.ToHashSet()))
+                if (Hex(SHA1.HashData(b)) == h && named.Remove(h)) WriteBlob(f, h, b);
+            foreach (var r in generated.Where(Stay)) Write(f, r.Tag, r.Payload);
+        }
+        topUp.Written = named.Count == 0;
+        if (topUp.Written) Log?.Report($"{game.Name}: {topUp.LeftOut:N0} pipelines left out before the work files were written");
     }
 
-    /// <summary>Written by <see cref="Materialize"/> into the work folder: how many PSOs it skipped (a shader not in this
+    /// <summary>Written by Materialize into the work folder: how many PSOs it skipped (a shader not in this
     /// install), then how many of those need a recording on this PC (an 'L' flag), as two numbers.</summary>
     public const string SkippedFile = "skipped.txt";
 
@@ -649,11 +763,11 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
 
     /// <summary>The recorded pipelines another player's RenoDX made (<see cref="PlanBuilder.RenoDx"/>): the game here creates them
     /// only through its own RenoDX layer. Null when it has one, or when no root signature in <paramref name="db"/> is RenoDX's.</summary>
-    internal static Func<Rec, bool>? AddonMade(Game game, EngineInfo engine, ShaderIndex index, string db)
+    internal static Func<Rec, bool>? AddonMade(Game game, EngineInfo engine, ShaderIndex index, IEnumerable<Rec> db)
     {
         if (PlanBuilder.LayerInjects(game, engine)) return null;
         var blobs = new Dictionary<string, byte[]>();
-        foreach (var r in Read(db).Where(r => r.Tag == 'B' && r.Payload.Length > 20))
+        foreach (var r in db.Where(r => r.Tag == 'B' && r.Payload.Length > 20))
             try
             {
                 if (r.Payload.AsSpan(20).StartsWith("DXBC"u8) && Dxbc.Part(r.Payload.AsSpan(20), "RTS0"u8).IsEmpty) continue;   // a shader
@@ -673,11 +787,11 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     /// <summary>The recorded pipelines another GPU vendor's game made: the root signature is the engine rule's construction for
     /// the other vendor (<see cref="ReRule.OtherCbvBase"/>) and not this one's, so the game here never creates them (RE Requiem
     /// demo: a shared recording of 15,758 pipelines in the layout off NVIDIA). Null when the rule builds the same everywhere.</summary>
-    internal static Func<Rec, bool>? OtherVendors(EngineInfo engine, ShaderIndex index, VendorCaps caps, string db)
+    internal static Func<Rec, bool>? OtherVendors(EngineInfo engine, ShaderIndex index, VendorCaps caps, IEnumerable<Rec> db)
     {
         if (RulesFile.Current.RuleFor(engine) is not { RootSignature.Re.OtherCbvBase: not null } rule) return null;
         var nvidia = caps.Profile.StartsWith("nvidia");
-        var blobs = Read(db).Where(r => r.Tag == 'B' && r.Payload.Length > 20).GroupBy(r => Hex(r.Payload.AsSpan(0, 20))).ToDictionary(g => g.Key, g => g.First().Payload[20..]);
+        var blobs = db.Where(r => r.Tag == 'B' && r.Payload.Length > 20).GroupBy(r => Hex(r.Payload.AsSpan(0, 20))).ToDictionary(g => g.Key, g => g.First().Payload[20..]);
         return r =>
         {
             if (r.Tag is not ('G' or 'C' or 'S')) return false;

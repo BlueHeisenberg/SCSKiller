@@ -52,6 +52,9 @@ public sealed class Warmer(IGpuVendorBackend vendor, string? warmExe = null) : I
     /// <summary>What a Linux warm's environment lines start with in its stderr, which a failure's message leaves out.</summary>
     internal const string EnvPrefix = "env: ";
 
+    /// <summary>What each process's line of its work and stage files' sizes starts with in stderr, which a failure's message leaves out.</summary>
+    internal const string StagedPrefix = "staged: ";
+
     /// <summary>DXVK's line, at DXVK_LOG_LEVEL=info, for a device it found or skipped and why, or its error: its own prefixes
     /// ("info:  ", "err:   "), not Wine's err: channels. A Linux warm's failure relays them, its message leaves them out.</summary>
     internal static bool DxvkDeviceLine(string line) => line.StartsWith("err:   ", StringComparison.Ordinal)
@@ -400,15 +403,20 @@ sealed class SteamFirstRun : IWarmRun
             }
             var (failed, skipped, invalid, unsupported) = (first?.Failed ?? 0, first?.DriverSkipped ?? 0, first?.Invalid ?? 0, first?.Unsupported ?? 0);
             var cached = first?.Cached ?? 0;
-            var rest = await Phase(start(options with { StartAt = Math.Max(0, options.StartAt - steam) }, progress == null ? null
-                : new Relay(p => progress.Report(p with { Done = p.Done + steam, Total = p.Total + steam, Failed = p.Failed + failed, DriverSkipped = p.DriverSkipped + skipped,
+            // a replay the cache's room ended: what it didn't reach isn't created. Done stays past all of it, a resume's position
+            var steamLeft = first is { Outcome: WarmOutcome.Completed, Full: not null } ? Math.Max(0, steam - first.Done) : 0;
+            var at = Math.Max(0, options.StartAt - steam);
+            var rest = await Phase(start(options with { StartAt = at }, progress == null ? null
+                : new Relay(p => progress.Report(p with { Done = p.Done + steam - steamLeft, Total = p.Total + steam, Failed = p.Failed + failed, DriverSkipped = p.DriverSkipped + skipped,
                     Invalid = p.Invalid + invalid, Unsupported = p.Unsupported + unsupported }))));
+            // a warm with no room to start doesn't count its items: the plan's total, as a stop before it does
+            var items = rest is { Full: not null } && rest.Total == at ? Math.Max(at, WarmItems()) : rest.Total;
             return rest with
             {
-                Done = rest.Done + steam, DiedAt = rest.DiedAt + steam, Total = rest.Total + steam, Failed = rest.Failed + failed, DriverSkipped = rest.DriverSkipped + skipped,
+                Done = rest.Done + steam, DiedAt = rest.DiedAt + steam, Total = items + steam, Failed = rest.Failed + failed, DriverSkipped = rest.DriverSkipped + skipped,
                 Invalid = rest.Invalid + invalid, Unsupported = rest.Unsupported + unsupported, Cached = rest.Cached + cached,
                 Elapsed = rest.Elapsed + (first?.Elapsed ?? TimeSpan.Zero), CacheGrowthBytes = rest.CacheGrowthBytes + (first?.CacheGrowthBytes ?? 0),
-                CacheKeysAdded = first?.CacheKeysAdded is { } added ? [.. added, .. rest.CacheKeysAdded ?? []] : rest.CacheKeysAdded, Full = rest.Full ?? first?.Full,
+                CacheKeysAdded = first?.CacheKeysAdded is { } added ? [.. added, .. rest.CacheKeysAdded ?? []] : rest.CacheKeysAdded, Full = rest.Full ?? first?.Full, SteamLeft = steamLeft,
             };
         }
     }
@@ -518,14 +526,17 @@ sealed class WarmRun : IWarmRun
         var rt = 0;   // the ray tracing threads of the last process
         IReadOnlyList<long> isolated = [];   // the items it created alone first
         var hardOnly = false;   // the next process restarts for memory only at the 60% bound
+        long creptTo = -1;   // where the last memory restart went on from, when that moved the resume point under MinRestartItems
         int band = 0, ran = 0;   // the workers the next process alone starts with for its first 1,000 items (0: all), the last one's
         bool one = false, single = false;   // the next process runs one thread, the last one ran one
         long completed = 0;
         // the proxy's per-item limit: hung items that compile alone were slow on many threads (Phantom Blade Zero on NVIDIA)
         var stuckS = int.TryParse(System.Environment.GetEnvironmentVariable(StuckVariable), out var s0) && s0 > 0 ? s0 : 60;
         long Whole(long done) => passes?.Overall(pass, done) ?? done;
+        var processes = 0;
         IWarmProcess Launch(long start, int rtThreads, List<long> skip, IReadOnlyList<long> isolate)
         {
+            processes++;
             (from, rt, isolated) = (start, rtThreads, isolate);
             _retried = false;
             var threads = one ? 1 : passes != null && !passes.IsFast(pass) && o.CarefulThreads > 0 ? o.CarefulThreads : o.Threads;
@@ -744,7 +755,10 @@ sealed class WarmRun : IWarmRun
                     {
                         // what the process completed (its last progress, the retry event's Done is From): an unfinished item early on holds the resume point back
                         // one that resumes where it started with nothing in flight to create alone would only restart there again
-                        var little = r.From == from && !aloneFirst || Math.Max(completed, r.From) - from < MinRestartItems;
+                        var creeping = r.From - from < MinRestartItems;
+                        // slow items in flight keep the resume point back while the other workers run ahead into the budget: twice running, nothing else ends it
+                        var little = r.From == from && !aloneFirst || Math.Max(completed, r.From) - from < MinRestartItems || creeping && creptTo == from;
+                        creptTo = creeping ? r.From : -1;
                         // memory held by heavy compiles in flight grows back on every thread: half the workers each time, the 60% bound only at one
                         (band, hardOnly) = little ? (ran == 1 ? 0 : Math.Max(1, ran / 2), ran == 1) : (0, false);
                         log?.Report($"{game.Name}: compile: restarted to free memory (private memory {r.PrivateMB:N0} MB, {r.FreeMB:N0} MB of RAM free), going on from item {Whole(r.From):N0}"
@@ -809,10 +823,11 @@ sealed class WarmRun : IWarmRun
             }
             if (outcome == WarmOutcome.Failed)
             {
-                var shown = stderr.Where(l => !l.StartsWith(Warmer.EnvPrefix, StringComparison.Ordinal) && !Warmer.DxvkDeviceLine(l)).TakeLast(3).ToList();
+                var shown = stderr.Where(l => !l.StartsWith(Warmer.EnvPrefix, StringComparison.Ordinal) && !l.StartsWith(Warmer.StagedPrefix, StringComparison.Ordinal) && !Warmer.DxvkDeviceLine(l)).TakeLast(3).ToList();
                 var tail = shown.Count == 0 ? "" : ": " + string.Join(" | ", shown);
                 error ??= code == null ? Warmer.DiedError + tail : code != 0 ? $"{Warmer.ExitedError}{code}{tail}" : Warmer.NoDoneError;
             }
+            log?.Report($"{game.Name}: the compile ran {processes} process{(processes == 1 ? "" : "es")}");
             return new WarmResult(outcome, Whole(reached), passes?.Total ?? total, failed, clock.Elapsed, growth,
                 Path.Combine(stage ?? Path.Combine(workDir, "stage"), "scskiller.log"), outcome == WarmOutcome.Failed ? _host.Explain(error) : null,
                 Crashed: crashed.Count > 0 ? crashed : null, DriverSkipped: skips, Resumable: resumable && outcome == WarmOutcome.Failed,

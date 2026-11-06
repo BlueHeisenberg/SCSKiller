@@ -75,6 +75,7 @@
 #include "fossilize_db.hpp"
 #include "fossilize_external_replayer.hpp"
 #include "warm_items.h"
+#include "gen_mem.h"
 
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "ole32.lib")
@@ -760,6 +761,9 @@ static int child(DWORD parent_pid, const Opts& o) {
     if (loading) SetEvent(loading);
     load();
     if (loading) ResetEvent(loading), CloseHandle(loading);
+    auto plan_whole = (BOOL(WINAPI*)())proc("SCSKiller_WarmPlanWhole");
+    if (!plan_whole) return fail(L"this d3d12.dll isn't the warm's build");
+    if (!plan_whole()) return fail(L"the plan's shared memory can't be read");
     const bool d3d11_only = items12 && start11 && !items12();
     std::wstring am_why = o.aftermath.empty() || d3d11_only ? L"" : aftermath_dumps(o);
     if (!o.ags.empty() && !d3d11_only) {
@@ -1308,7 +1312,7 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
         std::function<void()> f;
         ~Unstage() { f(); }
     } unstage{[&] {  // only inside this run's folder: the staged inputs go, the proxy's outputs stay in flat
-        for (auto n : {exe, std::wstring(L"d3d12.dll"), std::wstring(L"scskiller.db"), std::wstring(L"scskiller_gen.db"), std::wstring(L"scskiller_pass.bin")})
+        for (auto n : {exe, std::wstring(L"d3d12.dll"), std::wstring(L"scskiller.db"), std::wstring(L"scskiller_gen.db"), std::wstring(L"scskiller_gen.mem"), std::wstring(L"scskiller_pass.bin")})
             unput(n);
         for (auto& n : layer) unput(n);
         for (auto& n : agility) unput(n);
@@ -1316,22 +1320,34 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
         if (!o.d3d12.empty() && !RemoveDirectoryW((stage + L"D3D12").c_str()))
             err_printf(L"removing the staged %lsD3D12 failed (error %lu)\n", stage.c_str(), GetLastError());
         if (!died) DeleteFileW((stage + kItemsFile).c_str());
+        MoveFileExW((stage + kCarryFile).c_str(), (work + kCarryFile).c_str(), MOVEFILE_REPLACE_EXISTING);
         if (stage == flat) return;
         for (auto n : {L"scskiller.log", L"scskiller_creates.csv", L"scskiller_warm_times.csv", L"scskiller_failed.keys", kItemsFile})
             MoveFileExW((stage + n).c_str(), (flat + n).c_str(), 0);
         for (auto d = dirs.rbegin(); d != dirs.rend(); ++d) RemoveDirectoryW(d->c_str());  // only if empty
     }};
+    MoveFileExW((work + kCarryFile).c_str(), (stage + kCarryFile).c_str(), MOVEFILE_REPLACE_EXISTING);  // each process stages in a new folder
     auto put = [&](const std::wstring& from, const std::wstring& name, bool optional) {
         std::wstring to = stage + name;
         if (optional && GetFileAttributesW(from.c_str()) == INVALID_FILE_ATTRIBUTES) return true;
-        // the generated plan is big and only read: hard link; the recorded db is copied (the proxy may append to it)
-        return (name == L"scskiller_gen.db" && CreateHardLinkW(to.c_str(), from.c_str(), nullptr)) || CopyFileW(from.c_str(), to.c_str(), TRUE);
+        // the dbs are big and the staged child only reads them (load_db): hard links, copies where the volume has none
+        return ((name == L"scskiller.db" || name == L"scskiller_gen.db") && CreateHardLinkW(to.c_str(), from.c_str(), nullptr)) || CopyFileW(from.c_str(), to.c_str(), TRUE);
     };
     std::wstring proxy = bin + L"d3d12.dll";
     if (GetFileAttributesW(proxy.c_str()) == INVALID_FILE_ATTRIBUTES) proxy = bin + L"..\\d3d12.dll";  // the segheap\ build uses its parent's
     if (!put(self, exe, false) || !put(proxy, L"d3d12.dll", false) || !put(work + L"scskiller.db", L"scskiller.db", true) ||
-        !put(work + L"scskiller_gen.db", L"scskiller_gen.db", true) || !put(work + L"scskiller_pass.bin", L"scskiller_pass.bin", true))
+        !put(work + L"scskiller_gen.db", L"scskiller_gen.db", true) || !put(work + L"scskiller_gen.mem", L"scskiller_gen.mem", true) ||
+        !put(work + L"scskiller_pass.bin", L"scskiller_pass.bin", true))
         return fail(L"staging into " + stage + L" failed (error " + std::to_wstring(GetLastError()) + L")");
+    // a child without it would call every pipeline of the plan failed
+    if (GetFileAttributesW((work + L"scskiller_gen.mem").c_str()) != INVALID_FILE_ATTRIBUTES) {
+        GenMem m;
+        const char* base = gen_mem_read(work + L"scskiller_gen.mem", m) ? gen_mem_map(m) : nullptr;
+        const bool whole = base && gen_mem_walk(base, m, [](const char*, const char*, uint32_t) {});
+        const DWORD err = GetLastError();
+        if (base) UnmapViewOfFile(base);
+        if (!whole) return fail(L"the plan's shared memory can't be read (error " + std::to_wstring(err) + L")");
+    }
     if (!o.layer.empty()) {
         // the layer's log stays in the stage, with the proxy's outputs
         std::error_code ec;
@@ -1351,6 +1367,14 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
     }
     if (!o.d3d11.empty() && !put(o.d3d11, L"d3d11.dll", false))
         return fail(L"staging the game's d3d11.dll failed (error " + std::to_wstring(GetLastError()) + L")");
+    auto sizes = [](const std::wstring& dir) {  // "x<n>": a hard link with n names, its bytes on disk once
+        std::wstring s;
+        std::error_code ec;
+        for (auto& e : std::filesystem::directory_iterator(dir, ec))
+            if (e.is_regular_file(ec)) s += L" " + e.path().filename().wstring() + L" " + std::to_wstring(e.file_size(ec)) + L" B x" + std::to_wstring(e.hard_link_count(ec));
+        return s;
+    };
+    err_printf(L"staged: work%ls, stage%ls\n", sizes(work).c_str(), sizes(stage).c_str());
     UINT sdk = 0;
     if (!o.d3d12.empty()) {
         CreateDirectoryW((stage + L"D3D12").c_str(), nullptr);
@@ -1560,6 +1584,9 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
             if (retry_after_death(stage + kItemsFile, pi.dwProcessId, o, hex, turns / 10.0)) return died = true, 3;
             return fail(L"the warm process died (exit code " + std::wstring(hex) + L")");
         }
+        // A process killed from outside reads 1 (Task Manager, or any SIGKILL under Wine: wineserver's kill_process), or 0 if
+        // Wine saw its threads go first. Item states exist only past the point where every child return sets the event.
+        if (final_event && !last_line && retry_after_death(stage + kItemsFile, pi.dwProcessId, o, hex, turns / 10.0)) return died = true, 3;
         return (int)code;
     }
 }

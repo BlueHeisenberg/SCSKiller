@@ -232,6 +232,7 @@ public partial class App : Application
         // a game played while the window was away changed its cache size
         var lastSizes = DateTime.MinValue;
         real.QueueChanged += q => { if (q.Stage == QueueStage.Done) Host.Ui.TryEnqueue(() => { if (!unseen) _ = StartDialogs.AskOldPlansAsync(real); }); };
+        real.OldPlansQuestion = StartDialogs.AskBeforeWarmAsync;
         Main.Activated += (_, _) =>
         {
             if (DateTime.UtcNow - lastSizes < TimeSpan.FromSeconds(10)) return;
@@ -349,6 +350,6 @@ public partial class App : Application
     public static void CompileQueue()
     {
         foreach (var q in Host.Core.Queue.Where(q => ScsKiller.WaitsOnItsOwn(q) && !q.PlanCheck).ToList()) Host.Core.Enqueue(q.GameId);
-        Host.Core.StartQueue();
+        Host.Core.StartQueueByUser();
     }
 }

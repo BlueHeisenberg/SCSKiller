@@ -2,6 +2,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Win32;
 using SCSKiller.Core.Carved;
 using SCSKiller.Core.Games;
 using static SCSKiller.Core.Planning.PsoDb;
@@ -229,19 +230,76 @@ public static class Middleware
 
     /// <summary>The containers among <paramref name="sha1s"/> that the packable middleware DLLs next to the game's exe hold
     /// (read-only, each verified by SHA-1; none for anti-cheat games): <see cref="Rehydrate.Run"/>'s extra blob source, as
-    /// a hash-only recording's middleware PSOs (FSR4's compute shaders...) aren't in the game's index. A DLL is scanned
-    /// only when there's something to look for.</summary>
+    /// a hash-only recording's middleware PSOs (FSR4's compute shaders...) aren't in the game's index. Then the D3D12
+    /// runtime's D3D12Core.dll, the game's Agility SDK copy before the system's, for anti-cheat games too: most D3D12
+    /// games' first PSOs use its shaders, which an upload flags 'L'. Then the Steam and EOS overlays (<see cref="OverlayDlls"/>),
+    /// whose PSOs on the game's device an upload flags 'L' too. A DLL is scanned only when there's something to look for.</summary>
     public static IEnumerable<(string Sha1, byte[] Bytes)> Blobs(Game game, IReadOnlySet<string> sha1s)
     {
         if (sha1s.Count == 0) yield break;
         var left = sha1s.ToHashSet();
-        foreach (var d in Detect(game).Where(d => d.Packable))
+        foreach (var path in Detect(game).Where(d => d.Packable).Select(d => d.Path).Concat(Runtimes(game)).Concat(OverlayDlls()))
         {
             if (left.Count == 0) yield break;
-            if (TryScan(d.Path) is not { } image) continue;
+            if (TryScan(path) is not { } image) continue;
             foreach (var h in left.Where(image.Containers.ContainsKey).ToList())
-                if (image.Read(h) is { } b) { left.Remove(h); yield return (h, b); }
+            {
+                byte[]? b;
+                try { b = image.Read(h); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { break; }   // removed or locked since its scan: the next DLL
+                if (b != null) { left.Remove(h); yield return (h, b); }
+            }
         }
+    }
+
+    /// <summary>The D3D12 runtime's two PSOs, the first creates of most D3D12 games and the same bytes in each, with their root signature,
+    /// and their shaders read from <see cref="Blobs"/>. False when this PC's runtime doesn't hold those shaders. Measured on NVIDIA: a warm
+    /// without them at its start leaves the game's first launch as cold as no warm (REANIMAL, Hogwarts Legacy).</summary>
+    public static bool WriteRuntimeFirst(Game game, string output)
+    {
+        var shaders = Blobs(game, new HashSet<string> { "dd931d021b70164fbe0901346a26cdcdf98c886b", "bdc339dddad1047efa6cd44d1a741f143c90b338" }).ToList();
+        if (shaders.Count != 2) return false;
+        var rootSig = Convert.FromBase64String("RFhCQyLDhBP9c+MDJCwxOa8fPooBAAAARAAAAAEAAAAkAAAAUlRTMBgAAAADAAAAAAAAABgAAAAAAAAAGAAAAAAAAAA=");
+        using var f = new BufferedStream(File.Create(output));
+        PsoDb.Write(f, 'B', [.. System.Security.Cryptography.SHA1.HashData(rootSig), .. rootSig]);
+        foreach (var (sha1, bytes) in shaders) PsoDb.Write(f, 'B', [.. Convert.FromHexString(sha1), .. bytes]);
+        PsoDb.Write(f, 'G', Convert.FromBase64String("y60ZMXSv4HzU6C3cDLG1X0yEi3Ddkx0CG3AWT74JATRqJs3N+YyIawAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAABAAAAAQAAAAIAAAABAAAAAQAAAAQAAAAPAAAAAAAAAAAAAAACAAAAAQAAAAEAAAACAAAAAQAAAAEAAAAEAAAADwAAAAAAAAAAAAAAAgAAAAEAAAABAAAAAgAAAAEAAAABAAAABAAAAA8AAAAAAAAAAAAAAAIAAAABAAAAAQAAAAIAAAABAAAAAQAAAAQAAAAPAAAAAAAAAAAAAAACAAAAAQAAAAEAAAACAAAAAQAAAAEAAAAEAAAADwAAAAAAAAAAAAAAAgAAAAEAAAABAAAAAgAAAAEAAAABAAAABAAAAA8AAAAAAAAAAAAAAAIAAAABAAAAAQAAAAIAAAABAAAAAQAAAAQAAAAPAAAAAAAAAAAAAAACAAAAAQAAAAEAAAACAAAAAQAAAAEAAAAEAAAADwAAAAAAAAADAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAgAAAAAAAAD//wAAAQAAAAEAAAABAAAACAAAAAEAAAABAAAAAQAAAAgAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAA=="));
+        PsoDb.Write(f, 'C', Convert.FromBase64String("y60ZMXSv4HzU6C3cDLG1X0yEi3C9wznd2tEEfvps1E0adB8UPJCzOAEAAAAAAAAA"));
+        return true;
+    }
+
+    static IEnumerable<string> Runtimes(Game game) =>
+        new[] { Warming.Warmer.AgilityDir(game.ExePath), GameFiles.SystemFolder(game) }.OfType<string>().Select(d => GameFiles.Find(d, "D3D12Core.dll"));
+
+    /// <summary>The shaders of the D3D12 runtime's D3D12Core.dll and of the overlay DLLs, as <see cref="Blobs"/> reads them:
+    /// the runtime's own PSOs, which most D3D12 games create first, and the overlays' use them.</summary>
+    public static (HashSet<string> Runtime, HashSet<string> Overlay) FrontShaders(Game game)
+    {
+        static HashSet<string> Of(IEnumerable<string> dlls) => dlls.Select(TryScan).OfType<MiddlewareImage>().SelectMany(i => i.Containers.Keys).ToHashSet();
+        return (Of(Runtimes(game)), Of(OverlayDlls()));
+    }
+
+    /// <summary>The overlay DLLs Steam and the EOS SDK load into a game on Windows: Steam's from its own folder, EOS's from the
+    /// folders the SDK reads from SOFTWARE\Epic Games\EOS OverlayPath (HKLM's 32-bit view, HKLM's 64-bit view, HKCU; drive-letter
+    /// paths only), each once.</summary>
+    static List<string> OverlayDlls()
+    {
+        var dlls = new List<string>();
+        if (!OperatingSystem.IsWindows()) return dlls;
+        try { dlls.Add(Path.Combine(SteamSource.Root(), "gameoverlayrenderer64.dll")); }
+        catch (Exception e) when (e is IOException or System.Security.SecurityException) { }
+        // the EOS service's install writes HKLM's 32-bit view (WOW6432Node), the Epic Games Launcher HKCU
+        foreach (var (hive, view) in new[] { (RegistryHive.LocalMachine, RegistryView.Registry32), (RegistryHive.LocalMachine, RegistryView.Registry64), (RegistryHive.CurrentUser, RegistryView.Default) })
+            try
+            {
+                using var root = RegistryKey.OpenBaseKey(hive, view);
+                using var key = root.OpenSubKey(@"SOFTWARE\Epic Games\EOS");
+                if (key?.GetValue("OverlayPath") is string eos && !eos.Contains('\0') && Path.IsPathFullyQualified(eos) && Path.GetPathRoot(eos) is { Length: 3 })
+                    dlls.Add(Path.Combine(GameFiles.DirKey(eos), "EOSOVH-Win64-Shipping.dll"));
+            }
+            catch (Exception e) when (e is IOException or System.Security.SecurityException or UnauthorizedAccessException or ArgumentException) { }
+        dlls.RemoveAll(p => p.Contains('\0'));   // FileInfo throws on it
+        return [.. dlls.Distinct(StringComparer.OrdinalIgnoreCase)];
     }
 
     internal static MiddlewareImage? TryScan(string path)

@@ -35,10 +35,11 @@ sealed record SteamPlaceResult(SteamPlaceState State, string? Leaf = null, IRead
 /// <summary>Puts the warm's NVIDIA cache where a Steam game reads it under the environment Steam gives every game, so it needs
 /// no launch options. Steam points the driver at &lt;library&gt;/steamapps/shadercache/&lt;app&gt;/nvidiav1 (<paramref name="steamDir"/>
 /// holds it), where the game writes steamapp_shader_cache&lt;n&gt; and first reads steam_shader_cache, then
-/// steamapp_merged_shader_cache, read only (measured). The warm's sets of app name <paramref name="appName"/> without a
-/// dictionary (<see cref="GlCacheNoDict"/>), in the game's data folder <paramref name="gameDir"/>, go into
-/// <see cref="Targets"/> in the folder named like the warm's: entries in set then .toc order, the first of each key, each
-/// as Coding says, the .tocs rebuilt. A <see cref="SteamTarget.SteamFirst"/> file keeps Steam's entries first, in order and
+/// steamapp_merged_shader_cache, read only (measured). The warm's sets of app name <paramref name="appName"/>, in the game's
+/// data folder <paramref name="gameDir"/>, go into <see cref="Targets"/> in the folder named like the warm's: entries in set
+/// then .toc order, the first of each key, each as Coding says, the .tocs rebuilt. Each is decoded with its own set's
+/// dictionary (<see cref="GlCacheNoDict"/>), and a placement that stores them has those sets rewritten without one first.
+/// A <see cref="SteamTarget.SteamFirst"/> file keeps Steam's entries first, in order and
 /// byte for byte, its dictionary entry included, and SCSKiller's in it are known by key and checksum. A file of the warm's
 /// alone that neither <see cref="ManifestFile"/> nor the folder's owner note lists is Steam's, left alone. Steam's merge
 /// after a game exits rewrites the merged file, the new entries in front and the others kept in order (measured), so the
@@ -146,6 +147,7 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
     public const string OwnPrefix = ".scskiller-";
 
     const string TempPrefix = OwnPrefix + "place-";
+    const string CutShort = "rewriting the warm's files without a dictionary was cut short";
     const string NoteName = OwnPrefix + "owner.json";
     const string JournalName = OwnPrefix + "journal.json";
     const string HalfRenamed = "a run that was cut short left Steam's files half renamed: left as it is";
@@ -204,15 +206,17 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
         // nothing of the game's or Steam's is read while the game plays
         if (Running()) throw new Refused(SteamPlaceState.GameRunning, "the game is running");
         var m = LoadManifest();
-        if (Unfinished()) throw new Refused(SteamPlaceState.NextCompile, "rewriting the warm's files without a dictionary was cut short");
+        if (Unfinished()) throw new Refused(SteamPlaceState.NextCompile, CutShort);
         if (WarmLeaf() is not var (leaf, names)) return new(SteamPlaceState.Nothing, Why: "the warm left no files");
         if (WarmForOtherDriver) throw new Refused(SteamPlaceState.NextCompile, "the compile was made under another driver", leaf);
         if (SteamBuckets() is { } buckets && !buckets.Contains(leaf))
             throw new Refused(SteamPlaceState.OtherBucket, $"Steam's current NVIDIA folders aren't {leaf}", leaf);
         if (ReadLeaf != null && ReadLeaf != leaf) throw new Refused(SteamPlaceState.NextCompile, $"the game reads {ReadLeaf}, the compile is for {leaf}", leaf);
         var target = Path.Combine(NvidiaRoot, "GLCache", leaf);
-        using var sets = WarmSets.Read(Path.Combine(NvidiaLinuxAppCache.CacheDir(gameDir), leaf), names);
-        if (sets.All.Count == 0) return new(SteamPlaceState.Nothing, leaf, Why: "none of the warm's files is without a dictionary");
+        var coded = Coding == SteamEntryCoding.LeafDictionary;
+        if (!coded) names = Rewritten(leaf);
+        using var sets = WarmSets.Read(Path.Combine(NvidiaLinuxAppCache.CacheDir(gameDir), leaf), names, dictionaries: coded);
+        if (sets.All.Count == 0) return new(SteamPlaceState.Nothing, leaf, Why: NoSets);
         var sources = sets.Fingerprint;
         SteamPlaceResult nv;
         if (m != null && UpToDate(m, target, sources)) nv = (m.Last ?? new(SteamPlaceState.Placed, leaf)) with { State = SteamPlaceState.UpToDate };
@@ -230,6 +234,17 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
         var result = nv with { Vkd3d = vk.What, Vkd3dWaits = vk.Waits };
         if (nv.State == SteamPlaceState.Placed || vk.Placed) Log?.Invoke(Line(result, steamDir.Length == 0));
         return result;
+    }
+
+    const string NoSets = "none of the warm's files can be used";
+
+    /// <summary>The warm's sets in <paramref name="leaf"/> once those that kept a dictionary are rewritten without one, for a
+    /// placement that copies entries as they are.</summary>
+    List<string> Rewritten(string leaf)
+    {
+        new GlCacheNoDict(gameDir, appName) { Log = Log, Cap = NvidiaLinux.PlacedCacheSize, Budget = NvidiaLinux.BudgetOf(NvidiaLinux.PlacedCacheSize), Files = Files }.Run();
+        if (Unfinished()) throw new Refused(SteamPlaceState.NextCompile, CutShort);
+        return SetNames(Path.Combine(NvidiaLinuxAppCache.CacheDir(gameDir), leaf));
     }
 
     /// <summary><see cref="PlaceVkd3d"/>, its refusal or failure said in what it returns. Failed: why it failed.</summary>
@@ -282,16 +297,17 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
     List<string> SetNames(string dir) => [.. Enumerable.Range(0, Files).Select(n => appName + n.ToString(CultureInfo.InvariantCulture))
         .Where(n => IsFile(Path.Combine(dir, n + ".toc")) && IsFile(Path.Combine(dir, n + ".bin")))];
 
-    /// <summary>The warm's sets without a dictionary, read and open; a set with one, or that doesn't read, left out with why.</summary>
+    /// <summary>The warm's sets, read and open, their dictionary entries out of Records; a set that doesn't read, or holds a
+    /// dictionary without <c>dictionaries</c>, left out with why.</summary>
     sealed class WarmSets : IDisposable
     {
         public List<Set> All { get; } = [];
         public List<(string Name, string Why)> Skipped { get; } = [];
         public string Fingerprint => string.Join(';', All.Select(s => $"{s.Name}:{s.TocLength}:{s.BinLength}:{s.Written}"));
 
-        public sealed record Set(string Name, byte[] Header, List<Record> Records, long TocLength, long BinLength, long Written, SafeFileHandle Bin);
+        public sealed record Set(string Name, byte[] Header, List<Record> Records, long TocLength, long BinLength, long Written, SafeFileHandle Bin, GlCacheDict.SetDictionary? Dictionary);
 
-        public static WarmSets Read(string dir, List<string> names)
+        public static WarmSets Read(string dir, List<string> names, bool dictionaries)
         {
             var sets = new WarmSets();
             try
@@ -304,15 +320,23 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
                     var h = File.OpenHandle(bin, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                     var header = new byte[GlCacheFile.HeaderSize];
                     long length;
+                    GlCacheDict.SetDictionary? own = null;
                     try
                     {
                         length = RandomAccess.GetLength(h);
-                        why ??= t!.Value.Records.Any(r => r.IsDictionary) ? "it holds a dictionary"
+                        why ??= t!.Value.Records.Count(r => r.IsDictionary) is var held && held > (dictionaries ? 1 : 0) ? $"it holds {held} dictionaries"
                             : RandomAccess.Read(h, header, 0) != header.Length || !header.AsSpan().SequenceEqual(t.Value.Header) ? "its .bin header isn't its .toc's"
                             : sets.All.Count > 0 && !header.AsSpan().SequenceEqual(sets.All[0].Header) ? $"its header isn't {sets.All[0].Name}'s"
                             : t.Value.Records.Any(r => r.Offset < GlCacheFile.HeaderSize || r.Offset + r.Length > length) ? "an entry lies outside its .bin"
                             : t.Value.Records.Any(r => r.Size > MaxEntry) ? "an entry's size is past 256 MiB"
                             : null;
+                        if (why == null && t!.Value.Records.FirstOrDefault(r => r.IsDictionary) is { Key: not null } d)
+                            try
+                            {
+                                if (Whole(h, d) is not { } entry || !GlCacheFile.Checks(entry, d)) why = "its dictionary entry doesn't check out";
+                                else own = new(entry.AsSpan(GlCacheFile.EntryHeaderSize));
+                            }
+                            catch (InvalidDataException e) { why = e.Message; }
                     }
                     catch
                     {
@@ -325,7 +349,7 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
                         sets.Skipped.Add((name, why));
                         continue;
                     }
-                    sets.All.Add(new(name, header, t!.Value.Records, bytes.Length, length, File.GetLastWriteTimeUtc(bin).Ticks, h));
+                    sets.All.Add(new(name, header, own != null ? t!.Value.Records.FindAll(r => !r.IsDictionary) : t!.Value.Records, bytes.Length, length, File.GetLastWriteTimeUtc(bin).Ticks, h, own));
                 }
                 return sets;
             }
@@ -338,7 +362,11 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
 
         public void Dispose()
         {
-            foreach (var s in All) s.Bin.Dispose();
+            foreach (var s in All)
+            {
+                s.Bin.Dispose();
+                s.Dictionary?.Dispose();
+            }
         }
     }
 
@@ -683,6 +711,7 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
         public bool Dict { get; set; }       // it holds the leaf's dictionary
         public bool DictOurs { get; set; }   // SCSKiller wrote that dictionary entry in it
         public List<(SafeFileHandle Bin, Record Record)> Carried { get; } = [];   // dictionaries SCSKiller recorded, copied in from where the leaf holds them
+        public (byte[] Toc, byte[] Bin)? Headers { get; set; }   // a file new to the folder with no warm's set to take them from: those of the file its dictionary came from
         public int Count => Steam.Count + Carried.Count + Warm.Count + (DictOurs ? 1 : 0);
 
         /// <summary>Written anew: it gets the warm's entries, or loses some of SCSKiller's earlier ones.</summary>
@@ -792,6 +821,7 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
             for (var i = 0; i < sets.All.Count; i++)
                 foreach (var r in sets.All[i].Records)
                     if (seen.Add(Key.Of(r.Key))) warm.Add((i, r));
+            if (same && coding == SteamEntryCoding.LeafDictionary) warm = InPlacedOrder(outs, warm);
             var at = 0;
             foreach (var o in outs.Where(o => !o.Kept))
             {
@@ -859,7 +889,7 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
     {
         if (o.End > NvidiaLinux.CacheFileIndexed) throw new InvalidDataException($"{o.Target.Name} would come out {o.End} bytes, past what its .toc indexes");
         var steamHeaders = o.Target.SteamFirst && o.Existing is { Exists: true, Broken: null };
-        var (tocHeader, binHeader) = steamHeaders ? (o.Existing.TocHeader, o.Existing.BinHeader) : (sets!.All[0].Header, sets.All[0].Header);
+        var (tocHeader, binHeader) = steamHeaders ? (o.Existing.TocHeader, o.Existing.BinHeader) : o.Headers ?? (sets!.All[0].Header, sets.All[0].Header);
         var mode = o.Existing.Exists ? o.Existing.Mode : UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead;
         var buffer = new byte[1 << 16];
         using var s = new Sink(o, () => Create(Path.Combine(dir, TempPrefix + o.Target.Name + ".bin"), mode, known), tocHeader, binHeader, mode);
@@ -1635,7 +1665,7 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
             var recorded = RecordedHashes(m, note, dir.Path);
             foreach (var f in m.Files)
             {
-                var o = new Out(new SteamTarget(f.Name, NvidiaLinux.CacheFileIndexed, f.SteamFirst), Existing.Read(dir.At, f.Name, walk: f.SteamFirst));
+                var o = new Out(new SteamTarget(f.Name, NvidiaLinux.CacheFileIndexed, f.SteamFirst, Slot: f.Slot), Existing.Read(dir.At, f.Name, walk: f.SteamFirst));
                 outs.Add(o);
                 var e = o.Existing;
                 if (!e.Exists) continue;
@@ -1682,6 +1712,7 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
             // the dictionary SCSKiller's slots have their entries encoded with is one it placed, whatever is recorded
             recorded.UnionWith(PlacedByFrames(outs, SlotFramed(dir, m.Files.Where(f => f.Slot).Select(f => f.Name)), RecordedIds(m, note, dir.Path)));
             KeepRecorded(files, outs, removal: true, recorded);
+            stayed.RemoveAll(s => s.File.Slot && outs.Any(o => o.Write && o.Target.Name == s.File.Name));
             var need = outs.Where(o => o.Write && o.Count > 0).Sum(o => o.End + GlCacheFile.HeaderSize + (long)GlCacheFile.RecordSize4 * o.Count);
             if (need > 0 && FreeSpace(target) is var free && free < need + Margin)
                 throw new Refused(SteamPlaceState.NoSpace, $"{Format.Bytes(need)} to write and {Format.Bytes(free)} free");

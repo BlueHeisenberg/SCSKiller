@@ -352,7 +352,7 @@ public static partial class D3DSCache
     const string SchemaSql = "select group_concat(name || ':' || sql, '|') from (select name, sql from {0}.sqlite_master order by name)";
     const string CompilerSql = "select group_concat(abi || ':' || version || ':' || family, '|') from (select * from {0}.compiler_id order by id)";
 
-    const string GameStarted = "the game started";
+    const string GameStarted = "the game started", AnotherCompiler = "the game's db names another compiler";
 
     /// <summary>A <see cref="MergeInto"/> refusal of the compile's db itself, after which its folder is checked for damage.</summary>
     public static bool OwnDbRefusal(string why) => why.StartsWith("the compile's db", StringComparison.Ordinal) && why != "the compile's db is open in another process"
@@ -411,7 +411,12 @@ public static partial class D3DSCache
 
     /// <summary>A <see cref="MergeInto"/> refusal read from the dbs' content alone, under their locks: it stands until a db changes.
     /// One of a lock, an open, an identity or a write may pass without any.</summary>
-    public static bool Lasting(string why) => why is "the game's db has another schema" or "the game's db names another compiler" or "the game's db names another exe";
+    public static bool Lasting(string why) => why is "the game's db has another schema" or "the game's db names another exe" || why.StartsWith(AnotherCompiler, StringComparison.Ordinal);
+
+    /// <summary>A refusal by a game's db from another driver, the compile's being <paramref name="own"/>, this driver's: a run of the game
+    /// rewrites that db's compiler row and keeps its keys (measured on NVIDIA). An empty row wasn't measured.</summary>
+    public static bool RunRewrites(string why, string own) => why.StartsWith(AnotherCompiler + ": ", StringComparison.Ordinal)
+        && !why.StartsWith(AnotherCompiler + ": ,", StringComparison.Ordinal) && why.EndsWith(", the compile's " + own, StringComparison.Ordinal);
 
     /// <summary>Null when merged, else why not.</summary>
     static string? MergeDb(string from, string to, string exe, Action<long>? added, Func<bool>? stop, AppIdentity? asd = null, bool byRule = false,
@@ -596,7 +601,8 @@ public static partial class D3DSCache
             if (!Exec(t, $"attach database {Quote(from)} as s")) return "the compile's db can't be attached";
             var schema = Text(t, string.Format(SchemaSql, "main"));
             if (schema == null || schema != Text(t, string.Format(SchemaSql, "s"))) return "the game's db has another schema";
-            if (schema.Contains("compiler_id:") && (Text(t, string.Format(CompilerSql, "main")) is not { Length: > 0 } mine || mine != Text(t, string.Format(CompilerSql, "s")))) return "the game's db names another compiler";
+            if (schema.Contains("compiler_id:") && Text(t, string.Format(CompilerSql, "main")) is var mine && Text(t, string.Format(CompilerSql, "s")) is var made && (mine is not { Length: > 0 } || mine != made))
+                return $"{AnotherCompiler}: {mine}, the compile's {made}";
             if (stop?.Invoke() == true) return GameStarted;
             // a swap writes only the compile's db, renamed in place of the game's after the commit
             if (swap && !Exec(t, "pragma s.synchronous=FULL")) return "the compile's db can't be attached";

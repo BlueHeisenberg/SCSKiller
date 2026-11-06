@@ -22,10 +22,11 @@ public static partial class GameFiles
     /// CrashReportClient), helpers (<see cref="IsHelper"/>) aside; of exes named alike, the one nearest the root; a 32-bit one is
     /// passed over, and none is taken when none is the game's, <see cref="UnrealExe"/>), else
     /// the exe BattlEye's launcher starts (<see cref="BattlEyeTarget"/>), else <paramref name="launcherExe"/>, else the
-    /// largest exe near the install root. A launcher among the last two is replaced by the game it starts
-    /// (<see cref="LaunchedExe"/>). Exes in a patcher's or installer's copy of the game (<see cref="Staging"/>) are never
+    /// largest exe near the install root, or with none in the root of an install that isn't Unreal's <paramref name="steamLaunch"/>,
+    /// Steam's launch target (<see cref="SteamSource.LaunchExe"/>), unless it is named like a launcher. A launcher among the others is replaced by
+    /// the game it starts (<see cref="LaunchedExe"/>). Exes in a patcher's or installer's copy of the game (<see cref="Staging"/>) are never
     /// picked, nor are those an Xbox app game's config marks as not the game (<see cref="XboxSource.NotTheGame"/>).</summary>
-    public static string? FindExe(string installDir, string? launcherExe = null)
+    public static string? FindExe(string installDir, string? launcherExe = null, string? steamLaunch = null)
     {
         if (!Directory.Exists(installDir)) return null;
         if (ShippingExe(installDir, launcherExe == null ? null : Path.GetFileName(Under("", launcherExe))) is { } shipping) return shipping;
@@ -40,22 +41,26 @@ public static partial class GameFiles
             .ThenByDescending(f => f.Length).ToList();
         if (unreal.Count > 0 && UnrealExe(installDir, unreal) is { } built) return built;
         if (BattlEyeTarget(installDir) is { } be) return be;
-        if (launcherExe != null)
-        {
-            var p = Path.GetFullPath(Find(installDir, launcherExe));
-            if (File.Exists(p)) return RedLauncherTarget(installDir, p) ?? BuildOf32BitLauncher(installDir, p) ?? p;
-        }
-        // ponytail: non-Unreal games get a guess; Steam's launch target (appinfo.vdf config/launch, SteamSource.Apps) could seed it, but for launcher games it names the launcher
         List<FileInfo> Exes(EnumerationOptions depth) => [.. EnumerateFiles(installDir, "*.exe", depth).Where(f => !NotTheGameExe(installDir, f, excluded)).Select(f => new FileInfo(f))];
         var exes = Exes(Deep) is { Count: > 0 } near ? near : Exes(FarDeep);
+        if (launcherExe != null && Path.GetFullPath(Find(installDir, launcherExe)) is var named && File.Exists(named) && !IsHelper(named))   // a store may name Epic's bootstrapper
+            return XboxSource.LauncherOrUtility(Path.GetFileName(named)) ? LaunchedExe(installDir, new FileInfo(named), exes)
+                : RedLauncherTarget(installDir, named) ?? BuildOf32BitLauncher(installDir, named) ?? named;
         // the exe an EasyAntiCheat bootstrap starts is the game: ELDEN RING NIGHTREIGN's Artbook/OST DLC is a Unity app in its own folder
         if (exes.Where(f => f.Name.Equals("start_protected_game.exe", StringComparison.OrdinalIgnoreCase)).Select(f => EacExecutable(installDir, f.FullName)).OfType<string>()
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList() is [{ } eac])
             return eac;   // bootstraps naming different exes: none is trusted over the others
         if (exes.FirstOrDefault(f => Directory.Exists(Find(f.DirectoryName!, Path.GetFileNameWithoutExtension(f.Name) + "_Data"))) is { } unity) return unity.FullName;   // Unity: Game.exe + Game_Data
-        var guess = exes.OrderBy(f => f.DirectoryName!.Length > installDir.TrimEnd(Path.DirectorySeparatorChar).Length ? 1 : 0)   // root folder first
-            .ThenByDescending(f => f.Length).FirstOrDefault();
-        return guess == null ? null : NotPlus(LaunchedExe(installDir, guess, exes), exes);
+        bool Nested(FileInfo f) => f.DirectoryName!.Length > installDir.TrimEnd(Path.DirectorySeparatorChar).Length;
+        var guess = exes.OrderBy(f => Nested(f) ? 1 : 0).ThenByDescending(f => f.Length).FirstOrDefault();   // root folder first
+        if (guess == null) return null;
+        // a launch target can be a launcher: RDR2's in the root, Phantom Blade Zero's stub steam\PBZ.exe in an Unreal install. Not through
+        // LaunchedExe: an engine in a DLL leaves the game's exe importing no graphics API, and a larger tool may import one
+        if (steamLaunch != null && Nested(guess) && !UnrealFolders(installDir).Any()
+            && Path.GetFullPath(Find(installDir, steamLaunch.Trim('\\', '/'))) is var target && exes.FirstOrDefault(f => f.FullName.Equals(target, StringComparison.OrdinalIgnoreCase)) is { } launched
+            && !XboxSource.LauncherOrUtility(launched.Name))
+            return launched.FullName;
+        return NotPlus(LaunchedExe(installDir, guess, exes), exes);
     }
 
     /// <summary>&lt;Name&gt;.exe for &lt;Name&gt;_Plus.exe beside it, whatever their sizes: the Ubisoft+ build, which only
@@ -263,16 +268,19 @@ public static partial class GameFiles
 
     /// <summary>The game a launcher (<paramref name="guess"/>) starts: the target of CD PROJEKT RED's launcher-configuration.json
     /// next to it, else the 64-bit build a 32-bit guess is named for (<see cref="BuildOf32BitLauncher"/>), else, when the guess
-    /// imports no graphics API, the one larger exe of <paramref name="exes"/> that does (no binary read in an install with
-    /// anti-cheat). Anything else (one unreadable, several, none) keeps the guess.</summary>
+    /// imports no graphics API, the one larger exe of <paramref name="exes"/> that does, or with none larger the one beside an
+    /// exe named like a launcher (Brothers' is larger than its game), no binary read in an install with anti-cheat.
+    /// Anything else (one unreadable, several, none) keeps the guess.</summary>
     static string LaunchedExe(string installDir, FileInfo guess, IReadOnlyList<FileInfo> exes)
     {
         if (RedLauncherTarget(installDir, guess.FullName) is { } red) return red;
-        var larger = exes.Where(f => f.Length > guess.Length).ToList();
+        var others = exes.Where(f => f.Length > guess.Length).ToList();
+        if (others.Count == 0 && guess.Name.Contains("launcher", StringComparison.OrdinalIgnoreCase))
+            others = [.. exes.Where(f => string.Equals(f.DirectoryName, guess.DirectoryName, StringComparison.OrdinalIgnoreCase) && !XboxSource.LauncherOrUtility(f.Name))];
         if (BuildOf32BitLauncher(installDir, guess.FullName) is { } build) return build;
-        if (larger.Count == 0 || ImportsGraphics(guess.FullName) != false
-            || DetectAntiCheat(new Game("", "", Store.Other, installDir, guess.FullName)) != AntiCheat.None) return guess.FullName;
-        var imports = larger.Select(f => (f.FullName, Imports: ImportsGraphics(f.FullName))).ToList();
+        if (others.Count == 0 || DetectAntiCheat(new Game("", "", Store.Other, installDir, guess.FullName)) != AntiCheat.None
+            || ImportsGraphics(guess.FullName) != false) return guess.FullName;
+        var imports = others.Select(f => (f.FullName, Imports: ImportsGraphics(f.FullName))).ToList();
         return imports.All(x => x.Imports != null) && imports.Where(x => x.Imports == true).ToList() is [var game] ? game.FullName : guess.FullName;
     }
 

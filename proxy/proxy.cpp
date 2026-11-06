@@ -79,6 +79,7 @@
 #include "sys_dxgi.h"
 #include "warm_items.h"
 #include "warm_memory.h"
+#include "gen_mem.h"
 
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "advapi32.lib")  // RegGetValueW: Steam's folder (vac_now)
@@ -149,6 +150,8 @@ static std::atomic<uint64_t> g_warm_ok, g_warm_fail, g_warm_crash;  // crash: sk
 static std::atomic<uint64_t> g_warm_other;                       // items of another pass: counted done, never created
 static std::atomic<uint64_t> g_warm_unbuilt;  // of g_warm_fail: D3D11 items SCSKiller can't build (ScsKiller.Unbuilt11's split)
 static std::atomic<uint64_t> g_warm_unsupported;  // of g_warm_ok: refused for blending on a format this GPU can't blend
+static std::mutex g_unsupported_mx;
+static std::vector<size_t> g_unsupported_items;
 // SCSKiller_CountCached: d3dscache's ShaderCache_AddValue calls on this thread. A create that made none stored no compile:
 // the runtime served it from a cache, the game's delivery when one is registered for the staged exe
 static thread_local uint64_t t_cache_adds;
@@ -1386,6 +1389,20 @@ static size_t load_keys(const std::wstring& path) {
     return g_imported.size();
 }
 
+// A view of a section isn't private bytes, as the memory budget wants.
+static bool g_plan_whole = true;
+static void load_ram(const std::wstring& path) {
+    if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+    GenMem m;
+    const char* base = gen_mem_read(path, m) ? gen_mem_map(m) : nullptr;
+    if (!base || !gen_mem_walk(base, m, [](const char* h, const char* bytes, uint32_t size) { g_blob_bytes[*(const Hash*)h] = std::string_view(bytes, size); })) {
+        g_plan_whole = false;
+        return logf("db: the plan's shared memory can't be read (error %lu)", GetLastError());
+    }
+    logf("db: %llu shader blobs in shared memory (%llu bytes)", m.blobs, m.used);
+}
+extern "C" BOOL WINAPI SCSKiller_WarmPlanWhole() { return g_plan_whole; }
+
 static bool loader_lock_held();
 static void load_db(bool with_bytes) {
     // deny-write, before the load: what is read and repaired can't change under it, and a second process of the folder
@@ -1399,10 +1416,11 @@ static void load_db(bool with_bytes) {
     const bool may_wait = GetProcessTimes(GetCurrentProcess(), &made, &unused, &unused, &unused) && u64(now) - u64(made) < 50000000ull && !loader_lock_held();
     const double asked = now_ms();
     bool waited = false;
-    while ((_doserrno = 0, !(g_db = _wfsopen((g_dir + L"scskiller.db").c_str(), L"abN", _SH_DENYWR))) && _doserrno == ERROR_SHARING_VIOLATION && may_wait
+    // a staged warm only reads: its db is a hard link to the work folder's, and nothing it could append outlives the stage
+    while (!g_staged && (_doserrno = 0, !(g_db = _wfsopen((g_dir + L"scskiller.db").c_str(), L"abN", _SH_DENYWR))) && _doserrno == ERROR_SHARING_VIOLATION && may_wait
            && now_ms() - asked < 2000)
         Sleep(100), waited = true;
-    if (!g_db) logf("db: scskiller.db is open in another process: nothing is recorded in this one");
+    if (!g_db && !g_staged) logf("db: scskiller.db is open in another process: nothing is recorded in this one");
     else if (waited) logf("db: scskiller.db was open in another process, free after %.1f s", (now_ms() - asked) / 1000);
     load_file(g_dir + L"scskiller.db", true, with_bytes);
     g_main_recs = g_recs.size();
@@ -1411,6 +1429,7 @@ static void load_db(bool with_bytes) {
     g_db_records_at_start = g_keys.size();
     size_t rec_tuples = g_known_tuples.size();
     load_file(g_dir + L"scskiller_gen.db", false, with_bytes);
+    if (with_bytes) load_ram(g_dir + L"scskiller_gen.mem");
     g_total = g_recs.size() + g_plan.size() + g_items11.size();
     WIN32_FILE_ATTRIBUTE_DATA fa;
     if (GetFileAttributesExW((g_dir + L"scskiller.db").c_str(), GetFileExInfoStandard, &fa)) g_db_bytes = (uint64_t)fa.nFileSizeHigh << 32 | fa.nFileSizeLow;
@@ -2042,7 +2061,11 @@ static int replay(size_t j, const Rec& rec, const Override* ovr = nullptr, const
     if (FAILED(hr) && removed()) return -2;  // its root signature failed on the removed device too: retried, never failed
     if (hr == E_OUTOFMEMORY) return note_oom(j), 2;
     // a recording from another vendor's GPU: not for this one, and done, so a recompile on this driver doesn't retry it
-    if (hr == E_INVALIDARG && r.ok && r.unblendable) return g_warm_unsupported++, 1;
+    if (hr == E_INVALIDARG && r.ok && r.unblendable) {
+        std::lock_guard l(g_unsupported_mx);
+        g_unsupported_items.push_back(j);
+        return g_warm_unsupported++, 1;
+    }
     if (FAILED(hr)) {
         char what[160];
         const char* kind = rec.tag == 'C' ? "compute desc" : rec.tag == 'G' ? "graphics desc" : "pipeline stream";
@@ -2493,6 +2516,19 @@ static void warm_main() {
     for (size_t k : g_skip)
         if (k < nrec && g_so[k]) std::call_once(g_so[k]->once, [&] { g_so[k]->hr = E_FAIL, g_so[k]->why = "it faulted or hung in the driver alone in an earlier run", g_so[k]->skipped = g_so[k]->done = true; });
     g_item_state.open(g_dir + kItemsFile, first, n12, n);
+    // after a memory restart the workers count what the last process created without creating it again: a slow item low
+    // down would otherwise have every process repeat all the items above it
+    if (FILE* c = _wfopen((g_dir + kCarryFile).c_str(), L"rb")) {
+        uint64_t head[2];
+        std::vector<uint8_t> was(n12);
+        const bool same = fread(head, sizeof head, 1, c) == 1 && head[0] == first && head[1] == n12 && fread(was.data(), 1, n12, c) == n12;
+        fclose(c);
+        DeleteFileW((g_dir + kCarryFile).c_str());
+        size_t kept = 0;
+        for (size_t j = first; same && j < n12; ++j)
+            if (was[j] == 1) g_item_state[j] = 1, ++kept;
+        if (same) logf("warm: %zu items the last process created stay created", kept);
+    }
     auto key = [&](size_t j) { return j < nrec ? key_of(g_recs[j].tag, g_recs[j].payload) : key_of('P', g_plan[j - nrec]); };
     HashSet crash_found;
     if (!g_crash_keys.empty() || !g_known_keys.empty()) {
@@ -2806,6 +2842,13 @@ static void warm_main() {
                 } else if (g_mem_stop) {  // in flight at the stop: the app has them created alone first when this process moved nothing
                     for (size_t j = from; j < n12; ++j)
                         if (g_item_state[j] == 3) g_alone_next.push_back(j);
+                    if (FILE* c = _wfopen((g_dir + kCarryFile).c_str(), L"wb")) {
+                        // only what was created: the rest goes through a replay, which counts it and retries what ran out of memory
+                        const uint64_t head[2] = {from, n12};
+                        std::vector<uint8_t> carry(g_item_state.begin(), g_item_state.end());
+                        for (size_t j : g_unsupported_items) carry[j] = 0;
+                        fwrite(head, sizeof head, 1, c), fwrite(carry.data(), 1, n12, c), fclose(c);
+                    }
                 }
                 char fault[48];
                 int rt_next = std::max(1, (g_rt_threads ? g_rt_threads : g_threads) / 4);
@@ -2908,8 +2951,10 @@ static void warm_main() {
         const double ram_mb = got ? (g_test_ram_mb ? g_test_ram_mb : sys.ullTotalPhys / 1048576.0) : 0;
         // past 60% of RAM the PC pages: the process stops for a new one, whatever its restart setting
         const bool hard = g_mem_mb && ram_mb > 0 && mb > 0.6 * ram_mb && work_left();
+        // a quarter of RAM is what the plan's own memory check leaves free, 1 GB covers what's in flight when a stop lands
+        const bool plenty = got && !g_test_ram_mb && free_mb > ram_mb / 4 + 1024 && sys.ullAvailPageFile / 1048576.0 > ram_mb / 4 + 1024;
         if (g_state == RUN && g_mem_mb && (!restart_said || hard && !may_restart) &&
-            (hard || !hard_only && warm_restart_tick(wr, mb, g_start_mb, g_mem_mb, ram_mb, low, now_ms()) || (restart_at && warm_done() >= restart_at))) {
+            (hard || !hard_only && warm_restart_tick(wr, mb, g_start_mb, g_mem_mb, ram_mb, low, plenty, now_ms()) || (restart_at && warm_done() >= restart_at))) {
             int run = RUN;
             if (!may_restart && !hard) {
                 if (!restart_said) restart_said = true, logf("warm: private memory %.0f MB (%.0f MB at the start), %.0f MB of RAM free: its restarts are off, this process goes on until 60%% of RAM", mb, g_start_mb, free_mb);
@@ -2983,8 +3028,9 @@ static void warm_main() {
             g_parked.push_back((ID3D12StateObject*)(IUnknown*)&g_hang_so);
         }
         // a Release that hangs in the driver (or a batch behind one) must not keep the warm from ending: watched by its
-        // progress in 100 ms turns, as a pause suspends this process; what's left goes with the process exit
-        std::thread rel([] { release_parked("end of the warm"); });
+        // progress in 100 ms turns, as a pause suspends this process; what's left goes with the process exit.
+        // Stopping, all of it does: releasing 17,933 state objects on AMD outlasted the 30 s the app gives a stop
+        std::thread rel([] { if (g_state != STOP) release_parked("end of the warm"); });
         uint64_t seen = g_released;
         for (int idle = 0; WaitForSingleObject(rel.native_handle(), 100) == WAIT_TIMEOUT;)
             if (g_released != seen) seen = g_released, idle = 0;

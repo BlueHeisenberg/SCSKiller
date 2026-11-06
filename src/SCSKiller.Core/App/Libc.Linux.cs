@@ -192,6 +192,10 @@ static partial class Libc
         return unlink(from) == 0 ? 0 : Marshal.GetLastPInvokeError();
     }
 
+    /// <summary>Gives the file <paramref name="from"/> the further name <paramref name="to"/>, never replacing a file: the
+    /// errno, 0 when done.</summary>
+    public static int Link(string from, string to) => link(from, to) == 0 ? 0 : Marshal.GetLastPInvokeError();
+
     /// <summary>Swaps what <paramref name="a"/> and <paramref name="b"/> name in one step (renameat2's RENAME_EXCHANGE). The
     /// errno, 0 when done: EINVAL where the file system can't, ENOENT when either is missing.</summary>
     public static int Exchange(string a, string b) => renameat2(AtFdCwd, a, AtFdCwd, b, RenameExchange) == 0 ? 0 : Marshal.GetLastPInvokeError();
@@ -463,6 +467,9 @@ static partial class Libc
         using var h = Open(path, OCloExec);
         if (fsync((int)h.DangerousGetHandle()) != 0) throw new IOException($"{path}: {Marshal.GetPInvokeErrorMessage(Marshal.GetLastPInvokeError())}");
     }
+
+    /// <summary>Puts the file's bytes on disk (fsync).</summary>
+    public static void SyncFile(string path) => SyncFolder(path);
 
     public const uint ModeType = 0xF000, ModeDirectory = 0x4000, ModePermissions = 0x1FF, ModeOwnerOnly = 0x1C0;
 

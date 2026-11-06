@@ -34,6 +34,9 @@ sealed partial class SteamCachePlace
 
     // level 19 when the entries don't fit at 9: 1.84 times smaller than stored against 1.65, and 10 times slower (measured)
     const int Level = 9, TightLevel = 19;
+
+    /// <summary>One entry in this many is encoded at <see cref="Level"/> to tell whether all of them fit.</summary>
+    const int LevelSample = 64;
     const int DictCapacity = 2 << 20;   // the driver's own dictionaries are 2 MiB
     const int DictSamples = 4000;
     const long Batch = 64L << 20;       // the warm's bytes, as stored, encoded at a time
@@ -82,7 +85,9 @@ sealed partial class SteamCachePlace
         catch (NoDictionary e)
         {
             Log?.Invoke($"{leaf}: the pipelines go in as the warm stores them, {e.Message}");
-            return PlaceNvidia(m, target, leaf, sets, ct, e);
+            if (!sets.All.Any(s => s.Dictionary != null)) return PlaceNvidia(m, target, leaf, sets, ct, e);
+            using var plain = WarmSets.Read(Path.Combine(NvidiaLinuxAppCache.CacheDir(gameDir), leaf), Rewritten(leaf), dictionaries: false);
+            return plain.All.Count == 0 ? new(SteamPlaceState.Nothing, leaf, Why: NoSets) : PlaceNvidia(m, target, leaf, plain, ct, e);
         }
     }
 
@@ -121,13 +126,15 @@ sealed partial class SteamCachePlace
         var copies = same ? Copies(outs) : [];
         var stats = new Stats();
         var level = Level;
-        var at = Pass(copies);
-        if (at < warm.Count)
+        if (dict != null && WontFit()) level = TightLevel;
+        var tight = same && m!.Dictionary!.Level == TightLevel ? copies : [];
+        var at = Pass(level == Level ? copies : tight);
+        if (level == Level && at < warm.Count)
         {
             Log?.Invoke($"{warm.Count - at:N0} pipelines don't fit at zstd level {Level}: encoded at level {TightLevel}");
             CleanUp(dir, known);
             (level, stats) = (TightLevel, new Stats());
-            at = Pass(same && m!.Dictionary!.Level == TightLevel ? copies : []);
+            at = Pass(tight);
         }
         if (dict != null)
         {
@@ -142,12 +149,36 @@ sealed partial class SteamCachePlace
         Permanent(outs, recorded, dict);
         return ([.. warm.Skip(at)], dict?.Placed(level));
 
+        GlCacheDict? Codec()
+        {
+            try { return dict != null ? new GlCacheDict(dict.Dictionary, level) : null; }
+            catch (InvalidDataException e) when (dict!.Source != FromKept) { throw new NoDictionary($"the dictionary {dict.Id:x8} doesn't load: {e.Message}"); }
+        }
+
         int Pass(Dictionary<Key, (Out From, Record Record)> from)
         {
-            GlCacheDict? codec;
-            try { codec = dict != null ? new GlCacheDict(dict.Dictionary, level) : null; }
-            catch (InvalidDataException e) when (dict!.Source != FromKept) { throw new NoDictionary($"the dictionary {dict.Id:x8} doesn't load: {e.Message}"); }
-            using (codec) return Fill(dir, outs, sets, warm, dict, codec, from, known, lowered, stats, ct);
+            using var codec = Codec();
+            return Fill(dir, outs, sets, warm, dict, codec, from, known, lowered, stats, ct);
+        }
+
+        // a pass that doesn't fit writes every file it fills, only to throw them away. Close to the room it still tries.
+        bool WontFit()
+        {
+            var room = outs.Where(o => !o.Kept).Sum(o => o.Target.Limit - GlCacheFile.HeaderSize - o.SteamBytes);
+            if (warm.Sum(w => (long)w.Record.Length) <= room) return false;
+            var sample = warm.Where((_, i) => i % LevelSample == 0).ToList();
+            using var codec = Codec();
+            long bytes = 0;
+            for (var i = 0; i < sample.Count;)
+            {
+                var batch = Entries(sample, i, sets, dict!, codec!, copies, lowered, new Stats(), ct);
+                bytes += batch.Sum(e => (long)(e?.Length ?? 0));
+                i += batch.Length;
+            }
+            bytes *= LevelSample;
+            if (bytes <= room * 21 / 20) return false;
+            Log?.Invoke($"the pipelines come to about {Format.Bytes(bytes)} at zstd level {Level}, the files hold {Format.Bytes(room)}: encoded at level {TightLevel}");
+            return true;
         }
     }
 
@@ -212,6 +243,17 @@ sealed partial class SteamCachePlace
         (o.TocWritten, o.BinWritten) = (null, null);
     }
 
+    /// <summary>The warm's entries with those the files hold first, where they are, and the new ones after: a process's set
+    /// takes any free number, and a file whose entries only moved would be written whole again.</summary>
+    static List<(int Set, Record Record)> InPlacedOrder(List<Out> outs, List<(int Set, Record Record)> warm)
+    {
+        var place = new Dictionary<Key, int>();
+        foreach (var o in outs.Where(o => !o.Kept))
+            foreach (var r in o.Target.SteamFirst ? o.Mine : o.Ours ? o.Existing.Records : [])
+                place.TryAdd(Key.Of(r.Key), place.Count);
+        return [.. warm.OrderBy(w => place.GetValueOrDefault(Key.Of(w.Record.Key), int.MaxValue))];
+    }
+
     /// <summary>One line per placement for the warm's entries it left out, by set.</summary>
     void LogSkipped(string leaf, List<Out> outs, WarmSets sets)
     {
@@ -252,7 +294,7 @@ sealed partial class SteamCachePlace
                     return w;
                 }
                 // the warm's reject log has it: the others still go in
-                if (Whole(sets.All[set].Bin, r) is not { } stored || !GlCacheFile.Checks(stored, r) || !w.Raw(stored.AsSpan(GlCacheFile.EntryHeaderSize), out var raw)) return w;
+                if (Whole(sets.All[set].Bin, r) is not { } stored || !GlCacheFile.Checks(stored, r) || !w.Raw(stored.AsSpan(GlCacheFile.EntryHeaderSize), sets.All[set].Dictionary, out var raw)) return w;
                 entries[i] = w.Entry(r.Key, raw);
                 Interlocked.Increment(ref stats.Encoded);
                 Interlocked.Add(ref stats.Raw, raw.Length);
@@ -386,6 +428,17 @@ sealed partial class SteamCachePlace
         void Start()
         {
             _bin = _create();
+            if (At > GlCacheFile.HeaderSize)
+            {
+                // the file's own entries take no writes where the file system shares extents
+                if (Libc.Clone(_bin.SafeFileHandle, Owner.Existing.Bin!) == 0)
+                {
+                    _bin.SetLength(At);
+                    _bin.Position = At;
+                    return;
+                }
+                _bin.SetLength(0);
+            }
             _bin.Write(_binHeader);
             for (long at = GlCacheFile.HeaderSize; at < At;)
             {
@@ -632,6 +685,15 @@ sealed partial class SteamCachePlace
         /// refused at commit (<see cref="Check"/>), whatever is read. A new steamapp_shader_cache&lt;k&gt; is a new name.</summary>
         public void Watch() => (_names, _watched) = (Names(), true);
 
+        /// <summary>The files read that hold an entry encoded with dictionary <paramref name="id"/>, which leave this list: a
+        /// file another handle holds can't be leased.</summary>
+        public List<(string Name, Existing File)> TakeFramed(uint id)
+        {
+            var taken = (_read ??= Read()).Where(x => x.File.Bin != null && Framed([(x.File.Bin!, x.File.Records)], id)).ToList();
+            _read.RemoveAll(taken.Contains);
+            return taken;
+        }
+
         List<(string Name, Existing File)> Read()
         {
             if (!_watched) _names = Names();
@@ -673,7 +735,7 @@ sealed partial class SteamCachePlace
     /// left as it is.</summary>
     static List<(SafeFileHandle Bin, IEnumerable<Record> Records)> Staying(List<Out> outs, IEnumerable<Existing> others) =>
     [
-        .. outs.Where(o => o.Existing.Bin != null && !(o.Write && !o.Target.SteamFirst)).Select(o => (o.Existing.Bin!, o.Write ? o.Steam : (IEnumerable<Record>)o.Existing.Records)),
+        .. outs.Where(o => o.Existing.Bin != null && !(o.Write && !o.Target.SteamFirst && o.Headers == null)).Select(o => (o.Existing.Bin!, o.Write ? o.Steam : (IEnumerable<Record>)o.Existing.Records)),
         .. others.Where(e => e.Bin != null).Select(e => (e.Bin!, (IEnumerable<Record>)e.Records)),
     ];
 
@@ -694,24 +756,35 @@ sealed partial class SteamCachePlace
 
     /// <summary>An entry of <paramref name="sources"/> but a dictionary is encoded with dictionary <paramref name="id"/>,
     /// read from its frame's header.</summary>
-    static bool Framed(IEnumerable<(SafeFileHandle Bin, IEnumerable<Record> Records)> sources, uint id)
+    static bool Framed(IEnumerable<(SafeFileHandle Bin, IEnumerable<Record> Records)> sources, uint id) =>
+        sources.Any(s => s.Records.Any(r => !r.IsDictionary && FrameId(s.Bin, r) == id));
+
+    /// <summary>The dictionary its frame's header names, of an entry that isn't a dictionary; null when it names none.</summary>
+    static uint? FrameId(SafeFileHandle bin, Record r)
     {
         var start = new byte[GlCacheFile.EntryHeaderSize + 22];   // the entry's header, the u32 size and the longest frame header
-        foreach (var (bin, records) in sources)
-            foreach (var r in records.Where(r => !r.IsDictionary))
-            {
-                var n = RandomAccess.Read(bin, start.AsSpan(0, (int)Math.Min(start.Length, r.Length)), r.Offset);
-                if (n > GlCacheFile.EntryHeaderSize && GlCacheFile.FrameDictId(start.AsSpan(GlCacheFile.EntryHeaderSize, n - GlCacheFile.EntryHeaderSize)) == id) return true;
-            }
-        return false;
+        var n = RandomAccess.Read(bin, start.AsSpan(0, (int)Math.Min(start.Length, r.Length)), r.Offset);
+        return n > GlCacheFile.EntryHeaderSize ? GlCacheFile.FrameDictId(start.AsSpan(GlCacheFile.EntryHeaderSize, n - GlCacheFile.EntryHeaderSize)) : null;
+    }
+
+    /// <summary>The dictionaries that lose to the most used one, <paramref name="id"/> among those a file of
+    /// <paramref name="sources"/> holds, when entries use another held one; the driver reads only the winner.</summary>
+    static List<uint> Losers(IEnumerable<(SafeFileHandle Bin, IEnumerable<Record> Records)> sources, uint id)
+    {
+        var uses = sources.SelectMany(s => s.Records.Where(r => !r.IsDictionary).Select(r => FrameId(s.Bin, r))).OfType<uint>().GroupBy(d => d).ToDictionary(g => g.Key, g => g.LongCount());
+        var held = sources.SelectMany(s => s.Records.Where(r => r.IsDictionary).Select(r => DictIdAt(s.Bin, r))).OfType<uint>().Where(d => d != id && uses.ContainsKey(d)).Distinct().ToList();
+        if (held.Count == 0) return [];
+        var best = held.MaxBy(d => uses[d]);
+        return uses[best] > uses.GetValueOrDefault(id) ? [id, .. held.Where(d => d != best)] : held;
     }
 
     /// <summary>Keeps in the leaf's read-only files every dictionary SCSKiller recorded for it (<paramref name="recorded"/>)
     /// that they hold, a copy whole and checking (<see cref="Permanent"/>). One no file would keep goes after the entries of
     /// Steam's merged file (<see cref="Out.Carried"/>), copied by <see cref="WriteTemp"/>. The driver reads the same recorded
-    /// one first: a placement never makes another the leaf's, and on <paramref name="removal"/> another that comes first
-    /// once SCSKiller's entries are gone is refused while the game's entries in the leaf use the one that did
-    /// (<see cref="Framed"/>). Refused, everything left as it is, when one can't be kept.</summary>
+    /// one first: a placement never makes another the leaf's. A <paramref name="removal"/> always goes through: with no merged
+    /// file one is made for a dictionary the game's entries use (<see cref="Framed"/>), and when it can't stay where the
+    /// driver reads it those entries go (<see cref="DropFramed"/>). A placement that can't keep one is refused, everything
+    /// left as it is.</summary>
     void KeepRecorded(LeafFiles files, List<Out> outs, bool removal, HashSet<string> recorded)
     {
         var copies = new List<(Out O, Record R, uint Id, string Hash)>();
@@ -722,9 +795,27 @@ sealed partial class SteamCachePlace
         foreach (var (o, r, id, hash) in copies)
         {
             if (Dictionaries(outs, recorded, written: true).Any(a => a.Hash == hash)) continue;
+            // the driver reads one dictionary, a read-only file's before the game's own file's, and never adds again a key it holds
+            // but can't read: the entries under the one that loses would stay cold on every launch
+            if (removal && Losers(Staying(outs, files.Files), id) is { Count: > 0 } losers)
+            {
+                foreach (var loser in losers) DropFramed(files, outs, loser, tracked: loser == id);
+                if (losers.Contains(id)) continue;
+            }
             var merged = outs.FirstOrDefault(x => x.Target.SteamFirst && !x.Kept && x.Existing is { Exists: true, Broken: null, Bin: not null });
             if (merged == null || !merged.Write && merged.Existing.Sums(out _) == null)
-                throw new Refused(SteamPlaceState.Failed, $"SCSKiller's dictionary {id:x8} has no file of Steam's to stay in: left as it is");
+            {
+                if (!removal) throw new Refused(SteamPlaceState.Failed, $"SCSKiller's dictionary {id:x8} has no file of Steam's to stay in: left as it is");
+                var needed = Framed(Staying(outs, files.Files), id);
+                // the game's slot holds no dictionary: a merged file of the dictionary alone is where its entries read it
+                merged = needed ? outs.FirstOrDefault(x => x.Target.SteamFirst && !x.Kept && !x.Existing.Exists) : null;
+                if (merged == null)
+                {
+                    if (needed) DropFramed(files, outs, id, tracked: true);
+                    continue;
+                }
+                merged.Headers = (o.Existing.TocHeader, o.Existing.BinHeader);
+            }
             if (!merged.Write)
             {
                 merged.Steam.Clear();
@@ -739,12 +830,37 @@ sealed partial class SteamCachePlace
             && Dictionaries(outs, recorded, written: true).FirstOrDefault() is var now && now.Hash != first)
         {
             if (!removal) throw new Refused(SteamPlaceState.Failed, $"SCSKiller's dictionary {was:x8} would stop being the leaf's: left as it is");
-            if (Framed(Staying(outs, files.Files), was))
-                throw new Refused(SteamPlaceState.Failed, now.Id == was
-                    ? $"the game's entries in Steam's folder use SCSKiller's dictionary {was:x8}, and the copy of it that stays in {now.O.Target.Name} isn't the one SCSKiller recorded: left as it is"
-                    : $"the game's entries in Steam's folder use SCSKiller's dictionary {was:x8}, which can't stay there: left as it is");
+            if (Framed(Staying(outs, files.Files), was)) DropFramed(files, outs, was, tracked: true);
         }
         foreach (var line in lines) Log?.Invoke(line);
+    }
+
+    /// <summary>The entries that name dictionary <paramref name="id"/> go, for a removal that can't keep it where the driver
+    /// reads it, and the driver compiles them again. A file that doesn't read stays as it is. <paramref name="tracked"/>: a
+    /// slot the removal tracks too, only for SCSKiller's dictionary, as one rewritten is no longer waited for and would
+    /// keep SCSKiller's entries.</summary>
+    void DropFramed(LeafFiles files, List<Out> outs, uint id, bool tracked)
+    {
+        static void Drop(Out o, uint id)
+        {
+            var e = o.Existing;
+            if (e.Broken != null || !o.Write && e.Sums(out _) == null) return;
+            var had = o.Write ? o.Steam : e.Records;
+            var left = had.Where(r => r.IsDictionary || FrameId(e.Bin!, r) != id).ToList();
+            if (left.Count == had.Count) return;
+            o.Steam.Clear();
+            o.Steam.AddRange(left);
+            o.Headers = (e.TocHeader, e.BinHeader);
+            (o.End, o.Write) = (GlCacheFile.HeaderSize + o.SteamBytes + o.Carried.Sum(c => c.Record.Length), true);
+        }
+        foreach (var o in outs.Where(o => o.Existing.Bin != null && (o.Target.SteamFirst || tracked && o.Target.Slot && !o.Write))) Drop(o, id);
+        foreach (var (name, e) in files.TakeFramed(id))
+        {
+            var o = new Out(new SteamTarget(name, NvidiaLinux.CacheFileIndexed, false), e);
+            outs.Add(o);
+            Drop(o, id);
+        }
+        Log?.Invoke($"the game's entries in Steam's folder that use the dictionary {id:x8} go, the driver compiles them again");
     }
 
     /// <summary>A placement's own file of the warm's alone that holds a dictionary SCSKiller recorded keeps it first, its
@@ -841,22 +957,14 @@ sealed partial class SteamCachePlace
         var (dict, used) = lowered.Run(() =>
         {
             var samples = new List<byte[]>(n);
-            using (var plain = new Decompressor())
+            using (var reader = new GlCacheDict.Reader())
                 for (var i = 0; i < n; i++)
                 {
                     if (i % 256 == 0) ct.ThrowIfCancellationRequested();
                     var (set, r) = warm[(int)((long)i * warm.Count / n)];
                     // one that doesn't check or decode is skipped here as the placement skips it
-                    if (Whole(sets.All[set].Bin, r) is not { } stored || !GlCacheFile.Checks(stored, r) || stored.Length < GlCacheFile.EntryHeaderSize + 4) continue;
-                    var payload = stored.AsSpan(GlCacheFile.EntryHeaderSize);
-                    var size = BinaryPrimitives.ReadUInt32LittleEndian(payload);
-                    if (size > int.MaxValue / 2) continue;
-                    var sample = new byte[size];
-                    try
-                    {
-                        if (plain.Unwrap(payload[4..], sample) == size) samples.Add(sample);
-                    }
-                    catch (ZstdException) { }
+                    if (Whole(sets.All[set].Bin, r) is { } stored && GlCacheFile.Checks(stored, r) && reader.Raw(stored.AsSpan(GlCacheFile.EntryHeaderSize), sets.All[set].Dictionary, out var raw))
+                        samples.Add(raw.ToArray());
                 }
             try { return (GlCacheDict.Train(samples, DictCapacity, Level, lowered.MaximumConcurrencyLevel), samples.Count); }
             catch (InvalidDataException e) { throw new NoDictionary(e.Message); }

@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -132,13 +133,25 @@ public static partial class PsoDb
         return f;
     }
 
-    /// <summary>Copies a recording as a proxy db, which is what the proxy reads.</summary>
+    /// <summary>A recording as a proxy db, which is what the proxy reads: a raw one a hard link where the volume allows, so
+    /// <paramref name="to"/> is only ever replaced (a temp file and a rename), never written in place.</summary>
     public static void CopyRaw(string from, string to)
     {
-        if (!IsCompact(from)) { File.Copy(from, to, true); return; }
+        if (!IsCompact(from))
+        {
+            File.Delete(to);   // an earlier link to from: a copy over it would write the source
+            if (!(OperatingSystem.IsWindows() ? CreateHardLinkW(to, from, 0) : link(from, to) == 0)) File.Copy(from, to);
+            return;
+        }
         using var f = new BufferedStream(File.Create(to), 1 << 20);
         foreach (var r in Read(from)) Write(f, r.Tag, r.Payload);
     }
+
+    [DllImport("kernel32", CharSet = CharSet.Unicode)]
+    static extern bool CreateHardLinkW(string newName, string existing, nint security);
+
+    [DllImport("libc")]
+    static extern int link([MarshalAs(UnmanagedType.LPUTF8Str)] string from, [MarshalAs(UnmanagedType.LPUTF8Str)] string to);
 
     public static IEnumerable<Rec> Read(Stream f)
     {
@@ -170,6 +183,8 @@ public static partial class PsoDb
 
     public static void Write(Stream s, char tag, ReadOnlySpan<byte> payload)
     {
+        if (tag == 'B' && s is GenRam ram && ram.Add(tag, [], payload)) return;
+        if (s is TopUp.RecordsOnly only) { only.Add(tag, payload); return; }
         Span<byte> head = stackalloc byte[5];
         head[0] = (byte)tag;
         BinaryPrimitives.WriteUInt32LittleEndian(head[1..], (uint)payload.Length);
@@ -179,6 +194,8 @@ public static partial class PsoDb
 
     public static void WriteBlob(Stream s, string sha1, ReadOnlySpan<byte> bytes)
     {
+        if (s is GenRam ram && ram.Add('B', Convert.FromHexString(sha1), bytes)) return;
+        if (s is TopUp.RecordsOnly only) { only.Top.See(sha1, bytes); return; }
         Span<byte> head = stackalloc byte[25];
         head[0] = (byte)'B';
         BinaryPrimitives.WriteUInt32LittleEndian(head[1..], (uint)(20 + bytes.Length));

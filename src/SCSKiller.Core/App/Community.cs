@@ -500,27 +500,38 @@ public sealed class Community
     /// with its own. A state object's too when <paramref name="first"/>'s has its options (Phantom Blade Zero: the downloads' came
     /// after 4,910 of 5,078 recorded ones, half without the slot); else it stays: a download's options repair an older recorder's
     /// missing ones (RtCollections.OptionFixes). A 'B' of <paramref name="more"/> whose bytes don't hash to its SHA-1 is
-    /// left out: it would take the place of <paramref name="first"/>'s copy. Returns how many were.</summary>
-    public static int Union(string first, IReadOnlyList<string> more, string output, IReadOnlySet<string>? leaveOut = null)
+    /// left out: it would take the place of <paramref name="first"/>'s copy. Returns how many were. The records of
+    /// <paramref name="more"/> that <paramref name="front"/> ranks come right after <paramref name="first"/>'s, lowest rank
+    /// first: the warm creates in file order, and a download's records are in key order, not the game's.</summary>
+    public static int Union(string first, IReadOnlyList<string> more, string output, IReadOnlySet<string>? leaveOut = null, Func<PsoDb.Rec, int?>? front = null)
     {
         var bad = 0;
+        var tmp = output + ".tmp";
+        using (var f = new BufferedStream(File.Create(tmp), 1 << 20))
+            foreach (var r in UnionRecords(first, more, leaveOut, front, () => bad++))
+                PsoDb.Write(f, r.Tag, r.Payload);
+        File.Move(tmp, output, true);
+        return bad;
+    }
+
+    /// <summary><see cref="Union"/>'s records as they are read. <paramref name="unsound"/>: a downloaded blob that doesn't match its hash.</summary>
+    internal static IEnumerable<PsoDb.Rec> UnionRecords(string first, IReadOnlyList<string> more, IReadOnlySet<string>? leaveOut, Func<PsoDb.Rec, int?>? front, Action? unsound = null)
+    {
         bool Sound(PsoDb.Rec r)
         {
             if (r.Tag != 'B' || r.Payload.Length >= 20 && SHA1.HashData(r.Payload.AsSpan(20)).AsSpan().SequenceEqual(r.Payload.AsSpan(0, 20))) return true;
-            bad++;
+            unsound?.Invoke();
             return false;
         }
         // streamed: a local recording with its shader bytes can be large
         var have = new HashSet<string>();
         var nv = OwnNv(File.Exists(first) ? PsoDb.Read(first) : [], have);
         if (leaveOut != null) have.UnionWith(leaveOut);
-        IEnumerable<PsoDb.Rec> Pass(bool blobs) => (File.Exists(first) ? PsoDb.Read(first) : []).Where(r => r.Tag == 'B' == blobs)
-            .Concat(more.SelectMany(m => PsoDb.Read(m).Where(r => r.Tag == 'B' == blobs && Sound(r) && !(NvTarget(r) is { } t && nv.Contains(t)) && have.Add(r.Key))));
-        var tmp = output + ".tmp";
-        using (var f = new BufferedStream(File.Create(tmp), 1 << 20))
-            foreach (var r in Pass(true).Concat(Pass(false))) PsoDb.Write(f, r.Tag, r.Payload);
-        File.Move(tmp, output, true);
-        return bad;
+        IEnumerable<PsoDb.Rec> First(bool blobs) => (File.Exists(first) ? PsoDb.Read(first) : []).Where(r => r.Tag == 'B' == blobs);
+        IEnumerable<PsoDb.Rec> More(Func<PsoDb.Rec, bool> pick) =>
+            more.SelectMany(m => PsoDb.Read(m).Where(r => pick(r) && Sound(r) && !(NvTarget(r) is { } t && nv.Contains(t)) && have.Add(r.Key)));
+        IEnumerable<PsoDb.Rec> picked = front == null ? [] : More(r => r.Tag != 'B' && front(r) != null).OrderBy(front);
+        return First(true).Concat(More(r => r.Tag == 'B')).Concat(First(false)).Concat(picked).Concat(More(r => r.Tag != 'B'));
     }
 
     /// <summary>The record an 'N' is about; null for any other record.</summary>

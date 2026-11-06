@@ -221,7 +221,7 @@ static class Activation
     static void CompileNow(IEnumerable<string> ids)
     {
         foreach (var id in ids) Host.Core.Enqueue(id);
-        Host.Core.StartQueue();
+        Host.Core.StartQueueByUser();
         App.Main.Navigate(typeof(QueuePage));
         App.ShowWindow();
     }

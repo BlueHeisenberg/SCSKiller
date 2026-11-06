@@ -72,14 +72,57 @@ public static class CompiledItems
     /// keys of <paramref name="compiled"/> the dbs hold, left out or not. A compiled item whose record key <paramref name="again"/>
     /// holds stays, its key added to <paramref name="redone"/>.</summary>
     public static long LeaveOut(IReadOnlyList<string> dbs, IReadOnlySet<string> compiled, ISet<string>? held = null, IReadOnlySet<string>? again = null,
-        ISet<string>? redone = null) =>
-        LeaveOut(dbs, (r, key) =>
-        {
-            var done = compiled.Contains(key);
-            if (done) held?.Add(key);
-            if (done && again?.Contains(r.Key) == true) { redone?.Add(key); return false; }
-            return done;
-        }, d3d11: false);
+        ISet<string>? redone = null) => LeaveOut(dbs, Compiled(compiled, held, again, redone), d3d11: false);
+
+    static Func<Rec, string, bool> Compiled(IReadOnlySet<string> compiled, ISet<string>? held, IReadOnlySet<string>? again, ISet<string>? redone) => (r, key) =>
+    {
+        var done = compiled.Contains(key);
+        if (done) held?.Add(key);
+        if (done && again?.Contains(r.Key) == true) { redone?.Add(key); return false; }
+        return done;
+    };
+
+    /// <summary>The records <see cref="LeaveOut(IReadOnlyList{string}, IReadOnlySet{string}, ISet{string}?, IReadOnlySet{string}?, ISet{string}?)"/>
+    /// takes out of work dbs holding <paramref name="records"/>, in the proxy's order, and how many items that is.</summary>
+    internal static (HashSet<string> Dropped, long Items) LeftOut(IReadOnlyList<Rec> records, IReadOnlySet<string> compiled, ISet<string> held, IReadOnlySet<string> again, ISet<string> redone)
+    {
+        var (dropped, items, _) = Dropped(records, records, Compiled(compiled, held, again, redone), false);
+        return (dropped, items);
+    }
+
+    /// <summary>About what <see cref="LeaveOut(IReadOnlyList{string}, IReadOnlySet{string}, ISet{string}?, IReadOnlySet{string}?, ISet{string}?)"/>
+    /// gives on the work dbs of <paramref name="recording"/> and <paramref name="planFile"/>, read before they are written: how many
+    /// keys of <paramref name="compiled"/> they would hold, and of those how many <paramref name="again"/> compiles again.
+    /// <paramref name="has"/>: a blob of the plan's the install holds, as Planner.Materialize drops what names none. Null for a
+    /// plan with ray tracing collections to synthesize: their keys come from the libraries' bytes, so only the work dbs tell.
+    /// Otherwise it may hold more than the work dbs do, never less.</summary>
+    public static (int Held, int Redone)? WouldHold(IEnumerable<Rec> recording, string planFile, IReadOnlySet<string> compiled, IReadOnlySet<string> again, Func<string, bool> has)
+    {
+        var plan = Planning.Planner.PlanBody(planFile).Select(r => r.Tag == 'M' ? Planning.MiddlewarePacks.Unwrap(r).Entry : r).ToList();
+        if (plan.Any(r => r.Tag is 'Y' or 'H')) return null;
+        var blobs = new HashSet<string>();
+        var records = new List<Rec>();
+        foreach (var r in recording.Concat(plan))
+            if (r.Tag == 'B') blobs.Add(Hex(r.Payload.AsSpan(0, 20)));
+            else records.Add(r);
+        blobs.UnionWith(Planning.Rehydrate.References(records).Where(has));   // what's pulled from the install
+        bool Whole(Rec r) => Planning.Rehydrate.References([r]).IsSubsetOf(blobs);
+        // a template stays while a kept item uses it, whatever its own stages lack
+        var templates = records.Where(r => r.Tag == 'P' && Whole(r)).Select(r => ParseItem(r.Payload).Template).ToHashSet();
+        var nv = LastNv(records);
+        var (held, redone) = (new HashSet<string>(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal));
+        var kept = new HashSet<string>(StringComparer.Ordinal);   // in file order: a state object goes with what it builds on
+        foreach (var r in records.Where(r => IsItem(r.Tag)))
+            if (r.Key is var own && (templates.Contains(own) || Whole(r)) && (!IsStateObject(r.Tag) || ParseStateObject(r).Depends.All(kept.Contains)))
+            {
+                kept.Add(own);
+                var key = nv.GetValueOrDefault(own, own);
+                if (!compiled.Contains(key)) continue;
+                held.Add(key);
+                if (again.Contains(own)) redone.Add(key);
+            }
+        return (held.Count, redone.Count);
+    }
 
     /// <summary>Rewrites a warm's work dbs to their ray tracing items (ScsKiller.CompileRtOnly): the state objects, the PSOs
     /// and plan items with a shader that traces rays inline (SFI0's RayQuery flag), and what they need. D3D11 items go too.
@@ -115,22 +158,7 @@ public static class CompiledItems
     {
         static bool IsD3D11(char tag) => tag is '1' or '2' or '3';
         var existing = dbs.Where(System.IO.File.Exists).ToList();
-        var items = new List<(string Key, bool Compiled, List<string> Needs)>();
-        var nv = LastNv(existing.SelectMany(db => Read(db).Where(r => r.Tag == 'N')));
-        var anyD3D11 = false;
-        foreach (var r in existing.SelectMany(db => Read(db)))
-            if (IsItem(r.Tag) && Needs(r) is var needs)
-            {
-                var done = drop(r, nv.GetValueOrDefault(r.Key, r.Key));
-                items.Add((r.Key, needs != null && done, needs ?? []));
-            }
-            else anyD3D11 |= d3d11 && IsD3D11(r.Tag);
-        // what an item needs comes before it in the files: one pass from the end
-        var needed = new HashSet<string>(StringComparer.Ordinal);
-        var dropped = new HashSet<string>(StringComparer.Ordinal);
-        for (var i = items.Count - 1; i >= 0; i--)
-            if (items[i].Compiled && !needed.Contains(items[i].Key)) dropped.Add(items[i].Key);
-            else needed.UnionWith(items[i].Needs);
+        var (dropped, count, anyD3D11) = Dropped(existing.SelectMany(db => Read(db).Where(r => r.Tag == 'N')), existing.SelectMany(db => Read(db)), drop, d3d11);
         if (dropped.Count == 0 && !anyD3D11) return 0;
         foreach (var db in existing)
         {
@@ -144,7 +172,28 @@ public static class CompiledItems
             }
             finally { System.IO.File.Delete(tmp); }
         }
-        return items.Count(x => dropped.Contains(x.Key));
+        return count;
+    }
+
+    static (HashSet<string> Dropped, long Items, bool AnyD3D11) Dropped(IEnumerable<Rec> nvRecords, IEnumerable<Rec> records, Func<Rec, string, bool> drop, bool d3d11)
+    {
+        var items = new List<(string Key, bool Compiled, List<string> Needs)>();
+        var nv = LastNv(nvRecords);
+        var anyD3D11 = false;
+        foreach (var r in records)
+            if (IsItem(r.Tag) && Needs(r) is var needs)
+            {
+                var done = drop(r, nv.GetValueOrDefault(r.Key, r.Key));
+                items.Add((r.Key, needs != null && done, needs ?? []));
+            }
+            else anyD3D11 |= d3d11 && r.Tag is '1' or '2' or '3';
+        // what an item needs comes before it in the files: one pass from the end
+        var needed = new HashSet<string>(StringComparer.Ordinal);
+        var dropped = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = items.Count - 1; i >= 0; i--)
+            if (items[i].Compiled && !needed.Contains(items[i].Key)) dropped.Add(items[i].Key);
+            else needed.UnionWith(items[i].Needs);
+        return (dropped, items.Count(x => dropped.Contains(x.Key)), anyD3D11);
     }
 
     /// <summary>The records an item is created on; null when it doesn't parse (it is then never left out).</summary>

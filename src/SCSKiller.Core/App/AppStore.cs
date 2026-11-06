@@ -48,7 +48,7 @@ public sealed class GameRecord
     public string? PlanMaps { get; set; }                   // ScsKiller.MapsFingerprint of the index the plan was built from
     public string? D3DSCacheFolder { get; set; }            // the game's own D3DSCache folder (named by its exe path), found again once emptied
     public string? D3DSCacheExe { get; set; }               // the exe path that folder's dbs name
-    public bool WarmedD3DSCache { get; set; }               // the last complete warm's D3DSCache dbs were kept, not deleted
+    public bool WarmedD3DSCache { get; set; }               // the last complete warm's D3DSCache dbs were kept, not deleted, on a Windows that keeps pipelines there
     public Dictionary<string, long>? WarmedD3DSCacheBytes { get; set; }   // NVIDIA: the game's D3DSCache dbs and their lengths after that warm's fold; null = not recorded
     public DateTimeOffset? WarmedD3DSCacheAt { get; set; }  // ...when they were read: a db made after it holds none of the warm's
     public string? D3DSCacheMade { get; set; }              // the D3DSCache folder SCSKiller made before the game's first run
@@ -96,9 +96,7 @@ public sealed class GameRecord
     public DateTimeOffset? WarmedAt { get; set; }
     public TimeSpan? LastWarmTime { get; set; }
     public long? LastCacheGrowthBytes { get; set; }
-    public long? OldPlansBytes { get; set; }                 // the last complete warm's plan changed a lot (ScsKiller.OldPlansAsk): about the bytes earlier plans' pipelines hold, until answered
-    public long OldPlansItems { get; set; }                  // ...those pipelines
-    public long? OldPlansKept { get; set; }                  // ...the count the user chose to keep: a later plan asks only for what it leaves out on top
+    public long? OldPlansKept { get; set; }                  // the count of earlier plans' pipelines the user chose to keep (ScsKiller.OldPlansAsk): a later plan asks only for what it leaves out on top
     public List<string>? OldPlansFoldersKept { get; set; }   // ...the earlier game versions' D3DSCache folders the user chose to keep (ScsKiller.OrphanedD3DSCache)
     public long? LastWarmFailed { get; set; }                // the last complete warm: PSOs the driver rejected
     public long? LastWarmSkipped { get; set; }               // ...and PSOs skipped: a shader not in this install (never replayed)
@@ -168,6 +166,7 @@ public sealed class GameRecord
     public string? HeldKeys { get; set; }                    // AMD: the D3D12 ones its process held at the last sighting that held any, comma-separated (a string: arrays merge as sets); null = none seen since this was kept
     public HashSet<string>? WarmedKeys { get; set; }         // ...the ones the last complete warm held open; null = not recorded
     public HashSet<string>? WarmedParts { get; set; }        // AMD: the D3D12 file sets the last complete warm held open (Vendors.AmdAppCache.Part); null = not recorded
+    public bool MissedTwice { get; set; }                    // the warm before the last complete one missed the game too (ScsKiller.CantReach)
     public Dictionary<string, string> GameParts { get; set; } = [];   // AMD: sets of its keys a launch after the warm used instead of the warm's, with the driver as in GameKeyDrivers
     public bool KeysByPath { get; set; }                     // its keys shared with a game of the same exe name were sorted out (ScsKiller.SortTwinKeys)
     public HashSet<string> DisputedKeys { get; set; } = [];  // ...the ones it dropped then: still another game's claim until its own process shows (ScsKiller.LearnKeys)
@@ -233,6 +232,7 @@ public sealed class GameRecord
     public string? CompileFailedBuild { get; set; }          // Game.Version ("" without one) whose last compile failed or was refused; null = none since the last complete one
     public string? CompileFailedWhy { get; set; }            // that compile's error without its log path (ScsKiller.WithoutLog), the home folder masked; null = none kept
     public BeforeAfterRecord? BeforeAfter { get; set; }      // a before and after recording in progress, or the last one done; null = none
+    public int CreatingCompiles { get; set; }                // complete compiles that created pipelines (SupportPopup): clearing the cache keeps it
 }
 
 /// <summary>A game's before and after recording (ScsKiller.BeforeAfter). A run is the first launch whose #session stamp is

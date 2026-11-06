@@ -51,7 +51,8 @@ public sealed partial class SteamSource(string? steamRoot = null) : IGameSource,
                             continue;
                         }
                         var exe = Known?.GetValueOrDefault($"steam:{id}") is { Version: { } was } k && was == build && k.InstallDir.Equals(install, StringComparison.OrdinalIgnoreCase)
-                            && File.Exists(k.ExePath) && !GameFiles.NotTheGameExe(install, k.ExePath) ? k.ExePath : GameFiles.FindExe(install);
+                            && File.Exists(k.ExePath) && !GameFiles.NotTheGameExe(install, k.ExePath) ? k.ExePath
+                            : GameFiles.FindExe(install, steamLaunch: LaunchExe(Apps(AppInfoPath(root), new HashSet<uint> { id })?.GetValueOrDefault(id), Values(text, "BetaKey").LastOrDefault()));   // MountedConfig's, after UserConfig's
                         if (exe == null)
                         {
                             noExe.Add((id, V("name") ?? dir, install));
@@ -319,6 +320,21 @@ public sealed partial class SteamSource(string? steamRoot = null) : IGameSource,
     internal static string AppInfoPath(string root, bool wine, string? client, Func<string, string?> dos) =>
         !wine || string.IsNullOrEmpty(client) ? Path.Combine(root, "appcache", "appinfo.vdf")
         : dos(client) is { Length: > 0 } steam ? Path.Combine(steam, "appcache", "appinfo.vdf") : "";
+
+    /// <summary>The executable, as Steam writes it, of the Windows launch entry (appinfo config/launch) a 64-bit Steam starts for
+    /// <paramref name="branch"/> (an appmanifest's BetaKey; none: public): the branch's own entries first, then type "default".
+    /// Null without one.</summary>
+    internal static string? LaunchExe(Dictionary<string, object>? app, string? branch)
+    {
+        if (app?.GetValueOrDefault("config") is not Dictionary<string, object> config || config.GetValueOrDefault("launch") is not Dictionary<string, object> launch) return null;
+        static string? Of(Dictionary<string, object> e, string key) => (e.GetValueOrDefault("config") as Dictionary<string, object>)?.GetValueOrDefault(key) as string;
+        branch = string.IsNullOrEmpty(branch) ? "public" : branch;
+        return launch.Values.OfType<Dictionary<string, object>>()
+            .Where(e => (Of(e, "oslist") is not { } os || os.Contains("windows", StringComparison.OrdinalIgnoreCase)) && Of(e, "osarch") != "32"
+                && (Of(e, "betakey") is not { } key || key.Equals(branch, StringComparison.OrdinalIgnoreCase)))
+            .OrderByDescending(e => Of(e, "betakey") != null).ThenByDescending(e => "default".Equals(e.GetValueOrDefault("type") as string, StringComparison.OrdinalIgnoreCase))
+            .Select(e => e.GetValueOrDefault("executable") as string).FirstOrDefault(e => !string.IsNullOrEmpty(e));
+    }
 
     /// <summary>The appinfo object (common, config...) of the given app ids (null: all) from appinfo.vdf (binary KeyValues, v28 or v29),
     /// streamed: other apps are skipped by their size. Null when the file is missing or not

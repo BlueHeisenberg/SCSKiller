@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
@@ -28,6 +29,10 @@ public sealed class ContentDialog : Border
     /// <summary>Runs on the primary button instead of closing; true closes the dialog, false keeps it open (an answer to show).</summary>
     public Func<Task<bool>>? PrimaryButtonClick { get; set; }
     public double ContentMaxHeight { get; set; } = 560;
+    /// <summary>An X in the corner, which answers as Esc does.</summary>
+    public bool ShowsX { get; set; }
+    /// <summary>A row per button: texts too long for equal columns.</summary>
+    public bool StackedButtons { get; set; }
 
     bool primaryEnabled = true;
     public bool IsPrimaryButtonEnabled { get => primaryEnabled; set { primaryEnabled = value; if (primary != null) primary.IsEnabled = value; } }
@@ -81,7 +86,7 @@ public sealed class ContentDialog : Border
         Res(BackgroundProperty, "LayerFillColorAltBrush", top);
 
         // as WinUI lays them out: equal columns, a lone button in the right half
-        var buttons = new Grid { ColumnSpacing = 8 };
+        var buttons = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
         int count = new[] { PrimaryButtonText, SecondaryButtonText, CloseButtonText }.Count(b => !string.IsNullOrEmpty(b));
         if (count == 1) buttons.ColumnDefinitions.Add(new(GridLength.Star));
         void Add(string? text, ContentDialogButton kind, ContentDialogResult result)
@@ -95,8 +100,16 @@ public sealed class ContentDialog : Border
                 Close(result);
             };
             if (kind == ContentDialogButton.Primary) (primary, b.IsEnabled) = (b, primaryEnabled);
-            Grid.SetColumn(b, buttons.ColumnDefinitions.Count);
-            buttons.ColumnDefinitions.Add(new(GridLength.Star));
+            if (StackedButtons)
+            {
+                Grid.SetRow(b, buttons.RowDefinitions.Count);
+                buttons.RowDefinitions.Add(new(GridLength.Auto));
+            }
+            else
+            {
+                Grid.SetColumn(b, buttons.ColumnDefinitions.Count);
+                buttons.ColumnDefinitions.Add(new(GridLength.Star));
+            }
             buttons.Children.Add(b);
         }
         Add(PrimaryButtonText, ContentDialogButton.Primary, ContentDialogResult.Primary);
@@ -107,6 +120,17 @@ public sealed class ContentDialog : Border
 
         var grid = new Grid { RowDefinitions = new("*,Auto"), Children = { top, bottom } };
         Grid.SetRow(bottom, 1);
+        if (ShowsX)
+        {
+            var x = new Button
+            {
+                Classes = { "Subtle" }, Width = 38, Height = 38, Padding = new(0), Margin = new(0, 5, 5, 0), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, Content = new TextBlock { Classes = { "Icon" }, Text = Glyphs.Dismiss },
+            };
+            AutomationProperties.SetName(x, "Close");
+            x.Click += (_, _) => Close(ContentDialogResult.None);
+            grid.Children.Add(x);
+        }
         Child = grid;
     }
 

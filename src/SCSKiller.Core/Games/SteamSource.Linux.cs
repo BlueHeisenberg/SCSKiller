@@ -240,14 +240,7 @@ public sealed partial class SteamSource
     internal static string? RuntimeOf(string root, string proton, out string? why)
     {
         why = null;
-        string? id = null;
-        try
-        {
-            var manifest = Path.Combine(proton, "toolmanifest.vdf");
-            if (File.Exists(manifest) && Small(manifest) is { } text) id = Child(KeyValues(text), "manifest")?.GetValueOrDefault("require_tool_appid") as string;
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-        if (!uint.TryParse(id, out var app))
+        if (RuntimeApp(proton) is not { } app)
         {
             why = $"the Proton in {proton} doesn't run in Steam's Linux runtime (Proton 5.13 and later do)";
             return null;
@@ -262,6 +255,22 @@ public sealed partial class SteamSource
         return null;
     }
 
+    /// <summary>The Steam app of the Linux runtime Proton <paramref name="proton"/> runs in (its toolmanifest.vdf's require_tool_appid), null when it names none.</summary>
+    internal static uint? RuntimeApp(string proton)
+    {
+        try
+        {
+            var manifest = Path.Combine(proton, "toolmanifest.vdf");
+            if (File.Exists(manifest) && Small(manifest) is { } text && Child(KeyValues(text), "manifest")?.GetValueOrDefault("require_tool_appid") is string id
+                && uint.TryParse(id, out var app)) return app;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        return null;
+    }
+
     /// <summary>The runtime's launcher, as Steam runs a tool in it.</summary>
     public const string EntryPoint = "_v2-entry-point";
+
+    /// <summary>The apps of Steam Linux Runtime 4, which Proton 11 asks for, and of soldier, which older Protons do.</summary>
+    internal const uint Runtime4App = 4183110, SoldierApp = 1391110;
 }

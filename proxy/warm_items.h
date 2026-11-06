@@ -5,6 +5,8 @@
 #include <cstdint>
 
 constexpr wchar_t kItemsFile[] = L"scskiller_items.bin";
+// A memory restart's item states for the next process: u64 from, u64 n12, then the states as in the items file.
+constexpr wchar_t kCarryFile[] = L"scskiller_carry.bin";
 constexpr uint64_t kItemsMagic = 0x31534D4554494B53;  // "SKITEMS1"
 struct ItemsHeader {
     uint64_t magic, pid, first, n12, total;  // pid: the child's, so no earlier child's file is taken; the states of items [0, n12) follow, one byte each

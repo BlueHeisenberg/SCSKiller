@@ -147,6 +147,14 @@ static partial class Screenshots
             if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") == "oldplans") return;
         }
 
+        // SCSKILLER_SHOTS=support takes only the support popup, dark
+        if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") is null or "support")
+        {
+            main.RequestedThemeVariant = ThemeVariant.Dark;
+            await Dialog(StartDialogs.SupportDialog(), "support-popup");
+            if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") == "support") return;
+        }
+
         // The AES key dialog empty and with keys pasted (made-up hex), then a paste with refused lines, dark only.
         // SCSKILLER_SHOTS=aes takes only these.
         main.RequestedThemeVariant = ThemeVariant.Dark;

@@ -35,6 +35,24 @@ public sealed class CarvedReader : IEngineReader
 
     static string? ForkOf(string installDir) =>
         File.Exists(GameFiles.Find(installDir, "All.psc")) && File.Exists(GameFiles.Find(installDir, "LangDef.tsc")) ? Zouna : null;
+    /// <summary>ScsKiller's log: which file decided a game's old API, and an exe <see cref="ApiExe"/> took instead of the game's.</summary>
+    public static Action<string>? Warn;
+
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> Logged = new();   // once per process, not every evaluation
+
+    // a game without a name is D3D9Exe's, asked at every scan
+    static void Once(Game game, string line)
+    {
+        if (game.Name.Length > 0 && Logged.TryAdd(line, 0)) Warn?.Invoke(line);
+    }
+
+    /// <summary><paramref name="api"/>, logged with the file that decided it, by name only: users share these logs.</summary>
+    static string Decided(Game game, string api, string file)
+    {
+        Once(game, $"{game.Name}: reads as {api} from {Path.GetFileName(file)}");
+        return api;
+    }
+
     public const string Dx9Reason = "runs on DirectX 9: compiling it waits for DirectX 9 support in SCSKiller";
 
     /// <summary>The status line of a DirectX 9 game (<see cref="OldApi"/>), null for any other API.</summary>
@@ -651,22 +669,22 @@ public sealed class CarvedReader : IEngineReader
         var bin = Directory.EnumerateDirectories(dir, "bin", new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive, IgnoreInaccessible = true }).FirstOrDefault();
         var dlls = GameFiles.EnumerateFiles(dir, "*.dll").Concat(bin != null ? GameFiles.EnumerateFiles(bin, "*.dll", new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 1, IgnoreInaccessible = true }) : [])
             .Where(p => !Middleware.Any(m => Path.GetFileName(p).StartsWith(m, StringComparison.OrdinalIgnoreCase)));
-        string? old = null;
+        string? old = null, from = null;
         foreach (var p in dlls.Prepend(game.ExePath))
             try
             {
                 var imports = PeImports(p, out var agility);
                 if (agility || imports.Any(ApiDlls.ContainsKey)) return null;
-                if (imports.Any(D3D10Dlls.Contains)) old = "D3D10";
-                else if (old == null && imports.Contains("d3d9.dll", StringComparer.OrdinalIgnoreCase)) old = "D3D9";
+                if (imports.Any(D3D10Dlls.Contains)) (old, from) = ("D3D10", p);
+                else if (old == null && imports.Contains("d3d9.dll", StringComparer.OrdinalIgnoreCase)) (old, from) = ("D3D9", p);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException) { }
-        if (old != null) return old;
+        if (old != null) return Decided(game, old, from!);
         // ponytail: only DLLs named for the API are read whole (Source 1's shaderapidx9.dll), add others when a renderer is missed
         foreach (var p in dlls.Where(p => Path.GetFileName(p).Contains("dx9", StringComparison.OrdinalIgnoreCase)).Prepend(game.ExePath))
             // NamesApi is false for an unreadable file too: only a readable one is read for names
             if (ApiImports(p) != null && NamesApi(p, [.. D3D10Entry, .. D3D9Entry]) == false && NamesApi(p, D3DRuntimes) == null)
-                return NamesApi(p, D3D10Entry) == false ? "D3D10" : "D3D9";
+                return Decided(game, NamesApi(p, D3D10Entry) == false ? "D3D10" : "D3D9", p);
         return null;
     }
 
@@ -689,7 +707,9 @@ public sealed class CarvedReader : IEngineReader
         if (Path.GetDirectoryName(game.ExePath) is not { } dir || !Directory.Exists(dir) || ImportsApi(game.ExePath) != false
             || PeImports(game.ExePath, out _).Contains("mscoree.dll", StringComparer.OrdinalIgnoreCase)) return game;
         var others = GameFiles.EnumerateFiles(dir, "*.exe").Where(p => !SameDir(p, game.ExePath) && ImportsApi(p) == true).Take(2).ToList();
-        return others is [var one] && NamesApi(game.ExePath, [.. D3DNames, .. D3D10Entry, .. D3D9Entry]) == null ? game with { ExePath = one } : game;
+        if (others is not [var one] || NamesApi(game.ExePath, [.. D3DNames, .. D3D10Entry, .. D3D9Entry]) != null) return game;
+        Once(game, $"{game.Name}: API read from {Path.GetFileName(one)}, not {Path.GetFileName(game.ExePath)}");
+        return game with { ExePath = one };
     }
 
     /// <summary>The binary imports D3D9, D3D10, D3D11, D3D12 or Vulkan; null when it can't be read.</summary>

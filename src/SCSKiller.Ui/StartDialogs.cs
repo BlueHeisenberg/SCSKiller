@@ -32,17 +32,65 @@ static class StartDialogs
             await StartFlow.TraversalAsync(core, AskTraversalAsync);
             // recorded before it shows: if another dialog is up, About shows it
             if (WhatsNew.AtStart(Host.Store, firstRun: false, AppVersion.Current) is { } news) await TryShowAsync(WhatsNewDialog.Build(news));
+            await AskSupportAsync(main);
         };
         main.Opened += Once;
 
         async void Once(object? _, EventArgs __)
         {
             main.Opened -= Once;
+            if (AppStore.Moved == null && core.Settings.SupportFirstUse == null) SaveSupport(core, core.Settings with { SupportFirstUse = DateTimeOffset.UtcNow });
             await run();
         }
     }
 
-    static async Task<ContentDialogResult?> TryShowAsync(ContentDialog dialog) => App.Main.TryShowDialog(dialog) is { } shown ? await shown : null;
+    static bool dialogShown;
+
+    static async Task<ContentDialogResult?> TryShowAsync(ContentDialog dialog)
+    {
+        if (App.Main.TryShowDialog(dialog) is not { } shown) return null;
+        dialogShown = true;
+        return await shown;
+    }
+
+    /// <summary>Checked once per opening, last. A skipped opening costs no try, and a try is spent as it shows: quitting from it counts as X.</summary>
+    static async Task AskSupportAsync(Window main)
+    {
+        try
+        {
+            if (Host.Core is not ScsKiller k || AppStore.Moved != null || !SupportPopup.TimeToAsk(k.Settings, DateTimeOffset.UtcNow)) return;
+            // true until a scan has listed the games, which the rule reads too
+            for (var i = 0; i < SupportPopup.ListChecks && await Task.Run(() => k.GameRunning()); i++) await Task.Delay(SupportPopup.ListCheckEvery);
+            var earned = await Task.Run(() => SupportPopup.Earned(k.Games, k.Store.LoadGame));
+            var gameOpen = await Task.Run(() => k.GameRunning());
+            // nothing awaits from here to the show
+            var compiling = Busy.IsHeld() || k.Compiling || k.Queue.Any(q => !q.PlanCheck && Fmt.Active(q));
+            if (dialogShown || !main.IsVisible || main.WindowState == WindowState.Minimized
+                || !SupportPopup.Due(k.Settings, DateTimeOffset.UtcNow, App.Account.SignedIn, gameOpen, compiling, earned)
+                || App.Main.TryShowDialog(SupportDialog()) is not { } shown) return;
+            SaveSupport(k, SupportPopup.Asked(k.Settings, DateTimeOffset.UtcNow));
+            var answer = await shown;
+            if (answer == ContentDialogResult.None) return;
+            SaveSupport(k, SupportPopup.Answered(k.Settings));
+            if (answer == ContentDialogResult.Primary) await main.Launcher.LaunchUriAsync(new Uri(SupportPopup.Link));
+        }
+        catch (Exception e) { Host.Log?.Report($"the support popup failed: {e.Message}"); }
+    }
+
+    // a settings.json that can't be written costs a repeat of the popup, never the app or the answer on screen
+    static void SaveSupport(IScsKiller core, Settings s)
+    {
+        try { core.Settings = s; }
+        catch (Exception e) { Host.Log?.Report($"the support popup's state wasn't saved: {e.Message}"); }
+    }
+
+    /// <summary>Primary: the Patreon page, Secondary: no, each never asked again. X or Esc: <see cref="ContentDialogResult.None"/>.</summary>
+    public static ContentDialog SupportDialog() => new()
+    {
+        Title = "Enjoying SCSKiller?", Content = "If it's been useful to you, you can support it on Patreon.",
+        PrimaryButtonText = "Okay, you earned it, take my money", SecondaryButtonText = "Stop bothering me, shader man",
+        ShowsX = true, StackedButtons = true,
+    };
 
     static async Task<WelcomeAnswer?> AskWelcomeAsync(Task<WelcomeContent?> fetch)
     {
@@ -116,9 +164,41 @@ static class StartDialogs
 
     static bool askingOldPlans;
 
-    /// <summary>A game with a lot of cache its version and plan don't use (<see cref="ScsKiller.OldPlansNotice"/>), asked once:
-    /// Delete and compile clears it as Clear cache does, then compiles, Delete takes only its earlier versions' folders. Keep it or
-    /// Esc keeps it.</summary>
+    /// <summary>Before a warm (<see cref="ScsKiller.OldPlansQuestion"/>): Delete and compile true, Keep it, Enter or Esc false, null when
+    /// it wasn't shown or closed unanswered.</summary>
+    public static Task<bool?> AskBeforeWarmAsync((string Title, string Text, bool Compile) n, CancellationToken close)
+    {
+        var answer = new TaskCompletionSource<bool?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!Host.Ui.TryEnqueue(async () =>
+        {
+            try
+            {
+                if (close.IsCancellationRequested || !App.Main.IsVisible || App.Main.WindowState == WindowState.Minimized)
+                {
+                    answer.TrySetResult(null);
+                    return;
+                }
+                var dialog = OldPlansDialog(n);
+                using (close.Register(() => Host.Ui.TryEnqueue(dialog.Hide)))
+                {
+                    // a dialog open at the start, such as What's new, shows first: the wait for an answer runs meanwhile
+                    var shown = App.Main.TryShowDialog(dialog);
+                    while (shown == null && !close.IsCancellationRequested)
+                    {
+                        await Task.Delay(250);
+                        if (!close.IsCancellationRequested) shown = App.Main.TryShowDialog(dialog);
+                    }
+                    dialogShown |= shown != null;
+                    answer.TrySetResult(shown != null && await shown is var r && !close.IsCancellationRequested ? r == ContentDialogResult.Primary : null);   // Hide also ends it as None
+                }
+            }
+            catch (Exception e) { answer.TrySetException(e); }
+        })) answer.TrySetResult(null);
+        return answer.Task;
+    }
+
+    /// <summary>A game with a lot of cache of its earlier versions (<see cref="ScsKiller.OldPlansNotice"/>), asked once: Delete takes
+    /// those folders. Keep it or Esc keeps them.</summary>
     public static async Task AskOldPlansAsync(ScsKiller k)
     {
         if (askingOldPlans) return;
@@ -131,10 +211,9 @@ static class StartDialogs
             await Task.Run(() => k.OldPlansAnswered(id, keep: !clear));
             if (!clear) return;
             string? error;
-            try { error = n.Compile ? await Task.Run(() => k.ClearGameCache(id)) ? null : "No shader-cache files of this game were found." : await Task.Run(() => k.DeleteOrphanedD3DSCache(id)) > 0 ? null : "No earlier versions' shader cache could be deleted."; }
+            try { error = await Task.Run(() => k.DeleteOrphanedD3DSCache(id)) > 0 ? null : "No earlier versions' shader cache could be deleted."; }
             catch (Exception e) { error = e.Message; }
             if (error != null) await TryShowAsync(new ContentDialog { Title = "Couldn't clear the cache", Content = error, CloseButtonText = "OK" });
-            else if (n.Compile) k.Compile(id);
         }
         finally { askingOldPlans = false; }
     }

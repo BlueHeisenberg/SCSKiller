@@ -36,7 +36,7 @@ public sealed record CacheFile(string Path, long Length, DateTime WrittenUtc, lo
 /// other items' included; a file of a unit not in it was added since. Note: shown with the item. Kept: shown, never deleted
 /// (Mesa's file of a Steam game, see <see cref="MesaLinuxAppCache"/>).</summary>
 public sealed record CacheItem(string Name, CacheGroupKind Kind, IReadOnlyList<CacheFile> Files, IReadOnlyList<string> GameIds,
-    IReadOnlyCollection<string> Seen, string? Note = null, bool Kept = false)
+    IReadOnlyCollection<string> Seen, string? Note = null, bool Kept = false, bool ByFiles = false)   // ByFiles: a left-out record was dropped from its keys (Claims)
 {
     public long Bytes => Files.Sum(f => f.Length);
 
@@ -143,7 +143,8 @@ public sealed partial class ScsKiller
             _ => (GpuVendor.Unknown, []),
         };
         var notes = new Dictionary<string, string>();
-        var claims = Claims(own, notes);
+        var leftBehind = new HashSet<string>();
+        var claims = Claims(own, notes, leftBehind);
 
         var items = new Dictionary<(CacheGroupKind Kind, string Name), (List<FileInfo> Files, HashSet<string> Ids)>();
         void Add(CacheGroupKind kind, string name, IEnumerable<FileInfo> files, IEnumerable<string>? ids = null)
@@ -270,7 +271,7 @@ public sealed partial class ScsKiller
                         own == GpuVendor.Nvidia && NvidiaAppCache.Key(f.Name) != null ? NvidiaAppCache.UsedBytes(f.FullName) : null)).ToList(),
                         i.Value.Ids.Order().ToList(), Seen(i.Value.Files), kept.Contains(i.Key) ? MesaKept : g.Key == CacheGroupKind.Uninstalled ? notes.GetValueOrDefault(i.Key.Name)
                             : oldVersions.Contains(i.Key) ? OldVersionsNote : null,
-                        kept.Contains(i.Key)))
+                        kept.Contains(i.Key), i.Value.Ids.Overlaps(leftBehind)))
                     .OrderByDescending(p => p.Bytes).ToList(),
                 g.Key == CacheGroupKind.OtherVendor ? note : null))
             .ToList();
@@ -297,8 +298,9 @@ public sealed partial class ScsKiller
     }
 
     /// <summary>Driver cache key -> the games that claim it: learned keys, on AMD the exe name's hash, and on NVIDIA every game
-    /// whose exe has the same file name (the key is that name's). <paramref name="notes"/> gets uninstalled games' notes.</summary>
-    Dictionary<string, List<(CacheGroupKind Kind, string Name, string Id)>> Claims(GpuVendor own, Dictionary<string, string>? notes = null)
+    /// whose exe has the same file name (the key is that name's). A record left out of the list for its folder's listed game
+    /// keeps only keys that game doesn't claim, and <paramref name="leftBehind"/> gets that game. <paramref name="notes"/> gets uninstalled games' notes.</summary>
+    Dictionary<string, List<(CacheGroupKind Kind, string Name, string Id)>> Claims(GpuVendor own, Dictionary<string, string>? notes = null, HashSet<string>? leftBehind = null)
     {
         var claims = new Dictionary<string, List<(CacheGroupKind Kind, string Name, string Id)>>(StringComparer.OrdinalIgnoreCase);
         var byExe = new List<(HashSet<string> Exes, CacheGroupKind Kind, string Name, string Id)>();
@@ -316,16 +318,24 @@ public sealed partial class ScsKiller
             byExe.Add((exeNames.OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase), kind, name, id));
         }
 
+        static string ExeFolder(string exe) => GameFiles.DirKey(Path.GetDirectoryName(exe) ?? exe);
+        var exeFolders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var games = Games;
         foreach (var g in games.Select(s => s.Game).Concat(HiddenGames))   // a hidden game is still installed: its cache isn't an uninstalled game's
         {
             var rec = Store.LoadGame(g.Id);
             Claim(rec, [Path.GetFileName(g.ExePath), rec.LaunchedExeName, rec.WarmedExeName], CacheGroupKind.Installed, g.Name, g.Id);
+            exeFolders[ExeFolder(g.ExePath)] = g.Id;
         }
+        var folderOwners = new Dictionary<string, string>();
         foreach (var (id, rec) in UninstalledRecords(games))
         {
             var name = UninstalledName(id, rec);
-            if (notes != null && rec.RecorderInstallDir is { } dir && Directory.Exists(dir))
+            // a list that read no store (Settings.ScanAtStart off) left out only what's live: the record's own exe tells for the rest
+            var owner = _folderOwner.GetValueOrDefault(Store.GameDir(id)) is { } left && exeFolders.ContainsValue(left) ? left
+                : new[] { rec.D3DSCacheExe, rec.RecorderExe }.OfType<string>().Where(Path.IsPathFullyQualified).Select(e => exeFolders.GetValueOrDefault(ExeFolder(e))).FirstOrDefault(o => o != null);
+            if (owner != null) folderOwners[id] = owner;
+            else if (notes != null && rec.RecorderInstallDir is { } dir && Directory.Exists(dir))
                 notes[name] = $"Its folder {dir} is still there. It may be on a drive or in a store SCSKiller didn't find this time.";
             Claim(rec, [UninstalledExe(rec), rec.LaunchedExeName, Path.GetFileName(rec.RecorderExe)], CacheGroupKind.Uninstalled, name, id);
         }
@@ -335,6 +345,16 @@ public sealed partial class ScsKiller
                 foreach (var (kind, _, id) in list.ToList())
                     foreach (var o in byExe.Where(o => o.Id != id && byExe.Any(m => m.Id == id && m.Exes.Overlaps(o.Exes)) && !list.Any(x => x.Id == o.Id)))
                         list.Add((kind == CacheGroupKind.OldBuild ? kind : o.Kind, o.Name, o.Id));
+        // a delete forgets every claimant's compile: a record left out of the list has no share in its folder owner's keys
+        foreach (var list in claims.Values)
+        {
+            var ids = list.Select(x => x.Id).ToHashSet();
+            foreach (var (left, owner) in folderOwners.Where(o => ids.Contains(o.Key) && ids.Contains(o.Value)))
+            {
+                list.RemoveAll(x => x.Id == left);
+                leftBehind?.Add(owner);
+            }
+        }
         return claims;
     }
 
@@ -497,7 +517,8 @@ public sealed partial class ScsKiller
                     skipped.Add($"{item.Name}: {running} is running");
                     continue;
                 }
-                if (item is { Kind: CacheGroupKind.Installed, GameIds: [var only] } && games.ContainsKey(only))
+                // not with a left-out record on its keys: an uninstalled game may share one (ClearKeys counts listed games), so only the row's files go
+                if (item is { Kind: CacheGroupKind.Installed, GameIds: [var only], ByFiles: false } && games.ContainsKey(only))
                 {
                     // the game page's Clear cache, which takes the game's lock itself
                     if (!cleared.Add(only)) continue;

@@ -640,7 +640,8 @@ public sealed partial class ScsKiller
     /// GLCache folder (<see cref="SteamGlFiles"/>). Null: none known.</summary>
     long? CacheOnDiskOf(Game g, EngineInfo? engine, GameRecord rec)
     {
-        long? keyed = rec.CacheKeys.Count > 0 && AppCache != null ? AppCache.SizeOf(AppCache is Vendors.NvidiaAppCache ? LiveKeys(rec) : rec.CacheKeys) : null;
+        var own = OwnKeys(g, rec);
+        long? keyed = own.Count > 0 && AppCache != null ? AppCache.SizeOf(AppCache is Vendors.NvidiaAppCache ? LiveKeys(rec) : own) : null;
         // AMD: of the warm's keys, only the file sets the warm filled, none once the game is seen using another (PartsMissed)
         if (keyed != null && AppCache is Vendors.AmdAppCache amd && rec.WarmedParts is { Count: > 0 } warmed)
         {
@@ -723,16 +724,25 @@ public sealed partial class ScsKiller
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
     }
 
-    /// <summary>For Clear cache's delete of <see cref="SteamGlFiles"/>: the game's lock, after the Linux placer took its
-    /// entries out of Steam's files. InvalidOperationException while a compile or a placement runs, or a before and after
-    /// recording has the folder set aside.</summary>
+    /// <summary>For Clear cache's delete of <see cref="SteamGlFiles"/>: the game's lock, held since before the Linux placer took
+    /// its entries out of Steam's files, so no placement puts them back before the clear's record says so.
+    /// InvalidOperationException while a compile or a placement runs, or a before and after recording has the folder set aside.</summary>
     FileStream SteamGlHeld(GameState s)
     {
         if (PairAsides().Any(a => a.PendingGame == s.Game.Id)) throw new InvalidOperationException($"{s.Game.Name}'s cache is set aside for its before and after recording, end it first");
-        (bool Done, string Status, IReadOnlyList<string>)? removed = null;
-        SteamPlaceOnce(s, remove: true, CancellationToken.None, ref removed);
-        if (removed is { Done: false } r) throw new InvalidOperationException(r.Status);
-        return CompileLock(s.Game.Id) ?? throw new InvalidOperationException($"A compile of {s.Game.Name} is in progress");
+        var own = CompileLock(s.Game.Id) ?? throw new InvalidOperationException($"A compile of {s.Game.Name} is in progress");
+        try
+        {
+            (bool Done, string Status, IReadOnlyList<string>)? removed = null;
+            SteamPlaceOnce(s, remove: true, CancellationToken.None, ref removed, own);
+            if (removed is { Done: false } r) throw new InvalidOperationException(r.Status);
+            return own;
+        }
+        catch
+        {
+            own.Dispose();
+            throw;
+        }
     }
 
     /// <summary>Steam's folder, whose filter file a Vulkan plan reads Steam's archives by (<see cref="SteamSources"/>); null:

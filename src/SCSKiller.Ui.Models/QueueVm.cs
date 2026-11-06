@@ -137,7 +137,7 @@ public sealed class QueueVm : Bindable
     static string NoteOf(QueueItem q, GameState? g) => q.Stage switch
     {
         QueueStage.Failed => "Failed: " + q.Error,
-        QueueStage.Stopped when (Fmt.FoldLine(q.GameId) ?? (ScsKiller.NotReached(g?.StatusReason) ? Format.Sentence(g!.StatusReason) : null)) is { } fold => fold,
+        QueueStage.Stopped when (Fmt.FoldLine(q.GameId) ?? (g == null ? null : ScsKiller.LaunchLine(g) ?? (ScsKiller.NotReached(g.StatusReason) ? Format.Sentence(g.StatusReason) : null))) is { } fold => fold,
         QueueStage.Stopped when q.Progress is { } p => $"Stopped at {p.Done:N0} of {p.Total:N0}: add it again to continue" + (q.Note is { } n ? " · " + n : ""),
         QueueStage.Stopped => "Stopped",
         QueueStage.Done => q.Note is { } n ? "Done · " + n : "Done",

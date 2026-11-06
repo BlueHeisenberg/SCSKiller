@@ -88,7 +88,7 @@ public static partial class VulkanLayer
             var file = Path.Combine(folder, SettingsName);
             using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(SettingsKey, writable: true))
                 foreach (var v in key?.GetValueNames().Where(v => Same(v, file)) ?? []) key!.DeleteValue(v, false);
-            if (Entries(file) != null) File.Delete(file);
+            if (File.Exists(file) && Entries(file) != null) File.Delete(file);   // File.Delete throws on a missing folder, a data folder that never had a Vulkan recorder
         }
         return mine;
     }

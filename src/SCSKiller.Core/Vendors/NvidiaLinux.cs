@@ -34,6 +34,11 @@ public static class NvidiaLinux
     /// its files within <see cref="Wine.WarmFiles"/>.</summary>
     public const long SegmentLimit = 3L << 29;
 
+    /// <summary><see cref="SegmentLimit"/> for a placed compile, whose sets aren't rewritten: other processes holding the
+    /// cache take numbers (two, measured on one game), and the six sets left hold what <see cref="PlacedCacheSize"/> takes at
+    /// <see cref="PlacedGrowth"/>. Where no hard links can be made, a rewrite of one still ends under <see cref="CacheFileIndexed"/>.</summary>
+    public const long PlacedSegmentLimit = 2L << 30;
+
     /// <summary>Where a Vulkan warm, which replays from its first pipeline each time, is stopped for good: its plan keeps its
     /// one file under it (<see cref="Caps"/>' VulkanCacheCap).</summary>
     public const long VulkanLimit = 7L << 29;
@@ -41,6 +46,11 @@ public static class NvidiaLinux
     /// <summary>How many times larger a set is once rewritten without its dictionary (<c>GlCacheNoDict</c>), at most: 1.50 to
     /// 1.74 measured.</summary>
     public const double RewriteGrowth = 1.75;
+
+    /// <summary>How many times its driver bytes a placed compile's set counts toward its budget (<see cref="PlacedCacheSize"/>),
+    /// though it stays as the driver wrote it: what fills Steam's files at level 19. Phantom Blade Zero's sets come to 1.41 times
+    /// that rewritten, by two compiles' sizes, and its compile stopped there filled them with 11% left out (measured).</summary>
+    public const double PlacedGrowth = 1.4;
 
     /// <summary>What the warm's files may hold, rewritten without a dictionary (<c>GlCacheNoDict</c>, 50 to 74% more
     /// than the driver's, measured): the rest of <see cref="CacheSize"/> is the game's own file's.</summary>

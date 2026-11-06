@@ -258,7 +258,7 @@ async Task<int> Status(string? query)
           exe        {g.Game.ExePath}
           runs as    {(rec.LaunchedExeName is { } l0 ? $"{l0} (seen {rec.LaunchedExeSeenAt:yyyy-MM-dd HH:mm})" : "not seen yet")}, warms stage {ScsKiller.WarmExeName(g.Game, rec)}
           engine     {(g.Engine is { } e ? string.Join(' ', new[] { Format.Engine(e) + (e.VersionGuessed ? " (guessed)" : ""), e.Fork, e.GraphicsApi }.OfType<string>()) + (e.Encrypted ? " encrypted" : "") + (e.Note is { } n ? " · " + n : "") : "-")}
-          status     {StatusName(g)}: {g.StatusReason}{(ScsKiller.DeliveryLine(g) is { } asd ? $"\n             {asd}" : "")}{(ScsKiller.CleanupLine(g) is { } cleanup ? $"\n             {cleanup}" : "")}
+          status     {StatusName(g)}: {ScsKiller.LaunchLine(g) ?? g.StatusReason}{(ScsKiller.DeliveryLine(g) is { } asd ? $"\n             {asd}" : "")}{(ScsKiller.CleanupLine(g) is { } cleanup ? $"\n             {cleanup}" : "")}
           anti-cheat {(ScsKiller.AntiCheatHeld(g) ? "couldn't be fully checked, recorder kept out" : g is { AntiCheatUnfinished: true, Vac: false } ? "check didn't finish, kept out until it does" : g.AnyAntiCheat ? ScsKiller.AntiCheatName(g) : "None")}
           shaders    {g.ShaderCount?.ToString() ?? "-"}
           plan       {(g.Plan is { } p ? $"{p.Recorded} recorded + {p.Generated} generated + {p.D3D11Shaders} DirectX 11 shaders{(p.D3D11Draws > 0 ? $" ({p.D3D11Draws} vertex shaders with recorded layouts)" : "")} + {p.MiddlewareItems} middleware, {p.RootSignatures} root sigs, rule verified: {p.RootSigRuleVerified}" : "-")}
@@ -269,7 +269,7 @@ async Task<int> Status(string? query)
           shared     {(g.SharedHashes ? "used" : "not used: nothing is downloaded for this game and its plans leave the downloads out")}, {(g.SharedChoice == null ? "follows Settings" : "set for this game (shared <game> follow)")}
           warmed     {(g.WarmedAt is { } w ? $"{w:yyyy-MM-dd HH:mm} for driver {g.WarmedDriverVersion} in {Hms(g.LastWarmTime)}" + (ScsKiller.WarmCounts(g.LastWarmFailed ?? 0, g.LastWarmSkipped ?? 0, g.LastWarmCrashed ?? 0, g.LastWarmDriverSkipped ?? 0, g.LastWarmUnbuilt ?? 0, g.Plan, g.LastWarmInvalid ?? 0, g.LastWarmUnsupported ?? 0, g.LastWarmKnown ?? 0, g.LastWarmFailedBy, g.LastWarmCrashedBefore ?? 0) is { } counts ? $", {counts}" : "") : "never")}
           failed     {ScsKiller.RefusedLine(g) ?? "-"}{(k.WhyFailed(g.Game.Id) is { } failedWhy ? $" Why: {failedWhy}" : "")}
-          covered    {(ScsKiller.ShownPercent(g) is { } pct ? $"{pct}%" : "-")} for {(g.Engine is { } api && ScsKiller.ApiKey(api.GraphicsApi) is { } key ? ScsKiller.KeyName(key) : "-")}
+          covered    {(ScsKiller.ShownPercent(g) is { } pct ? $"{pct}%" : "-")} for {(g.Engine is { } api && ScsKiller.ApiKey(api.GraphicsApi) is { } key ? ScsKiller.KeyName(key) : "-")}{(g.WarmedRoomLeft is > 0 and var unreached ? $", {unreached:N0} of those not compiled" : "")}
           other APIs {(g.KeptApis is { Count: > 0 } kept ? string.Join(", ", kept.Select(a => $"{ScsKiller.KeyName(a.Api)} compiled {a.WarmedAt:yyyy-MM-dd HH:mm} for driver {a.DriverVersion}{(a.CurrentDriver ? "" : " (an older driver)")}")) : "-")}
           cache      {(g.CacheOnDisk is { } c ? $"{Format.Bytes(c)} on disk{(Format.InUseShown(c, g.CacheInUse) ? $", {Format.Bytes(g.CacheInUse)} in use" : "")} (driver-cache files its warms or the game had open)" : "-")}{(g.WindowsCache is { } wc ? $", {Format.Bytes(wc)} in its D3DSCache folder" : "")}
           keys       {(rec.CacheKeys.Count > 0 ? string.Join(", ", rec.CacheKeys.Order()) : "-")}{(k.WarmAgs(g.Game.Id) is { } ags ? $" (compiles register its AGS app name {ags.App} as the game does: the exe name's case doesn't matter)" : AmdAppCache.IsNameHashed(rec.CacheKeys, ScsKiller.WarmExeName(g.Game, rec)) == false ? " (an app profile's key, not the exe name's hash: the name's case doesn't matter)" : "")}
@@ -819,7 +819,7 @@ async Task<int> RehydrateCommand()
     Console.WriteLine($"index content hash {index.ContentHash}");
     var r = SCSKiller.Core.Planning.Rehydrate.Run(args[2], outDb, g.Game, engine, reader, index, Opt("--expect"),
         moreBlobs: h => SCSKiller.Core.Planning.Middleware.Blobs(g.Game, h));
-    Console.WriteLine($"referenced {r.Referenced}, already in db {r.AlreadyPresent}, found {r.Found} ({r.FoundInMiddleware} in middleware DLLs), missing {r.Missing.Count}" +
+    Console.WriteLine($"referenced {r.Referenced}, already in db {r.AlreadyPresent}, found {r.Found} ({r.FoundInMiddleware} in middleware, D3D12 runtime or overlay DLLs), missing {r.Missing.Count}" +
         (r.ContentHashMatches is { } m ? $", content hash {(m ? "matches" : "DIFFERS")}" : "") + $" -> {outDb} ({r.OutputBytes:N0} bytes)");
     foreach (var h in r.Missing) Console.WriteLine($"  missing {h}");
     return r.Complete ? 0 : 2;

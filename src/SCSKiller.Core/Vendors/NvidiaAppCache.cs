@@ -47,24 +47,38 @@ public sealed class NvidiaAppCache(string dir, string? vulkanDir = null) : IAppC
 
     /// <summary>The bytes the file holds: a u64 at header offset 8 (lengths step 16x from 4 KiB to 256 MiB, then double).
     /// Null when unreadable (the driver opens its files unshared while the device lives) or another layout (7e55 files).</summary>
-    public static long? UsedBytes(string path)
+    public static long? UsedBytes(string path) => Read(path, out var used) ? used : null;
+
+    /// <summary>False when the file can't be opened: an open for its data is refused while a process holds it, whatever the
+    /// share mode (measured). True with no <paramref name="used"/>: read, another layout.</summary>
+    static bool Read(string path, out long? used)
     {
+        used = null;
         try
         {
             using var h = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             Span<byte> head = stackalloc byte[16];
-            if (RandomAccess.Read(h, head, 0) < head.Length || !head[..4].SequenceEqual("nvph"u8)) return null;
-            long used = System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(head[8..]);
-            return used > 0 && used <= RandomAccess.GetLength(h) ? used : null;
+            if (RandomAccess.Read(h, head, 0) < head.Length || !head[..4].SequenceEqual("nvph"u8)) return true;
+            long bytes = System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(head[8..]);
+            if (bytes > 0 && bytes <= RandomAccess.GetLength(h)) used = bytes;
+            return true;
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
     }
 
-    /// <summary>What the file holds (<see cref="UsedBytes"/>), else its length.</summary>
-    public static long Holds(FileInfo f) => UsedBytes(f.FullName) ?? f.Length;
+    /// <summary>What the file holds (<see cref="UsedBytes"/>), its length in another layout. Null when it can't be opened.</summary>
+    public static long? Holds(FileInfo f) => Read(f.FullName, out var used) ? used ?? f.Length : null;
 
-    /// <summary>What the keys' files hold (<see cref="Holds"/>): a file's length grows in steps, up to twice what it holds.</summary>
-    public long UsedOf(IEnumerable<string> keys) => FilesOf(keys).Sum(Holds);
+    /// <summary>What the keys' files hold (<see cref="Holds"/>): a file's length grows in steps, up to twice what it holds.
+    /// Null while one can't be opened: not known, and its length would pass as held.</summary>
+    public long? UsedOf(IEnumerable<string> keys)
+    {
+        long used = 0;
+        foreach (var f in FilesOf(keys))
+            if (Holds(f) is { } held) used += held;
+            else return null;
+        return used;
+    }
 
     public IReadOnlySet<string> KeysOpenBy(string exeFileName) => AppCacheFiles.KeysOpenBy(exeFileName, All());
 

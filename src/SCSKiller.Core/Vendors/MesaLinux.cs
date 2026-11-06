@@ -51,6 +51,10 @@ public static class MesaLinux
     /// and steam_precompiled_&lt;hash&gt; (measured), which Steam replaces and rotates.</summary>
     public static bool SteamsFile(string name) => name.StartsWith("steam_", StringComparison.Ordinal);
 
+    /// <summary>A file of a game's Mesa folder that says nothing about the warm: Steam's own, or Mesa's index, which each cache start makes
+    /// again and no read of the entries uses (Mesa's disk_cache_get).</summary>
+    public static bool NotWarmData(string name) => SteamsFile(name) || name == "index";
+
     /// <summary>A variable that moves Mesa's disk cache or changes its type, of any Mesa version.</summary>
     public static bool CacheVariable(string name) =>
         name.StartsWith("MESA_SHADER_CACHE", StringComparison.Ordinal) || name.StartsWith("MESA_GLSL_CACHE", StringComparison.Ordinal)

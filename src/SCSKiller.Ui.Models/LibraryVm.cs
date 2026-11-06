@@ -84,7 +84,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     {
         _ when s.CompileUnreached => "The compile didn't help",
         _ when PartlyCompiled => "Partly compiled",
-        _ when ScsKiller.NotReached(s.StatusReason) => "Not reached yet",
+        _ when ScsKiller.ShownNotReached(s) => "Not reached yet",
         GameStatus.Warmed when Partly => "Partly warmed",
         GameStatus.Warmed when s.Plan?.RecordedOnly == true => "Warmed (recorded pipelines only)",
         GameStatus.Warmed => "Warmed",
@@ -105,7 +105,8 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     /// <summary>The whole reason: the row's tooltip and the game page's status text.</summary>
     public string FullNote => s.Status switch
     {
-        _ when s.CompileUnreached || PartlyCompiled || ScsKiller.NotReached(s.StatusReason) || ScsKiller.LinkedAway(s.StatusReason) => s.StatusReason,
+        _ when ScsKiller.LaunchLine(s) is { } launch => launch,
+        _ when s.CompileUnreached || PartlyCompiled || ScsKiller.ShownNotReached(s) || ScsKiller.LinkedAway(s.StatusReason) => s.StatusReason,
         GameStatus.Warmed when Partly => $"driver {s.WarmedDriverVersion} · {s.Careful!.LaunchCompiled * 100:0}% still compiled at its first launch",
         GameStatus.Warmed => $"driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? " · a recording compiles the rest"
             : ScsKiller.RtAfterRecording(s) ? " · " + ScsKiller.RtAfterRecordingNote : "") + Format.KeyNote(s),
@@ -130,7 +131,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     /// <summary>The status text's style: StatusAccent, StatusPrimary, StatusWarn or StatusMuted.</summary>
     public string StatusStyle => s.Status switch
     {
-        _ when s.CompileUnreached || PartlyCompiled || ScsKiller.NotReached(s.StatusReason) || ScsKiller.LinkedAway(s.StatusReason) => "StatusWarn",
+        _ when s.CompileUnreached || PartlyCompiled || ScsKiller.ShownNotReached(s) || ScsKiller.LinkedAway(s.StatusReason) => "StatusWarn",
         GameStatus.Warmed when Partly => "StatusWarn",
         GameStatus.Warmed => "StatusAccent",
         GameStatus.Ready => "StatusPrimary",

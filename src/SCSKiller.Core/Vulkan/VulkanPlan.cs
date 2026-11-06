@@ -428,8 +428,9 @@ public static partial class VulkanPlan
     /// one, whichever its hash map lists first. A pipeline that needs what no archive has is left out and counted in
     /// <see cref="Planner.SkippedFile"/>, as one no archive has. <see cref="ValidatedFile"/> names the modules of this PC's
     /// archives. Steam's archives are only read, and each file is written new and renamed over its
-    /// name, so a link there is replaced, never written through.</summary>
-    public static void Materialize(Plan plan, IReadOnlyList<FozSource> sources, string workDir, IProgress<string>? log = null)
+    /// name, so a link there is replaced, never written through. With <paramref name="compiled"/> a top-up's: the pipelines
+    /// <see cref="LeaveOut"/> would take out aren't written, nor anything only they are created from. Returns how many that is.</summary>
+    public static long Materialize(Plan plan, IReadOnlyList<FozSource> sources, string workDir, IProgress<string>? log = null, IReadOnlySet<string>? compiled = null)
     {
         var (work, validated, skipped) = (Path.Combine(workDir, WorkFile), Path.Combine(workDir, ValidatedFile), Path.Combine(workDir, Planner.SkippedFile));
         if (new[] { work, validated, skipped }.Any(p => SteamPipelineCache.Owned(p)))
@@ -471,6 +472,17 @@ public static partial class VulkanPlan
             while (todo.TryPop(out var n))
                 if (keep.Add(n))
                     foreach (var r in refs[n]) todo.Push(r);
+            var written = keep;
+            long left = 0;
+            if (compiled != null)
+            {
+                written = new HashSet<string>(StringComparer.Ordinal);
+                todo = new Stack<string>(keep.Where(n => Foz.IsPipeline(byName[n].E.Tag) && !compiled.Contains(Key(n))));
+                while (todo.TryPop(out var n))
+                    if (written.Add(n))
+                        foreach (var r in refs[n]) todo.Push(r);
+                left = keep.Count(n => Foz.IsPipeline(byName[n].E.Tag)) - written.Count(n => Foz.IsPipeline(byName[n].E.Tag));
+            }
 
             WriteNew(work, dst =>
             {
@@ -478,7 +490,7 @@ public static partial class VulkanPlan
                 if (archives.SelectMany(a => a.Entries.Where(e => e.Tag == Foz.ApplicationInfo).Take(1).Select(e => (A: a, E: e))).FirstOrDefault() is { A: { } first } app)
                     Foz.Copy(first.File, app.E, dst);
                 foreach (var a in archives)
-                    foreach (var e in a.Entries.Where(e => keep.Contains(e.Name) && byName[e.Name].A == a)) Foz.Copy(a.File, e, dst);
+                    foreach (var e in a.Entries.Where(e => written.Contains(e.Name) && byName[e.Name].A == a)) Foz.Copy(a.File, e, dst);
             });
             var modules = keep.Select(n => byName[n]).Where(x => x.E.Tag == Foz.ShaderModule).ToList();
             WriteNew(validated, w =>
@@ -487,6 +499,7 @@ public static partial class VulkanPlan
                 foreach (var m in modules.Where(m => m.A.Source.Trusted)) Foz.AppendName(w, Foz.ShaderModule, m.E.Hash);
             });
             WriteNew(skipped, w => w.Write(Encoding.ASCII.GetBytes($"{wanted.Count(n => !keep.Contains(n))} 0")));
+            return left;
         }
         finally { foreach (var a in archives) a.Dispose(); }
     }

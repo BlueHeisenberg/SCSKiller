@@ -61,14 +61,77 @@ sealed unsafe class GlCacheDict : IDisposable
         catch (ZstdException e) { throw new InvalidDataException($"a dictionary couldn't be trained from the warm's entries: {e.Message}"); }
     }
 
+    /// <summary>The dictionary a warm set was written under, its tables shared by every <see cref="Reader"/>.</summary>
+    public sealed class SetDictionary : IDisposable
+    {
+        internal ZSTD_DDict_s* Tables { get; }
+        public uint Id { get; }
+
+        public SetDictionary(ReadOnlySpan<byte> dictionary)
+        {
+            Id = GlCacheFile.DictionaryId(dictionary) ?? throw new InvalidDataException("the dictionary isn't a zstd dictionary");
+            fixed (byte* d = dictionary) Tables = Methods.ZSTD_createDDict(d, (nuint)dictionary.Length);
+            if (Tables == null) throw new InvalidDataException("the dictionary doesn't load");
+        }
+
+        public void Dispose()
+        {
+            if (Tables != null) Methods.ZSTD_freeDDict(Tables);
+        }
+    }
+
+    /// <summary>One thread's decoder of a warm set's payloads (u32 size, one zstd frame) and its buffer.</summary>
+    public sealed class Reader : IDisposable
+    {
+        readonly ZSTD_DCtx_s* _dctx = Methods.ZSTD_createDCtx();
+        readonly Decompressor _plain = new();
+        byte[] _raw = [];
+
+        /// <summary>The payload decoded to exactly the bytes its u32 says, without a dictionary or else with its set's
+        /// <paramref name="own"/>; false when it doesn't decode so.</summary>
+        public bool Raw(ReadOnlySpan<byte> payload, SetDictionary? own, out ReadOnlySpan<byte> raw)
+        {
+            raw = default;
+            if (payload.Length < 4 || BinaryPrimitives.ReadUInt32LittleEndian(payload) is var size && size > int.MaxValue / 2) return false;
+            if (_raw.Length < size) _raw = new byte[Math.Max(size, 2L * _raw.Length)];
+            var into = _raw.AsSpan(0, (int)size);
+            var frame = payload[4..];
+            if (GlCacheFile.FrameDictId(payload) is not { } id) return false;
+            if (id == 0)
+                try
+                {
+                    if (_plain.Unwrap(frame, into) == size)
+                    {
+                        raw = into;
+                        return true;
+                    }
+                }
+                catch (ZstdException) { }   // a frame under a dictionary needn't name it
+            if (own == null || id != 0 && id != own.Id || _dctx == null) return false;
+            nuint n;
+            fixed (byte* src = frame)
+            fixed (byte* dst = into)
+                n = Methods.ZSTD_decompress_usingDDict(_dctx, dst, size, src, (nuint)frame.Length, own.Tables);
+            if (Methods.ZSTD_isError(n) || n != size) return false;
+            raw = into;
+            return true;
+        }
+
+        public void Dispose()
+        {
+            if (_dctx != null) Methods.ZSTD_freeDCtx(_dctx);
+            _plain.Dispose();
+        }
+    }
+
     /// <summary>One thread's compression and decompression contexts and buffers.</summary>
     public sealed class Worker : IDisposable
     {
         readonly GlCacheDict _owner;
         readonly ZSTD_CCtx_s* _cctx;
         readonly ZSTD_DCtx_s* _dctx;
-        readonly Decompressor _plain = new();
-        byte[] _raw = [], _payload = [], _check = [];
+        readonly Reader _reader = new();
+        byte[] _payload = [], _check = [];
 
         internal Worker(GlCacheDict owner)
         {
@@ -91,22 +154,8 @@ sealed unsafe class GlCacheDict : IDisposable
 
         static nuint Ok(nuint code) => Methods.ZSTD_isError(code) ? throw new InvalidDataException($"zstd: {Methods.ZSTD_getErrorName(code)}") : code;
 
-        /// <summary>A stored payload (u32 size, one plain zstd frame) decoded to exactly the bytes its u32 says; false when it
-        /// doesn't decode so.</summary>
-        public bool Raw(ReadOnlySpan<byte> payload, out ReadOnlySpan<byte> raw)
-        {
-            raw = default;
-            if (payload.Length < 4 || BinaryPrimitives.ReadUInt32LittleEndian(payload) is var size && size > int.MaxValue / 2) return false;
-            if (_raw.Length < size) _raw = new byte[Math.Max(size, 2L * _raw.Length)];
-            var into = _raw.AsSpan(0, (int)size);
-            try
-            {
-                if (_plain.Unwrap(payload[4..], into) != size) return false;
-            }
-            catch (ZstdException) { return false; }
-            raw = into;
-            return true;
-        }
+        /// <inheritdoc cref="Reader.Raw"/>
+        public bool Raw(ReadOnlySpan<byte> payload, SetDictionary? own, out ReadOnlySpan<byte> raw) => _reader.Raw(payload, own, out raw);
 
         /// <summary>The entry of <paramref name="key"/> holding <paramref name="raw"/> encoded under the dictionary: the u32
         /// size, then the frame, decoded back before it is returned.</summary>
@@ -136,7 +185,7 @@ sealed unsafe class GlCacheDict : IDisposable
         {
             if (_cctx != null) Methods.ZSTD_freeCCtx(_cctx);
             if (_dctx != null) Methods.ZSTD_freeDCtx(_dctx);
-            _plain.Dispose();
+            _reader.Dispose();
         }
     }
 }

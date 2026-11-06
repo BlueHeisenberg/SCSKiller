@@ -43,8 +43,10 @@ struct WarmRestart {
     double mark_mb = -1, mark_t = 0, was_mb = -1;
 };
 
-inline bool warm_restart_tick(WarmRestart& r, double mb, double start_mb, double budget, double ram_mb, bool low, double now) {
+// plenty: free RAM and commit are well above a quarter of the PC's: the third of RAM doesn't count, as a restart throws away
+// the kept state objects the next process rebuilds.
+inline bool warm_restart_tick(WarmRestart& r, double mb, double start_mb, double budget, double ram_mb, bool low, bool plenty, double now) {
     if (r.mark_mb < 0 || now - r.mark_t >= 300000) r.was_mb = now - r.mark_t < 600000 ? r.mark_mb : -1, r.mark_mb = mb, r.mark_t = now;  // older: a pause
     double grown = mb - start_mb;
-    return (ram_mb > 0 && grown >= ram_mb / 3) || (low && grown >= budget / 3 && r.was_mb >= 0 && mb > r.was_mb);
+    return (ram_mb > 0 && !plenty && grown >= ram_mb / 3) || (low && grown >= budget / 3 && r.was_mb >= 0 && mb > r.was_mb);
 }

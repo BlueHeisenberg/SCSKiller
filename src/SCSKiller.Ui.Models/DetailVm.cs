@@ -97,7 +97,7 @@ public sealed class DetailVm(string id) : Bindable
         _ when s.Engine?.Encrypted == true => "needs the game's AES key",   // the title: "Encrypted game files"
         _ => HasDbTeaser ? NoDbNote(s.StatusReason) : s.StatusReason,
     })
-        + (IsPartlyCompiled || s.CompileUnreached ? "." : "") + Format.ModNote(s);
+        + (ScsKiller.LaunchLine(s) is { } launch ? ". " + launch : "") + (IsPartlyCompiled || s.CompileUnreached ? "." : "") + Format.ModNote(s);
     static string NoDbNote(string r) => r.Replace(". " + Sentence(ScsKiller.InDbSupportersNote), "").Replace(". " + Sentence(ScsKiller.InDbNote), "");
     public bool IsPartlyCompiled => ScsKiller.IsPartlyCompiled(s);
     public bool NeedsAesKey => ScsKiller.NeedsAesKey(s);
@@ -446,9 +446,12 @@ public sealed class DetailVm(string id) : Bindable
     // left and what helps; every count in Details. No plan yet on a game that can compile: the card says when it's measured.
     PlanStats? P => s.Plan;
     // a compile that didn't help: the ring is greyed out, nothing of it counts for the game
-    int? Pct => DriverChanged ? null : ScsKiller.ShownPercent(s);
+    int? Pct => PagePercent(s);
+    /// <summary>The coverage the game's page shows.</summary>
+    public static int? PagePercent(GameState s) => OnOldDriver(s) ? null : ScsKiller.ShownPercent(s);
     // the last compile filled the old driver's cache, which the new driver doesn't use
-    bool DriverChanged => s.Status == GameStatus.Stale && s.StatusReason.StartsWith("driver changed:", StringComparison.Ordinal);
+    bool DriverChanged => OnOldDriver(s);
+    static bool OnOldDriver(GameState s) => s.Status == GameStatus.Stale && s.StatusReason.StartsWith("driver changed:", StringComparison.Ordinal);
     public bool HasCoverageCard => ScsKiller.ShowsCoverage(s) || CanCompile;
     public bool HasPlan => P != null;
     public bool HasMeter => Pct != null;
