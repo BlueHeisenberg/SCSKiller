@@ -4,6 +4,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**Fixed on Linux**
+
+- Heroic, Lutris and Faugus games, and non-Steam games added to Steam, are recorded when they load Streamline first, as
+  Cyberpunk 2077 does. The recorder goes in through its preloader instead of a d3d12.dll the game never loads.
+
 ## [1.4.7] - 2026-11-08
 
 **New**
