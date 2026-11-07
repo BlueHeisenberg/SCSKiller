@@ -235,6 +235,7 @@ public sealed partial class ScsKiller : IScsKiller
             (StarEngine.StarEngineReader.Family, new StarEngine.StarEngineReader()),
             (Swarm.SwarmReader.Family, new Swarm.SwarmReader()),
             (Snowdrop.SnowdropReader.Family, new Snowdrop.SnowdropReader(dataDir)),
+            (Anvil.ValhallaReader.Family, new Anvil.ValhallaReader()),
             .. CarvedReader.Families.Select(f => (f, (IEngineReader)carved))]);
     }
 
