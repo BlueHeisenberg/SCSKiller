@@ -4,6 +4,10 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**Fixed on Linux**
+
+- A DirectX game under Proton no longer stays at "start it once from Steam" after it was started from Steam.
+
 ## [1.4.6] - 2026-11-06
 
 **Improved**
