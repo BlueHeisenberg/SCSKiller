@@ -5704,7 +5704,7 @@ public sealed partial class ScsKiller : IScsKiller
             .Concat(Planner.PlanBody(r.Plan?.FilePath).Where(x => x.Tag == 'M').Select(x => MiddlewarePacks.Unwrap(x).Entry.Key)).ToHashSet();
         var one = fresh.Count > 0 ? PipelineKeys(g, r, e) : [];
         string P(string k) => one.GetValueOrDefault(k, k);   // a pipeline at two texture filtering settings is one
-        var news = fresh.Where(k => made?.Contains(k) != true).ToList();
+        var news = fresh.Where(k => made?.Contains(k) != true && !(r.Plan?.Platform == VulkanPlan.Platform && packs.Contains(k))).ToList();
         var pending = new Pending(news.Select(P).Distinct().Count(),
             made == null || !CurrentPlanner(r.PlanVersion, r.PlanRules, r.PlanReaderVersion, e) ? null : fresh.Where(made.Contains).Select(P).Distinct().Count(), warmed == null,
             news.Where(packs.Contains).Select(P).Distinct().Count());
@@ -5748,7 +5748,7 @@ public sealed partial class ScsKiller : IScsKiller
         try
         {
             return KeyFiles.DerivedStamp([.. inputs, r.WarmKeysFile is { } wf ? Path.Combine(dir, wf) : null, r.PlanKeysFile is { } pf ? Path.Combine(dir, pf) : null],
-                $"{extra}|{string.Join(',', CrashKeysNow(r).Order())}|{CurrentPlanner(r.PlanVersion, r.PlanRules, r.PlanReaderVersion, e)}|planned-units");   // the rule's mark: a count stored under another is redone
+                $"{extra}|{string.Join(',', CrashKeysNow(r).Order())}|{CurrentPlanner(r.PlanVersion, r.PlanRules, r.PlanReaderVersion, e)}|planned-units|vulkan-plan-packs");   // the rule's mark: a count stored under another is redone
         }
         catch (Exception x) when (x is IOException or UnauthorizedAccessException) { return null; }
     }

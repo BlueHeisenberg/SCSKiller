@@ -4,6 +4,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**Fixed on Linux**
+
+- A DirectX 12 game planned from Steam's shader cache alone, such as The Witcher 3, no longer shows Needs rebuilding
+  for upscaler pipelines that plan can't take.
+
 ## [1.4.7] - 2026-11-08
 
 **New**
