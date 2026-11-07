@@ -8,8 +8,8 @@ using SCSKiller.Core.Unreal;
 
 namespace SCSKiller.Core.Anvil;
 
-/// <summary>Valhalla's loose SBIN shader table and Oodle-compressed DX12 Forge resources. Known Forge variants supply exact stage
-/// sets, with validated root profiles for the supported shader build.</summary>
+/// <summary>Valhalla's loose SBIN shader table and Oodle-compressed DX12 Forge resources. Recognized Forge variant tables
+/// supply exact stage sets and select root profiles by their layout flag.</summary>
 public sealed class ValhallaReader : IEngineReader
 {
     public const string Family = "Anvil (Valhalla)";
@@ -19,7 +19,7 @@ public sealed class ValhallaReader : IEngineReader
     readonly record struct Location(string Path, ValhallaForge.Entry? Entry, long Offset, int Size);
     readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, Location>> located = new();
 
-    public int ReaderVersion(EngineInfo engine) => 2;
+    public int ReaderVersion(EngineInfo engine) => 5;
 
     public EngineInfo? Detect(Game game)
     {
@@ -109,14 +109,6 @@ public sealed class ValhallaReader : IEngineReader
             try
             {
                 using var file = Open(archive);
-                var supported = Path.GetFileName(archive).ToLowerInvariant() switch
-                {
-                    "datapc_dx12.forge" when file.Length == 2_588_672 =>
-                        Matches(file, "5850a69c04ac4573f54c79323071f8fcdc4df9f29d74876840a565e4dd587742"),
-                    "datapc_extra_dx12.forge" when file.Length == 425_984 =>
-                        Matches(file, "4a68b1345bf4519213d47cb1cd9a9c84964407c55b9a150072a6f4da15d060e5"),
-                    _ => false
-                };
                 var entries = ValhallaForge.Entries(file);
                 foreach (var entry in entries)
                 {
@@ -141,8 +133,8 @@ public sealed class ValhallaReader : IEngineReader
                             foreach (var set in sets)
                             {
                                 string[] stages = set.Pixel is { } ps ? [set.Vertex, ps] : [set.Vertex];
-                                var profile = supported ? set.Bindless ? ValhallaRootProfiles.ForgeBindless : ValhallaRootProfiles.ForgeRegular : null;
-                                var root = profile != null && stages.All(h => profile.Covers(shaders[h])) ? Use(profile) : null;
+                                var profile = set.Bindless ? ValhallaRootProfiles.ForgeBindless : ValhallaRootProfiles.ForgeRegular;
+                                var root = stages.All(h => profile.Covers(shaders[h])) ? Use(profile) : null;
                                 if (stageSets.Add((set.Vertex, set.Pixel, root)))
                                     maps.Add(new(CarvedReader.Sha1Hex(string.Join(',', stages) + "|" + root), name, Platform, stages,
                                         IsPipeline: true, RootSignature: root));
