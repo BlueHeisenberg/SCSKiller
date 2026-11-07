@@ -2,6 +2,7 @@
     x:Class="SCSKiller.App.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:SCSKiller.App.Controls"
     Title="SCSKiller">
     <Window.SystemBackdrop>
         <MicaBackdrop />
@@ -23,7 +24,7 @@
                 <FontIconSource Glyph="&#xE945;" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
             </TitleBar.IconSource>
             <TitleBar.Resources>
-                <!-- the template's default 48 px drag column leaves a gap between the bell and the caption buttons -->
+                <!-- the template's default 48 px drag column leaves a gap between the header and the caption buttons -->
                 <x:Double x:Key="TitleBarMinDragRegionWidth">0</x:Double>
             </TitleBar.Resources>
             <!-- a downloaded update (Updater): quiet, never a dialog -->
@@ -34,19 +35,6 @@
                             <FontIcon Glyph="&#xE777;" FontSize="13" />
                             <TextBlock x:Name="UpdateText" Text="Restart to update" FontSize="13" />
                         </StackPanel>
-                    </Button>
-                    <!-- 46 px: the system caption-button width, so the bell sits flush against min/max/close -->
-                    <Button x:Name="BellButton" Background="Transparent" BorderThickness="0" Padding="0"
-                            Width="46" VerticalAlignment="Stretch"
-                            ToolTipService.ToolTip="Notifications" AutomationProperties.Name="Notifications">
-                        <!-- sized to hold the badge, which hangs off the glyph's top-right corner; negative margins would clip it -->
-                        <Grid Width="32" Height="32" HorizontalAlignment="Center" VerticalAlignment="Center">
-                            <FontIcon Glyph="&#xEA8F;" FontSize="16" />
-                            <InfoBadge x:Name="BellBadge" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Top" />
-                        </Grid>
-                        <Button.Flyout>
-                            <Flyout x:Name="BellFlyout" Placement="BottomEdgeAlignedRight" Opening="OnBellOpening" />
-                        </Button.Flyout>
                     </Button>
                 </StackPanel>
             </TitleBar.RightHeader>
@@ -68,6 +56,18 @@
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="SettingsItem" Content="Settings">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE713;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <!-- opens its flyout instead of selecting a page -->
+                <NavigationViewItem x:Name="BellButton" Content="Notifications" SelectsOnInvoked="False"
+                                    ToolTipService.ToolTip="Notifications" AutomationProperties.Name="Notifications"
+                                    AutomationProperties.HelpText="Opens notifications">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xEA8F;" /></NavigationViewItem.Icon>
+                    <NavigationViewItem.InfoBadge>
+                        <controls:QuietInfoBadge x:Name="BellBadge" Visibility="Collapsed" AutomationProperties.AccessibilityView="Raw" />
+                    </NavigationViewItem.InfoBadge>
+                    <FlyoutBase.AttachedFlyout>
+                        <Flyout x:Name="BellFlyout" Placement="RightEdgeAlignedTop" Opening="OnBellOpening" />
+                    </FlyoutBase.AttachedFlyout>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
             <NavigationView.FooterMenuItems>

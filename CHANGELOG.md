@@ -4,6 +4,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**Improved**
+
+- The notifications bell moves from the title bar into the navigation pane below Settings, with the unread count
+  shown on the item.
+
 ## [1.4.6] - 2026-11-06
 
 **Improved**

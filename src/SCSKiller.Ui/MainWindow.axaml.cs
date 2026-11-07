@@ -34,15 +34,19 @@ public sealed partial class MainWindow : Window
     bool? wide;
     AppStore? placement;   // where window.json goes (RestorePlacement); none: the screenshots' window is never saved
     readonly nint hwnd;   // 0 off Windows and in the screenshots
+    readonly Flyout bellFlyout = new() { Placement = PlacementMode.RightEdgeAlignedTop };
 
     public MainWindow()
     {
         InitializeComponent();
+        bellFlyout.Opening += OnBellOpening;
         AddHandler(PointerPressedEvent, OnMouseNav, RoutingStrategies.Tunnel);
+        KeyDown += OnBellEscape;   // an empty flyout has no focusable content, so its popup can't close itself
         pages = [(LibraryItem, typeof(LibraryPage)), (QueueItem, typeof(QueuePage)), (CacheItem, typeof(CachePage)), (SettingsItem, typeof(SettingsPage)), (AboutItem, typeof(AboutPage))];
         paneWidth = Nav.OpenPaneLength;
         ((Panel)LibraryItem.Content!).Children.OfType<TextBlock>().Last().PropertyChanged += (_, e) => { if (e.Property == TextBlock.FontSizeProperty) FitPane(); };
         FitPane();
+        Nav.PropertyChanged += (_, e) => { if (e.Property == SplitView.IsPaneOpenProperty) ShowBell(); };   // the badge moves over the glyph compact
         ShowGpu();
         var bell = new Coalesced(Host.Ui, () => { ShowBell(); Activation.ToastNews(); });   // targeting reads the games, the account and the news
         Host.Core.GameChanged += _ => bell.Request();
@@ -70,13 +74,13 @@ public sealed partial class MainWindow : Window
     /// <summary>The open pane is as wide as its widest label needs, as with a large Text size, and never narrower than set.</summary>
     void FitPane()
     {
-        var labels = pages.Select(p => ((Panel)p.Item.Content!).Children.OfType<TextBlock>().Last()).ToList();
+        var labels = pages.Select(p => ((Panel)p.Item.Content!).Children.OfType<TextBlock>().Last()).Append(BellLabel).ToList();
         var widest = labels.Max(l => l.Margin.Left + new FormattedText(l.Text ?? "", System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
             new Typeface(l.FontFamily, l.FontStyle, l.FontWeight), l.FontSize, null).WidthIncludingTrailingWhitespace);
         Nav.OpenPaneLength = Math.Max(paneWidth, widest + 16);
     }
 
-    /// <summary>The title row ends at the caption buttons, so the bell sits flush against them. The screenshots leave their room
+    /// <summary>The title row ends at the caption buttons, so its button sits flush against them. The screenshots leave their room
     /// too. Under the window manager's own title bar (Linux), and on macOS, whose window buttons are at the left, the row
     /// reaches the window's edge.</summary>
     void ShowCaptionInset()
@@ -139,6 +143,7 @@ public sealed partial class MainWindow : Window
 
     void Show(Type page, object? arg)
     {
+        LayoutUpdated -= ShowBellAfterLayout;   // a page change supersedes the flyout's pending close
         var content = page == typeof(LibraryPage) ? cached.TryGetValue(page, out var kept) ? kept : cached[page] = new LibraryPage() : (Control)Activator.CreateInstance(page)!;
         (content as INavigable)?.NavigatedTo(arg);
         ContentFrame.Content = content;
@@ -181,12 +186,46 @@ public sealed partial class MainWindow : Window
 
     void OnNavClick(object? sender, RoutedEventArgs _)
     {
+        LayoutUpdated -= ShowBellAfterLayout;   // also the page that is already shown supersedes the flyout's pending close
         var page = pages.First(p => p.Item == sender).Page;
         if (page != shown) Navigate(page);
         if (Nav.DisplayMode == SplitViewDisplayMode.CompactOverlay) Nav.IsPaneOpen = false;
     }
 
-    void OnPaneToggle(object? _, RoutedEventArgs __) => Nav.IsPaneOpen = !Nav.IsPaneOpen;
+    void OnPaneToggle(object? _, RoutedEventArgs __)
+    {
+        LayoutUpdated -= ShowBellAfterLayout;   // reopening the pane supersedes the flyout's pending close
+        Nav.IsPaneOpen = !Nav.IsPaneOpen;
+    }
+
+    void OnBellClick(object? _, RoutedEventArgs __)
+    {
+        if (BellFlyout.IsOpen) { BellFlyout.Hide(); return; }
+        // Compact overlay: the pane covers the page and gives way, as WinUI's does. The flyout waits for the rail's new
+        // bounds, or it would keep the old overlay edge as its anchor.
+        if (Nav.DisplayMode == SplitViewDisplayMode.CompactOverlay && Nav.IsPaneOpen)
+        {
+            Nav.IsPaneOpen = false;
+            LayoutUpdated += ShowBellAfterLayout;
+            return;
+        }
+        OpenBell();
+    }
+
+    void OnBellEscape(object? _, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape || !BellFlyout.IsOpen) return;
+        e.Handled = true;
+        BellFlyout.Hide();
+    }
+
+    void ShowBellAfterLayout(object? _, EventArgs __)
+    {
+        var compact = Nav.CompactPaneLength - BellAnchor.Margin.Left - BellAnchor.Margin.Right;
+        if (BellAnchor.Bounds.Width > compact) return;   // still the overlay's, or an animating pane's, width
+        LayoutUpdated -= ShowBellAfterLayout;
+        OpenBell();
+    }
 
     void ShowUpdate()
     {
@@ -221,6 +260,10 @@ public sealed partial class MainWindow : Window
         var unread = Notifications().Unread.Count;
         BellCount.Text = unread.ToString();
         BellBadge.IsVisible = unread > 0;
+        // open, the badge ends the row; compact, it hangs off the bell's top-right corner as WinUI's InfoBadge does
+        var compact = !Nav.IsPaneOpen;
+        BellBadge.VerticalAlignment = compact ? VerticalAlignment.Top : VerticalAlignment.Center;
+        BellBadge.Margin = compact ? new Thickness(0, 4, 2, 0) : new Thickness(0, 0, 12, 0);
         AutomationProperties.SetName(BellButton, unread > 0 ? $"Notifications, {unread} unread" : "Notifications");
     }
 
@@ -236,7 +279,7 @@ public sealed partial class MainWindow : Window
 
     /// <summary>--screenshots: the bell's flyout, open.</summary>
     public Flyout Bell => BellFlyout;
-    Flyout BellFlyout => (Flyout)BellButton.Flyout!;
+    Flyout BellFlyout => bellFlyout;
     public Button BellAnchor => BellButton;
 
     void FillBell(IReadOnlyList<NewsItem> shownNews, IReadOnlySet<string> unread)

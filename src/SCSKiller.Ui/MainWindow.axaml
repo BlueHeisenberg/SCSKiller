@@ -52,22 +52,6 @@
                         <TextBlock x:Name="UpdateText" Text="Restart to update" FontSize="{DynamicResource TextSize.13}" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
-                <Button x:Name="BellButton" Classes="Subtle" Width="46" Padding="0" VerticalAlignment="Stretch"
-                        HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
-                        ToolTip.Tip="Notifications" AutomationProperties.Name="Notifications">
-                    <!-- sized to hold the badge, which hangs off the glyph's top-right corner -->
-                    <Panel Width="32" Height="32">
-                        <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Bell}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        <Border x:Name="BellBadge" IsVisible="False" HorizontalAlignment="Right" VerticalAlignment="Top" MinWidth="16" Height="16"
-                                CornerRadius="8" Padding="4,0" Background="{DynamicResource AccentFillColorDefaultBrush}">
-                            <TextBlock x:Name="BellCount" FontSize="11" Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
-                    </Panel>
-                    <Button.Flyout>
-                        <Flyout Placement="BottomEdgeAlignedRight" Opening="OnBellOpening" />
-                    </Button.Flyout>
-                </Button>
                 </StackPanel>
             </Grid>
 
@@ -103,6 +87,19 @@
                                     <Border Classes="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Background="{DynamicResource AccentFillColorDefaultBrush}" />
                                     <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Settings}" Margin="12,0,0,0" VerticalAlignment="Center" />
                                     <TextBlock Text="Settings" Margin="44,0,0,0" VerticalAlignment="Center" />
+                                </Panel>
+                            </Button>
+                            <!-- opens a flyout: no page to select, so no pill -->
+                            <Button x:Name="BellButton" Classes="Nav" ToolTip.Tip="Notifications" AutomationProperties.Name="Notifications" Click="OnBellClick">
+                                <Panel>
+                                    <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Bell}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="BellLabel" Text="Notifications" Margin="44,0,0,0" VerticalAlignment="Center" />
+                                    <!-- at the row's end open; over the glyph's top-right corner compact (ShowBell) -->
+                                    <Border x:Name="BellBadge" IsVisible="False" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0"
+                                            MinWidth="16" Height="16" CornerRadius="8" Padding="4,0" Background="{DynamicResource AccentFillColorDefaultBrush}">
+                                        <TextBlock x:Name="BellCount" FontSize="11" Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
                                 </Panel>
                             </Button>
                         </StackPanel>

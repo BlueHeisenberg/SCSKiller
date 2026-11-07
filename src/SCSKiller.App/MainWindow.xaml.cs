@@ -21,8 +21,12 @@ public sealed partial class MainWindow : Window
 {
     // Narrower, a page clips: Settings' two columns, the Library's chips and status column.
     const int MinWidth = 1072, MinHeight = 640;
+    // A compact pane closes in well under this: a pending flyout older than it has lost its close.
+    const long BellPendingMs = 2000;
 
     bool syncingNav;
+    bool bellPending;   // the notifications flyout waits for the compact pane to close
+    long bellPendingAt;
     AppStore? placement;   // where window.json goes (RestorePlacement); none: the screenshots' window is never saved
     bool maximizeOnShow;
     readonly (NavigationViewItem Item, Type Page)[] pages;
@@ -31,6 +35,7 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
         pages = [(QueueItem, typeof(QueuePage)), (CacheItem, typeof(CachePage)), (SettingsItem, typeof(SettingsPage)), (AboutItem, typeof(AboutPage))];
+        Nav.PaneOpened += (_, _) => ClearBellPending();   // a reopened pane supersedes the close the flyout waited for
         ExtendsContentIntoTitleBar = true;
         Root.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(OnMouseNav), true);
         SetTitleBar(AppTitleBar);
@@ -77,7 +82,11 @@ public sealed partial class MainWindow : Window
         GpuDriver.Text = (App.Core as ScsKiller)?.GpuRestartNote ?? "Driver " + App.Core.Vendor.Gpu.DriverVersion;
     }
 
-    public void Navigate(Type page, object? arg = null) => ContentFrame.Navigate(page, arg);
+    public void Navigate(Type page, object? arg = null)
+    {
+        ClearBellPending();   // a page change supersedes the flyout's pending close
+        ContentFrame.Navigate(page, arg);
+    }
 
     public void NavigateToPatreon()
     {
@@ -212,8 +221,43 @@ public sealed partial class MainWindow : Window
     // On a game's page Library stays selected, so clicking it raises no SelectionChanged.
     void OnNavInvoked(NavigationView _, NavigationViewItemInvokedEventArgs e)
     {
+        if (e.InvokedItemContainer == BellButton)
+        {
+            // A superseded close (a second invocation, or the pane reopened) would otherwise fire this flyout later.
+            if (bellPending && Environment.TickCount64 - bellPendingAt > BellPendingMs) ClearBellPending();
+            if (bellPending) return;
+            // Compact, NavigationView closes its overlay pane after the item is invoked. Shown now, the flyout would keep
+            // the pane's old edge as its anchor; wait for the rail's new position.
+            if (Nav.IsPaneOpen && Nav.DisplayMode != NavigationViewDisplayMode.Expanded)
+            {
+                bellPending = true;
+                bellPendingAt = Environment.TickCount64;
+                Nav.PaneClosed -= ShowBellAfterPaneClosed;
+                Nav.PaneClosed += ShowBellAfterPaneClosed;
+            }
+            else ShowBellFlyout();
+            return;
+        }
+        ClearBellPending();   // another page supersedes the flyout's pending close
         if (e.InvokedItemContainer == LibraryItem && ContentFrame.SourcePageType == typeof(DetailPage)) ShowLibrary();
     }
+
+    void ShowBellAfterPaneClosed(NavigationView sender, object args)
+    {
+        sender.PaneClosed -= ShowBellAfterPaneClosed;
+        if (!bellPending) return;
+        bellPending = false;
+        if (Nav.IsPaneOpen || Environment.TickCount64 - bellPendingAt > BellPendingMs) return;
+        ShowBellFlyout();
+    }
+
+    void ClearBellPending()
+    {
+        bellPending = false;
+        Nav.PaneClosed -= ShowBellAfterPaneClosed;
+    }
+
+    void ShowBellFlyout() => Microsoft.UI.Xaml.Controls.Primitives.FlyoutBase.ShowAttachedFlyout(BellButton);
 
     /// <summary>Back to the Library list from a game's page, at its scroll position when it is the page behind.</summary>
     public void ShowLibrary()
@@ -224,6 +268,7 @@ public sealed partial class MainWindow : Window
 
     void OnNavigated(object _, NavigationEventArgs e)
     {
+        ClearBellPending();   // also a code-driven page change supersedes the flyout's pending close
         syncingNav = true;
         Nav.SelectedItem = pages.FirstOrDefault(p => p.Page == e.SourcePageType).Item ?? LibraryItem;
         syncingNav = false;
