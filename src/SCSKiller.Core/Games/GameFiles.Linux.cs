@@ -30,7 +30,7 @@ public static partial class GameFiles
         Libc.RealPath(path) is { } final ? (Libc.Stat(final) is { } s ? WineFileId(s.Inode) : null, final) : null;
 
     internal static partial string? SystemFolder(Game game) =>
-        SteamSource.PrefixFolder(game) is { } pfx ? Path.Combine(pfx, "drive_c", "windows", "system32") : null;
+        PrefixOf(game) is { } pfx ? Path.Combine(pfx, "drive_c", "windows", "system32") : null;
 
     internal static partial string? PrefixOf(Game game) =>
         SteamShortcuts.AppId(game.Id) is { } app ? Path.Combine(ProtonContext.ShortcutData(SteamSource.Root(), app), "pfx")
