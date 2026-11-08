@@ -1449,7 +1449,9 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         // a false anchor in carved package bytes claims up to 64 MB: one buffer for every codec tried, not one each
         // (a pool would keep its 64 MB buffers live after the read, counted against the plan's memory limit)
         var into = GC.AllocateUninitializedArray<byte>(size);
-        foreach (var m in InOrder(s))
+        Span<CompressionMethod> methods = stackalloc[] { CompressionMethod.Oodle, CompressionMethod.Zlib, CompressionMethod.Zstd, CompressionMethod.LZ4 };
+        InOrder(s, methods);
+        foreach (var m in methods)
             try
             {
                 Compression.Decompress(s, into, m);
@@ -1471,13 +1473,14 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     // Zstd block header: first 4 bytes are the magic number 0xFD2FB528
     static bool ZstdBlock(ReadOnlySpan<byte> b) => b.Length >= 4 && BinaryPrimitives.ReadUInt32LittleEndian(b) == 0xFD2FB528;
 
-    static CompressionMethod[] InOrder(ReadOnlySpan<byte> b)
+    // Try the codec indicated by the header first, or headerless LZ4 if none matches. The remaining codecs keep
+    // their fallback order, since a header can match by chance.
+    static void InOrder(ReadOnlySpan<byte> b, Span<CompressionMethod> methods)
     {
-        bool oodle = OodleBlock(b);
-        bool zlib = ZlibBlock(b);
-        bool zstd = ZstdBlock(b);
-        
-        return [.. new[] { (CompressionMethod.Oodle, oodle), (CompressionMethod.Zlib, zlib), (CompressionMethod.Zstd, zstd), (CompressionMethod.LZ4, !oodle && !zlib && !zstd) }.OrderBy(c => !c.Item2).Select(c => c.Item1)];
+        var preferred = OodleBlock(b) ? CompressionMethod.Oodle : ZlibBlock(b) ? CompressionMethod.Zlib : ZstdBlock(b) ? CompressionMethod.Zstd : CompressionMethod.LZ4;
+        var index = methods.IndexOf(preferred);
+        methods[..index].CopyTo(methods[1..]);
+        methods[0] = preferred;
     }
 
     static void InitCodecs() => Codecs.Load();
