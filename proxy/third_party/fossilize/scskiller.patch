@@ -1533,3 +1533,38 @@
  		default:
  			LOGE("Unrecognized pNext sType: %u. Treating as unsupported.\n", unsigned(base->sType));
  			return false;
+--- a/cli/fossilize_feature_filter.cpp
++++ b/cli/fossilize_feature_filter.cpp
+@@ -2696,30 +2696,12 @@ bool FeatureFilter::Impl::validate_module_capability(spv::Capability cap) const
+ 	case spv::CapabilityVulkanMemoryModelDeviceScope:
+ 		return features.memory_model.vulkanMemoryModelDeviceScope == VK_TRUE;
+ 	case spv::CapabilityDenormPreserve:
+-		// Not sure if we have to inspect every possible type. Assume compiler won't barf if at least one property is set.
+-		return props.float_control.shaderDenormPreserveFloat16 == VK_TRUE ||
+-		       props.float_control.shaderDenormPreserveFloat32 == VK_TRUE ||
+-		       props.float_control.shaderDenormPreserveFloat64 == VK_TRUE;
+ 	case spv::CapabilityDenormFlushToZero:
+-		// Not sure if we have to inspect every possible type. Assume compiler won't barf if at least one property is set.
+-		return props.float_control.shaderDenormFlushToZeroFloat16 == VK_TRUE ||
+-		       props.float_control.shaderDenormFlushToZeroFloat32 == VK_TRUE ||
+-		       props.float_control.shaderDenormFlushToZeroFloat64 == VK_TRUE;
+ 	case spv::CapabilitySignedZeroInfNanPreserve:
+-		// Not sure if we have to inspect every possible type. Assume compiler won't barf if at least one property is set.
+-		return props.float_control.shaderSignedZeroInfNanPreserveFloat16 == VK_TRUE ||
+-		       props.float_control.shaderSignedZeroInfNanPreserveFloat32 == VK_TRUE ||
+-		       props.float_control.shaderSignedZeroInfNanPreserveFloat64 == VK_TRUE;
+ 	case spv::CapabilityRoundingModeRTE:
+-		// Not sure if we have to inspect every possible type. Assume compiler won't barf if at least one property is set.
+-		return props.float_control.shaderRoundingModeRTEFloat16 == VK_TRUE ||
+-		       props.float_control.shaderRoundingModeRTEFloat32 == VK_TRUE ||
+-		       props.float_control.shaderRoundingModeRTEFloat64 == VK_TRUE;
+ 	case spv::CapabilityRoundingModeRTZ:
+-		// Not sure if we have to inspect every possible type. Assume compiler won't barf if at least one property is set.
+-		return props.float_control.shaderRoundingModeRTZFloat16 == VK_TRUE ||
+-		       props.float_control.shaderRoundingModeRTZFloat32 == VK_TRUE ||
+-		       props.float_control.shaderRoundingModeRTZFloat64 == VK_TRUE;
++		// not the per-width properties: games use modes their driver reports false (NVIDIA: DenormFlushToZero 32) and it compiles them
++		return api_version >= VK_API_VERSION_1_2 || enabled_extensions.count(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME) != 0;
+ 	case spv::CapabilityComputeDerivativeGroupQuadsKHR:
+ 		return features.compute_shader_derivatives.computeDerivativeGroupQuads == VK_TRUE;
+ 	case spv::CapabilityComputeDerivativeGroupLinearKHR:

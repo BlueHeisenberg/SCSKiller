@@ -1,4 +1,4 @@
-// Test stand-in for a mod's d3d12.dll that the proxy chains to (scskiller.ini next=): forwards D3D12CreateDevice to the
+// Test stand-in for a mod's d3d12.dll that the proxy chains to (scskiller.cfg next=): forwards D3D12CreateDevice to the
 // system dll and counts the calls. Only D3D12CreateDevice, like many wrappers: the proxy takes the rest from the system dll.
 // After FakeNext_SwapPs it acts like a shader-replacing wrapper (ReShade with a RenoDX addon): the game gets a wrapper
 // device whose CreateGraphicsPipelineState passes the desc on with that pixel shader instead of the game's.

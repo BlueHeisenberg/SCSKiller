@@ -124,14 +124,14 @@ public sealed partial class ScsKiller
             }
             // the run's own lines (the countdown's): an ini SCSKiller couldn't write would leave the run without them
             var lines = RunIni(s.Game, rec.BeforeAfter);
-            iniReady = lines.Length == 0 || File.Exists(Path.Combine(dir, "scskiller.ini")) && File.ReadAllText(Path.Combine(dir, "scskiller.ini")).Contains(lines, StringComparison.Ordinal);
+            iniReady = lines.Length == 0 || File.Exists(IniPath(dir)) && File.ReadAllText(IniPath(dir)).Contains(lines, StringComparison.Ordinal);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { installed = current = iniReady = false; }
         if (installed && current && iniReady && Attested(s.Game)) return;
-        throw new InvalidOperationException(RecorderNotReadyNote + (s.RecorderSkip ?? (s.RecorderNote == NoteForeignIni ? "its scskiller.ini isn't SCSKiller's" : s.RecorderNote) ?? _unstamped.GetValueOrDefault(gameId)
+        throw new InvalidOperationException(RecorderNotReadyNote + (s.RecorderSkip ?? (s.RecorderNote == NoteForeignIni ? "its scskiller.cfg isn't SCSKiller's" : s.RecorderNote) ?? _unstamped.GetValueOrDefault(gameId)
             ?? (!s.RecorderEffective ? "it's off for this game"
                 : installed && !current ? "another SCSKiller's recorder is in the game and couldn't be replaced"
-                : installed && !iniReady ? "its scskiller.ini isn't SCSKiller's"
+                : installed && !iniReady ? "its scskiller.cfg isn't SCSKiller's"
                 : installed ? "the game's folder is still being checked, try again in a moment" : "it couldn't be installed")));
     }
 

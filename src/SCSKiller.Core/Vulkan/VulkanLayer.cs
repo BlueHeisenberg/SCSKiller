@@ -13,7 +13,7 @@ namespace SCSKiller.Core.Vulkan;
 /// game's on Windows is an entry of SCSKiller's loader settings file (<see cref="SettingsName"/>), which turns the layer on
 /// for the game's exe path alone: no other process ever finds it. On Linux a game of Heroic, Lutris or Faugus has an
 /// implicit layer like a Steam game's, enabled by the variable its launcher starts it with (<see cref="Launcher"/>). The layer records only an exe the recorder's admission
-/// admits (its signed scskiller.ini beside the exe), into the recorder folder's vulkan\&lt;exe file key&gt;\: the archives
+/// admits (its signed scskiller.cfg beside the exe), into the recorder folder's vulkan\&lt;exe file key&gt;\: the archives
 /// (<see cref="VulkanPlan.InboxPattern"/>) and scskiller_creates.csv with #api,vulkan, the driver-cache variables the game ran
 /// with (#cache,NAME=value) and its instance and device create infos (#vkinstance, #vkdevice; scskiller_layer.hpp).</summary>
 public static partial class VulkanLayer

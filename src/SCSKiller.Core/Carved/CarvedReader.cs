@@ -113,6 +113,7 @@ public sealed class CarvedReader : IEngineReader
         notes = "";
         if (!Directory.Exists(game.InstallDir)) return null;
         if (GodotApi(game.ExePath, () => UnrealRhi.LaunchOptions(game)) is { } godot) return new EngineInfo(Fingerprint(game.InstallDir), "-", null, godot, false, godot == "OpenGL" ? GodotOpenGl : GodotReason);
+        if (Hookshot(game.ExePath)) return new EngineInfo(Fingerprint(game.InstallDir), "-", null, "Vulkan", false, $"{NoRawShaders}: shaders are {Packed}", VulkanOnly: true);
         var seen = new HashSet<string>();
         var perFile = new Dictionary<string, int>();
         int graphics = 0, compute = 0, dxil = 0, rts0 = 0;
@@ -643,6 +644,22 @@ public sealed class CarvedReader : IEngineReader
         return d3d12 ? (d3d11 && !dxil ? UnrealRhi.Ambiguous : "D3D12") : d3d11 ? "D3D11" : apis.Contains("Vulkan") ? "Vulkan" : OldApi(game) is { } old ? Wrapped(game, old)
             : RuntimeApi(game) ?? UnrealRhi.Ambiguous;
     }
+
+    /// <summary>A HookshotBuilder port (a static recomp): its renderer, ROM image, shader census and romfs\ beside the exe, whatever
+    /// the exe's name, or any exe in a bin\ folder with its renderer beside it and the rest in the folder above (the launcher layout).
+    /// It runs on Vulkan only, though its exe names d3d12.dll and dxgi.dll.</summary>
+    internal static bool Hookshot(string exe) => Path.GetDirectoryName(exe) is { } dir && File.Exists(Path.Combine(dir, "hookshot_vk.dll"))
+        && (HookshotData(dir) && !File.Exists(Path.Combine(dir, "bin", "hookshot_vk.dll")) // a renderer in bin\ beside it means this exe is the port's launcher
+            || HookshotBinLayout(exe));
+
+    /// <summary>Where a Hookshot port keeps and writes its files: the folder above bin\ in the launcher layout, else the exe's own.</summary>
+    internal static string HookshotDataDir(string exe) => HookshotBinLayout(exe) ? Path.GetDirectoryName(Path.GetDirectoryName(exe))! : Path.GetDirectoryName(exe)!;
+
+    static bool HookshotBinLayout(string exe) => Path.GetDirectoryName(exe) is { } bin && Path.GetFileName(bin).Equals("bin", StringComparison.OrdinalIgnoreCase)
+        && File.Exists(Path.Combine(bin, "hookshot_vk.dll")) && Path.GetDirectoryName(bin) is { } top && HookshotData(top);
+
+    static bool HookshotData(string dir) => Directory.Exists(Path.Combine(dir, "romfs"))
+        && new[] { "image.bin", "hookshot_shaders.bin" }.All(f => File.Exists(Path.Combine(dir, f)));
 
     // FNA compiles its effects at run time (MojoShader): no DXBC ever sits in the files.
     static bool Fna(Game game) => Path.GetDirectoryName(game.ExePath) is { } dir && Directory.Exists(dir) && GameFiles.EnumerateFiles(dir, "FNA3D.dll").Any();

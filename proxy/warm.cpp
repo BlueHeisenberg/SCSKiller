@@ -7,6 +7,7 @@
 //                  [--stop-event <name>] [--adapter-luid <hex>] [--rt-threads N] [--skip i,j,...]
 //                  [--memory-mb N] [--memory-restart 1|2] [--package <app user model id>] [--stage-path <install folder>\<dir>\<exe>]
 //                  [--skip-keys <sha1 hex>,...|@<file>] [--known-keys <sha1 hex>,...|@<file>] [--isolate i,j,...]
+//                  [--died-alone i,j,...]
 //                  [--ags <amd_ags_x64.dll> --ags-app <name> --ags-engine <name> [--ags-version <app hex>,<engine hex>]]
 //                  [--pass K] [--layer <folder>]
 //                  [--d3d12 <the game's Agility SDK folder>] [--d3d11 <the game's d3d11.dll>] [--vulkan]
@@ -140,6 +141,7 @@ struct Opts {
     std::vector<uint8_t> skip_keys;  // 20 bytes each: items that removed the device in an earlier run
     std::vector<uint8_t> known_keys;  // 20 bytes each: items that crashed or hung this driver in an earlier compile
     std::vector<uint64_t> isolate;   // a retry: in flight when the device was removed, created alone first
+    std::vector<uint64_t> died_alone;  // this compile's items that ended their process alone
     std::wstring package;        // app user model id whose package identity the child runs with
     std::wstring stage_path;
     std::wstring ags, ags_app, ags_engine;
@@ -222,9 +224,9 @@ static bool parse(int argc, wchar_t** argv, int i, Opts& o) {
             o.asd_psdbs.emplace_back(v.substr(0, e), v.substr(e + 1));
         }
         else if (k == L"--out" || k == L"--err") continue;  // opened by wmain, before anything prints
-        else if (k == L"--skip" || k == L"--isolate") {
+        else if (k == L"--skip" || k == L"--isolate" || k == L"--died-alone") {
             for (const wchar_t* c = v.c_str(); *c;) {
-                (k == L"--skip" ? o.skip : o.isolate).push_back(_wcstoui64(c, &end, 10));
+                (k == L"--skip" ? o.skip : k == L"--isolate" ? o.isolate : o.died_alone).push_back(_wcstoui64(c, &end, 10));
                 if (end == c || (*end && *end != L',')) return false;
                 c = *end ? end + 1 : end;
             }
@@ -724,6 +726,7 @@ static int child(DWORD parent_pid, const Opts& o) {
     auto warm_known = (void(WINAPI*)(const uint8_t*, uint32_t))proc("SCSKiller_WarmKnown");
     auto known = (void(WINAPI*)(uint64_t*, const char**))proc("SCSKiller_Known");
     auto memory_stop = (BOOL(WINAPI*)(uint64_t*))proc("SCSKiller_MemoryStop");  // optional: then never a memory retry
+    auto died_alone = (void(WINAPI*)(const uint64_t*, uint32_t))proc("SCSKiller_WarmDiedAlone");  // optional: then no shader is skipped for them
     if (!create_device || !options || !start || !progress || !control || !warm_rt || !retry || !memory || !warm_crash || !crashes || !skipped || !hung || !load ||
         !warm_known || !known ||
         (o.pass >= 0 && !warm_pass))
@@ -756,6 +759,7 @@ static int child(DWORD parent_pid, const Opts& o) {
     memory(o.memory_mb);
     warm_crash(o.skip_keys.data(), (uint32_t)(o.skip_keys.size() / 20), o.isolate.data(), (uint32_t)o.isolate.size());
     warm_known(o.known_keys.data(), (uint32_t)(o.known_keys.size() / 20));
+    if (died_alone) died_alone(o.died_alone.data(), (uint32_t)o.died_alone.size());
     // the dbs before the device, which would read them: the parent's start window leaves this out (millions of records take minutes)
     HANDLE loading = OpenEventW(EVENT_MODIFY_STATE, FALSE, loading_name(parent_pid).c_str());
     if (loading) SetEvent(loading);
@@ -1251,6 +1255,7 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
               "                      [--stop-event <name>] [--adapter-luid <hex>] [--rt-threads N] [--skip i,j,...] [--memory-mb N]\n"
               "                      [--package <app user model id>] [--stage-path <install folder>\\<dir>\\<exe>]\n"
               "                      [--skip-keys <sha1 hex>,...|@<file>] [--known-keys <sha1 hex>,...|@<file>] [--isolate i,j,...]\n"
+              "                      [--died-alone i,j,...]\n"
               "                      [--ags <amd_ags_x64.dll> --ags-app <name> --ags-engine <name> [--ags-version <hex>,<hex>]]\n"
               "                      [--pass K] [--layer <folder>] [--d3d12 <folder>] [--d3d11 <dll>] [--vulkan]\n"
               "                      [--aftermath <dll> --aftermath-init <version>,<features>,<apis>,<dump flags>]\n"

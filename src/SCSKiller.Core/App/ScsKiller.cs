@@ -162,12 +162,13 @@ public sealed partial class ScsKiller : IScsKiller
         DeleteLedger();   // first: every 1.2 proxy is a pass-through from here on, whatever fails later
         if (only == null)   // a call for one game migrates its own record at the scan's start
             try { MigrateInis(Store); }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { RecordersLog(Store.DataDir, $"the records' scskiller.ini entries weren't moved yet: {e.Message}"); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { RecordersLog(Store.DataDir, $"the records' scskiller.cfg entries weren't moved yet: {e.Message}"); }
         D3DSCache.Warn = m => Log?.Report(m);
         GameFiles.Warn = m => Log?.Report(m);
         CarvedReader.Warn = m => Log?.Report(m);
         D3DSCache.SweepWarmRegistrations();
         GenRam.Sweep();
+        Hookshot.Recover(Path.Combine(dataDir, "games"), Log);
         Middleware.LoadImages(ImagesFile);
         ReShade.LoadProbes(ProbesFile);
         if (StutterList.Cached(StutterFile) is { } cached) StutterList.Current = cached;
@@ -722,7 +723,7 @@ public sealed partial class ScsKiller : IScsKiller
         var discovering = Ticket();   // a game evaluated after it (Add game) stays listed though discovery missed it
         if (Only != null)
             try { MigrateInis(Store, scope: IdScope()); }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { RecordersLog(Store.DataDir, $"the records' scskiller.ini entries weren't moved yet: {e.Message}"); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { RecordersLog(Store.DataDir, $"the records' scskiller.cfg entries weren't moved yet: {e.Message}"); }
         CleanOfflineSessions();   // before any game is read or written
         RedetectGpu();   // a driver updated while the app runs: the states below compare against it
         AdoptDismissals(Snapshot());
@@ -1738,23 +1739,24 @@ public sealed partial class ScsKiller : IScsKiller
         else if (ours && Unarmed(exeDir)) (ours, unarmed) = (false, true);
         // the recorder is never installed next to anti-cheat, nor in a game the user added before they confirm its folder
         var unconfirmed = Unconfirmed(g);
-        // an interposer in the Streamline\ folder (Path of Exile 2) loads System32's d3d12.dll first on AMD too. Only a
-        // preloader comes of it: without a name for one the game records as it did before
+        // an interposer in the Streamline\ folder (Path of Exile 2), or any interposer off NVIDIA, loads System32's d3d12.dll
+        // first too. Only a preloader comes of it: without a name for one the game records as it did before
         var slFolder = streamlineFirst && !File.Exists(GameFiles.Find(exeDir, "sl.interposer.dll"));
+        var slSoft = slFolder || OwnDriver != GpuVendor.Nvidia;
         // the layer route loads before any DirectX: Streamline's d3d12.dll is in the way of the proxy only
-        var slFirst = streamlineFirst && (OwnDriver == GpuVendor.Nvidia || TestPreloadAnyGpu || slFolder) && dllName == Dll12 && !VulkanRoute(g, engine);
+        var slFirst = streamlineFirst && dllName == Dll12 && !VulkanRoute(g, engine);
         // the preloader loads the recorder first, under Proton too (Wine takes the DLL beside the exe before its own): blocked only without one
         IReadOnlySet<string>? builtin = null;
         if (slFirst && antiCheat == AntiCheat.None && !vac) WineBuiltinFirst(g, ref builtin);
         var (preload, preloadHeld, heldByOptions) = slFirst && !LocalRedirect(g) && antiCheat == AntiCheat.None && !vac ? PreloadName(g, rec, builtin) : (null, null, false);
-        if (slFolder && preload == null) (preloadHeld, heldByOptions) = (null, false);
-        var slBlocks = slFirst && preload == null && !slFolder;
+        if (slSoft && preload == null) (preloadHeld, heldByOptions) = (null, false);
+        var slBlocks = slFirst && preload == null && !slSoft;
         // a risk session can record it: no claim that its anti-cheat blocks the recorder
         var riskOffered = (antiCheat != AntiCheat.None || vac) && OfflineEntry(g, antiCheat, engine) == null && RiskOffered(g, engine, anyAntiCheat: true);
         // also when a pass cleared it since: a verdict published later settles the state (WithVerdict)
         var unfinished = antiCheat != AntiCheat.None && (evaluated.Unfinished || _unknown.ContainsKey(g.Id));
         var wegame = GameFiles.WeGameId(g) != null;
-        var allowable = RiskUnavailable == null && !Settings.RecordAntiCheatGames && RiskFits(g, engine) && StoreLaunches(g);   // the setting would offer the recorder
+        var allowable = (antiCheat != AntiCheat.None || vac) && RiskUnavailable == null && !Settings.RecordAntiCheatGames && RiskFits(g, engine) && StoreLaunches(g);   // the setting would offer the recorder
         var noRecording = riskOffered ? RiskNoRecording
             : unfinished && !vac ? wegame ? HeldNoRecording : AntiCheatCheckNoRecording
             : antiCheat != AntiCheat.None && !unfinished ? AntiCheatNoRecording(OfflineEntry(g, antiCheat, engine) != null, allowable)
@@ -1818,7 +1820,9 @@ public sealed partial class ScsKiller : IScsKiller
                 Format.Then(check.Reason.Replace(Planner.Record, shared ? SharedOn(byName) : RecordOnFirst(byName)), DbNote(inDb, entitled))),
             Readiness.NeedsRecording => (GameStatus.NeedsRecording, Format.Then(check.Reason, DbNote(inDb, entitled))),
             // a current plan with nothing in it: a compile has nothing to compile, only a recording can add to it
-            _ when EmptyPlan(g, rec, engine) => engine == null || !RecordsApi(g, engine) ? (GameStatus.Unsupported, NoShadersReason)
+            // middleware pipelines alone keep a game compilable (MiddlewareOnly), never Unsupported
+            _ when EmptyPlan(g, rec, engine) => engine == null || !RecordsApi(g, engine)
+                    ? (rec.Plan!.Stats.MiddlewareItems > 0 ? GameStatus.NeedsRecording : GameStatus.Unsupported, NoShadersReason)
                 : noRecording != null ? (noRecordingStatus, Format.Then(NeedsRecording("needs a recording", noRecording), NoShadersReason))
                 : (GameStatus.NeedsRecording, Format.Then(NoShadersReason, Planner.Record)),
             // a recording can't help a game the warm doesn't reach
@@ -1954,7 +1958,8 @@ public sealed partial class ScsKiller : IScsKiller
             RecordingPaused = ours && DbCap(s.Game) is { } cap && db >= cap,
             OfflineEligible = offline, OfflineRecord = rec.OfflineRecord, AlwaysRecord = rec.AlwaysRecord,
             OfflineRunning = (OfflineLive(s.Game.Id) || rec.OfflineSession != null) && !_armed.ContainsKey(s.Game.Id),
-            RiskEligible = !offline && RiskOffered(s), RiskNoLaunch = !offline && RiskOfferedButLaunch(s.Game, s.Engine, s.AnyAntiCheat) && !StoreLaunches(s.Game), SessionNote = _sessionNotes.GetValueOrDefault(s.Game.Id) };
+            RiskEligible = !offline && RiskOffered(s), RiskNoLaunch = !offline && RiskOfferedButLaunch(s.Game, s.Engine, s.AnyAntiCheat) && !StoreLaunches(s.Game),
+            RiskTrusted = !offline && RecordsAntiCheat && s.AnyAntiCheat && TrustedLaunch(s.Game), SessionNote = _sessionNotes.GetValueOrDefault(s.Game.Id) };
     }
 
     static long Length(string path) => new FileInfo(path) is { Exists: true } f ? f.Length : 0;
@@ -2073,6 +2078,9 @@ public sealed partial class ScsKiller : IScsKiller
     /// <summary>The same for a game's state: not while a newer recording waits for its plan (<see cref="GameState.RtToPlan"/>),
     /// nor once it was recorded long enough without ray tracing (<see cref="GameState.RtUnseen"/>).</summary>
     public static bool NeedsRtRecording(GameState s) => NeedsRtRecording(s.Plan) && !s.RtUnseen && !s.RtToPlan && !s.RtSkipped;
+
+    /// <summary>A game asked for a recording whose plan holds middleware pipelines and nothing of its own: they still compile.</summary>
+    public static bool MiddlewareOnly(GameState s) => s is { Status: GameStatus.NeedsRecording, Plan: { Recorded: 0, Generated: 0, D3D11Shaders: 0, MiddlewareItems: > 0 } };
 
     /// <summary>The plan asks for a ray tracing recording and a recording was imported after it was built, (Unreal 5) it
     /// was built before inline ray tracing was counted, or the engine now says the game builds no state object: the plan
@@ -2268,6 +2276,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// (nothing to choose). Ambiguous stays both without a choice: both cover whatever a recording shows.</summary>
     (EngineInfo Engine, string? Detected) WithApiChoice(Game g, EngineInfo e, DxApi? choice)
     {
+        if (e.VulkanOnly && choice != DxApi.Vulkan) choice = null;   // a DirectX choice made before it was known
         // a Vulkan game on a vendor without a Vulkan warm has nothing to choose
         if (ApiKey(e.GraphicsApi) is not { } key || key == "vk" && Vendor.Caps.VulkanKey == null && choice == null) return (e, null);
         if (g.Id == FortniteId && choice is { } mode)
@@ -2311,8 +2320,8 @@ public sealed partial class ScsKiller : IScsKiller
 
     /// <summary>The APIs the game page's picker offers after Auto: DirectX 11 and 12, and Vulkan where the vendor has a Vulkan
     /// warm (<see cref="VendorCaps.VulkanKey"/>), also where detection found none: a game that starts its renderer in another
-    /// process can hide it. A Vulkan choice already made stays listed.</summary>
-    public static IReadOnlyList<DxApi> ApiChoices(GameState s, VendorCaps caps) =>
+    /// process can hide it. A Vulkan choice already made stays listed. Vulkan alone for a game with no DirectX renderer.</summary>
+    public static IReadOnlyList<DxApi> ApiChoices(GameState s, VendorCaps caps) => s.Engine is { VulkanOnly: true } ? [DxApi.Vulkan] :
         caps.VulkanKey != null || s.ApiOverride == DxApi.Vulkan
             ? [DxApi.D3D11, DxApi.D3D12, DxApi.Vulkan] : [DxApi.D3D11, DxApi.D3D12];
 
@@ -2519,7 +2528,7 @@ public sealed partial class ScsKiller : IScsKiller
         : "More than the AMD shader cache holds";
 
     /// <summary>Why the plan of a game on <paramref name="engine"/> leaves pipelines out for the cache budget (<see cref="PlanStats.CacheBudgetLeftOut"/>), on the game page.</summary>
-    public static string CacheBudgetNote(VendorCaps caps, EngineInfo? engine = null, int? capGB = null) => (VulkanCap(caps, engine) is { } file
+    public static string CacheBudgetNote(VendorCaps caps, EngineInfo? engine = null, int? capGB = null, PlanStats? plan = null) => (VulkanCap(caps, engine) is { } file
             ? $"This game has more pipelines than one {PerGameVendor(caps)} shader cache file holds ({App.Format.Bytes(file)}). "
             : UserCap(caps, capGB) is { } user
             ? $"This game has more pipelines than its compile size limit ({App.Format.Bytes(user)}). "
@@ -2529,7 +2538,8 @@ public sealed partial class ScsKiller : IScsKiller
             : caps.PerGameCacheCap is { } cap
             ? $"This game has more pipelines than the {PerGameVendor(caps)} driver keeps for one game ({App.Format.Bytes(cap)}). "
             : $"This game has more pipelines than the AMD driver's whole shader cache can hold ({App.Format.Bytes(AmdAppCache.DxcCacheCap)}). ")
-        + "So SCSKiller compiles the ones most likely to be used, recorded ones first. The rest compile while you play.";
+        + "So SCSKiller compiles the ones most likely to be used, recorded ones first. The rest compile while you play."
+        + (UserCap(caps, capGB) != null && plan is { Generated: 0, Recorded: > 0 } ? " The recorded pipelines alone are over this limit." : "");
 
     // NvidiaLinux.PlacedCacheSize: what the placer fits in Steam's files, each read up to NvidiaLinux.CacheFileIndexed
     static readonly string SteamFilesFit = $"what fits in Steam's shader cache files of {App.Format.Bytes(NvidiaLinux.CacheFileIndexed)} each";
@@ -4925,7 +4935,7 @@ public sealed partial class ScsKiller : IScsKiller
         var rec = Store.LoadGame(owner.Id);
         if (rec.RecorderFiles.Count == 0 || rec.RecorderExe == null) return false;
         var at = Path.GetDirectoryName(RecordedAt(owner, rec).ExePath)!;
-        return SameFinalDir(at, dir) && rec.RecorderFiles.Any(f => !f.Key.Equals("scskiller.ini", StringComparison.OrdinalIgnoreCase) && Path.Combine(at, f.Key) is var file && File.Exists(file) && Sha256(file) == f.Value);
+        return SameFinalDir(at, dir) && rec.RecorderFiles.Any(f => !f.Key.Equals(OldIniName, StringComparison.OrdinalIgnoreCase) && Path.Combine(at, f.Key) is var file && File.Exists(file) && Sha256(file) == f.Value);
     }
 
     /// <summary>A listed store game whose recorder is in <paramref name="dir"/> (<see cref="OwnsFolder"/>).</summary>
@@ -6891,7 +6901,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// anti-cheat line; null = not one.</summary>
     public static string? CrashNote(Game g) => RecorderCrashes(g) ? $"Not available: {g.Name} doesn't start with the recorder in its folder." : null;
 
-    /// <summary>The name a mod's d3d12.dll gets when the recorder chains to it (the proxy's scskiller.ini next=). It keeps the
+    /// <summary>The name a mod's d3d12.dll gets when the recorder chains to it (the proxy's scskiller.cfg next=). It keeps the
     /// d3d12 prefix for a wrapper that reads its role from its own name by prefix (ReShade's d3d*). <see cref="ChainName11"/>:
     /// the same for a mod's d3d11.dll.</summary>
     public const string ChainName = "d3d12.scskiller-next.dll", ChainName11 = "d3d11.scskiller-next.dll";
@@ -6925,7 +6935,41 @@ public sealed partial class ScsKiller : IScsKiller
     /// <summary>Every name our proxy goes in under.</summary>
     static readonly string[] ProxyNames = [Dll12, Dll11, Dll9, AgsName, DllOpti];
 
-    /// <summary>The names the recorder's preloader (proxy/preload.cpp) goes in under beside a Streamline game's exe on NVIDIA,
+    /// <summary>The recorder's config beside the exe, not an .ini: a mod loader (BSIPA) refuses any other .ini in the game
+    /// folder. <see cref="OldIniName"/>: earlier builds', the only one their recorders read.</summary>
+    public const string IniName = "scskiller.cfg", OldIniName = "scskiller.ini";
+
+    static readonly string[] IniNames = [IniName, OldIniName];
+
+    /// <summary>The config the recorder in <paramref name="dir"/> reads, as its config_path picks: <see cref="IniName"/> unless
+    /// it is known not to be there, else <see cref="OldIniName"/>.</summary>
+    internal static string IniPath(string dir)
+    {
+        var cfg = Path.Combine(dir, IniName);
+        try
+        {
+            File.GetAttributes(cfg);
+            return cfg;
+        }
+        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { return Path.Combine(dir, OldIniName); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return cfg; }
+    }
+
+    // config_path's literal, UTF-16 in a Windows build, UTF-8 in the Linux layer
+    static readonly byte[] CfgMarker = System.Text.Encoding.Unicode.GetBytes(IniName), CfgMarker8 = "scskiller.cfg"u8.ToArray();
+
+    /// <summary>Every recorder of ours that reads <paramref name="dir"/>'s config reads <see cref="IniName"/>: each proxy of
+    /// ours beside the exe and the layer copy of the manifest <paramref name="layer"/>. An earlier build's reads only
+    /// <see cref="OldIniName"/>, so its folder keeps that until it is replaced. False when one can't be read.</summary>
+    static bool CfgRead(string dir, string? layer)
+    {
+        static bool Reads(string file) => File.ReadAllBytes(file) is var b && (b.AsSpan().IndexOf(CfgMarker) >= 0 || b.AsSpan().IndexOf(CfgMarker8) >= 0);
+        var copy = layer == null ? null : Path.Combine(Path.GetDirectoryName(layer)!, VulkanLayer.Dll);
+        try { return ProxyNames.Select(n => Path.Combine(dir, n)).Where(IsOurProxy).All(Reads) && (copy == null || !File.Exists(copy) || Reads(copy)); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>The names the recorder's preloader (proxy/preload.cpp) goes in under beside a Streamline game's exe,
     /// in the order one is picked. None is a KnownDLL, so the exe's static import loads the copy beside it at process start,
     /// and its DllMain loads the recorder before Streamline's first d3d12.dll.</summary>
     public static readonly string[] PreloadNames = ["winmm.dll", "version.dll", "dinput8.dll"];
@@ -7001,13 +7045,6 @@ public sealed partial class ScsKiller : IScsKiller
 
     // SCSKILLER_TEST_PRELOAD_GENERIC=1: an exe that imports one of PreloadNames gets another name too (E2E)
     static readonly bool TestPreloadGeneric = Environment.GetEnvironmentVariable("SCSKILLER_TEST_PRELOAD_GENERIC") == "1";
-
-#if SCSK_TEST_HOOKS
-    // SCSKILLER_TEST_PRELOAD_ANY_GPU=1: the Streamline route on any GPU, for a stand-in's load-order run (the OS loader's, not the GPU's)
-    static readonly bool TestPreloadAnyGpu = Environment.GetEnvironmentVariable("SCSKILLER_TEST_PRELOAD_ANY_GPU") == "1";
-#else
-    const bool TestPreloadAnyGpu = false;
-#endif
 
     /// <summary>A name on the record that a preloader went in under: one of <see cref="PreloadNames"/>, or another DLL's
     /// that isn't the proxy's or one of the recorder's own files.</summary>
@@ -7261,7 +7298,7 @@ public sealed partial class ScsKiller : IScsKiller
     static bool FramesOnly(string dll, VendorCaps caps) => dll == Dll11 && Planner.D3D11CoversVs(caps);
 
     /// <summary>Why our d3d11.dll in the game's folder must not be armed on a <see cref="FramesOnly"/> GPU: the game's switch
-    /// and "Record in all compatible games" keep it out and no pair is in progress, or no scskiller.ini of ours with
+    /// and "Record in all compatible games" keep it out and no pair is in progress, or no scskiller.cfg of ours with
     /// frames_only=1 is next to it (without it the proxy records in full). Null = it may. A dll or ini that can't be read refuses.</summary>
     string? FramesOnlyRefusal(Game g)
     {
@@ -7275,11 +7312,11 @@ public sealed partial class ScsKiller : IScsKiller
             var pair = PairFrames11(s?.Engine, rec, Vendor.Caps);
             if (!pair && !Frames11Play(s?.Engine, Vendor.Caps) || !RecorderWanted(rec.Recorder ?? RecorderOverride.Default, s != null && RecordsByDefault(Settings, s), null, pair))
                 return "its frame times recorder is off for this game";
-            var ini = Path.Combine(dir, "scskiller.ini");
+            var ini = IniPath(dir);
             return File.Exists(ini) && GetIni(Store, dir)?.Tracked is { Length: > 0 } tracked && tracked.Split('|').Contains(Sha256(ini))
-                && File.ReadAllLines(ini).Contains("frames_only=1") ? null : "its scskiller.ini doesn't keep the d3d11.dll to frame times";
+                && File.ReadAllLines(ini).Contains("frames_only=1") ? null : "its scskiller.cfg doesn't keep the d3d11.dll to frame times";
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return "its d3d11.dll or scskiller.ini can't be read: " + e.Message; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return "its d3d11.dll or scskiller.cfg can't be read: " + e.Message; }
     }
 
     static string ChainOf(string dll) => dll == Dll11 ? ChainName11 : dll == AgsName ? AgsChainName : ChainName;
@@ -7288,19 +7325,19 @@ public sealed partial class ScsKiller : IScsKiller
 
     /// <summary>Our proxy placed in a chained mod's place and gone from it: a mod's uninstall deletes its DLL by name. The mod
     /// is never put back and the recorder never goes in around it (<see cref="GameRecord.RecorderOrphans"/>). Only a chain
-    /// that was complete counts: its scskiller.ini names the mod, written after the proxy's copy, so a failed install's
+    /// that was complete counts: its scskiller.cfg names the mod, written after the proxy's copy, so a failed install's
     /// rename is still put back. A removal cut off before the mod was back left its proxy parked (<see cref="RemoveRecorder"/>).</summary>
     static bool Orphaned(string dir, GameRecord rec)
     {
         if (rec.RecorderChained is not { } c || Path.Combine(dir, RoleOf(c)) is var dll && (File.Exists(dll) || File.Exists(dll + TempSuffix))) return false;
-        try { return File.ReadAllLines(Path.Combine(dir, "scskiller.ini")).Contains($"next={c.Name}"); }
+        try { return File.ReadAllLines(IniPath(dir)).Contains($"next={c.Name}"); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }   // put back, as before
     }
 
     public const string DxvkNote = "DXVK runs this game on Vulkan, so the compile isn't used",
         DxvkCompiledNote = "DXVK runs this game on Vulkan, and the compile covers it";
 
-    public const string IniPendingNote = "its scskiller.ini can't be taken out, so the recorder refuses until it's gone";
+    public const string IniPendingNote = "its scskiller.cfg can't be taken out, so the recorder refuses until it's gone";
 
     public const string UnarmedNote = "left by an earlier install: SCSKiller's recorder refuses it";
 
@@ -7811,7 +7848,7 @@ public sealed partial class ScsKiller : IScsKiller
                 if (rec.RecorderRollback || dirs.Any(d => IniPending(Store, d)))   // the game and the record keep the folder until it's out
                 {
                     Store.SaveGame(gameId, rec);
-                    throw new InvalidOperationException($"{g.Name}: the recorder's scskiller.ini can't be taken out yet: try again once nothing holds it");
+                    throw new InvalidOperationException($"{g.Name}: the recorder's scskiller.cfg can't be taken out yet: try again once nothing holds it");
                 }
                 // a folder that couldn't be reached (a drive away) stays on the record: SCSKiller's uninstall, or the game
                 // added again, takes it out, checked to be that folder still
@@ -7941,15 +7978,15 @@ public sealed partial class ScsKiller : IScsKiller
     }
 
     /// <summary>Each file the record placed in <paramref name="dir"/> is there with the bytes it records, and the folder's
-    /// scskiller.ini with a hash this data folder's entry tracks and the installed copy's doesn't (read only): what another
+    /// scskiller.cfg with a hash this data folder's entry tracks and the installed copy's doesn't (read only): what another
     /// copy wrote there since never matches. The record is no proof of whose it is (<see cref="NamedByInstalled"/>).</summary>
     bool PlacedAsRecorded(string dir, GameRecord rec)
     {
         try
         {
-            var ini = Path.Combine(dir, "scskiller.ini");
+            var ini = IniPath(dir);
             if (!(rec.RecorderFiles.Count > 0
-                  && rec.RecorderFiles.All(f => f.Key.Equals("scskiller.ini", StringComparison.OrdinalIgnoreCase) || File.Exists(Path.Combine(dir, f.Key)) && Sha256(Path.Combine(dir, f.Key)) == f.Value)
+                  && rec.RecorderFiles.All(f => f.Key.Equals(OldIniName, StringComparison.OrdinalIgnoreCase) || File.Exists(Path.Combine(dir, f.Key)) && Sha256(Path.Combine(dir, f.Key)) == f.Value)
                   && File.Exists(ini) && GetIni(Store, dir)?.Tracked is { Length: > 0 } tracked && tracked.Split('|').Contains(Sha256(ini))))
                 return false;
             return !(GetIni(new AppStore(Path.GetDirectoryName(DefaultLedger)!), dir)?.Tracked is { Length: > 0 } installed && installed.Split('|').Contains(Sha256(ini)));
@@ -7998,7 +8035,7 @@ public sealed partial class ScsKiller : IScsKiller
     }
 
     /// <summary>Makes a recorder without a marker that this data folder's record placed (a 1.2.5 portable's, from before
-    /// markers) this copy's: its first marker goes in, never over one put there meanwhile, its scskiller.ini is tracked as
+    /// markers) this copy's: its first marker goes in, never over one put there meanwhile, its scskiller.cfg is tracked as
     /// this copy's, and the reconcile after it updates it as any. Not while the game runs, nor when it chains to a mod.
     /// <paramref name="takeOver"/>: any other copy's recorder, which this copy wants, its marker replaced and its proxy
     /// replaced by this build's (<see cref="GameRecord.RecorderClaimed"/>).</summary>
@@ -8029,7 +8066,7 @@ public sealed partial class ScsKiller : IScsKiller
                 Unstamp(dir);
                 throw new InvalidOperationException("it changed while it was checked");
             }
-            var ini = Path.Combine(dir, "scskiller.ini");
+            var ini = IniPath(dir);
             if (File.Exists(ini) && File.ReadAllText(ini).StartsWith(RecorderIni, StringComparison.Ordinal))
                 SetIni(Store, dir, e => (e ?? new IniOwner(dir)) with { Tracked = Sha256(ini), Users = false, Remove = false, Install = g.InstallDir });
             RecorderLog(takeOver ? $"{g.Name}: took over the recorder another SCSKiller copy placed ({dir})"
@@ -8135,6 +8172,7 @@ public sealed partial class ScsKiller : IScsKiller
         var gen = RemovalGen(g.Id);
         foreach (var d in dirs) TakingOver[FullDir(d)] = Environment.CurrentManagedThreadId;
         var restored = true;
+        var wrote = _takeOverWrote = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         try
         {
             Claim(g, rec, takeOver: true);
@@ -8156,7 +8194,8 @@ public sealed partial class ScsKiller : IScsKiller
         }
         catch (Exception) when (RemovalGen(g.Id) == gen)   // else anti-cheat took it out
         {
-            restored = RestoreTakeOver(g, rec, dirs, files, inis, vulkan && !registered && RegisteredNow(), () =>
+            _takeOverWrote = null;
+            restored = RestoreTakeOver(g, rec, dirs, files, wrote, inis, vulkan && !registered && RegisteredNow(), () =>
             {
                 (rec.RecorderExe, rec.RecorderInstallDir, rec.RecorderChained, rec.RecorderClaimed, rec.KeysPending, rec.KeysIndexHash, rec.RecorderRollback) =
                     (was.RecorderExe, was.RecorderInstallDir, was.RecorderChained, was.RecorderClaimed, was.KeysPending, was.KeysIndexHash, was.RecorderRollback);
@@ -8168,17 +8207,31 @@ public sealed partial class ScsKiller : IScsKiller
         }
         finally
         {
+            _takeOverWrote = null;
             foreach (var d in dirs)
                 if (restored) TakingOver.TryRemove(FullDir(d), out _); else TakingOver[FullDir(d)] = 0;
         }
     }
 
+    // the files this thread's take-over attempt wrote in the game folders, by full path, with the SHA-256 of what it wrote
+    [ThreadStatic] static Dictionary<string, string>? _takeOverWrote;
+
+    /// <summary>The SHA-256 of <paramref name="file"/> while a take-over attempt runs on this thread, for <see cref="Wrote"/>.</summary>
+    internal static string? WriteHash(string file) => _takeOverWrote == null ? null : Sha256(file);
+
+    /// <summary>A file the running take-over attempt put at <paramref name="path"/>, with <paramref name="sha"/> (<see cref="WriteHash"/>).</summary>
+    internal static void Wrote(string path, string? sha)
+    {
+        if (sha != null && _takeOverWrote != null) _takeOverWrote[Path.GetFullPath(path)] = sha;
+    }
+
     /// <summary>Puts back what a failed <see cref="TakeOver"/> changed: the other copy's files byte for byte, then the files the
-    /// attempt added go, its marker last; then this copy's ini entries and record (<paramref name="record"/>). The layer the attempt
+    /// attempt wrote (<paramref name="wrote"/>) go while they hold its bytes, its marker last, and any other file there since
+    /// is left; then this copy's ini entries and record (<paramref name="record"/>). The layer the attempt
     /// registered (<paramref name="layer"/>) goes first, so no launch loads it. A folder another
     /// copy took over meanwhile is left to it. A step that fails stops it there, nothing more is deleted, and the folders stay
     /// another copy's until SCSKiller starts again. False then.</summary>
-    bool RestoreTakeOver(Game g, GameRecord rec, List<string> dirs, Dictionary<string, byte[]> files, List<(string Dir, IniOwner? Entry)> inis, bool layer, Action record)
+    bool RestoreTakeOver(Game g, GameRecord rec, List<string> dirs, Dictionary<string, byte[]> files, Dictionary<string, string> wrote, List<(string Dir, IniOwner? Entry)> inis, bool layer, Action record)
     {
         try
         {
@@ -8199,11 +8252,23 @@ public sealed partial class ScsKiller : IScsKiller
                 if (opti && File.Exists(f) && ProxyAt(f) != true) return;   // a mod's since
                 if (!File.Exists(f) || !File.ReadAllBytes(f).AsSpan().SequenceEqual(files[f])) Place(f, s => s.Write(files[f]), replace: !opti || ProxyAt(f) == true);
             }
-            foreach (var f in files.Keys.Where(f => !Ledger(f))) PutBack(f);
+            // the configs before the dlls: an earlier build's dll is never back without the config it reads
+            foreach (var f in files.Keys.Where(f => !Ledger(f)).OrderBy(f => f.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))) PutBack(f);
+            // a file by a recorder name the user, a mod or another copy put there since the snapshot isn't the attempt's to delete
+            void Drop(string f)
+            {
+                try
+                {
+                    if (wrote.TryGetValue(Path.GetFullPath(f), out var sha) && DeleteWritten(f, sha)) return;
+                    if (File.Exists(f)) RecorderLog($"{g.Name}: the take-over failed: left {f}, which it didn't write");
+                }
+                // a held file at the name: left, and the rest of the put-back goes on
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { RecorderLog($"{g.Name}: the take-over failed: left {f} ({e.Message})"); }
+            }
             var added = TakeOverDirs(dirs).SelectMany(d => Directory.EnumerateFiles(d).Where(TakeOverFile)).Where(f => !files.ContainsKey(f)).ToList();
-            foreach (var f in added.Where(f => !Ledger(f))) File.Delete(f);
+            foreach (var f in added.Where(f => !Ledger(f))) Drop(f);
             foreach (var f in files.Keys.Where(Ledger)) PutBack(f);
-            foreach (var f in added.Where(Ledger)) File.Delete(f);
+            foreach (var f in added.Where(Ledger)) Drop(f);
             foreach (var (dir, entry) in inis) SetIni(Store, dir, _ => entry);
             record();
             _rollbacks.TryRemove(g.Id, out _);
@@ -8216,6 +8281,17 @@ public sealed partial class ScsKiller : IScsKiller
             RecorderLog($"{g.Name}: the take-over failed and putting the other SCSKiller copy's recorder back failed too ({e.Message}): {TakeOverStuckNote}");
             return false;
         }
+    }
+
+    /// <summary>Deletes <paramref name="path"/> while its bytes hash to <paramref name="sha"/>, read through a handle that lets
+    /// no one write it meanwhile.</summary>
+    static bool DeleteWritten(string path, string sha)
+    {
+        // ponytail: deleted by path, so a rename and replace after the read loses that file; 1.5's DeleteIfOurs deletes through the handle
+        using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+        if (Convert.ToHexString(SHA256.HashData(f)) != sha) return false;
+        File.Delete(path);
+        return true;
     }
 
     public void ReconcileRecorders(string? gameId = null)
@@ -8373,11 +8449,12 @@ public sealed partial class ScsKiller : IScsKiller
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException) { notTaken = TakeOverFailed + e.Message; }
         if (Foreign(g) || Foreign(RecordedAt(g, rec)))   // never adopted, armed, updated or emptied here
         {
-            var foreignNote = notTaken ?? ForeignNote;
+            // turning recording on takes nothing over until a restart
+            var foreignNote = notTaken ?? (_removedFromAll ? RemovedFromAllNote : ForeignNote);
             if (_recorderNotes.GetValueOrDefault(id) == foreignNote) return false;
             _recorderNotes[id] = foreignNote;
-            if (notTaken == null) RecordersLog(Store.DataDir, $"{g.Name}: recorder {foreignNote}");
-            else RecorderLog($"{g.Name}: left as it is: {(notTaken == TakeOverFailed + MovedDataRefusal ? "another SCSKiller copy's recorder, this copy doesn't install recorders" : notTaken)}");
+            if (notTaken == null && !_removedFromAll) RecordersLog(Store.DataDir, $"{g.Name}: recorder {foreignNote}");
+            else if (notTaken != null) RecorderLog($"{g.Name}: left as it is: {(notTaken == TakeOverFailed + MovedDataRefusal ? "another SCSKiller copy's recorder, this copy doesn't install recorders" : notTaken)}");
             Refresh(g);
             return true;
         }
@@ -8453,7 +8530,7 @@ public sealed partial class ScsKiller : IScsKiller
                         MoveSessionFiles(wasDir, dir);
                     }
                     if (!Uninstall(old, rec))
-                        left = GameRunning(old) ? "moves when the game exits" : IniPending(Store, wasDir) ? $"moves once the scskiller.ini in {wasDir} can be taken out"
+                        left = GameRunning(old) ? "moves when the game exits" : IniPending(Store, wasDir) ? $"moves once the scskiller.cfg in {wasDir} can be taken out"
                             : $"couldn't move: the recording in {wasDir} couldn't be imported";
                 }
                 if (left == null)
@@ -8549,7 +8626,7 @@ public sealed partial class ScsKiller : IScsKiller
                     {
                         (stamp, gen) = (Stamp(ArmTarget(g).ExePath), RemovalGen(id));
                         if ((rename || stray) && !Uninstall(g, rec))
-                            throw new InvalidOperationException(IniPending(Store, dir) ? "its scskiller.ini can't be taken out yet" : "the recording couldn't be imported");
+                            throw new InvalidOperationException(IniPending(Store, dir) ? "its scskiller.cfg can't be taken out yet" : "the recording couldn't be imported");
                         Install(g, rec, rename ? target : name, s.Preload);
                         if (!Attest(ArmTarget(g), rec, stamp, gen)) note = ForeignIni(dir, rec);   // Install's full checks were clean
                     }
@@ -8600,7 +8677,7 @@ public sealed partial class ScsKiller : IScsKiller
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { RecorderLog($"{g.Name}: couldn't write the keys file: {e.Message}"); }
             // an install cut off before its ini: written first, unsigned, so the frames-only check sees its frames_only=1
-            if (clean && !File.Exists(Path.Combine(dir, "scskiller.ini"))) UpdateRecorderIni(g, rec, "");
+            if (clean && !File.Exists(IniPath(dir))) UpdateRecorderIni(g, rec, "");
             if (clean && !Attest(ArmTarget(g), rec, stamp, gen)) note = ForeignIni(dir, rec);
             else UpdateRecorderIni(g, rec);
         }
@@ -8779,7 +8856,7 @@ public sealed partial class ScsKiller : IScsKiller
         var src = ProxySource(name, g) ?? throw new FileNotFoundException($"the recorder for {name} was not found next to the app");
         var dir = Path.GetDirectoryName(g.ExePath)!;
         var dll = Path.Combine(dir, name);
-        var ini = Path.Combine(dir, "scskiller.ini");
+        var ini = IniPath(dir);
         var (iniState, iniJudged) = JudgeOwnIni(g, rec, dir, rec.RecorderChained?.Name);
         if (iniState == IniState.Unknown) throw new IOException($"{ini} can't be read: not installing until it can");
         bool iniOurs = iniState is IniState.Absent or IniState.Ours;
@@ -8823,7 +8900,9 @@ public sealed partial class ScsKiller : IScsKiller
                 throw new InvalidOperationException($"{g.Name} is running");
             }
             File.Delete(ini);   // ours: a next= left by a removal cut off before it went would make this attempt's rename look complete (Orphaned)
+            var moved = WriteHash(dll);   // before the rename: a file put at the new name after it is never taken for this one
             File.Move(dll, to);
+            Wrote(to, moved);
         }
         else
         {
@@ -8870,10 +8949,10 @@ public sealed partial class ScsKiller : IScsKiller
                 Store.SaveGame(g.Id, rec);   // the folder and the dll on the record before the ini exists: the uninstall hook finds them
                 // changed while its entry was saved: the user's, left alone
                 if (!WriteIni(dir, IniText(g, rec), iniJudged, rec.RecorderChained?.Name, g.InstallDir, () => GameFolderWrite(g),
-                        step => { if (step == "saved") InstallStep?.Invoke("ini"); }, install: true)
+                        step => { if (step == "saved") InstallStep?.Invoke("ini"); }, install: true, layer: rec.VulkanLayer)
                     && !GameFolderWrite(g))
                     throw new InvalidOperationException($"{g.Name} started while the recorder was installed");
-            }   // else: the user's own scskiller.ini, left alone
+            }   // else: the user's own scskiller.cfg, left alone
         }
         catch (Exception e) { failed = e; }
         // the full check before anything that may wait for a lock (the keys file's, the record's)
@@ -9015,6 +9094,7 @@ public sealed partial class ScsKiller : IScsKiller
     ///   (WarmJob.In), read from /proc.</summary>
     bool OurCopy((int Pid, int Parent, string Exe) p, List<(int Pid, int Parent, string Exe)> all)
     {
+        if (Hookshot.Ours(p.Pid)) return true;
         var token = false;
         CarriesOurToken(p.Pid, ref token);
         if (token) return true;
@@ -9222,13 +9302,13 @@ public sealed partial class ScsKiller : IScsKiller
     }
 
     /// <summary>Anti-cheat or VAC in a game whose recorder is another SCSKiller copy's: only that recorder goes, our proxy and
-    /// preloader while its scskiller.ini is held, then the ini, and its ledger once no session or data file is left there.
+    /// preloader while its scskiller.cfg is held, then the ini, and its ledger once no session or data file is left there.
     /// Its session and data files stay. An ini that may arm a session at the user's own risk (Always record or a risk
     /// session: pid= or risk=, or no sig= yet while it waits for the launch), none or one that can't be read, a chained mod
     /// or a running game: all of it stays (the page says another copy placed it).</summary>
     void ForeignTakeOut(string dir, Game g, string why)
     {
-        var (ini, ledger) = (Path.Combine(dir, "scskiller.ini"), Path.Combine(dir, LedgerStamp));
+        var (ini, ledger) = (IniPath(dir), Path.Combine(dir, LedgerStamp));
         var owner = "another SCSKiller copy";
         try
         {
@@ -9292,7 +9372,7 @@ public sealed partial class ScsKiller : IScsKiller
         try { recorded = Store.LoadGame(g.Id); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { }
         foreach (var dir in new[] { g.ExePath, recorded?.RecorderExe, recorded?.RecorderMoveFrom, recorded?.RecorderMoveTo }.OfType<string>().Select(Path.GetDirectoryName).OfType<string>()
-                     .Distinct(StringComparer.OrdinalIgnoreCase).Where(d => File.Exists(Path.Combine(d, "scskiller.ini"))))
+                     .Distinct(StringComparer.OrdinalIgnoreCase).Where(d => File.Exists(IniPath(d))))
             Revoke(dir, true, RecorderLog);
         lock (_recorderLock)
         {
@@ -9446,7 +9526,7 @@ public sealed partial class ScsKiller : IScsKiller
     string? Resigned(Game g, GameRecord rec) =>
         AttestedStamp(g) is { } exe ? Signed(g, exe, SignedLines(g, rec)) : null;
 
-    /// <summary>The recorder's scskiller.ini (root=: <see cref="RootValue"/>). <paramref name="stamp"/>: <see cref="Signed"/>'s,
+    /// <summary>The recorder's scskiller.cfg (root=: <see cref="RootValue"/>). <paramref name="stamp"/>: <see cref="Signed"/>'s,
     /// or "" for none (the proxy records nothing then).</summary>
     string IniText(Game g, GameRecord rec, string stamp = "") => IniText(g, rec, DbCap(g)?.ToString(), stamp);
 
@@ -9454,7 +9534,7 @@ public sealed partial class ScsKiller : IScsKiller
         IniOf(cap, ChainNext(Path.GetDirectoryName(g.ExePath)!, rec),
             FramesOnly(File.Exists(Path.Combine(Path.GetDirectoryName(g.ExePath)!, Dll11)) ? Dll11 : Dll12, Vendor.Caps), RootValue(g), stamp);
 
-    /// <summary>scskiller.ini as SCSKiller writes it, from its values (null: the line isn't written): 1.0 to 1.2 wrote the header,
+    /// <summary>scskiller.cfg as SCSKiller writes it, from its values (null: the line isn't written): 1.0 to 1.2 wrote the header,
     /// max_db_bytes= and next=; 1.3 adds frames_only=, root= and the stamp (<see cref="Signed"/>'s lines, with
     /// <see cref="SignedLines"/>). The one writer, which <see cref="OurIniBytes"/> renders again to recognise its files.</summary>
     static string IniOf(string? cap, string? next, bool framesOnly, string? root, string stamp) =>
@@ -9576,10 +9656,15 @@ public sealed partial class ScsKiller : IScsKiller
     internal static bool IniPending(AppStore store, string dir) => GetIni(store, dir) is { Remove: true };
 
     /// <summary>The user's from now on (also once it's untracked), until SCSKiller writes its own there: nothing of SCSKiller's to take out there.</summary>
-    static void MarkUsers(AppStore store, string dir, TimeSpan? wait = null) =>
-        SetIni(store, dir, e => (e ?? new IniOwner(dir)) with { Tracked = null, Users = true, Remove = false }, wait);
+    static void MarkUsers(AppStore store, string dir, TimeSpan? wait = null, string? ini = null) =>
+        SetIni(store, dir, e => (e ?? new IniOwner(dir)) with { Tracked = null, Users = true, Remove = false, Wrote = KeptWrote(e, ini) }, wait);
 
-    /// <summary>Whose the scskiller.ini in <paramref name="dir"/> is (<see cref="IniOwner"/>, the folder's), and its bytes as
+    /// <summary>The entry's <see cref="IniOwner.Wrote"/> as an <paramref name="ini"/> marked the user's leaves it: an
+    /// <see cref="IniName"/>'s tracked hashes join it, so an <see cref="OldIniName"/> of ours beside it is still known (<see cref="JudgeBeside"/>).</summary>
+    static string? KeptWrote(IniOwner? e, string? ini) =>
+        ini != null && Path.GetFileName(ini) == IniName ? (e?.Tracked ?? "").Split('|').Where(h => h.Length > 0).Aggregate(e?.Wrote, WroteWith) : e?.Wrote;
+
+    /// <summary>Whose the scskiller.cfg in <paramref name="dir"/> is (<see cref="IniOwner"/>, the folder's), and its bytes as
     /// read (null when absent, unreadable or over 64 KB). A tracked one is SCSKiller's only while its bytes hash to one the entry
     /// names (what SCSKiller wrote, or what it judged its own and is about to replace); otherwise, and over 64 KB (SCSKiller
     /// never writes that much), it's the user's from then on, until SCSKiller writes its own there. An untracked one, or one tracked as unknown
@@ -9587,22 +9672,23 @@ public sealed partial class ScsKiller : IScsKiller
     /// <paramref name="installDir"/> (the entry's when null; none known: an untracked root= is never SCSKiller's). One that
     /// can't be read, or a folder that can't be reached (a drive away, not gone), is unknown: never written or deleted.
     /// <paramref name="removal"/>: bytes SCSKiller wrote there (<see cref="IniOwner.Wrote"/>) are its own to delete whatever the
-    /// entry says since, as an edit put back.</summary>
-    static (IniState State, byte[]? Bytes) JudgeIni(string dir, AppStore store, string? chain, string? installDir, TimeSpan? wait = null, bool removal = false)
+    /// entry says since, as an edit put back. <paramref name="file"/>: that name instead of the one the recorder reads (<see cref="IniPath"/>).</summary>
+    static (IniState State, byte[]? Bytes) JudgeIni(string dir, AppStore store, string? chain, string? installDir, TimeSpan? wait = null, bool removal = false, string? file = null)
     {
-        var ini = Path.Combine(dir, "scskiller.ini");
+        var ini = file == null ? IniPath(dir) : Path.Combine(dir, file);
+        var name = Path.GetFileName(ini);
         var entry = GetIni(store, dir);
         byte[] bytes;
         try
         {
             if (!File.Exists(ini))
             {
-                if (Directory.Exists(dir) ? !Directory.EnumerateFiles(dir, "scskiller.ini").Any() : Gone(dir))   // listed: not just unreadable
+                if (Directory.Exists(dir) ? !Directory.EnumerateFiles(dir, name).Any() : Gone(dir))   // listed: not just unreadable
                 {
                     // nothing of SCSKiller's to take out; the user's marking stays (an editor may save by replacing the file)
                     // under the lock, listed again: a write since is tracked by its writer
                     if (entry is { Tracked: not null } or { Remove: true })
-                        SetIni(store, dir, e => e == null || Directory.Exists(dir) && Directory.EnumerateFiles(dir, "scskiller.ini").Any() ? e : e with { Tracked = null, Remove = false }, wait);
+                        SetIni(store, dir, e => e == null || Directory.Exists(dir) && Directory.EnumerateFiles(dir, name).Any() ? e : e with { Tracked = null, Remove = false }, wait);
                     return (IniState.Absent, null);
                 }
                 if (!Directory.Exists(dir)) return (IniState.Unknown, null);
@@ -9610,7 +9696,7 @@ public sealed partial class ScsKiller : IScsKiller
             using var f = new FileStream(ini, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             if (f.Length > 65536)
             {
-                MarkUsers(store, dir, wait);
+                MarkUsers(store, dir, wait, ini);
                 return (IniState.NotOurs, null);
             }
             bytes = new byte[f.Length];
@@ -9621,22 +9707,22 @@ public sealed partial class ScsKiller : IScsKiller
         if (entry?.Tracked is { Length: > 0 } tracked)
         {
             if (tracked.Split('|').Contains(Convert.ToHexString(SHA256.HashData(bytes)))) return (IniState.Ours, bytes);
-            return MarkUsers(store, dir, bytes, wait);   // changed since SCSKiller wrote it
+            return MarkUsers(store, dir, bytes, wait, ini);   // changed since SCSKiller wrote it
         }
         var root = (installDir ?? entry?.Install) is { } install ? RootValue(dir, install) : null;
         if (entry is not { Users: true } && OurIniBytes(bytes, chain ?? entry?.Chain, root)) return (IniState.Ours, bytes);
         // its root= can't be checked without the install it should name: not known to be the user's either
         if (entry is not { Users: true } && root == null && System.Text.Encoding.ASCII.GetString(bytes).Contains("\r\nroot=")) return (IniState.Unknown, bytes);
         // seen not to be SCSKiller's: the user's, also once edited into SCSKiller's shape
-        return entry is { Users: true } ? (IniState.NotOurs, bytes) : MarkUsers(store, dir, bytes, wait);
+        return entry is { Users: true } ? (IniState.NotOurs, bytes) : MarkUsers(store, dir, bytes, wait, ini);
     }
 
     /// <summary>The user's from now on, decided again under the store's lock, where SCSKiller writes its own ini
     /// (<see cref="WriteIni"/>): the entry was read before the bytes, so a write between the two reads is SCSKiller's when the
     /// entry tracks the bytes there now. Bytes changed again, or unreadable, are unknown: judged again later.</summary>
-    static (IniState State, byte[]? Bytes) MarkUsers(AppStore store, string dir, byte[] judged, TimeSpan? wait)
+    static (IniState State, byte[]? Bytes) MarkUsers(AppStore store, string dir, byte[] judged, TimeSpan? wait, string ini)
     {
-        var (key, ini) = (FullDir(dir), Path.Combine(dir, "scskiller.ini"));
+        var key = FullDir(dir);
         (IniState, byte[]?) verdict = (IniState.Unknown, null);
         if (!Directory.Exists(key)) return verdict;
         store.UpdateInis(all =>
@@ -9653,7 +9739,7 @@ public sealed partial class ScsKiller : IScsKiller
             if (entry?.Tracked is { Length: > 0 } t && t.Split('|').Contains(Convert.ToHexString(SHA256.HashData(now)))) verdict = (IniState.Ours, now);
             else if (now.AsSpan().SequenceEqual(judged))
             {
-                all[key] = (entry ?? new IniOwner(key)) with { Dir = key, Tracked = null, Users = true, Remove = false };
+                all[key] = (entry ?? new IniOwner(key)) with { Dir = key, Tracked = null, Users = true, Remove = false, Wrote = KeptWrote(entry, ini) };
                 verdict = (IniState.NotOurs, judged);
             }
         }, wait);
@@ -9671,7 +9757,7 @@ public sealed partial class ScsKiller : IScsKiller
     {
         try
         {
-            if (!File.Exists(ini)) return Directory.EnumerateFiles(Path.GetDirectoryName(ini)!, "scskiller.ini").Any() || judged != null ? null : true;
+            if (!File.Exists(ini)) return Directory.EnumerateFiles(Path.GetDirectoryName(ini)!, Path.GetFileName(ini)).Any() || judged != null ? null : true;
             using var f = new FileStream(ini, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             var now = new byte[Math.Min(f.Length, 65537)];
             f.ReadExactly(now);
@@ -9686,6 +9772,26 @@ public sealed partial class ScsKiller : IScsKiller
     // ponytail: the last 16 written, enough for the arms of one install
     static string WroteWith(string? wrote, string hash) => string.Join('|', (wrote?.Split('|') ?? []).Where(h => h != hash).Append(hash).TakeLast(16));
 
+    /// <summary>After <see cref="IniName"/> is written in <paramref name="dir"/>: an <see cref="OldIniName"/> there whose bytes
+    /// <paramref name="entry"/> names (tracked or written) is deleted, one that can't be stays named in what it returns
+    /// (<see cref="IniOwner.Wrote"/>, for the removal). Anything else is left alone.</summary>
+    static string? DropOldIni(string dir, IniOwner entry)
+    {
+        if (!File.Exists(Path.Combine(dir, IniName)) || OwnOldIni(dir, entry) is not { } hash) return entry.Wrote;
+        try { File.Delete(Path.Combine(dir, OldIniName)); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return WroteWith(entry.Wrote, hash); }
+        return entry.Wrote;
+    }
+
+    /// <summary>The hash of the <see cref="OldIniName"/> in <paramref name="dir"/> when <paramref name="entry"/> names its bytes
+    /// (tracked or written); null when there is none, it can't be read, or it isn't SCSKiller's by the entry.</summary>
+    static string? OwnOldIni(string dir, IniOwner? entry)
+    {
+        var old = Path.Combine(dir, OldIniName);
+        try { return entry != null && File.Exists(old) && Sha256(old) is var hash && $"{entry.Tracked}|{entry.Wrote}".Split('|').Contains(hash) ? hash : null; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+    }
+
     static string IniTracked(string text, byte[]? judged) =>
         Hex(text) + (judged == null ? "" : "|" + Convert.ToHexString(SHA256.HashData(judged)));
 
@@ -9695,12 +9801,15 @@ public sealed partial class ScsKiller : IScsKiller
     /// the user's; unreadable, gone or not to be written now (<paramref name="still"/>), the entry is put back and it's judged
     /// again later. An update (not <paramref name="install"/>) never cancels a queued removal and runs only beside our proxy
     /// or a registered Vulkan recorder (<paramref name="vulkan"/>), both checked under the lock. True when written.</summary>
-    bool WriteIni(string dir, string text, byte[]? judged, string? chain, string installDir, Func<bool> still, Action<string>? step, bool install = false, bool vulkan = false)
+    bool WriteIni(string dir, string text, byte[]? judged, string? chain, string installDir, Func<bool> still, Action<string>? step, bool install = false, bool vulkan = false, string? layer = null)
     {
         dir = FullDir(dir);
         if (!Directory.Exists(dir)) return false;
         RefuseForeign(dir);
-        var (ini, key, intent) = (Path.Combine(dir, "scskiller.ini"), dir, IniTracked(text, judged));
+        var (ini, key, intent) = (IniPath(dir), dir, IniTracked(text, judged));
+        // the earlier name stays while a recorder here reads only that
+        var cfgRead = CfgRead(dir, layer);
+        var to = Path.GetFileName(ini) == OldIniName && cfgRead ? Path.Combine(dir, IniName) : ini;
         IniOwner? was = null;
         var go = false;
         Store.UpdateInis(all =>
@@ -9721,8 +9830,8 @@ public sealed partial class ScsKiller : IScsKiller
             switch (still() ? IniNow(ini, judged) : null)
             {
                 case true:
-                    Place(ini, Text(text), replace: true);
-                    all[key] = now with { Tracked = Hex(text), Wrote = WroteWith(now.Wrote, Hex(text)) };
+                    Place(to, Text(text), replace: to == ini);   // never over an IniName put there meanwhile
+                    all[key] = now with { Tracked = Hex(text), Wrote = WroteWith(cfgRead ? DropOldIni(dir, now) : now.Wrote, Hex(text)) };
                     written = true;
                     break;
                 case false:
@@ -9757,7 +9866,7 @@ public sealed partial class ScsKiller : IScsKiller
             if (!preArm && (text != IniText(g, rec, cap, stamp) || SignedStampExe(g, stamp) == null)) return (state, judged);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return (state, judged); }
-        var ini = Path.Combine(dir, "scskiller.ini");
+        var ini = IniPath(dir);
         var adopted = false;
         SetIni(Store, dir, e =>
         {
@@ -9766,11 +9875,11 @@ public sealed partial class ScsKiller : IScsKiller
             return e with { Tracked = Convert.ToHexString(SHA256.HashData(judged)), Users = false, Remove = false, Chain = chain, Install = g.InstallDir };
         });
         if (!adopted) return (state, judged);
-        RecorderLog($"{g.Name}: the scskiller.ini in {dir} is SCSKiller's own, signed for this game: tracked again");
+        RecorderLog($"{g.Name}: the scskiller.cfg in {dir} is SCSKiller's own, signed for this game: tracked again");
         return (IniState.Ours, judged);
     }
 
-    /// <summary>Rewrites SCSKiller's own scskiller.ini when its limit line is out of date (the setting changed, an import
+    /// <summary>Rewrites SCSKiller's own scskiller.cfg when its limit line is out of date (the setting changed, an import
     /// grew the copy, a clear), or writes it when our proxy has none; anything else is left alone (<see cref="JudgeIni"/>).
     /// The proxy reads it when the game starts. <paramref name="stamp"/>: <see cref="Attest"/>'s; null keeps the ini's own.
     /// <paramref name="still"/>: asked right before the file is written; false writes nothing.</summary>
@@ -9793,11 +9902,12 @@ public sealed partial class ScsKiller : IScsKiller
             {
                 if (entry?.Tracked != Hex(text))   // recognised, not tracked yet
                     SetIni(Store, dir, e => e is { Remove: true } || !OurProxyIn(dir) && !vulkan ? e : (e ?? new IniOwner(dir)) with { Tracked = Hex(text), Wrote = WroteWith(e?.Wrote, Hex(text)), Users = false, Chain = rec.RecorderChained?.Name, Install = g.InstallDir });
-                return;
+                // written again only to move off the earlier name, once every recorder here reads IniName
+                if (OwnOldIni(dir, GetIni(Store, dir)) == null || !CfgRead(dir, rec.VulkanLayer)) return;
             }
-            WriteIni(dir, text, judged, rec.RecorderChained?.Name, g.InstallDir, () => still?.Invoke() != false && GameFolderWrite(g), AttestStep, vulkan: vulkan);
+            WriteIni(dir, text, judged, rec.RecorderChained?.Name, g.InstallDir, () => still?.Invoke() != false && GameFolderWrite(g), AttestStep, vulkan: vulkan, layer: rec.VulkanLayer);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { RecorderLog($"{g.Name}: couldn't update the recorder's scskiller.ini: {e.Message}"); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { RecorderLog($"{g.Name}: couldn't update the recorder's scskiller.cfg: {e.Message}"); }
     }
 
     /// <summary>The recording is imported, then the recorder's data files are deleted. False when the game started before
@@ -9821,7 +9931,7 @@ public sealed partial class ScsKiller : IScsKiller
                 if (RemoveRecorderData(dir, RecordingPath(g.Id), rec.RecordingInbox, () => GameRunning(g), rec.RecorderRollback || IniPending(Store, dir)))
                 {
                     if (!IniPending(Store, dir)) return true;
-                    RecorderLog($"{g.Name}: the recorder's scskiller.ini in {dir} isn't out yet: tried again later");   // the record keeps the folder
+                    RecorderLog($"{g.Name}: the recorder's scskiller.cfg in {dir} isn't out yet: tried again later");   // the record keeps the folder
                     return false;
                 }
                 RecorderLog($"{g.Name}: the game started: the recorder's data files left in {dir} for the next reconcile");
@@ -9884,7 +9994,7 @@ public sealed partial class ScsKiller : IScsKiller
         catch (Exception e) when (e is IOException and not ForeignFolderException or UnauthorizedAccessException)
         {
             (iniLeft, rec.RecorderRollback) = (true, true);   // the record keeps the folder: the next reconcile's removal takes it out
-            log($"{name}: couldn't take {Path.Combine(dir, "scskiller.ini")} out ({e.Message}): tried again later");
+            log($"{name}: couldn't take {IniPath(dir)} out ({e.Message}): tried again later");
         }
         foreach (var file in Directory.EnumerateFiles(dir, ArmedFile + "*"))
             try { File.Delete(file); }
@@ -9951,7 +10061,7 @@ public sealed partial class ScsKiller : IScsKiller
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { log($"{name}: left {dll + TempSuffix}: {e.Message}"); }
         }
-        foreach (var (file, hash) in rec.RecorderFiles.Where(f => f.Key != "scskiller.ini").ToList())   // an ini named here (1.2's) is the store's
+        foreach (var (file, hash) in rec.RecorderFiles.Where(f => f.Key != OldIniName).ToList())   // an ini named here (1.2's) is the store's
         {
             var path = Path.Combine(dir, file);
             try
@@ -10018,7 +10128,7 @@ public sealed partial class ScsKiller : IScsKiller
         }
         RemoveFlatpakGrants(store.DataDir, Log);
         try { MigrateInis(store, Left()); }
-        catch (Exception e) { Log($"the records' scskiller.ini entries: {e.Message}"); }
+        catch (Exception e) { Log($"the records' scskiller.cfg entries: {e.Message}"); }
         var removed = new List<(string Id, string Dir, Func<bool> Runs)>();
         var named = new HashSet<string>();   // the records whose folder stays named until their data files are out
         foreach (var id in (Directory.Exists(games) ? Directory.GetDirectories(games) : []).Select(d => AppStore.GameId(Path.GetFileName(d))).Order())
@@ -11234,7 +11344,7 @@ public sealed partial class ScsKiller : IScsKiller
             : IntelLocalDriver(installed) ? $"not ready: {SkipIntelDriver}"
             : LauncherClearsNext(installed) ? $"not ready: {LauncherClearsReason}"
             : AppCacheFiles.MissingTarget(AppCache) is { } link ? $"not ready: {LinkTargetMissing(link)}"
-            : state.Status is GameStatus.Unsupported || state.Status == GameStatus.NeedsRecording && !NeedsRtRecording(state) ? $"not ready: {state.StatusReason}"
+            : state.Status is GameStatus.Unsupported || state.Status == GameStatus.NeedsRecording && !NeedsRtRecording(state) && !MiddlewareOnly(state) ? $"not ready: {state.StatusReason}"
             : null;
         if (NotReady() != null && now?.Check.Readiness == Readiness.Ready)   // the state may be older than the check (another process imported a recording)
         {
@@ -13757,9 +13867,10 @@ public sealed partial class ScsKiller : IScsKiller
     /// <param name="maxOnce">the compile is a <see cref="CompileMax"/>: the plan must be a Maximum one</param>
     bool PlanIsStale(Game g, GameRecord r, EngineInfo? e, bool maxOnce = false) => PlanIsStale(g.Id, r, e, maxOnce) || r.PlanSteam != SteamDownloads(g, e) || r.PlanPsoCache != PsoCacheInUse(g, e);
 
-    /// <summary>The plan has no items and the next compile would build it the same: this build's index, nothing newer to plan
-    /// from (<see cref="PlanIsStale"/>), the same middleware packs. A warm of another plan (a re-plan without one) keeps its status.</summary>
-    bool EmptyPlan(Game g, GameRecord r, EngineInfo? e) => PlanItems(r.Plan?.Stats) == 0 && (r.WarmedAt == null || r.WarmedPlanItems == r.PlanItems) && Indexed(g, r) && !PlanIsStale(g, r, e)
+    /// <summary>The plan has none of the game's items (middleware pipelines and their variants alone don't warm the game) and
+    /// the next compile would build it the same: this build's index, nothing newer to plan from (<see cref="PlanIsStale"/>),
+    /// the same middleware packs. A warm of another plan (a re-plan without one) keeps its status.</summary>
+    bool EmptyPlan(Game g, GameRecord r, EngineInfo? e) => r.Plan?.Stats is { Recorded: 0, Generated: 0, D3D11Shaders: 0 } && (r.WarmedAt == null || r.WarmedPlanItems == r.PlanItems) && Indexed(g, r) && !PlanIsStale(g, r, e)
         && ((_planner as Planner)?.PackFingerprint(g) ?? "") == (r.PlanMiddleware ?? "");
 
     bool PlanIsStale(string id, GameRecord r, EngineInfo? e, bool maxOnce) => r.Plan is not { } p || !File.Exists(p.FilePath) || p.IndexContentHash != r.IndexContentHash
@@ -14299,7 +14410,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// (<see cref="CleanUninstalled"/>), then every game with the recorder in
     /// checked in full, each on its own, and, while no compile runs, every game whose check didn't finish; one that doesn't
     /// end within <see cref="RecorderCheckTimeout"/> keeps the recorder out until one does. A hit takes the recorder out, a
-    /// clean check of a game whose check didn't finish puts it back as a reconcile does. A clean check of a game whose stamp in scskiller.ini is no
+    /// clean check of a game whose check didn't finish puts it back as a reconcile does. A clean check of a game whose stamp in scskiller.cfg is no
     /// longer its exe's (an update while the app ran) writes the stamp taken before the check (<see cref="Attest"/>). A game
     /// with anti-cheat whose recorder is still on disk (a removal that failed) is tried again every
     /// <see cref="RemovalRetryInterval"/>.</summary>
@@ -14418,7 +14529,7 @@ public sealed partial class ScsKiller : IScsKiller
             if (OfflineLive(g.Id) || !GameFolderWrite(g) || Attested(g)) return;
             var was = IniStamp(g.ExePath);
             if (Attest(g, Store.LoadGame(g.Id), stamp, gen) && was is { Length: > 0 })
-                RecorderLog($"{g.Name}: the recorder's scskiller.ini didn't match {Path.GetFileName(g.ExePath)} (the game changed): checked again");
+                RecorderLog($"{g.Name}: the recorder's scskiller.cfg didn't match {Path.GetFileName(g.ExePath)} (the game changed): checked again");
         }
         finally { Monitor.Exit(_recorderLock); }
     }
@@ -14446,8 +14557,8 @@ public sealed partial class ScsKiller : IScsKiller
     internal Func<string?> VacReadError { get; set; } = () => Vac.ReadError();
 
     /// <summary>The files the app and the proxy write next to the exe: none is an anti-cheat marker.</summary>
-    internal static readonly HashSet<string> RecorderOwnFiles = new([.. RecorderDataFiles, .. Recordings.AppFiles, Dll12, Dll11, Dll9, DllOpti, "scskiller.ini", ChainName, ChainName11, AgsChainName, ArmedFile,
-        DllVulkan, Dll12 + TempSuffix, Dll11 + TempSuffix, Dll9 + TempSuffix, AgsName + TempSuffix, "scskiller.ini" + TempSuffix, LedgerStamp, LedgerStamp + TempSuffix], StringComparer.OrdinalIgnoreCase);
+    internal static readonly HashSet<string> RecorderOwnFiles = new([.. RecorderDataFiles, .. Recordings.AppFiles, Dll12, Dll11, Dll9, DllOpti, IniName, OldIniName, ChainName, ChainName11, AgsChainName, ArmedFile,
+        DllVulkan, Dll12 + TempSuffix, Dll11 + TempSuffix, Dll9 + TempSuffix, AgsName + TempSuffix, IniName + TempSuffix, OldIniName + TempSuffix, LedgerStamp, LedgerStamp + TempSuffix], StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The file types a game or a mod writes as it runs that anti-cheat never ships as: logs, settings and presets,
     /// pages, images, saves, dumps, shader caches. Every other type counts, an unknown one included.</summary>
@@ -14589,8 +14700,9 @@ public sealed partial class ScsKiller : IScsKiller
     /// there: Linux's rename replaces a file that appeared meanwhile.</summary>
     internal static void CreateLedger(string path, string text)
     {
-        using var f = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        f.Write(System.Text.Encoding.UTF8.GetBytes(text));
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        using (var f = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None)) f.Write(bytes);
+        Wrote(path, Convert.ToHexString(SHA256.HashData(bytes)));
     }
 
     sealed class ForeignFolderException(string dir) : IOException($"the recorder in {dir} is another SCSKiller copy's: left as it is");
@@ -14647,7 +14759,7 @@ public sealed partial class ScsKiller : IScsKiller
 
     static string? _recorderDir;
 
-    /// <summary>The exe as the proxy compares it (scskiller.ini's exe_size= and exe_time=, FILETIME UTC); null when it can't
+    /// <summary>The exe as the proxy compares it (scskiller.cfg's exe_size= and exe_time=, FILETIME UTC); null when it can't
     /// be read.</summary>
     internal static string? Stamp(string exe)
     {
@@ -14659,13 +14771,13 @@ public sealed partial class ScsKiller : IScsKiller
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
     }
 
-    /// <summary>The signed stamp lines of the exe's scskiller.ini (<see cref="Signed"/>); "" when it has none, null when it
+    /// <summary>The signed stamp lines of the exe's scskiller.cfg (<see cref="Signed"/>); "" when it has none, null when it
     /// can't be read.</summary>
     static string? IniStamp(string exe)
     {
         try
         {
-            var lines = File.ReadAllLines(Path.Combine(Path.GetDirectoryName(exe)!, "scskiller.ini"));
+            var lines = File.ReadAllLines(IniPath(Path.GetDirectoryName(exe)!));
             return string.Concat(lines.Where(l => IniKey(l) is { } k && StampKeys.Contains(k)).Select(l => l + "\r\n"));
         }
         catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { return ""; }
@@ -14716,7 +14828,7 @@ public sealed partial class ScsKiller : IScsKiller
         try
         {
             var at = File.GetLastWriteTimeUtc(file);
-            if (Refused(exe) != "exe not as checked" || at <= File.GetLastWriteTimeUtc(Path.Combine(Path.GetDirectoryName(exe)!, "scskiller.ini"))
+            if (Refused(exe) != "exe not as checked" || at <= File.GetLastWriteTimeUtc(IniPath(Path.GetDirectoryName(exe)!))
                 || !Collections.ExesBeside(exe).Any(x => !x.Equals(exe, StringComparison.OrdinalIgnoreCase) && Attested(g with { ExePath = x }))) return;
             File.WriteAllText(file, File.ReadAllText(file).Split(' ', 2)[0] + " " + CollectionSwitchRefusal);
             File.SetLastWriteTimeUtc(file, at);   // LastLaunch and NeverSaw date the launch by it
@@ -14819,13 +14931,13 @@ public sealed partial class ScsKiller : IScsKiller
         return arm == null ? "" : $"arm={arm}\r\n";
     }
 
-    /// <summary>The folder's scskiller.ini is signed, but not with the arm= <see cref="ArmLine"/> keeps for it, so the recorder
+    /// <summary>The folder's scskiller.cfg is signed, but not with the arm= <see cref="ArmLine"/> keeps for it, so the recorder
     /// refuses it: one put back after a removal, or an earlier version's not signed again yet.</summary>
     static bool Unarmed(string dir)
     {
         try
         {
-            if (IniStamp(Path.Combine(dir, "scskiller.ini")) is not { Length: > 0 } stamp) return false;
+            if (IniStamp(IniPath(dir)) is not { Length: > 0 } stamp) return false;
             var lines = stamp.Split("\r\n");
             // the value as the recorder reads it (admission.h ini_value): the first one, blanks trimmed, one pair of quotes off
             var arm = lines.Where(l => IniKey(l) == "arm").Select(l => l[(l.IndexOf('=') + 1)..].Trim())
@@ -14988,7 +15100,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// path when it can't be had.</summary>
     static string Final(string dir) => Path.TrimEndingDirectorySeparator(GameFiles.FinalPath(dir) ?? Path.GetFullPath(dir));
 
-    /// <summary>The exe's scskiller.ini carries a valid stamp for the exe as it is now, and its folder isn't revoked: the
+    /// <summary>The exe's scskiller.cfg carries a valid stamp for the exe as it is now, and its folder isn't revoked: the
     /// proxy would admit a launch there, anti-cheat aside.</summary>
     internal static bool Attested(Game g) => AttestedStamp(g) != null;
 
@@ -15096,14 +15208,14 @@ public sealed partial class ScsKiller : IScsKiller
         }
         if (signed == null) return Unstamped(unsigned ?? "its stamp couldn't be signed");
         if (IniStamp(g.ExePath) != signed)
-            return Unstamped($"its scskiller.ini in {dir} couldn't be written (one that isn't SCSKiller's is left as it is)");
+            return Unstamped($"its scskiller.cfg in {dir} couldn't be written (one that isn't SCSKiller's is left as it is)");
         IniState owner;
         try { owner = JudgeIni(dir, Store, rec.RecorderChained?.Name, g.InstallDir).State; }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { owner = IniState.Unknown; RecorderLog($"{g.Name}: whose the scskiller.ini in {dir} is couldn't be recorded: {e.Message}"); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { owner = IniState.Unknown; RecorderLog($"{g.Name}: whose the scskiller.cfg in {dir} is couldn't be recorded: {e.Message}"); }
         if (owner != IniState.Ours)   // ours by its stamp, not by ownership (another encoding of it): refused while it's there
         {
             Revoke(dir, true, RecorderLog);
-            return Unstamped($"the scskiller.ini in {dir} isn't SCSKiller's (left as it is)");
+            return Unstamped($"the scskiller.cfg in {dir} isn't SCSKiller's (left as it is)");
         }
         _unstamped.TryRemove(g.Id, out _);
         Revoke(dir, false, RecorderLog);
@@ -15127,7 +15239,7 @@ public sealed partial class ScsKiller : IScsKiller
         return true;
     }
 
-    /// <summary>The game page's note when the scskiller.ini beside the exe isn't SCSKiller's (<see cref="JudgeIni"/>): the
+    /// <summary>The game page's note when the scskiller.cfg beside the exe isn't SCSKiller's (<see cref="JudgeIni"/>): the
     /// recorder there is never stamped, and the file is left as it is.</summary>
     string? ForeignIni(string dir, GameRecord rec)
     {
@@ -15135,7 +15247,7 @@ public sealed partial class ScsKiller : IScsKiller
         return state == IniState.NotOurs ? NoteForeignIni : null;
     }
 
-    internal const string NoteForeignIni = "records nothing: the scskiller.ini in its folder isn't SCSKiller's, so it's left as it is";
+    internal const string NoteForeignIni = "records nothing: the scskiller.cfg in its folder isn't SCSKiller's, so it's left as it is";
 
     readonly ConcurrentDictionary<string, string> _unstamped = new();   // game id -> why it was last logged unstamped
 
@@ -15152,11 +15264,14 @@ public sealed partial class ScsKiller : IScsKiller
     /// <summary>The proxy's refusal file for an exe: its <see cref="FileKey"/> in the recorder folder's refused\.</summary>
     internal static string RefusedFile(string exe) => Path.Combine(RecorderDir, "refused", FileKey(exe));
 
+    // the recorder loads at the game's first DirectX call, which a process that exits within seconds may never make
+    static readonly TimeSpan ShortestJudgedRun = TimeSpan.FromSeconds(30);
+
     /// <summary>The recorder was in place before the last watched run started (a creation time not known doesn't show it), yet
     /// wrote neither its log nor a refusal during it: no device of the game reached it.</summary>
     internal static bool NeverSaw(string exe, string exeDir, string dllName, PlayWindow? run)
     {
-        if (run is not { } p) return false;
+        if (run is not { } p || p.To - p.From < ShortestJudgedRun) return false;
         var from = p.From.UtcDateTime;
         static DateTime? Written(string f) => File.Exists(f) ? File.GetLastWriteTimeUtc(f) : null;
         var dll = Path.Combine(exeDir, dllName);
@@ -15177,7 +15292,7 @@ public sealed partial class ScsKiller : IScsKiller
         foreach (var id in (Directory.Exists(games) ? Directory.GetDirectories(games) : []).Select(d => AppStore.GameId(Path.GetFileName(d))).Where(scope ?? (_ => true)))
         {
             var rec = store.LoadGame(id);
-            var hash = rec.RecorderFiles.GetValueOrDefault("scskiller.ini");
+            var hash = rec.RecorderFiles.GetValueOrDefault(OldIniName);
             if (hash == null && !rec.IniIsUsers) continue;
             var folder = (rec.RecorderExe ?? rec.RecorderMoveFrom ?? rec.OfflineSession?.Exe) is { } at ? Path.GetDirectoryName(at)! : null;
             if (folder != null && !Directory.Exists(folder)) continue;   // away: kept on the record for later
@@ -15195,7 +15310,7 @@ public sealed partial class ScsKiller : IScsKiller
             }
             else if (folder == null && rec.IniIsUsers) continue;   // no folder named: the game's next evaluation takes the mark to its exe folder
             rec.IniIsUsers = false;
-            rec.RecorderFiles.Remove("scskiller.ini");
+            rec.RecorderFiles.Remove(OldIniName);
             store.SaveGame(id, rec, wait);
         }
     }
@@ -15225,7 +15340,7 @@ public sealed partial class ScsKiller : IScsKiller
         }
     }
 
-    /// <summary>SCSKiller's scskiller.ini out of <paramref name="dir"/>, also beside a running game: without its stamp the next
+    /// <summary>SCSKiller's scskiller.cfg out of <paramref name="dir"/>, also beside a running game: without its stamp the next
     /// launch is a pass-through. Only one <see cref="JudgeIni"/> calls SCSKiller's is deleted, its bytes read again right
     /// before; anything else is never written or deleted. The folder's entry (<see cref="IniOwner"/>) says what's left: one
     /// that can't be read and SCSKiller's that couldn't be deleted are to be taken out later, by the next removal through the
@@ -15238,46 +15353,68 @@ public sealed partial class ScsKiller : IScsKiller
     {
         RefuseForeign(dir);
         var dropped = DropArm(dir);   // not dropped: revoked instead, and every branch keeps it so
-        var ini = Path.Combine(dir, "scskiller.ini");
-        var (state, judged) = JudgeIni(dir, store, chain, installDir, wait, removal: true);
         IniOwner Pending(IniOwner? e, string? tracked) =>
             (e ?? new IniOwner(dir)) with { Tracked = tracked, Remove = true, Chain = chain ?? e?.Chain, Install = installDir ?? e?.Install };
-        switch (state)
+        bool kept = false, took = false;
+        // the earlier name beside IniName is SCSKiller's only by what the entry named before either was judged, and never marked
+        var (before, beside) = (GetIni(store, dir), Path.GetFileName(IniPath(dir)) == IniName);
+        foreach (var file in beside ? IniNames : [OldIniName])
         {
-            case IniState.Absent:
-                Revoke(dir, !dropped, log);
-                return;
-            case IniState.Unknown:
-                SetIni(store, dir, e => Pending(e, e?.Tracked ?? ""), wait);   // whose it is is told later
+            var ini = Path.Combine(dir, file);
+            var (state, judged) = beside && file == OldIniName ? JudgeBeside(ini, before) : JudgeIni(dir, store, chain, installDir, wait, removal: true, file);
+            switch (state)
+            {
+                case IniState.Absent:
+                    continue;
+                case IniState.Unknown:
+                    SetIni(store, dir, e => Pending(e, e?.Tracked ?? ""), wait);   // whose it is is told later
+                    Revoke(dir, true, log);
+                    log($"{name}: couldn't read {ini}: the recorder there is refused until it can be");
+                    return;
+                case IniState.NotOurs:   // marked the user's (JudgeIni); nothing of SCSKiller's is queued there any more
+                    SetIni(store, dir, e => e is { Remove: true } ? e with { Remove = false, Tracked = null } : e, wait);
+                    // a stamp in it (an edit of SCSKiller's, in any encoding the proxy's reader takes) may still be valid: refused while it's there
+                    kept = true;
+                    log($"{name}: {ini} isn't what SCSKiller wrote, so it's kept as the user's and the recorder there is refused");
+                    continue;
+            }
+            SetIni(store, dir, e => Pending(e, Convert.ToHexString(SHA256.HashData(judged!))), wait);   // tracked until it is out
+            try
+            {
+                if (!IniUnchanged(ini, judged)) throw new IOException("it changed while it was checked");
+                File.Delete(ini);
+                SetIni(store, dir, e => e == null ? null : e with { Tracked = null, Remove = false }, wait);
+                took = true;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
                 Revoke(dir, true, log);
-                log($"{name}: couldn't read {ini}: the recorder there is refused until it can be");
+                log($"{name}: couldn't take {ini} out ({e.Message}): the recorder there is refused until it's gone");
                 return;
-            case IniState.NotOurs:   // marked the user's (JudgeIni); nothing of SCSKiller's is queued there any more
-                SetIni(store, dir, e => e is { Remove: true } ? e with { Remove = false, Tracked = null } : e, wait);
-                // a stamp in it (an edit of SCSKiller's, in any encoding the proxy's reader takes) may still be valid: refused while it's there
-                Revoke(dir, true, log);
-                log($"{name}: {ini} isn't what SCSKiller wrote, so it's kept as the user's and the recorder there is refused");
-                return;
+            }
         }
-        SetIni(store, dir, e => Pending(e, Convert.ToHexString(SHA256.HashData(judged!))), wait);   // tracked until it is out
+        if (took && !kept) SetIni(store, dir, _ => null, wait);
+        Revoke(dir, kept || !dropped, log);
+    }
+
+    /// <summary>An <see cref="OldIniName"/> beside <see cref="IniName"/>: SCSKiller's when <paramref name="entry"/> names its
+    /// bytes (tracked or written), else not ours, nothing marked.</summary>
+    static (IniState State, byte[]? Bytes) JudgeBeside(string ini, IniOwner? entry)
+    {
         try
         {
-            if (!IniUnchanged(ini, judged)) throw new IOException("it changed while it was checked");
-            File.Delete(ini);
-            SetIni(store, dir, _ => null, wait);
-            Revoke(dir, !dropped, log);
+            if (!File.Exists(ini)) return (Directory.EnumerateFiles(Path.GetDirectoryName(ini)!, OldIniName).Any() ? IniState.Unknown : IniState.Absent, null);
+            var bytes = File.ReadAllBytes(ini);
+            var hash = Convert.ToHexString(SHA256.HashData(bytes));
+            return (entry != null && $"{entry.Tracked}|{entry.Wrote}".Split('|').Contains(hash) ? IniState.Ours : IniState.NotOurs, bytes);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            Revoke(dir, true, log);
-            log($"{name}: couldn't take {ini} out ({e.Message}): the recorder there is refused until it's gone");
-        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return (IniState.Unknown, null); }
     }
 
     static readonly object _revokedLock = new();
 
     /// <summary>The recorder folder's recorder.revoked: the <see cref="FileKey"/> and <see cref="PathFolderKey"/> of each folder
-    /// whose scskiller.ini couldn't be taken out (one a line, ASCII). The proxy refuses in them whatever the ini says.</summary>
+    /// whose scskiller.cfg couldn't be taken out (one a line, ASCII). The proxy refuses in them whatever the ini says.</summary>
     internal static string Revoked => Path.Combine(RecorderDir, "recorder.revoked");
 
     /// <summary>The keys on <see cref="Revoked"/>; empty when it doesn't exist.</summary>

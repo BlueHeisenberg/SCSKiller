@@ -10,14 +10,14 @@ namespace SCSKiller.Core.Unreal;
 public static class ShaderContainer
 {
     /// <summary>Offset of the first "DXBC" whose uint32 size at +24 fits in the blob, or -1.</summary>
-    public static int Offset(byte[] code, out int len)
+    public static int Offset(ReadOnlySpan<byte> code, out int len)
     {
         len = code.Length;
-        for (var i = code.AsSpan().IndexOf("DXBC"u8); i >= 0 && i + 28 <= code.Length;)
+        for (var i = code.IndexOf("DXBC"u8); i >= 0 && i + 28 <= code.Length;)
         {
-            var size = BitConverter.ToUInt32(code, i + 24);
+            var size = BitConverter.ToUInt32(code[(i + 24)..]);
             if (size >= 32 && i + size <= code.Length) { len = (int)size; return i; }
-            var next = code.AsSpan(i + 1).IndexOf("DXBC"u8);
+            var next = code[(i + 1)..].IndexOf("DXBC"u8);
             i = next < 0 ? -1 : i + 1 + next;
         }
         return -1;

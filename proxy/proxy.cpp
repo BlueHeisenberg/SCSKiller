@@ -4,7 +4,7 @@
 // each input layout with its vertex shader ('D'); see "D3D11 recorder" below.
 //
 // Install: copy d3d12.dll next to the game's *-Win64-Shipping.exe.
-// Config:  scskiller.ini [scskiller] mode=record|warm threads=N next=<a mod's d3d12.dll, renamed>  (next to the dll), or env
+// Config:  scskiller.cfg [scskiller] mode=record|warm threads=N next=<a mod's d3d12.dll, renamed>  (next to the dll), or env
 //          SCSKILLER_MODE / SCSKILLER_THREADS (Steam launch options: SCSKILLER_MODE=warm %command%).
 //          max_db_bytes=N (ini only; missing = no limit): once scskiller.db has N bytes, no record is appended. Past 3/4
 //          of N only records that bring a new pipeline or shader tuple are (store).
@@ -114,9 +114,9 @@ static size_t shader_len(const D3D12_SHADER_BYTECODE& b) {
 }
 
 static HMODULE g_real;
-static bool g_next;  // scskiller.ini next= loaded a mod's d3d12.dll: the device comes from it
+static bool g_next;  // scskiller.cfg next= loaded a mod's d3d12.dll: the device comes from it
 static bool g_api11;  // loaded as d3d11.dll: the D3D11 recorder
-static bool g_frames_only;  // scskiller.ini frames_only=1 (d3d11.dll only): nothing is recorded
+static bool g_frames_only;  // scskiller.cfg frames_only=1 (d3d11.dll only): nothing is recorded
 static bool g_elsewhere;  // this dll's folder isn't the exe's: a mod loaded a copy of it from elsewhere (own_dir)
 static std::wstring g_dir;
 static const std::wstring& admit_dir() { return g_dir; }
@@ -355,11 +355,8 @@ static DWORD WINAPI nd_find(void* self) {
     try {
         const std::wstring f = refused_path();
         const size_t dir = f.find_last_of(L'\\'), parent = dir && dir != std::wstring::npos ? f.find_last_of(L'\\', dir - 1) : std::wstring::npos;
-        wchar_t vol[MAX_PATH];
-        UINT type = DRIVE_UNKNOWN;
         // local volumes only: a network folder can stall the exit's write, which nothing could cut short under the loader lock
-        if (parent && parent != std::wstring::npos && f.size() < std::size(g_nd_path) && GetVolumePathNameW(f.substr(0, parent).c_str(), vol, MAX_PATH)
-            && ((type = GetDriveTypeW(vol)) == DRIVE_FIXED || type == DRIVE_REMOVABLE || type == DRIVE_RAMDISK)) {
+        if (parent && parent != std::wstring::npos && f.size() < std::size(g_nd_path) && local_folder(f.substr(0, parent))) {
             wmemcpy(g_nd_path, f.c_str(), f.size() + 1), g_nd_dir = dir, g_nd_parent = parent;
             g_nd_ready.store(true, std::memory_order_release);
         }
@@ -411,7 +408,7 @@ static bool admitted() {
     g_asked = true;
     static std::once_flag once;
     std::call_once(once, [] {
-        const std::wstring ini = g_dir + L"scskiller.ini";
+        const std::wstring ini = config_path(g_dir);
         std::string read;
         const bool whole = ini_bytes(ini, read);
         t_ini = &read;
@@ -1346,7 +1343,7 @@ static void load_file(const std::wstring& path, bool main, bool with_bytes) {
     map_blobs(path, blobs);  // after the truncation: a mapped file can't be shortened
 }
 
-// scskiller.keys (record mode, written by the app next to scskiller.ini): "SCSKKEY1", then the 20-byte record keys and
+// scskiller.keys (record mode, written by the app next to scskiller.cfg): "SCSKKEY1", then the 20-byte record keys and
 // blob hashes the app already imported, and the hashes of the shaders the game's files ship. The app empties scskiller.db
 // after an import and reads a shipped shader back from the install, so a record naming these goes in without their bytes.
 // Kept as the file's own array, sorted: a big game ships 300,000 shaders (6 MB here, 70 MB as hash set entries).
@@ -1434,7 +1431,7 @@ static void load_db(bool with_bytes) {
     WIN32_FILE_ATTRIBUTE_DATA fa;
     if (GetFileAttributesExW((g_dir + L"scskiller.db").c_str(), GetFileExInfoStandard, &fa)) g_db_bytes = (uint64_t)fa.nFileSizeHigh << 32 | fa.nFileSizeLow;
     wchar_t cap[32];  // not cfg(): a staged warm child may inherit SCSKILLER_* variables
-    GetPrivateProfileStringW(L"scskiller", L"max_db_bytes", L"", cap, 32, (g_dir + L"scskiller.ini").c_str());
+    GetPrivateProfileStringW(L"scskiller", L"max_db_bytes", L"", cap, 32, config_path(g_dir).c_str());
     g_db_capped = *cap, g_db_cap = _wcstoui64(cap, nullptr, 10);
     if (g_db_capped) logf("db: %llu bytes, limit %llu", g_db_bytes, g_db_cap);
     logf("db: %llu PSOs / %zu shader tuples recorded, +%zu tuples generated, %zu blobs (mode=%s)", g_db_records_at_start,
@@ -1704,6 +1701,11 @@ static std::vector<char> g_so_keep;
 static std::atomic<bool> g_rt_off;                 // poisoned
 static int g_rt_threads;                           // SCSKiller_WarmRt: concurrent state object creates, 0 = no limit
 static std::unordered_set<size_t> g_skip;          // --skip: counted skipped, never replayed
+static std::vector<size_t> g_died_alone;           // SCSKiller_WarmDiedAlone: this compile's items that ended their process alone
+// Shader sets two generated items that ended their process alone share, less what any recorded item uses: a generated
+// item that uses all of one is skipped for this compile (dxil-spirv's abort() under vkd3d-proton ends the process on a shader)
+static std::vector<std::vector<Hash>> g_shared;
+static std::atomic<uint64_t> g_shared_skipped;
 static std::atomic<size_t> g_rt_fatal = SIZE_MAX;  // the state object whose fault / hang poisoned this run; the others are retried
 // An item that crashed or hung this driver in an earlier compile (--known-keys, the app keeps them per game and driver) is
 // skipped like --skip, it and what builds on it counted apart (SCSKiller_Known). This run's own such items, never what
@@ -1808,6 +1810,9 @@ static DWORD g_fault_hold_ms;
 // SCSKILLER_TEST_WARM_OOM=<item>,<last>: those PSOs' creates return E_OUTOFMEMORY.
 static double g_test_ram_mb;
 static size_t g_mem_item = SIZE_MAX, g_mem_last, g_mem_item_mb, g_oom_item = SIZE_MAX, g_oom_last;
+#ifdef SCSK_TEST_HOOKS
+static Hash g_fault_shader;  // SCSKILLER_WARM_FAULT_SHADER=<sha1 hex>: a generated item with it ends the process with 3 before its create, as abort() does
+#endif
 
 // SCSKILLER_WARM_SO_MS=<ms> (development): no driver call for state objects; each create takes ms per state object it
 // builds on (plus one) and succeeds, so chains of any depth run on WARP. SCSKILLER_WARM_SO_KB=<kb>: each also commits kb that is
@@ -2019,6 +2024,35 @@ static size_t so_blocker(size_t j) {
     return SIZE_MAX;
 }
 
+// A PSO record's or a plan item's shaders, sorted; none for a state object or what doesn't parse.
+static std::vector<Hash> item_shaders(size_t j, size_t nrec) {
+    Tuple t;
+    auto of = [&](const Rec& rec, const Override* ovr) {
+        Reader r{rec.payload};
+        r.resolve = false, r.ovr = ovr;
+        build(rec, r, nullptr);
+        if (r.ok) t = r.tup;  // a record that doesn't parse fails, never skipped
+    };
+    if (j < nrec && g_recs[j].tag != 'R' && g_recs[j].tag != 'A') of(g_recs[j], nullptr);
+    else if (j >= nrec && j - nrec < g_plan.size()) {
+        Reader r{g_plan[j - nrec]};
+        Override o;
+        if (const Rec* tr = parse_plan(r, o)) of(*tr, &o);
+    }
+    std::vector<Hash> s;
+    for (auto& [st, h] : t) s.push_back(h);
+    std::sort(s.begin(), s.end());
+    s.erase(std::unique(s.begin(), s.end()), s.end());
+    return s;
+}
+
+static bool uses_shared(size_t j, size_t nrec) {
+    auto s = item_shaders(j, nrec);
+    for (auto& set : g_shared)
+        if (std::includes(s.begin(), s.end(), set.begin(), set.end())) return true;
+    return false;
+}
+
 // nv: a plan item's NVAPI state (an 'N' on its 'P'); a record's own is looked up here.
 static int replay(size_t j, const Rec& rec, const Override* ovr = nullptr, const NvExt* nv = nullptr) {
     if (rec.tag == 'R' || rec.tag == 'A') {
@@ -2036,6 +2070,11 @@ static int replay(size_t j, const Rec& rec, const Override* ovr = nullptr, const
         }
         return SUCCEEDED(s.hr) ? 1 : 0;
     }
+    if (!g_shared.empty() && (ovr || j >= g_main_recs) && uses_shared(j, g_recs.size())) return ++g_shared_skipped, 2;
+#ifdef SCSK_TEST_HOOKS
+    if (g_fault_shader != kZero && (ovr || j >= g_main_recs))
+        if (auto sh = item_shaders(j, g_recs.size()); std::binary_search(sh.begin(), sh.end(), g_fault_shader)) TerminateProcess(GetCurrentProcess(), 3);
+#endif
     Reader r{rec.payload};
     r.ovr = ovr;
     ID3D12PipelineState* pso = nullptr;
@@ -2553,6 +2592,8 @@ static void warm_main() {
 #ifdef SCSK_TEST_HOOKS
     if (wchar_t v[64]; env(L"SCSKILLER_TEST_WARM_MEM", v)) swscanf_s(v, L"%lf,%zu,%zu,%zu", &g_test_ram_mb, &g_mem_item, &g_mem_last, &g_mem_item_mb);
     if (wchar_t v[48]; env(L"SCSKILLER_TEST_WARM_OOM", v)) swscanf_s(v, L"%zu,%zu", &g_oom_item, &g_oom_last);
+    if (wchar_t v[48]; env(L"SCSKILLER_WARM_FAULT_SHADER", v) && wcslen(v) == 40)
+        for (int i = 0; i < 20; ++i) swscanf_s(v + 2 * i, L"%2hhx", &g_fault_shader[i]);
 #endif
     if (env(L"SCSKILLER_WARM_SO_MS", fault)) g_so_fake_ms = _wtoi(fault);
     if (env(L"SCSKILLER_WARM_SO_KB", fault)) g_so_fake_kb = _wtoi(fault);
@@ -2560,6 +2601,27 @@ static void warm_main() {
         g_remove_item = g_remove_last = _wtoi64(fault), g_remove_shared = wcsstr(fault, L"shared");
         if (const wchar_t* last = wcschr(fault, L'-')) g_remove_last = _wtoi64(last + 1);
         if (const wchar_t* step = wcschr(fault, L'/')) g_remove_step = std::max<size_t>(1, _wtoi64(step + 1));
+    }
+    std::vector<std::vector<Hash>> died;
+    for (size_t k : g_died_alone)
+        if (k >= g_main_recs && k < n12) died.push_back(item_shaders(k, nrec));
+    if (died.size() >= 2) {
+        HashSet recorded;
+        for (size_t j = 0; j < g_main_recs; ++j)
+            for (const Hash& h : item_shaders(j, nrec)) recorded.insert(h);
+        // the whole shared set, not each shader: a bad shader's partner isn't skipped, a third death with another partner narrows it
+        for (size_t a = 0; a < died.size(); ++a)
+            for (size_t b = a + 1; b < died.size(); ++b) {
+                std::vector<Hash> s;
+                std::set_intersection(died[a].begin(), died[a].end(), died[b].begin(), died[b].end(), std::back_inserter(s));
+                std::erase_if(s, [&](const Hash& h) { return recorded.count(h) > 0; });
+                if (!s.empty() && std::find(g_shared.begin(), g_shared.end(), s) == g_shared.end()) g_shared.push_back(std::move(s));
+            }
+        for (auto& set : g_shared) {
+            std::string shown;
+            for (auto& h : set) shown += (shown.empty() ? "" : ",") + std::string(hex(h).data());
+            logf("warm: generated items that use shaders %s are skipped for this compile: two items that ended the process alone share them", shown.c_str());
+        }
     }
     // In flight when an earlier process's device was removed, or hung in an earlier process's mass hang: each alone, before
     // the workers, so a removal or a hang names its item. Each runs on a thread of its own, given up on as the supervisor
@@ -3042,6 +3104,7 @@ static void warm_main() {
     if (g_roundtrip) logf("warm: round trip: %llu same, %llu differ", g_roundtrip_ok.load(), g_roundtrip_bad.load());
     logf("warm: peak private memory %.0f MB (budget %s), %d of %d workers allowed at the end", std::max(peak_mb, private_mb()),
          g_mem_mb ? (std::to_string(g_mem_mb) + " MB").c_str() : "none", g_allowed.load(), g_threads);
+    if (g_shared_skipped) logf("warm: %llu generated items skipped: they use shaders that ended the process alone", g_shared_skipped.load());
     logf("warm: done ok=%llu fail=%llu skipped=%llu skipped-this-compile=%llu%s in %.1f s. Quit the game normally so the driver flushes its cache.", g_warm_ok.load(),
          g_warm_fail.load(), g_warm_crash.load(), g_warm_skipped.load(), g_pass_of.empty() ? "" : (" (pass " + std::to_string(g_pass) + ", " + std::to_string(g_warm_other.load()) + " items of other passes)").c_str(),
          (now_ms() - t0) / 1000);
@@ -3876,12 +3939,12 @@ static void unhook_ags(const char* why) {
 static bool stamp_cheap_ok();
 static bool ags_cheap_ok() {
     wchar_t v[64];
-    GetPrivateProfileStringW(L"scskiller", L"vendor", L"", v, 32, (g_dir + L"scskiller.ini").c_str());
+    GetPrivateProfileStringW(L"scskiller", L"vendor", L"", v, 32, config_path(g_dir).c_str());
     return !wcscmp(v, L"amd") && stamp_cheap_ok();   // the app signs vendor=amd only where the recorder is admitted (AMD, see AgsEligible)
 }
 static bool stamp_cheap_ok() {
     wchar_t v[64];
-    const std::wstring file = g_dir + L"scskiller.ini";
+    const std::wstring file = config_path(g_dir);
     if (GetPrivateProfileStringW(L"scskiller", L"sig", L"", v, 64, file.c_str()) != 40) return false;
     auto number = [&](const wchar_t* key) { return GetPrivateProfileStringW(L"scskiller", key, L"", v, 32, file.c_str()) ? _wcstoui64(v, nullptr, 10) : 0; };
     wchar_t exe[MAX_PATH];
@@ -4197,7 +4260,7 @@ static std::atomic<uint64_t> g_presents;
 static thread_local int t_present, t_fg_present;
 
 
-// In-game panel of a before and after run (overlay.h), asked for by SCSKiller's own scskiller.ini: overlay=1,
+// In-game panel of a before and after run (overlay.h), asked for by SCSKiller's own scskiller.cfg: overlay=1,
 // ab_play_s=<seconds>, ab_tag=before|after. The countdown, a graph of the last 5 s of frame times and, on D3D12, a flash
 // for each shader compilation stutter. Drawn in the outermost Present of a swap chain made through the hooked factory,
 // before the original Present, as one copy of the panel's pixels into the back buffer: painted on the CPU only when they
@@ -6076,8 +6139,8 @@ static std::wstring module_dir(HMODULE m);
 static void frame_hooks(IUnknown* dev) {
     if (g_warm) return;
     wchar_t on[8];  // not cfg(): a staged warm child may inherit SCSKILLER_* variables
-    GetPrivateProfileStringW(L"scskiller", L"frames", L"1", on, 8, (g_dir + L"scskiller.ini").c_str());
-    if (!wcscmp(on, L"0")) return logf("frames: off (scskiller.ini frames=0)");
+    GetPrivateProfileStringW(L"scskiller", L"frames", L"1", on, 8, config_path(g_dir).c_str());
+    if (!wcscmp(on, L"0")) return logf("frames: off (scskiller.cfg frames=0)");
     // Ubisoft Connect's loader ships beside the exe (entry_hooks)
     g_entry = GetModuleHandleW(L"upc_r2_loader64.dll") || GetFileAttributesW((module_dir(nullptr) + L"upc_r2_loader64.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
     g_opti_fgout = opti_fg_output();
@@ -6291,7 +6354,7 @@ extern "C" HRESULT WINAPI Proxy_D3D12CreateDevice(IUnknown* adapter, D3D_FEATURE
     // dred_settings): without both keys admission isn't asked here, before the device, so the off path is as before.
     static std::once_flag dred;
     std::call_once(dred, [] {
-        const std::wstring ini = g_dir + L"scskiller.ini";
+        const std::wstring ini = config_path(g_dir);
         if (!g_warm && !g_staged && GetPrivateProfileIntW(L"scskiller", L"traversal_suballocate", 0, ini.c_str()) == 1 &&
             GetPrivateProfileIntW(L"scskiller", L"traversal_dred", 0, ini.c_str()) == 1 && admitted())
             trav::dred_settings(real_D3D12GetDebugInterface);
@@ -6424,7 +6487,7 @@ static bool refused_late() {
         bool risk = false;
         const char* why;
         {
-            const bool whole = ini_bytes(g_dir + L"scskiller.ini", read);
+            const bool whole = ini_bytes(config_path(g_dir), read);
             t_ini = &read;
             struct Live {
                 ~Live() { t_ini = nullptr; }
@@ -6517,6 +6580,9 @@ extern "C" void WINAPI SCSKiller_WarmRt(int rt_threads, const uint64_t* skip, ui
     g_rt_threads = rt_threads;
     for (uint32_t i = 0; i < nskip; ++i) g_skip.insert((size_t)skip[i]);
 }
+
+// For scskiller_warm, before SCSKiller_StartWarm: this compile's items that ended their process alone (--died-alone).
+extern "C" void WINAPI SCSKiller_WarmDiedAlone(const uint64_t* items, uint32_t n) { g_died_alone.assign(items, items + n); }
 
 // For scskiller_warm, before SCSKiller_StartWarm: the keys (20 bytes each) of items that removed the device in an earlier run,
 // never replayed, and the items to create alone before the workers start (in flight when an earlier process's device was removed).
@@ -6656,7 +6722,7 @@ extern "C" void WINAPI SCSKiller_Stats(uint64_t out[7]) {
 static std::wstring cfg(const wchar_t* var, const wchar_t* key, const wchar_t* def) {
     wchar_t v[64];
     if (env(var, v)) return v;
-    GetPrivateProfileStringW(L"scskiller", key, def, v, 64, (g_dir + L"scskiller.ini").c_str());
+    GetPrivateProfileStringW(L"scskiller", key, def, v, 64, config_path(g_dir).c_str());
     return v;
 }
 
@@ -6715,7 +6781,7 @@ static void device11_created(HRESULT hr, ID3D11Device* dev) {
     {
         std::lock_guard l(g_mx);
         void** vt = *(void***)dev;
-        if (g_frames_only) logf("d3d11: device %p, frame times only (scskiller.ini frames_only=1)", (void*)dev);
+        if (g_frames_only) logf("d3d11: device %p, frame times only (scskiller.cfg frames_only=1)", (void*)dev);
         else {
             logf("d3d11: device %p vtable %p%s", (void*)dev, (void*)vt, vt[D11_IL] == (void*)hk11_il ? " (already hooked)" : "");
             patch(vt, D11_IL, (void*)hk11_il, o11_il);
@@ -6795,7 +6861,7 @@ static bool same_file(const std::wstring& a, const std::wstring& b) {
     return !memcmp(&id[0], &id[1], sizeof id[0]);
 }
 // This dll's folder. The loader's path can be rewritten in user mode: REFramework points every dll in the exe's folder at a
-// copy under <folder>\_storage_ (where no scskiller.ini is). The kernel's name of the mapped image can't be, so the exe's
+// copy under <folder>\_storage_ (where no scskiller.cfg is). The kernel's name of the mapped image can't be, so the exe's
 // folder is taken when the image really is that folder's file, else the reported one.
 static std::wstring own_dir(HMODULE self) {
     std::wstring dir = module_dir(self), exe_dir = module_dir(nullptr);
@@ -6820,7 +6886,7 @@ static void unhook_opti(const char* why) {
 static void hook_opti() {
     std::unique_lock l(g_hook_mx, std::try_to_lock);
     if (!l.owns_lock()) return logf("opti: not hooked (another hook was being installed)");
-    if (!stamp_cheap_ok()) return logf("opti: not hooked (scskiller.ini isn't signed for this exe, or an anti-cheat client is loaded)");
+    if (!stamp_cheap_ok()) return logf("opti: not hooked (scskiller.cfg isn't signed for this exe, or an anti-cheat client is loaded)");
     auto entry = (void*)GetProcAddress(g_real, "D3D12CreateDevice");
     pin_self();  // the patched entry jumps into this dll
     const bool hooked = entry && hook_fn(entry, (void*)Proxy_D3D12CreateDevice, (void**)&real_CreateDevice, false, &g_opti_patch, 64, 0, true);
@@ -6851,7 +6917,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     const std::wstring own = module_path(self);
     g_api11 = !_wcsicmp(own.c_str() + (own.find_last_of(L'\\') + 1), L"d3d11.dll");
     wchar_t p[MAX_PATH];
-    g_frames_only = g_api11 && GetPrivateProfileIntW(L"scskiller", L"frames_only", 0, (g_dir + L"scskiller.ini").c_str()) == 1;  // not cfg(): ini only
+    g_frames_only = g_api11 && GetPrivateProfileIntW(L"scskiller", L"frames_only", 0, config_path(g_dir).c_str()) == 1;  // not cfg(): ini only
     const wchar_t* sys_dll = g_api11 ? L"d3d11.dll" : L"d3d12.dll";
     const char* create_export = g_api11 ? "D3D11CreateDevice" : "D3D12CreateDevice";
     // the system d3d12's DllMain faults on a D3D12SDKPath the exe sets only after static init: the game's later load records
@@ -6867,7 +6933,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     // next=<file name>: a mod's d3d12.dll (d3d11.dll) renamed next to us (the app's "record alongside"); every export goes
     // to it first. A bare file name only. If it doesn't load or has no device create, the system dll serves alone.
     wchar_t next[64];
-    GetPrivateProfileStringW(L"scskiller", L"next", L"", next, 64, (g_dir + L"scskiller.ini").c_str());
+    GetPrivateProfileStringW(L"scskiller", L"next", L"", next, 64, config_path(g_dir).c_str());
     HMODULE mod = nullptr;
     const char* next_why = nullptr;
     if (*next && (wcspbrk(next, L"\\/:") || wcsstr(next, L"..")))

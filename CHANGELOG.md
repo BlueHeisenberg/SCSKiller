@@ -4,6 +4,54 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+## [1.4.7] - 2026-11-08
+
+**New**
+
+- Hookshot ports are detected as Vulkan games, and only Vulkan is offered for them.
+
+**Improved**
+
+- The game page says when a game keeps its own shader cache in its folder, which SCSKiller doesn't clear or change, such as
+  Phantom Blade Zero.
+- The game page says when recorded pipelines alone are over the compile size limit, and that earlier compiles stay
+  until you clear the cache.
+
+**Improved on Windows**
+
+- With NVIDIA, the compile size limit counts ray tracing pipelines.
+
+**Fixed**
+
+- Reading an Unreal game's shaders in the background no longer takes gigabytes of memory.
+- With AMD and other non-NVIDIA GPUs, Streamline games such as Dead Space and Monster Hunter Wilds record through the
+  recorder's preloader.
+- Beat Saber mods load again with the recorder placed.
+- With NVIDIA, Vulkan games whose shaders set float modes the GPU reports as unsupported compile all their pipelines.
+- A game whose plan holds only upscaler or other middleware pipelines shows that no shaders were found yet instead of
+  Warmed after a compile, and its compile stays available.
+- A launch that ends within seconds, before the game's first DirectX call, isn't reported as one where the recorder never
+  loaded.
+- A failed take-over of another SCSKiller copy's recorder deletes only the files it wrote.
+- After removing the recorder from all games, a game whose recorder another SCSKiller copy placed says to restart
+  SCSKiller to record again.
+
+**Fixed on Windows**
+
+- Hookshot ports that have been played once compile with no recording, through the port's own hidden shader precompile.
+- Games that block unsigned modules, such as Dota 2, no longer offer a recording session that would stop them from
+  starting.
+- With AMD, a compile size limit no longer leaves out most of the pipelines of games with many ray tracing pipelines.
+
+**Fixed on Linux**
+
+- A launch where the game makes its DirectX 12 device without the recorder says so instead of "The recorder never loaded".
+- A shader that crashes vkd3d-proton's shader compiler in Maximum mode costs a few compile restarts, not one per
+  pipeline that uses it.
+- Recording works on PCs without Steam, for games started outside Steam such as through Faugus.
+- A DirectX game under Proton no longer stays at "start it once from Steam" after it was started from Steam. Thanks to
+  Jabors.
+
 ## [1.4.6] - 2026-11-06
 
 **Improved**

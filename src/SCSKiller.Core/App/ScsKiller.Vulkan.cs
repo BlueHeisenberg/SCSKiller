@@ -6,14 +6,14 @@ using SCSKiller.Core.Warming;
 namespace SCSKiller.Core.App;
 
 // The Vulkan recorder of a game (VulkanLayer): its registration in the data folder and HKCU (on Linux the loader's
-// implicit_layer.d), the signed scskiller.ini beside the exe, and the layer's inbox in the recorder folder. Nothing else of
+// implicit_layer.d), the signed scskiller.cfg beside the exe, and the layer's inbox in the recorder folder. Nothing else of
 // it is in the game's folder, but a risk session's copy of the layer (StartRisk).
 public sealed partial class ScsKiller
 {
     public const string SkipVulkanSteamOnly = "Vulkan games are recorded only from Steam, Heroic, Lutris and Faugus for now";
 
     /// <summary>The game page's recorder line for a game the layer records: nothing goes in its folder but the ini.</summary>
-    public const string VulkanRecorderNote = "Adds a Vulkan layer for this game and a small scskiller.ini next to it to catch anything the plan missed.";
+    public const string VulkanRecorderNote = "Adds a Vulkan layer for this game and a small scskiller.cfg next to it to catch anything the plan missed.";
 
     public const string SteamPrecachingNote = "stopped while Steam processes this game's shaders: it goes on after";
 
@@ -105,7 +105,7 @@ public sealed partial class ScsKiller
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
     }
 
-    /// <summary>The game's Vulkan recorder is registered for its exe's folder: its scskiller.ini is the recorder's.</summary>
+    /// <summary>The game's Vulkan recorder is registered for its exe's folder: its scskiller.cfg is the recorder's.</summary>
     static bool VulkanIn(Game g, GameRecord rec) => rec.VulkanLayer != null && rec.RecorderExe is { } exe
         && SameDir(Path.GetDirectoryName(exe)!, Path.GetDirectoryName(g.ExePath)!);
 
@@ -263,7 +263,7 @@ public sealed partial class ScsKiller
             return changed;
         }
         // off the route (the game runs on DirectX now, or has no layer key): out, and the next reconcile is the DirectX one
-        var want = !LeftOut(g) && VulkanRoute(g, s.Engine) && RecorderWanted(rec.Recorder ?? RecorderOverride.Default, Settings.RecordAllGames && s.NoStutter == null, RecorderSkip(s, null), false);
+        var want = !LeftOut(g) && VulkanRoute(g, s.Engine) && !Hookshot.Is(g) && RecorderWanted(rec.Recorder ?? RecorderOverride.Default, Settings.RecordAllGames && s.NoStutter == null, RecorderSkip(s, null), false);
         if (want && VulkanBlocked(g, key!, manifest) is { } blocked) (want, note) = (false, blocked);
         else if (want && rec.RanElevated != null) note = ElevatedSessionNote;   // the loader skips HKCU's layers and settings for it
         var placed = rec.VulkanLayer != null;
@@ -314,7 +314,7 @@ public sealed partial class ScsKiller
         else if (want && !GameRunning(g))
         {
             if (src != null && File.Exists(src)) changed |= KeepFailure(id, rec, null);   // in place and current, its source still there
-            if (clean && !File.Exists(Path.Combine(dir, "scskiller.ini"))) UpdateRecorderIni(g, rec, "");
+            if (clean && !File.Exists(IniPath(dir))) UpdateRecorderIni(g, rec, "");
             if (clean && !Attest(ArmTarget(g), rec, stamp, gen)) note = ForeignIni(dir, rec);
             else UpdateRecorderIni(g, rec);
         }
@@ -344,7 +344,7 @@ public sealed partial class ScsKiller
         if (!GameFolderWrite(g)) throw new InvalidOperationException($"{g.Name} is running");
         var src = VulkanLayerSource is { } p && File.Exists(p) ? p : throw new FileNotFoundException($"the Vulkan recorder ({VulkanLayer.Dll}) was not found next to the app");
         var dir = Path.GetDirectoryName(g.ExePath)!;
-        var ini = Path.Combine(dir, "scskiller.ini");
+        var ini = IniPath(dir);
         var (iniState, judged) = JudgeOwnIni(g, rec, dir, null);
         if (iniState == IniState.Unknown) throw new IOException($"{ini} can't be read: not installing until it can");
         if (iniState is not (IniState.Absent or IniState.Ours)) throw new InvalidOperationException($"{ini} is not SCSKiller's: the Vulkan recorder needs its own. Not installing.");
@@ -354,7 +354,7 @@ public sealed partial class ScsKiller
         var late = false;
         var antiCheat = GameFiles.DetectAntiCheat(g, quick: true, late: () => late = true);
         if (antiCheat == AntiCheat.None && !WriteIni(dir, IniText(g, rec), judged, null, g.InstallDir, () => GameFolderWrite(g),
-                step => { if (step == "saved") InstallStep?.Invoke("ini"); }, install: true) && !GameFolderWrite(g))
+                step => { if (step == "saved") InstallStep?.Invoke("ini"); }, install: true, layer: rec.VulkanLayer) && !GameFolderWrite(g))
         {
             if (!TakingOverHere(dir)) TakeOut(g, rec, "the game started while the Vulkan recorder was installed");   // a take-over puts the other copy's back instead
             throw new InvalidOperationException($"{g.Name} started while the recorder was installed");
@@ -597,7 +597,7 @@ public sealed partial class ScsKiller
 
     /// <summary>A Vulkan game on AMD whose cache file isn't learned yet (<see cref="AmdVkFile"/>): its warm would fill a file of
     /// its own that the game never reads. Before a recorded launch (no device yet) the plan asks for one.</summary>
-    bool AmdVkUnlearned(GameRecord rec, EngineInfo? engine) => engine is { } e && VulkanPlan.IsVulkan(e) && rec.VulkanDevice != null && AmdVkFile(rec) == "";
+    bool AmdVkUnlearned(GameRecord rec, EngineInfo? engine) => engine is { VulkanOnly: false } e && VulkanPlan.IsVulkan(e) && rec.VulkanDevice != null && AmdVkFile(rec) == "";   // a Hookshot port compiles in its own process
 
     public const string AmdVkStartOnceReason = "Start the game once so SCSKiller can find its Vulkan cache.";
     /// <summary>Its file is learned only in a session recorded at the user's own risk (<see cref="StartRiskSession"/>).</summary>

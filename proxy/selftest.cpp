@@ -153,7 +153,7 @@ static int child(const std::wstring& dir, const std::wstring& mode, unsigned see
     SetEnvironmentVariableW(L"SCSKILLER_MODE", warm ? L"warm" : L"record");
     // agsunsigned: vendor=amd added by hand to an ini signed without it, before the proxy loads (its load-time gate, which
     // can't check sig=, then hooks AGS), and taken out again before the first device: admission takes the hook out
-    if (mode == L"agsunsigned") CHECK(WritePrivateProfileStringW(L"scskiller", L"vendor", L"amd", (dir + L"scskiller.ini").c_str()));
+    if (mode == L"agsunsigned") CHECK(WritePrivateProfileStringW(L"scskiller", L"vendor", L"amd", (dir + L"scskiller.cfg").c_str()));
     HMODULE m = LoadLibraryW((dir + L"d3d12.dll").c_str());
     CHECK(m);
     auto create_device = (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice");
@@ -201,7 +201,7 @@ static int child(const std::wstring& dir, const std::wstring& mode, unsigned see
         } unrevoke{revoked, before, listed};
         // the stamp's sig= gone after the proxy loaded (so its notification is registered) but before AGS loads: the
         // load-time gate must then install nothing. Its cheap check (no key, no shell) is loader-lock safe.
-        if (mode == L"agsdisarmed") CHECK(WritePrivateProfileStringW(L"scskiller", L"sig", nullptr, (dir2 + L"scskiller.ini").c_str()));
+        if (mode == L"agsdisarmed") CHECK(WritePrivateProfileStringW(L"scskiller", L"sig", nullptr, (dir2 + L"scskiller.cfg").c_str()));
         HMODULE ags = GetEnvironmentVariableW(L"SELFTEST_AGS", path, MAX_PATH) ? LoadLibraryW(path) : nullptr;
         CHECK(ags);
         // the hook patches the thunk's target, not the exported thunk: follow the same E9 chain the recorder does, bounded
@@ -231,7 +231,7 @@ static int child(const std::wstring& dir, const std::wstring& mode, unsigned see
             return 0;
         }
         if ((mode == L"agsrevoked" || mode == L"agsunsigned") && !memcmp(pristine, entry, 8)) return printf("FAIL: the recorder didn't hook the first AGS, or hooked the second copy\n"), 1;
-        if (mode == L"agsunsigned") CHECK(WritePrivateProfileStringW(L"scskiller", L"vendor", nullptr, (dir2 + L"scskiller.ini").c_str()));
+        if (mode == L"agsunsigned") CHECK(WritePrivateProfileStringW(L"scskiller", L"vendor", nullptr, (dir2 + L"scskiller.cfg").c_str()));
         auto version = (int (*)())GetProcAddress(ags, "agsGetVersionNumber");
         auto init = (int (*)(int, const void*, void**, void*))GetProcAddress(ags, "agsInitialize");
         auto create = (int (*)(void*, const void*, const void*, void*))GetProcAddress(ags, "agsDriverExtensionsDX12_CreateDevice");
@@ -1258,7 +1258,7 @@ static bool dxc_compile(IDxcCompiler3* c, const std::string& src, std::string& o
 static int dxr_child(int proc, unsigned seed, const std::wstring& blobs, const std::wstring& out) {
     std::wstring self(MAX_PATH, L'\0');
     self.resize(GetModuleFileNameW(nullptr, self.data(), MAX_PATH));
-    // process 6 records: the proxy next to the exe (its mode from SCSKILLER_MODE / scskiller.ini); the probe: the real runtime
+    // process 6 records: the proxy next to the exe (its mode from SCSKILLER_MODE / scskiller.cfg); the probe: the real runtime
     HMODULE m = proc == 6 ? LoadLibraryW((self.substr(0, self.find_last_of(L'\\') + 1) + L"d3d12.dll").c_str()) : load_system(L"d3d12.dll");
     CHECK(m);
     auto create_device = (decltype(&D3D12CreateDevice))GetProcAddress(m, "D3D12CreateDevice");
@@ -1672,6 +1672,7 @@ static int ledger_dir_rules() {
         CloseHandle(f);
         CHECK(stamped_recorder_dir(run.path, out) && out.empty());  // a link to a good marker is still no marker the app wrote
     } else printf("ledgerdir: no symbolic link here (error %lu), link cases skipped\n", GetLastError());
+    CHECK(local_folder(run.path) && local_folder(LR"(\\?\unix\home\x\.local\share\SCSKiller\recorder)"));  // where the no-device file may go
     printf("ledgerdir OK\n");
     return 0;
 }
@@ -3881,7 +3882,7 @@ static bool modswap_arm(HMODULE mod, unsigned seed) {
 }
 
 // `selftest chain <seed> [swap]`: a compute PSO created through the proxy d3d12.dll next to the exe on WARP (no GPU cache), with
-// scskiller.ini's next= naming a mod's d3d12.dll (fakenext.dll renamed). Prints "next-calls <n>" (-1: that dll isn't loaded
+// scskiller.cfg's next= naming a mod's d3d12.dll (fakenext.dll renamed). Prints "next-calls <n>" (-1: that dll isn't loaded
 // or isn't fakenext) and "created 0x<hr>"; the proxy records the PSO in scskiller.db either way. swap: a VS + PS graphics
 // PSO instead, the mod replacing its PS (fakenext's wrapper device): the proxy records the game's and the modded desc.
 static int chain_rows(const std::wstring& dir, unsigned seed, bool swap) {
@@ -3894,7 +3895,7 @@ static int chain_rows(const std::wstring& dir, unsigned seed, bool swap) {
     IDXGIAdapter* warp = nullptr;
     CHECK(create_device && ser && SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
     wchar_t next[64];
-    GetPrivateProfileStringW(L"scskiller", L"next", L"", next, 64, (dir + L"scskiller.ini").c_str());
+    GetPrivateProfileStringW(L"scskiller", L"next", L"", next, 64, (dir + L"scskiller.cfg").c_str());
     HMODULE mod = *next ? GetModuleHandleW((dir + next).c_str()) : nullptr;
     CHECK(!swap || modswap_arm(mod, seed));
     ID3D12Device* dev = nullptr;
@@ -4160,7 +4161,7 @@ static int vkwarm_parent(const std::wstring& a, const std::wstring& bin, const s
 }
 
 // `selftest vkrec`: the Vulkan recorder layer (VkLayer_scskiller.dll, beside this exe) in a copy of this exe in its own
-// folder, made by vkchild 9 on the system's loader. Under X the copy is armed (its signed scskiller.ini) and the layer is
+// folder, made by vkchild 9 on the system's loader. Under X the copy is armed (its signed scskiller.cfg) and the layer is
 // explicit, with FOSSILIZE_DUMP_PATH aimed at the copy's folder and a cache redirect variable set: the archive, the csv
 // (#api,vulkan, the #cache line, a row per pipeline) go to the recorder folder's vulkan\<exe key>\, and nothing but the ini
 // is in the copy's folder. Under U without an ini: it passes through, writes nothing there and no refusal. Then
@@ -4413,7 +4414,7 @@ static int vkrec_parent(const std::wstring& a, const std::wstring& bin, const st
         printf("\n");
         return s;
     };
-    auto only_ini = [](const Seen& s) { return s.game.size() == 2; };  // the exe and its scskiller.ini
+    auto only_ini = [](const Seen& s) { return s.game.size() == 2; };  // the exe and its scskiller.cfg
     int bad = 0;
 
     clean();
@@ -4427,7 +4428,7 @@ static int vkrec_parent(const std::wstring& a, const std::wstring& bin, const st
     env(L"SCSK_VK_APP", L""), env(L"SCSK_VK_ENGINE", L"");
     bad += x.code != 0 || x.foz < 1 || x.pipes < 1 || x.rows < x.pipes || !x.api || !x.cache || !x.inst || !x.dev || x.refused || !only_ini(x);
 
-    CHECK(DeleteFileW((game + L"scskiller.ini").c_str()));
+    CHECK(DeleteFileW((game + L"scskiller.cfg").c_str()));
     Seen u = play(L"u");
     bad += u.code != 0 || u.foz || u.rows || u.refused || u.game.size() != 1;
 
@@ -4539,7 +4540,7 @@ static int layerwarm_parent(const std::wstring& a, const std::wstring& dir, cons
         CreateDirectoryW(d.c_str(), nullptr);
         CopyFileW(a.c_str(), exe.c_str(), FALSE), CopyFileW((dir + L"d3d12.dll").c_str(), (d + L"d3d12.dll").c_str(), FALSE);
         for (auto& f : kit_files) CopyFileW(f.c_str(), (d + f.filename().wstring()).c_str(), FALSE);
-        if (FILE* ini = _wfopen((d + L"scskiller.ini").c_str(), L"w")) fputs("[scskiller]\nmode=record\n", ini), fclose(ini);
+        if (FILE* ini = _wfopen((d + L"scskiller.cfg").c_str(), L"w")) fputs("[scskiller]\nmode=record\n", ini), fclose(ini);
         printf("%lc: ", p);
         return run(exe, L"layerwarmchild " + std::to_wstring(seed) + L" " + std::to_wstring(n));
     };
@@ -4629,7 +4630,7 @@ static int amwarm_parent(const std::wstring& a, const std::wstring& dir, int n) 
         std::wstring d = run_dir.path + p + L"\\";
         CreateDirectoryW(d.c_str(), nullptr);
         CopyFileW(a.c_str(), (d + exe_of(p)).c_str(), FALSE), CopyFileW((dir + L"d3d12.dll").c_str(), (d + L"d3d12.dll").c_str(), FALSE);
-        if (FILE* ini = _wfopen((d + L"scskiller.ini").c_str(), L"w")) fputs("[scskiller]\nmode=record\n", ini), fclose(ini);
+        if (FILE* ini = _wfopen((d + L"scskiller.cfg").c_str(), L"w")) fputs("[scskiller]\nmode=record\n", ini), fclose(ini);
         printf("%lc (Aftermath 0x%x%s): ", p, features, dred ? ", DRED" : "");
         int r = run(d + exe_of(p), L"amwarmchild " + std::to_wstring(seed) + L" " + std::to_wstring(n) + L" " + std::to_wstring(features) + (dred ? L" dred" : L""));
         median[p] = strtod(read_all(d + L"median.txt").c_str(), nullptr), log[p] = read_all(d + L"scskiller.log");
@@ -4677,7 +4678,7 @@ static int amwarm_parent(const std::wstring& a, const std::wstring& dir, int n) 
 // `selftest burst <n> <threads> <rec|plain> [shaders] [compute|late]`: a game's startup compile on WARP: n graphics PSOs (or compute
 // PSOs of <shaders> shaders, mostly repeats) created by <threads> threads at once, each released right away, every fourth
 // the desc of an earlier one (late: each shader's PSOs in a run of their own, in shader order, as a session that reaches
-// new areas: max_db_bytes in the scskiller.ini beside the proxy shows what its limit keeps); through the proxy beside it recording (rec)
+// new areas: max_db_bytes in the scskiller.cfg beside the proxy shows what its limit keeps); through the proxy beside it recording (rec)
 // or the system d3d12.dll (plain). Prints creates/s, the process's private bytes at the start, at their peak and at the end,
 // and its file writes during the burst.
 static int burst_rows(const std::wstring& dir, long n, unsigned threads, bool rec, int shaders, bool cs, bool late) {
@@ -6632,12 +6633,12 @@ static int unload_rows(const std::wstring& dir) {
 }
 
 // What the app writes after a clean anti-cheat check (ScsKiller.IniText, ScsKiller.Signed): this exe's size and write time
-// in scskiller.ini here, root= (this folder) unless the ini names one, and sig= under the recorder folder's recorder.key
+// in scskiller.cfg here, root= (this folder) unless the ini names one, and sig= under the recorder folder's recorder.key
 // (SCSKILLER_TEST_RECORDER_DIR's, made there when missing; else the app's own, never made). Without a key: unsigned.
 static void arm_self(const std::wstring& dir, const std::wstring& exe) {
     WIN32_FILE_ATTRIBUTE_DATA self;
     if (!GetFileAttributesExW(exe.c_str(), GetFileExInfoStandard, &self)) return;
-    const std::wstring ini = dir + L"scskiller.ini";
+    const std::wstring ini = dir + L"scskiller.cfg";
     const std::wstring size = std::to_wstring((uint64_t)self.nFileSizeHigh << 32 | self.nFileSizeLow);
     const std::wstring time = std::to_wstring((uint64_t)self.ftLastWriteTime.dwHighDateTime << 32 | self.ftLastWriteTime.dwLowDateTime);
     WritePrivateProfileStringW(L"scskiller", L"exe_size", size.c_str(), ini.c_str());
@@ -7008,7 +7009,7 @@ static int overlay_unit() {
 }
 
 // `selftest overlay <draw|draw10|draw11|draw11_10|hdr|fp16|fg>`: the overlay through the proxy on WARP, with
-// scskiller.ini's overlay lines (the test writes them). A hook taken before the proxy's reads the back buffer back after the
+// scskiller.cfg's overlay lines (the test writes them). A hook taken before the proxy's reads the back buffer back after the
 // overlay drew, before dxgi presents it. draw: a compute PSO, then a 1920x1080 R8G8B8A8 swap
 // chain presents until the log says the play time is done; prints "first <n>" (the first frame against the countdown at
 // full time), "done <n>" (against the done text, a full bar), then "resize 0x<hr>" and "small <n>" at 1280x720, "big <n>"
@@ -7169,7 +7170,7 @@ static long spy_flash(ov::Out o, const char* widest) {
 }
 static int overlay_rows(const std::wstring& dir, const std::wstring& mode) {
     SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
-    const std::wstring ini = dir + L"scskiller.ini";
+    const std::wstring ini = dir + L"scskiller.cfg";
     int play_s = GetPrivateProfileIntW(L"scskiller", L"ab_play_s", 0, ini.c_str());
     wchar_t tag[16], sys[MAX_PATH];
     GetPrivateProfileStringW(L"scskiller", L"ab_tag", L"", tag, 16, ini.c_str());
@@ -7305,7 +7306,7 @@ static int overlay_rows(const std::wstring& dir, const std::wstring& mode) {
 
 // `selftest overlaybench <seconds>` (GPU): the hook time per present through the proxy on the first hardware adapter, as
 // a game sees it: a 1920x1080 R8G8B8A8 swap chain on a hidden window, about 250 presents a second, the overlay on or off
-// as the test's scskiller.ini says. Prints the proxy's own "frames: ... hook" log line, written after a minute.
+// as the test's scskiller.cfg says. Prints the proxy's own "frames: ... hook" log line, written after a minute.
 static int overlay_bench(const std::wstring& dir, int seconds) {
     if (gpu_lock("selftest overlaybench").empty()) return 1;
     SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
@@ -7555,7 +7556,7 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 1 && !wcscmp(argv[1], L"load")) return LoadLibraryW((dir + L"d3d12.dll").c_str()) ? 0 : 1;  // the proxy beside it, no device: never stamped
     if (argc > 1 && !wcscmp(argv[1], L"admission")) return admission_rules();  // no proxy: values only
     if (argc > 1 && !wcscmp(argv[1], L"warmmemory")) return warm_memory_rules();  // no proxy: values only
-    // The proxy records only for the exe the app checked (its stamp in scskiller.ini); here the selftest is the app. None
+    // The proxy records only for the exe the app checked (its stamp in scskiller.cfg); here the selftest is the app. None
     // with SCSKILLER_SELFTEST_UNARMED set.
     // run by hand, outside the tests: its recorder key and the proxy's refusals go to a temp folder, never the user's
     if (wchar_t tmp[MAX_PATH]; !GetEnvironmentVariableW(L"SCSKILLER_TEST_RECORDER_DIR", nullptr, 0) && GetTempPathW(MAX_PATH, tmp))
@@ -7691,7 +7692,7 @@ int wmain(int argc, wchar_t** argv) {
                 std::wstring sub = d + name + L"\\";
                 CreateDirectoryW(sub.c_str(), nullptr);
                 if (!CopyFileW((d + L"selftest.exe").c_str(), (sub + L"selftest.exe").c_str(), FALSE) || !CopyFileW((d + L"d3d12.dll").c_str(), (sub + L"d3d12.dll").c_str(), FALSE)) return 1;
-                if (FILE* f = _wfopen((sub + L"scskiller.ini").c_str(), L"w")) fprintf(f, "[scskiller]\nmode=record\n%s%s%s", *vendor ? "vendor=" : "", vendor, *vendor ? "\n" : ""), fclose(f);
+                if (FILE* f = _wfopen((sub + L"scskiller.cfg").c_str(), L"w")) fprintf(f, "[scskiller]\nmode=record\n%s%s%s", *vendor ? "vendor=" : "", vendor, *vendor ? "\n" : ""), fclose(f);
                 // agsnoldr: the child inherits this, and its proxy's load-time registration "fails", so nothing is installed
                 SetEnvironmentVariableW(L"SCSKILLER_TEST_NO_LDR", wcscmp(name, L"agsnoldr") ? nullptr : L"1");
                 int arc = run(sub + L"selftest.exe", std::wstring(mode) + seed);

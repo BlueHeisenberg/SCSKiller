@@ -16,7 +16,7 @@
 // draws without changing a compile. Nor is the fixed-function half of a draw with one shader (lighting, texture stage
 // states): it is drawn again with the defaults. ponytail: add those states if AMD shows misses on such draws.
 // Two threads setting the same state at once may leave a draw recorded with the other's value: a variant missed, no harm.
-// Config: scskiller.ini [scskiller] max_db_bytes=N as proxy.cpp reads it. Input: scskiller.keys as proxy.cpp (load_keys).
+// Config: scskiller.cfg [scskiller] max_db_bytes=N as proxy.cpp reads it. Input: scskiller.keys as proxy.cpp (load_keys).
 #define NOMINMAX
 #include <windows.h>
 #include <d3d9.h>
@@ -206,7 +206,7 @@ static void load_db() {
     g_db_bytes = (uint64_t)good;
     load_keys(g_dir + L"scskiller.keys");
     wchar_t cap[32];
-    GetPrivateProfileStringW(L"scskiller", L"max_db_bytes", L"", cap, 32, (g_dir + L"scskiller.ini").c_str());
+    GetPrivateProfileStringW(L"scskiller", L"max_db_bytes", L"", cap, 32, config_path(g_dir).c_str());
     g_db_capped = *cap, g_db_cap = _wcstoui64(cap, nullptr, 10);
     logf("d3d9: db %llu bytes, %zu records and blobs%s", g_db_bytes, g_keys.size(), g_db_capped ? ", limited" : "");
 }
@@ -848,7 +848,7 @@ static bool g_admitted;
 static void admit() {
     std::call_once(g_once, [] {
         std::string read;
-        const bool whole = !g_dir.empty() && ini_bytes(g_dir + L"scskiller.ini", read);
+        const bool whole = !g_dir.empty() && ini_bytes(config_path(g_dir), read);
         t_ini = &read;
         bool risk = false;
         std::string seen;

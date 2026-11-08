@@ -7,7 +7,7 @@ namespace SCSKiller.Core.App;
 /// <summary>A game's recording: SCSKiller's copy (games\&lt;id&gt;\recording.db, compact: <see cref="PsoDb.WriteCompact"/>)
 /// is the durable one, and the recorder's scskiller.db in the game folder is an inbox, emptied once imported. The recorder
 /// skips what the copy already has, and the bytes of the shaders the game ships, through <see cref="KeysFile"/>, next to
-/// its scskiller.ini.</summary>
+/// its scskiller.cfg.</summary>
 public static class Recordings
 {
     public const string KeysFile = "scskiller.keys";
@@ -239,7 +239,9 @@ public static class Recordings
                 if (publish?.Invoke() != false)
                 {
                     ScsKiller.RefuseLink(path);
+                    var sha = ScsKiller.WriteHash(tmp);
                     File.Move(tmp, path, true);
+                    ScsKiller.Wrote(path, sha);
                 }
             }
         }

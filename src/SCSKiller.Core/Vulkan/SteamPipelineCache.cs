@@ -43,8 +43,9 @@ public static class SteamPipelineCache
         var recorded = new[] { Path.Combine(dir, Merged) }.Where(File.Exists).Concat(runs).ToList();
         var download = Path.Combine(dir, Download);
         var apps = new List<FozApp>();
-        // a bucket's applications differ only in what its hash leaves out: one of each archive tells it
-        foreach (var path in recorded.Count > 0 || hash == null ? recorded : File.Exists(download) ? [download] : [])
+        // a bucket's applications differ only in what its hash leaves out: one of each archive tells it, the download's too,
+        // whose application info Steam's merge leaves out (measured)
+        foreach (var path in hash == null || !File.Exists(download) ? recorded : [.. recorded, download])
             try
             {
                 using var f = Open(path);

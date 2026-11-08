@@ -125,6 +125,7 @@
                             <TextBlock Text="{Binding KeptCacheNote}" Classes="Secondary" TextWrapping="Wrap" VerticalAlignment="Center" />
                             <HyperlinkButton Content="Clear it" Padding="0" Click="OnClearCache" VerticalAlignment="Center" />
                         </WrapPanel>
+                        <TextBlock Text="{Binding OwnCacheNote}" IsVisible="{Binding HasOwnCacheNote}" Classes="Secondary" TextWrapping="Wrap" />
                         <StackPanel Spacing="2" Margin="0,4,0,0" IsVisible="{Binding HasMaximumLine}">
                             <TextBlock Text="{Binding MaximumLine}" Classes="Secondary" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding MaximumNote}" IsVisible="{Binding HasMaximumNote}" Classes="Caption" TextWrapping="Wrap" />
@@ -408,7 +409,7 @@
                         </StackPanel>
                         <StackPanel Spacing="4" IsVisible="{Binding ShowCacheCap}">
                             <TextBlock Text="Compile size limit" Classes="BodyStrong" />
-                            <TextBlock Text="An estimate of what a compile adds. Recorded pipelines always compile and take part of it. Ray tracing doesn't count." Classes="Secondary" TextWrapping="Wrap" />
+                            <TextBlock Text="An estimate of what a compile adds. Recorded pipelines always compile. Earlier compiles stay until you clear the cache." Classes="Secondary" TextWrapping="Wrap" />
                             <ComboBox x:Name="CacheCapBox" ItemsSource="{Binding CacheCapChoices}" SelectedIndex="{Binding CacheCapIndex, Mode=OneWay}"
                                       SelectionChanged="OnCacheCapChanged" AutomationProperties.Name="Compile size limit" />
                         </StackPanel>
@@ -426,6 +427,7 @@
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Record while I play" Classes="Section" />
                                 <TextBlock Text="{Binding RecordNote}" Classes="Secondary" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding LastRefusal}" IsVisible="{Binding HasLastRefusal}" TextWrapping="Wrap" />
                                 <HyperlinkButton Content="{Binding UseDefaultText}" Click="OnUseDefault" Padding="0" Margin="0,2,0,0" IsVisible="{Binding ShowUseDefault}" />
                                 <HyperlinkButton Content="{Binding GrantText}" Click="OnGrantFlatpak" Padding="0" Margin="0,2,0,0" IsVisible="{Binding ShowGrant}" />
                                 <TextBlock Text="{Binding GrantNote}" IsVisible="{Binding HasGrantNote}" Classes="Secondary" TextWrapping="Wrap" />

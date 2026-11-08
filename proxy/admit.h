@@ -1,5 +1,5 @@
 // The recorder's admission (the D3D12 proxy's and the Vulkan layer's): which process records, read from the exe's
-// scskiller.ini, the install and Steam's files. The includer defines admit_dir(): the folder of the exe and its ini.
+// scskiller.cfg, the install and Steam's files. The includer defines admit_dir(): the folder of the exe and its ini.
 #pragma once
 #include <windows.h>
 #include <shellapi.h>
@@ -24,6 +24,16 @@
 
 static const std::wstring& admit_dir();
 
+// The recorder's config in dir: scskiller.cfg (a mod loader refuses any other .ini in the game folder), else the older
+// scskiller.ini only while no scskiller.cfg is there at all: one that can't be looked at is still picked, and refuses.
+static std::wstring config_path(const std::wstring& dir) {
+    if (dir.empty()) return L"scskiller.ini";
+    const std::wstring cfg = dir + L"scskiller.cfg";
+    if (GetFileAttributesW(cfg.c_str()) != INVALID_FILE_ATTRIBUTES) return cfg;
+    const DWORD e = GetLastError();
+    return e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND ? dir + L"scskiller.ini" : cfg;
+}
+
 static long long unix_ms() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
 // An environment variable into v; false when unset, empty or too long for v (the call then leaves v unwritten).
 template <size_t N> static bool env(const wchar_t* name, wchar_t (&v)[N]) {
@@ -47,25 +57,25 @@ static bool driveless() { return !module_path(nullptr).rfind(L"\\\\?\\unix\\", 0
 // when D3D12GetInterface hands out an SDK configuration or a device factory, before either is hooked. The recorder records
 // for the whole run only when all hold, else it is a pure pass-through (no device hooked, nothing written in the game
 // folder):
-//  - scskiller.ini's exe_size= and exe_time= are this process's exe as it is now, and its sig= is the HMAC the app made of
+//  - scskiller.cfg's exe_size= and exe_time= are this process's exe as it is now, and its sig= is the HMAC the app made of
 //    them, the exe's file key, root= (and pid=/pid_time=) with its own key (recorder.key in its recorder folder, outside
 //    every game folder; recorder_sig). The app takes the stamp before a full anti-cheat check of the install
 //    (GameFiles.DetectAntiCheat walks it; this dll doesn't) and signs it only when that check is clean, so an exe updated
 //    since, or during it, is refused, and so is an ini that SCSKiller didn't write, or wrote for another exe or root;
 //  - no anti-cheat marker in this folder or in any folder above it up to the install root (root=, relative to this folder;
 //    one that isn't this folder or above it refuses, so does one more than 64 up), each listed whole: the built-in list,
-//    plus scskiller.ini markers= (it only adds; malformed: no). pid= and pid_time= (its creation FILETIME, UTC; under Wine
+//    plus scskiller.cfg markers= (it only adds; malformed: no). pid= and pid_time= (its creation FILETIME, UTC; under Wine
 //    its Linux pid and /proc start time, wine_bound) name the one process the app started suspended itself for an offline
 //    session: for that process EasyAntiCheat's names
 //    leave the list; any other process with that ini is refused;
 //  - no "Riot Games" folder in the exe's path;
 //  - no anti-cheat client module loaded, and not a VAC game by Steam's files (vac_now);
 //  - this dll was loaded from the exe's folder;
-//  - this folder isn't on the app's revocation list (recorder.revoked: folders whose scskiller.ini it couldn't take out);
+//  - this folder isn't on the app's revocation list (recorder.revoked: folders whose scskiller.cfg it couldn't take out);
 //  - its signed arm= is the one the recorder folder's arms\ keeps for this folder (a removal deletes it);
 //  - the recorder folder is out of the game's reach: not in the install or, under Wine, the prefix, and under Wine named by
 //    a scskiller.ledger on Z:;
-//  - scskiller.ini is still as it was read when the decision is made (the app takes it out when it finds anti-cheat).
+//  - scskiller.cfg is still as it was read when the decision is made (the app takes it out when it finds anti-cheat).
 // risk=1 with that binding, inside the signed stamp (a session the user confirmed at their own risk, beside the anti-cheat):
 // the marker, Riot, client and VAC checks still run but refuse on nothing they find, and the log names it all once, as it
 // opens. Nothing is hidden from the anti-cheat. risk= without pid= or with another value is refused ("risk= malformed").
@@ -112,7 +122,7 @@ static bool is_marker(const wchar_t* name, const std::vector<std::wstring>& mark
 static bool anti_cheat_markers(std::vector<std::wstring>& out) {
     out.assign(std::begin(kAntiCheatMarkers), std::end(kAntiCheatMarkers));
     wchar_t v[4096];
-    DWORD n = GetPrivateProfileStringW(L"scskiller", L"markers", L"", v, 4096, (admit_dir() + L"scskiller.ini").c_str());
+    DWORD n = GetPrivateProfileStringW(L"scskiller", L"markers", L"", v, 4096, config_path(admit_dir()).c_str());
     if (n >= 4094) return false;
     if (!n) return true;
     std::wstring s = v;
@@ -145,19 +155,19 @@ static std::vector<std::string> anti_cheat_in(const std::wstring& dir, const std
     if (!listed) found.assign(1, "?");
     return found;
 }
-// While admission decides, ini_string reads this copy of scskiller.ini's bytes (the ones it compares again at the end), so
+// While admission decides, ini_string reads this copy of scskiller.cfg's bytes (the ones it compares again at the end), so
 // the values it checks and the signed lines it hands on come from one read: a file changed and put back meanwhile can't
 // split them (admission.h's ini_value).
 static thread_local const std::string* t_ini;
 
-// scskiller.ini's value of key, as written ("" when missing or longer than 1022).
+// scskiller.cfg's value of key, as written ("" when missing or longer than 1022).
 static std::wstring ini_string(const wchar_t* key) {
     if (t_ini) {
         std::wstring v = ini_value(*t_ini, key);
         return v.size() < 1022 ? v : L"";
     }
     wchar_t v[1024];
-    DWORD n = GetPrivateProfileStringW(L"scskiller", key, L"", v, 1024, (admit_dir() + L"scskiller.ini").c_str());
+    DWORD n = GetPrivateProfileStringW(L"scskiller", key, L"", v, 1024, config_path(admit_dir()).c_str());
     return n && n < 1022 ? std::wstring(v, n) : L"";
 }
 static bool ini_number(const wchar_t* key, uint64_t& out) {
@@ -1013,7 +1023,7 @@ static bool rec_same(const RecFolder& rec) {
     return !why && open_id(path, id) && !memcmp(&id, &rec.id, sizeof id);
 }
 // This folder's key on the app's revocation list (recorder.revoked in its recorder folder: the file_key of each folder whose
-// scskiller.ini it couldn't take out, one a line, as ScsKiller.Revoke writes them), or the list can't be read whole (only
+// scskiller.cfg it couldn't take out, one a line, as ScsKiller.Revoke writes them), or the list can't be read whole (only
 // a list that doesn't exist is empty): why it refuses; nullptr: neither.
 static const char* revoked_here(const RecFolder& rec) {
     std::string list;
@@ -1084,13 +1094,13 @@ static bool signed_by_app(const RecFolder& rec, const std::wstring& root) {
     return false;
 }
 
-// Admitted by the path form, the exe's folder must list as the app saw it from this process too: the exe, scskiller.ini and,
+// Admitted by the path form, the exe's folder must list as the app saw it from this process too: the exe, scskiller.cfg and,
 // when it was loaded from there, this module, by long or 8.3 name. The anti-cheat walk lists it through the same layer.
 static bool listed_here() {
     HMODULE self = nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)&listed_here, &self);
     const std::wstring exe = module_path(nullptr), own = module_path(self), dir = admit_dir();
-    const std::wstring want[3] = {exe.substr(exe.find_last_of(L'\\') + 1), L"scskiller.ini", own.substr(own.find_last_of(L'\\') + 1)};
+    const std::wstring want[3] = {exe.substr(exe.find_last_of(L'\\') + 1), config_path(dir).substr(dir.size()), own.substr(own.find_last_of(L'\\') + 1)};
     bool seen[3] = {false, false, _wcsnicmp(own.c_str(), dir.c_str(), dir.size()) || own.find(L'\\', dir.size()) != std::wstring::npos};
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileExW(long_path(dir + L"*").c_str(), FindExInfoStandard, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
@@ -1103,7 +1113,7 @@ static bool listed_here() {
     return seen[0] && seen[1] && seen[2];
 }
 
-// scskiller.ini's bytes, read whole; false when it can't be, or is over 64 KB (the app's is a few hundred bytes).
+// scskiller.cfg's bytes, read whole; false when it can't be, or is over 64 KB (the app's is a few hundred bytes).
 static bool ini_bytes(const std::wstring& path, std::string& out) {
     out.clear();
     FILE* f = _wfsopen(path.c_str(), L"rb", _SH_DENYNO);
@@ -1115,11 +1125,11 @@ static bool ini_bytes(const std::wstring& path, std::string& out) {
     return ok;
 }
 
-// The verdict for the exe beside the recorder (admit_dir()), whose scskiller.ini read is the bytes ini_string reads
+// The verdict for the exe beside the recorder (admit_dir()), whose scskiller.cfg read is the bytes ini_string reads
 // (t_ini, set by the caller), whole false when it couldn't be read whole: nullptr records, else why not. elsewhere: the
 // recorder wasn't loaded from that folder. risk and seen: for the log, as it opens.
 static const char* admission_verdict(bool whole, const std::string& read, bool elsewhere, bool& risk, std::string& seen) {
-    const std::wstring ini = admit_dir() + L"scskiller.ini";
+    const std::wstring ini = config_path(admit_dir());
     // opened once and held: a ledger, link or Wine drive changed meanwhile can't move what is read there
     RecFolder rec;
     const char* rec_why = nullptr;
@@ -1180,7 +1190,8 @@ static const char* admission_verdict(bool whole, const std::string& read, bool e
         if (checked) SetEvent(checked), CloseHandle(checked);
         if (go) WaitForSingleObject(go, 60000), CloseHandle(go);
     }
-    if (!why && (!ini_bytes(ini, again) || again != read)) why = "scskiller.ini changed while deciding";  // the app took it out meanwhile
+    // the app took it out meanwhile, or another name is the one read now
+    if (!why && (!ini_bytes(ini, again) || again != read || config_path(admit_dir()) != ini)) why = "scskiller.ini changed while deciding";
     if (!why && !rec_same(rec)) why = "SCSKiller's recorder folder changed while deciding";
     if (!why) why = revoked_here(rec);
     if (!why) why = armed_here(rec);

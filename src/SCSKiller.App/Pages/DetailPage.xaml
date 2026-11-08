@@ -108,6 +108,7 @@
                             <TextBlock Text="{x:Bind Vm.KeptCacheNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" VerticalAlignment="Center" />
                             <HyperlinkButton Content="Clear it" Padding="0" Click="OnClearCache" VerticalAlignment="Center" />
                         </StackPanel>
+                        <TextBlock Text="{x:Bind Vm.OwnCacheNote, Mode=OneWay}" Visibility="{x:Bind Vm.HasOwnCacheNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                         <StackPanel Spacing="2" Margin="0,4,0,0" Visibility="{x:Bind Vm.HasMaximumLine, Mode=OneWay}">
                             <TextBlock Text="{x:Bind Vm.MaximumLine, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                             <TextBlock Text="{x:Bind Vm.MaximumNote, Mode=OneWay}" Visibility="{x:Bind Vm.HasMaximumNote, Mode=OneWay}" Style="{StaticResource Caption}" TextWrapping="Wrap" />
@@ -414,7 +415,7 @@
                         </StackPanel>
                         <StackPanel Spacing="4" Visibility="{x:Bind Vm.ShowCacheCap, Mode=OneWay}">
                             <TextBlock Text="Compile size limit" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                            <TextBlock Text="An estimate of what a compile adds. Recorded pipelines always compile and take part of it. Ray tracing doesn't count." Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                            <TextBlock Text="An estimate of what a compile adds. Recorded pipelines always compile. Earlier compiles stay until you clear the cache." Style="{StaticResource Secondary}" TextWrapping="Wrap" />
                             <ComboBox x:Name="CacheCapBox" ItemsSource="{x:Bind Vm.CacheCapChoices, Mode=OneWay}" SelectedIndex="{x:Bind Vm.CacheCapIndex, Mode=OneWay}"
                                       SelectionChanged="OnCacheCapChanged" AutomationProperties.Name="Compile size limit" />
                         </StackPanel>
@@ -440,6 +441,7 @@
                             <StackPanel Spacing="2">
                                 <TextBlock Text="Record while I play" Style="{StaticResource Section}" />
                                 <TextBlock Text="{x:Bind Vm.RecordNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                                <TextBlock Text="{x:Bind Vm.LastRefusal, Mode=OneWay}" Visibility="{x:Bind Vm.HasLastRefusal, Mode=OneWay}" TextWrapping="Wrap" />
                                 <HyperlinkButton Content="{x:Bind Vm.UseDefaultText, Mode=OneWay}" Click="OnUseDefault" Padding="0" Margin="0,2,0,0"
                                                  Visibility="{x:Bind Vm.ShowUseDefault, Mode=OneWay}" />
                             </StackPanel>

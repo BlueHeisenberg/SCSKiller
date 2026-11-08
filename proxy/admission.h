@@ -145,7 +145,7 @@ inline const char* decide(bool risk, bool riot, const std::vector<std::string>& 
     return nullptr;
 }
 
-// The key's value in scskiller.ini's bytes, read as GetPrivateProfileStringW reads an ANSI file: the first [scskiller]
+// The key's value in scskiller.cfg's bytes, read as GetPrivateProfileStringW reads an ANSI file: the first [scskiller]
 // section, the key's first line, trimmed, quotes stripped. A file whose lines the two could split differently (a CR without
 // LF, a NUL, a section header other than [scskiller] exactly, or two of them) reads as empty: not signed.
 inline std::wstring ini_value(const std::string& bytes, const wchar_t* key) {

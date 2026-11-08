@@ -14,12 +14,12 @@ public sealed partial class SteamSource
     }
 
     /// <summary>Steam's folder for the home folder <paramref name="home"/>: ~/.steam/root resolved (Steam links it to the
-    /// folder it runs from), else the Flatpak Steam's, else the Snap Steam's (each keeps its own ~ in its sandbox folder),
-    /// else ~/.local/share/Steam.</summary>
+    /// folder it runs from), else the Flatpak Steam's, else the Snap Steam's (each keeps its own ~ in its sandbox folder)
+    /// when it has a library, else ~/.local/share/Steam. The recorder's admission finds it the same (admit_posix.h steam_root).</summary>
     internal static string Root(string home) =>
         Libc.RealPath(Path.Combine(home, ".steam", "root"))
         ?? new[] { Path.Combine(home, ".var", "app", "com.valvesoftware.Steam", ".local", "share", "Steam"), Path.Combine(home, "snap", "steam", "common", ".local", "share", "Steam") }
-            .FirstOrDefault(Directory.Exists)
+            .FirstOrDefault(p => Directory.Exists(Path.Combine(p, "steamapps")))
         ?? Path.Combine(home, ".local", "share", "Steam");
 
     /// <summary>The native Steam's folder: <see cref="Root(string)"/> without the Flatpak and Snap Steams.</summary>

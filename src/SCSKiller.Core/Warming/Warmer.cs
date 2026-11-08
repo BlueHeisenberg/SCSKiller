@@ -144,7 +144,8 @@ public sealed class Warmer(IGpuVendorBackend vendor, string? warmExe = null) : I
     /// records the run for. A DirectX plan's work folder with Steam's pipelines in it (<see cref="Vulkan.VulkanPlan.WorkFile"/>)
     /// replays those first (<see cref="SteamFirstRun"/>).</summary>
     public IWarmRun Start(Game game, string workDir, WarmOptions options, IProgress<WarmProgress>? progress, GpuInfo gpu) =>
-        options.Vulkan || !File.Exists(Path.Combine(workDir, Vulkan.VulkanPlan.WorkFile)) ? StartOne(game, workDir, options, progress, gpu)
+        Vulkan.Hookshot.Is(game) ? Vulkan.Hookshot.Start(game, workDir, gpu, progress, Log)
+        : options.Vulkan || !File.Exists(Path.Combine(workDir, Vulkan.VulkanPlan.WorkFile)) ? StartOne(game, workDir, options, progress, gpu)
             : new SteamFirstRun((o, p) => StartOne(game, workDir, o, p, gpu), workDir, options, progress, m => Log?.Report($"{game.Name}: {m}"));
 
     IWarmRun StartOne(Game game, string workDir, WarmOptions options, IProgress<WarmProgress>? progress, GpuInfo gpu)
@@ -521,6 +522,7 @@ sealed class WarmRun : IWarmRun
         var clock = Stopwatch.StartNew();
         var stderr = new System.Collections.Concurrent.ConcurrentQueue<string>();
         var skipKeys = new HashSet<string>(o.SkipKeys ?? [], StringComparer.OrdinalIgnoreCase);
+        var diedAlone = new List<long>();   // items whose process died creating them alone: no process left to name their keys
         var passes = WarmPasses.Read(workDir);
         var (pass, from) = passes?.Locate(o.StartAt) ?? (0, o.StartAt);
         var rt = 0;   // the ray tracing threads of the last process
@@ -568,6 +570,8 @@ sealed class WarmRun : IWarmRun
             Keys("--skip-keys", skipKeys);
             if (!o.Vulkan) Keys("--known-keys", o.KnownKeys ?? []);
             if (isolate.Count > 0) { args.Add("--isolate"); args.Add(string.Join(',', isolate)); }
+            // the generated items that use the shaders two of them share are skipped (proxy.cpp); the newest bound the command line
+            if (!o.Vulkan && diedAlone.Count > 1) { args.Add("--died-alone"); args.Add(string.Join(',', diedAlone.TakeLast(64))); }
             if (passes != null) { args.Add("--pass"); args.Add(passes.Number(pass).ToString()); }
             var all = new Dictionary<string, string>(env ?? new Dictionary<string, string>()) { [StuckVariable] = stuckS.ToString() };
             if (band > 0) all["SCSKILLER_WARM_BAND_WORKERS"] = band.ToString();
@@ -600,7 +604,6 @@ sealed class WarmRun : IWarmRun
             }
             long carried = 0, carriedSkips = 0, carriedKnown = 0;   // failures and skips the earlier processes counted (before their retry point, or in earlier passes)
             var culprits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var diedAlone = new List<long>();   // items whose process died creating them alone: no process left to name their keys
             var unnamed = false;   // a process died: what it didn't create is in no failed-keys file
             var lastCarried = false;   // the last process's failures are in carried already
             string? note = null;

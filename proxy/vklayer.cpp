@@ -25,7 +25,7 @@
 #include <thread>
 
 #ifdef _WIN32
-static std::wstring g_exe_dir;  // the exe's folder, trailing backslash: where its scskiller.ini is
+static std::wstring g_exe_dir;  // the exe's folder, trailing backslash: where its scskiller.cfg is
 static const std::wstring& admit_dir() { return g_exe_dir; }
 #else
 static std::string g_exe_dir;  // the exe's folder, trailing '/'
@@ -266,9 +266,9 @@ void scsk_layer_admit() {
         const std::wstring exe = module_path(nullptr);
         g_exe_dir = exe.substr(0, exe.find_last_of(L'\\') + 1);  // npos + 1 = 0: none, which refuses
         std::string read;
-        const bool whole = !g_exe_dir.empty() && ini_bytes(g_exe_dir + L"scskiller.ini", read);
-        // as on Linux: no scskiller.ini beside the exe is no folder the app armed, so no refusal to report
-        const DWORD gone = whole || g_exe_dir.empty() || GetFileAttributesW((g_exe_dir + L"scskiller.ini").c_str()) != INVALID_FILE_ATTRIBUTES ? 0 : GetLastError();
+        const bool whole = !g_exe_dir.empty() && ini_bytes(config_path(g_exe_dir), read);
+        // as on Linux: no scskiller.cfg beside the exe is no folder the app armed, so no refusal to report
+        const DWORD gone = whole || g_exe_dir.empty() || GetFileAttributesW(config_path(g_exe_dir).c_str()) != INVALID_FILE_ATTRIBUTES ? 0 : GetLastError();
         const bool unarmed = gone == ERROR_FILE_NOT_FOUND || gone == ERROR_PATH_NOT_FOUND;
         t_ini = &read;
         struct Live {
@@ -322,11 +322,11 @@ void scsk_layer_admit() {
         const std::string exe = module_path();
         g_exe_dir = exe.substr(0, exe.find_last_of('/') + 1);  // npos + 1 = 0: none, which refuses
         std::string read;
-        const bool whole = !g_exe_dir.empty() && ini_bytes(g_exe_dir + "scskiller.ini", read);
-        // no scskiller.ini beside the exe: not a folder the app armed (a process that inherited the game's SteamAppId), so no
+        const bool whole = !g_exe_dir.empty() && ini_bytes(config_path(g_exe_dir), read);
+        // no scskiller.cfg beside the exe: not a folder the app armed (a process that inherited the game's SteamAppId), so no
         // refusal to report. An armed folder's other or renamed exe still writes one.
         struct stat ini_st;
-        const bool unarmed = !whole && !g_exe_dir.empty() && lstat((g_exe_dir + "scskiller.ini").c_str(), &ini_st) && errno == ENOENT;
+        const bool unarmed = !whole && !g_exe_dir.empty() && lstat(config_path(g_exe_dir).c_str(), &ini_st) && errno == ENOENT;
         RecFd pinned;
         pin_rec(recorder_dir_now(g_exe_dir), pinned);
         const std::string& rec = pinned.real;

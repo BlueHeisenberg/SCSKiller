@@ -1445,15 +1445,20 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
 
     internal static byte[] Decompress(byte[] src, int offset, int count, int size)
     {
-        var s = new ReadOnlySpan<byte>(src, offset, count);
-        // a false anchor in carved package bytes claims up to 64 MB: one buffer for every codec tried, not one each
-        // (a pool would keep its 64 MB buffers live after the read, counted against the plan's memory limit)
         var into = GC.AllocateUninitializedArray<byte>(size);
+        Decompress(new ReadOnlySpan<byte>(src, offset, count), into);
+        return into;
+    }
+
+    /// <summary>Fills all of <paramref name="into"/>, one buffer for every codec tried.</summary>
+    internal static void Decompress(ReadOnlySpan<byte> s, Span<byte> into)
+    {
+        var (count, size) = (s.Length, into.Length);
         foreach (var m in InOrder(s))
             try
             {
                 Compression.Decompress(s, into, m);
-                return into;
+                return;
             }
             catch (Exception e) when (e is not OutOfMemoryException) { }
         // an Oodle block the managed decoder couldn't read, which stands in for the native one on such a CPU

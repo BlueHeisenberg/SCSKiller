@@ -139,10 +139,10 @@ own risk, and its authors are not responsible for bans, crashes or lost data.
 **Is it safe with anti-cheat games?** Outside a session SCSKiller never launches them, injects into them or gives them
 the recorder. It only reads their files. A session is allowed per game, confirmed every launch, and at your own risk.
 The offline session for ELDEN RING and ARMORED CORE VI runs them offline without EasyAntiCheat when their exe is
-started directly: Steam must be running (offline mode is fine), and SCSKiller adds `d3d12.dll`, `scskiller.ini` and
+started directly: Steam must be running (offline mode is fine), and SCSKiller adds `d3d12.dll`, `scskiller.cfg` and
 `steam_appid.txt` to the game's folder and starts the exe itself. With "Allow the recorder in games with anti-cheat (at
 your own risk)" on in Settings, any other supported game can run a session too: SCSKiller starts the game as usual, with
-`d3d12.dll` and `scskiller.ini` in its folder. Enabling the recorder in games with anti-cheat is at your own risk.
+`d3d12.dll` and `scskiller.cfg` in its folder. Enabling the recorder in games with anti-cheat is at your own risk.
 SCSKiller isn't responsible for bans. Bans from it are not support issues. In both kinds the recorder records
 only that process. When the game exits, SCSKiller takes those files out again (each only while it is still the file it
 added) and keeps the recording and the session's frame times, at the next logon or start if SCSKiller was closed or the
@@ -151,9 +151,9 @@ SCSKiller while the game runs.
 
 **What does it write, and where?** Settings and per-game plans go in `%LOCALAPPDATA%\SCSKiller\` (the `data` folder of
 a portable copy), and the compiled pipelines go in your driver's own shader cache. Game files are never modified. The
-optional recorder adds `d3d12.dll` and `scskiller.ini` to the folder of a game you turn it on for, and turning it off
+optional recorder adds `d3d12.dll` and `scskiller.cfg` to the folder of a game you turn it on for, and turning it off
 removes exactly those files. It never goes into a game with anti-cheat, and comes out the moment SCSKiller finds
-anti-cheat: when it scans, when the game exits or updates, and every 2 minutes while it runs. `scskiller.ini` names the
+anti-cheat: when it scans, when the game exits or updates, and every 2 minutes while it runs. `scskiller.cfg` names the
 game's exe as it was when SCSKiller last found no anti-cheat in its folders, and a game records only while its exe is
 still that one and no anti-cheat is next to it. Uninstalling SCSKiller removes these files and the recordings from every
 game folder, and a scan removes them from a game Steam uninstalled.

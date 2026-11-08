@@ -13,7 +13,7 @@ using SCSKiller.Core.Warming;
 namespace SCSKiller.Core.App;
 
 // Offline sessions without EasyAntiCheat (Games.OfflineEac) and risk sessions beside a game's anti-cheat (StartRiskSession,
-// Settings.RecordAntiCheatGames): the only cases where the recorder goes into an anti-cheat game. The signed scskiller.ini
+// Settings.RecordAntiCheatGames): the only cases where the recorder goes into an anti-cheat game. The signed scskiller.cfg
 // names one process (pid= and pid_time=; a risk session's carries risk=1 too, inside the signature), so any other launch is
 // a pass-through while the files are there. SCSKiller starts the exe itself, suspended, where it can, and only then places
 // the recorder; a game its store's launcher starts gets an unsigned ini first and is signed for its exe's first process
@@ -285,9 +285,33 @@ public sealed partial class ScsKiller
     bool RiskOfferedButLaunch(Game g, EngineInfo? engine, bool anyAntiCheat) =>
         RecordsAntiCheat && anyAntiCheat && RiskFits(g, engine);
 
+    /// <summary>The game page's line for <see cref="GameState.RiskTrusted"/>.</summary>
+    public const string TrustedNote = "This game blocks unsigned modules, so SCSKiller can't record it.";
+
+    /// <summary>The game's exe holds a trusted launch check (its \cfg\trustedlaunch.cfg and -allow_third_party_software): it
+    /// hooks the loader and fails every DLL it can't verify against its signature lists, so any recorder beside it stops the
+    /// game. Read from the exe on disk, once per size and write time; an exe that can't be read, or past 64 MB, has none.</summary>
+    internal static bool TrustedLaunch(Game g)
+    {
+        try
+        {
+            var f = new FileInfo(g.ExePath);
+            if (!f.Exists || f.Length > 64 << 20) return false;
+            return TrustedSeen.GetOrAdd((f.FullName.ToUpperInvariant(), f.Length, f.LastWriteTimeUtc.Ticks), _ =>
+            {
+                var bytes = File.ReadAllBytes(f.FullName).AsSpan();
+                return bytes.IndexOf(TrustedCfg) >= 0 && bytes.IndexOf(ThirdPartyFlag) >= 0;
+            });
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    static readonly ConcurrentDictionary<(string, long, long), bool> TrustedSeen = new();
+    static readonly byte[] TrustedCfg = Encoding.Unicode.GetBytes(@"\cfg\trustedlaunch.cfg"), ThirdPartyFlag = "-allow_third_party_software"u8.ToArray();
+
     /// <summary>A risk session could record the game, the setting and its launch aside.</summary>
     bool RiskFits(Game g, EngineInfo? engine) => !Unconfirmed(g) && !RecorderCrashes(g) && GameFiles.WeGameId(g) == null   // a WeGame game records only when confirmed clean, never at your own risk
-        && engine is { } e && RecordsApi(g, e) && GameVerdicts.Current.Unsupported(g, engine) == null;
+        && engine is { } e && RecordsApi(g, e) && GameVerdicts.Current.Unsupported(g, engine) == null && !TrustedLaunch(g);
 
     /// <summary>A recorder can record the game's API on this OS and GPU: DirectX 12, DirectX 11 where its recording records
     /// (<see cref="Records11Api"/>), Vulkan through the layer (a Steam launch's).</summary>
@@ -385,7 +409,7 @@ public sealed partial class ScsKiller
             // anti-cheat game may load no module from outside its folder
             var vulkan = dll == DllVulkan;
             var key = VulkanLayer.Key(g);
-            string[] placed = [.. WritesLedger ? new[] { LedgerStamp } : [], dll, "scskiller.ini"];
+            string[] placed = [.. WritesLedger ? new[] { LedgerStamp } : [], dll, IniName];
             var stamp = Stamp(g.ExePath);   // before the fresh check below
             ProcessStartInfo? launch = null;
             AntiCheat found = AntiCheat.None;
@@ -419,6 +443,7 @@ public sealed partial class ScsKiller
                     changed = true;
                     return $"{AntiCheatName(found, vac)} was found, not {AntiCheatName(shown, vac)}" + (always ? "" : ": confirm again");
                 }
+                if (TrustedLaunch(g)) return "the game blocks unsigned modules";   // fresh: the exe may have updated since the state
                 if (!manual && !launcher && !always && (launch = LaunchCommand(g)) == null) return "its store has no launch SCSKiller can start";
                 // a mod is left as it is: only one holding a name the session places refuses
                 if (Foreign(dir)) return "another SCSKiller copy's recorder is in its folder";
@@ -472,7 +497,7 @@ public sealed partial class ScsKiller
                     Place(manifest, Text(VulkanManifestText(g, key!, Path.Combine(dir, dll))), replace: true);
                     VulkanLayer.Register(manifest, g);
                 }
-                Place(Path.Combine(dir, "scskiller.ini"), Text(ini));
+                Place(Path.Combine(dir, IniName), Text(ini));
             }
             SafeProcessHandle? process = null;
             try
@@ -606,7 +631,7 @@ public sealed partial class ScsKiller
                 var (state, judged) = JudgeIni(dir, Store, null, g.InstallDir);
                 var ini = IniText(g, now, Signed(g, stamp, BoundTo(pid, created) + RiskLine + SignedLines(g, now, session: true, riskSession: true)));
                 if (state != IniState.Ours || !WriteIni(dir, ini, judged, null, g.InstallDir, () => true, null, vulkan: VulkanIn(g, now)))
-                    throw new InvalidOperationException("its scskiller.ini changed meanwhile");
+                    throw new InvalidOperationException("its scskiller.cfg changed meanwhile");
                 _armed.TryRemove(g.Id, out _);
             }
         }
@@ -743,7 +768,7 @@ public sealed partial class ScsKiller
             var dll = RiskDll(s.Engine, Vendor.Caps);
             var neverSaw = OfflineNeverSaw(s.Engine, dll);
             var noDevice = ApiKey(s.ApiDetected ?? s.Engine?.GraphicsApi) == "11+12" ? NeverSawDx11Note : NoDeviceNote;   // as detected, not as picked
-            string[] placed = [.. WritesLedger ? new[] { LedgerStamp } : [], dll, "scskiller.ini", .. addAppId ? new[] { SteamAppIdFile } : []];
+            string[] placed = [.. WritesLedger ? new[] { LedgerStamp } : [], dll, IniName, .. addAppId ? new[] { SteamAppIdFile } : []];
             var stamp = Stamp(g.ExePath);   // before the full check below
             string? Refusal()
             {
@@ -809,7 +834,7 @@ public sealed partial class ScsKiller
                     RefuseForeign(dir);
                     if (WritesLedger) CreateLedger(Path.Combine(dir, LedgerStamp), LedgerText(LedgerDir));   // first: this copy's
                     Place(Path.Combine(dir, dll), CopyOf(_proxyDll!));
-                    Place(Path.Combine(dir, "scskiller.ini"), Text(ini));
+                    Place(Path.Combine(dir, IniName), Text(ini));
                     if (addAppId) Place(Path.Combine(dir, SteamAppIdFile), Text(entry!.AppId));
                     if (GameFiles.DetectAntiCheat(g, quick: true, ignore: AntiCheat.EasyAntiCheat) is not AntiCheat.None and var other)
                         throw new InvalidOperationException($"{other} appeared in its folder");
@@ -832,7 +857,7 @@ public sealed partial class ScsKiller
         }
     }
 
-    /// <summary>scskiller.ini's lines that bind the recorder to one process: its pid and creation FILETIME.</summary>
+    /// <summary>scskiller.cfg's lines that bind the recorder to one process: its pid and creation FILETIME.</summary>
     internal static string BoundTo(int pid, long created) => $"pid={pid}\r\npid_time={created}\r\n";
 
     static string Hex(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
@@ -849,11 +874,13 @@ public sealed partial class ScsKiller
         try
         {
             using (file) write(file);
+            var sha = WriteHash(temp);
             RefuseLink(path);
             for (var attempt = 1; ; attempt++)
                 try
                 {
                     File.Move(temp, path, replace);
+                    Wrote(path, sha);
                     break;
                 }
                 // any open handle on the file it replaces refuses the rename, a reader's too (the game's proxy, a virus scanner)
@@ -1041,17 +1068,17 @@ public sealed partial class ScsKiller
         // what a launch loads goes first, before any wait for the recording
         var data = RecorderDataFiles.Concat(Recordings.AppFiles).Append(LedgerStamp).ToHashSet(StringComparer.OrdinalIgnoreCase);
         // the ini never by its name (1.2's journals list it): by its folder's entry, as every removal takes it (StripIni)
-        var created = (s.Created ?? []).Where(f => !data.Contains(f) && !f.Equals("scskiller.ini", StringComparison.OrdinalIgnoreCase)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var created = (s.Created ?? []).Where(f => !data.Contains(f) && !IniNames.Contains(f, StringComparer.OrdinalIgnoreCase)).ToHashSet(StringComparer.OrdinalIgnoreCase);
         try { StripIni(dir, store, null, s.InstallDir, name, log); }
         catch (ForeignFolderException e)   // another copy's since the check above: nothing more here, the next cleanup leaves it to that copy
         {
             log($"{name}: {e.Message}");
-            return ["scskiller.ini"];
+            return [IniName];
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            left.Add("scskiller.ini");   // its folder's entry couldn't be read or saved: tried again
-            log($"{name}: couldn't take {Path.Combine(dir, "scskiller.ini")} out ({e.Message}): tried again later");
+            left.Add(IniName);   // its folder's entry couldn't be read or saved: tried again
+            log($"{name}: couldn't take {IniPath(dir)} out ({e.Message}): tried again later");
         }
         foreach (var n in new[] { Dll12, Dll11, Dll9 })   // ours by its export, whatever the manifest says
             try { if (IsOurProxy(Path.Combine(dir, n))) File.Delete(Path.Combine(dir, n)); }
@@ -1064,7 +1091,7 @@ public sealed partial class ScsKiller
         HashSet<string>? listed;
         try { listed = Directory.EnumerateFileSystemEntries(dir).Select(Path.GetFileName).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException) { listed = null; }
-        foreach (var (file, hash) in rec.RecorderFiles.Where(f => !f.Key.Equals("scskiller.ini", StringComparison.OrdinalIgnoreCase)).ToList())
+        foreach (var (file, hash) in rec.RecorderFiles.Where(f => !f.Key.Equals(OldIniName, StringComparison.OrdinalIgnoreCase)).ToList())
         {
             var path = Path.Combine(dir, file);
             try
@@ -1105,7 +1132,7 @@ public sealed partial class ScsKiller
                     File.Delete(Path.Combine(dir, temp));
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { left.Add(file); }
-        if (IniPending(store, dir)) left.Add("scskiller.ini");   // its folder's entry takes it out, the session stays till then
+        if (IniPending(store, dir)) left.Add(IniName);   // its folder's entry takes it out, the session stays till then
         // a name confirmed gone leaves the list: one put there later is never the session's
         if (s.Created != null) rec.OfflineSession = s = s with { Created = [.. s.Created.Where(f => left.Contains(f) || data.Contains(f) && File.Exists(Path.Combine(dir, f)))] };
         store.SaveGame(id, rec);

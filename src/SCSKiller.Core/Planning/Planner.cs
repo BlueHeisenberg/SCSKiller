@@ -186,6 +186,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
 
     public PlanCheck Check(Game game, EngineInfo engine, Recording? recording, VendorCaps caps)
     {
+        if (engine.VulkanOnly && Vulkan.Hookshot.Is(game)) return Vulkan.Hookshot.Check();
         // the recording is the whole plan: nothing of the game files is read, so whether a reader can index them doesn't matter
         if (Vulkan.VulkanPlan.IsVulkan(engine))
         {
@@ -335,6 +336,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     public Plan Build(Game game, EngineInfo engine, ShaderIndex index, Recording? recording, VendorCaps caps, string outDir,
         IProgress<string>? log, CancellationToken ct, bool maximum = false, bool rayTracing = true)
     {
+        if (engine.VulkanOnly && Vulkan.Hookshot.Is(game)) return Vulkan.Hookshot.Build(game, caps, outDir);
         if (VulkanOnly(game, engine, recording, caps))
             return Vulkan.VulkanPlan.Build(game, recording ?? throw new InvalidOperationException("a Vulkan game plans only from a recording"), caps, outDir, rayTracing, index.ContentHash);
         Plan plan;
@@ -454,6 +456,11 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
 
     void Materialize(Plan plan, Game game, EngineInfo engine, IEngineReader reader, Recording? recording, string workDir, TopUp? topUp, CancellationToken ct)
     {
+        if (plan.Platform == Vulkan.VulkanPlan.Platform && engine.VulkanOnly && Vulkan.Hookshot.Is(game))
+        {
+            Vulkan.Hookshot.Materialize(workDir);
+            return;
+        }
         if (plan.Platform == Vulkan.VulkanPlan.Platform)
         {
             Vulkan.VulkanPlan.Materialize(plan, recording ?? throw new InvalidOperationException("a Vulkan plan replays only from a recording"), workDir);

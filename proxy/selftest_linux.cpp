@@ -1,6 +1,6 @@
 // `selftest_linux vkrec`: the Vulkan recorder layer (libVkLayer_scskiller.so, beside this exe) on Linux, in a copy of this
 // exe in a temp folder, made by `selftest_linux vkchild` on the system's loader (lavapipe will do). As selftest.cpp's vkrec:
-// X armed (a signed scskiller.ini) with the layer explicit through VK_LAYER_PATH, FOSSILIZE_DUMP_PATH aimed at the copy's
+// X armed (a signed scskiller.cfg) with the layer explicit through VK_LAYER_PATH, FOSSILIZE_DUMP_PATH aimed at the copy's
 // folder and a cache redirect set: the archive and the csv (#api,vulkan, #cache, #vkinstance, #vkdevice, a row per
 // pipeline) go to the recorder folder's vulkan/<exe key>/, nothing but the ini is in the copy's folder. T the exe touched
 // since it was signed, A an EasyAntiCheat folder beside it: each passes through, writes nothing there and leaves its
@@ -12,6 +12,7 @@
 // image read back after each round shows the panel's "SCSKiller before" as overlay.h paints it, and nothing else of the
 // image changed, while P and P0 leave the panel's place as the game cleared it. Its presents return what P0's do, and its
 // second round's swapchain, made without transfer usage, gets it from the layer.
+// R replays X's archive with fossilize-replay: both compute pipelines, whose shader has a float-controls mode, are created.
 // Also the keys and the HMAC against values Python's hashlib made, as ScsKiller.FileKey and Signed make them.
 #include "admit_posix.h"
 #define VK_NO_PROTOTYPES
@@ -268,6 +269,13 @@ static int vkchild() {
     VkPipelineLayout pl;
     CHECK(vkCreatePipelineLayout(dev, &pci, nullptr, &pl) == VK_SUCCESS);
     std::vector<uint32_t> w(kSpv_cs, kSpv_cs + sizeof kSpv_cs / 4);
+    // DenormFlushToZero 32, a float mode the driver may report unsupported and still compiles, as games use it
+    CHECK(w[5] == 0x00020011 && w[7] >> 16 == 6 && (w[7] & 0xffff) == 11);
+    w.insert(w.begin() + 7, {0x00020011, 4465, 0x0007000a, 0x5f565053, 0x5f52484b, 0x616f6c66, 0x6f635f74, 0x6f72746e, 0x0000736c});
+    size_t ep = 5;
+    while (ep < w.size() && (w[ep] & 0xffff) != 15) ep += w[ep] >> 16;
+    CHECK(ep < w.size());
+    w.insert(w.begin() + ep + (w[ep] >> 16), {0x00040010, w[ep + 2], 4460, 32});
     const size_t at = std::find(w.begin(), w.end(), kSpv_cs_marker) - w.begin();
     CHECK(at < w.size());
     std::random_device rd;
@@ -294,7 +302,7 @@ static bool write_file(const std::string& path, const std::string& text) {
     return f && fwrite(text.data(), 1, text.size(), f) == text.size() && fclose(f) == 0;
 }
 
-// The exe's scskiller.ini as the app signs it (ScsKiller.Signed): exe_size=, exe_time=, root=., sig=.
+// The exe's scskiller.cfg as the app signs it (ScsKiller.Signed): exe_size=, exe_time=, root=., sig=.
 // pid= and pid_time= when bound: the process's start time as ProcessTree.Created reads it (/proc/<pid>/stat field 22).
 // overlay: the countdown's lines of a 5 minute before run
 static bool arm(const std::string& game, const std::string& exe, const std::string& rec, pid_t pid = 0, long long pid_time = 0, bool overlay = false) {
@@ -317,7 +325,7 @@ static bool arm(const std::string& game, const std::string& exe, const std::stri
     }
     const std::string sig = recorder_sig(key, file_key(exe), file_key(no_slash(game)), signed_stamp(size, time, p, pt, L"", L"", overlay ? L"1" : L"", overlay ? L"300" : L"", overlay ? L"before" : L"", L"", widen(arm)), L".", file_key(no_slash(here)));
     const std::string bound = pid ? "pid=" + to_utf8(p) + "\r\npid_time=" + to_utf8(pt) + "\r\n" : "";
-    return !sig.empty() && write_file(game + "scskiller.ini", "[scskiller]\r\nexe_size=" + to_utf8(size) + "\r\nexe_time=" + to_utf8(time) + "\r\narm=" + arm + "\r\n" + bound + (overlay ? "overlay=1\r\nab_play_s=300\r\nab_tag=before\r\n" : "") + "root=.\r\nsig=" + sig + "\r\n");
+    return !sig.empty() && write_file(game + "scskiller.cfg", "[scskiller]\r\nexe_size=" + to_utf8(size) + "\r\nexe_time=" + to_utf8(time) + "\r\narm=" + arm + "\r\n" + bound + (overlay ? "overlay=1\r\nab_play_s=300\r\nab_tag=before\r\n" : "") + "root=.\r\nsig=" + sig + "\r\n");
 }
 
 // The process's start time as Core's ProcessTree.Stat parses it: the 20th field after the name's closing parenthesis.
@@ -507,7 +515,7 @@ static int vkrec(const std::string& bin) {
         printf("\n");
         return s;
     };
-    auto only_ini = [](const Seen& s) { return s.game.size() == 2; };  // the exe and its scskiller.ini
+    auto only_ini = [](const Seen& s) { return s.game.size() == 2; };  // the exe and its scskiller.cfg
     auto nothing = [](const Seen& s) { return s.code == 0 && !s.foz && !s.rows && s.frames == -1; };
     auto clean = [] {
         for (auto n : {"VK_LAYER_PATH", "VK_ADD_LAYER_PATH", "VK_INSTANCE_LAYERS", "VK_LOADER_LAYERS_ALLOW", "FOSSILIZE_DUMP_PATH", "__GL_SHADER_DISK_CACHE_PATH", "SteamAppId",
@@ -524,6 +532,21 @@ static int vkrec(const std::string& bin) {
     setenv("SCSK_VK_APP", "a, b%c", 1), setenv("SCSK_VK_ENGINE", "scsk engine", 1);
     Seen x = play("X");
     bad += x.code != 0 || x.foz < 1 || x.pipes < 2 || x.rows < 2 || !x.api || !x.cache || !x.inst || !x.dev || x.refused || !only_ini(x);
+    // R: fossilize-replay (beside this exe) replays X's archive, both pipelines with their float mode; it fails without
+    // the float-controls patch on a driver reporting DenormFlushToZero false for every width (lavapipe, NVIDIA)
+    std::string replayed;
+    for (auto& n : files(out))
+        if (!n.compare(0, 10, "scskiller.") && n.size() > 4 && !n.compare(n.size() - 4, 4, ".foz")) {
+            setenv("SCSK_R_EXE", (bin + "fossilize-replay").c_str(), 1), setenv("SCSK_R_FOZ", (out + n).c_str(), 1);
+            if (FILE* f = popen("env -u VK_INSTANCE_LAYERS -u FOSSILIZE_DUMP_PATH \"$SCSK_R_EXE\" --num-threads 1 \"$SCSK_R_FOZ\" 2>&1", "r")) {
+                char buf[4096];
+                for (size_t got; (got = fread(buf, 1, sizeof buf, f)) > 0;) replayed.append(buf, got);
+                bad += pclose(f) != 0;
+            }
+        }
+    const bool r_ok = replayed.find("Playing back 2 compute pipelines") != std::string::npos && replayed.find("not supported on this device") == std::string::npos;
+    printf("R: %s\n", r_ok ? "2 compute pipelines replayed" : replayed.c_str());
+    bad += !r_ok;
 
     setenv("SCSK_VK_PRESENT", "1", 1);
     const std::string px = dir + "pixels";
@@ -596,7 +619,7 @@ static int vkrec(const std::string& bin) {
     printf("N: exit %d, refused (%s)\n", ncode, read_all(odd_refusal).c_str());
     bad += ncode != 0 || read_all(odd_refusal).find(" a folder or file name isn't UTF-8") == std::string::npos;
 
-    CHECK(!unlink((game + "scskiller.ini").c_str()));
+    CHECK(!unlink((game + "scskiller.cfg").c_str()));
     Seen u = play("U");
     bad += !nothing(u) || u.refused || u.game.size() != 1;
     setenv("SCSK_VK_PRESENT", "1", 1);

@@ -30,15 +30,16 @@ public static class InlineShaders
     public static int Carve(IReadOnlyList<byte[]> parts, Action<Entry> found)
     {
         int undecoded = 0, map = 0, bias = 0;
+        var scratch = new Scratch();
         foreach (var d in parts)
         {
-            undecoded += Carve(d, bias, ref map, found);
+            undecoded += Carve(d, bias, ref map, found, scratch);
             bias += d.Length;
         }
         return undecoded;
     }
 
-    static int Carve(byte[] d, int bias, ref int map, Action<Entry> found)
+    static int Carve(byte[] d, int bias, ref int map, Action<Entry> found, Scratch scratch)
     {
         var blocks = new List<(int Start, int End)>();
         var undecoded = 0;
@@ -53,7 +54,7 @@ public static class InlineShaders
                 map++;
                 var decoded = 0;
                 foreach (var (off, fmt) in entries)
-                    if (Decode(d, off, fmt) is { } code) { decoded++; found(new(map, bias + off, fmt, code)); }
+                    if (Decode(d, off, fmt, scratch) is { } code) { decoded++; found(new(map, bias + off, fmt, code)); }
                 if (decoded == 0) continue; // a false anchor may overlap a real one: keep scanning inside it
                 undecoded += entries.Count - decoded;
                 var end = Layout(d, entries[^1].Off, entries[^1].Fmt).Len + entries[^1].Off;
@@ -63,7 +64,7 @@ public static class InlineShaders
             }
         }
         for (var i = d.AsSpan().IndexOf((byte)0x78); i >= 0; i = d.AsSpan(i + 1).IndexOf((byte)0x78) is var j and >= 0 ? i + 1 + j : -1)
-            if (i >= 4 && Layout(d, i - 4, 'Z').Len > 0 && !blocks.Any(b => i >= b.Start && i < b.End) && Decode(d, i - 4, 'Z') is { } code)
+            if (i >= 4 && Layout(d, i - 4, 'Z').Len > 0 && !blocks.Any(b => i >= b.Start && i < b.End) && Decode(d, i - 4, 'Z', scratch) is { } code)
                 found(new(0, bias + i - 4, 'Z', code)); // (a zlib-compressed 'A' entry has the same shape: it's its map's)
         return undecoded;
     }
@@ -71,16 +72,40 @@ public static class InlineShaders
     static readonly int[] HashSizes = [20, 8];
 
     /// <summary>The FShaderCode of the entry at <paramref name="offset"/>, or null if it isn't one holding a DXBC container.</summary>
-    public static byte[]? Decode(byte[] d, int offset, char format)
+    public static byte[]? Decode(byte[] d, int offset, char format) => Decode(d, offset, format, new Scratch());
+
+    static byte[]? Decode(byte[] d, int offset, char format, Scratch scratch)
     {
         var (len, at, n, size) = Layout(d, offset, format);
         if (len == 0) return null;
         try
         {
-            var code = format == 'Z' ? Inflate(d, at, n) : n == size ? d[at..(at + n)] : UnrealReader.Decompress(d, at, n, size);
-            return ShaderContainer.Offset(code, out _) >= 0 ? code : null;
+            byte[]? inflated = null;
+            ReadOnlySpan<byte> code;
+            if (format == 'Z') code = inflated = Inflate(d, at, n);
+            else if (n == size) code = d.AsSpan(at, n);
+            else
+            {
+                var o = scratch.Get(size);
+                UnrealReader.Decompress(d.AsSpan(at, n), o);
+                code = o;
+            }
+            return ShaderContainer.Offset(code, out _) < 0 ? null : inflated ?? code.ToArray();
         }
         catch (Exception) { return null; } // not compressed data after all
+    }
+
+    /// <summary>The output buffer of one <see cref="Carve"/>: most candidates are false and claim up to <see cref="MaxCode"/>
+    /// each, so they reuse it and only a real shader is copied out. Garbage once the package is carved.</summary>
+    sealed class Scratch
+    {
+        byte[] buffer = [];
+
+        public Span<byte> Get(int size)
+        {
+            if (buffer.Length < size) buffer = GC.AllocateUninitializedArray<byte>(Math.Max(size, Math.Min(MaxCode, 2 * buffer.Length)));
+            return buffer.AsSpan(0, size);
+        }
     }
 
     /// <summary>K entries in a row from <paramref name="e"/>, all of one layout ('B' starts with the i64 12), or null.</summary>

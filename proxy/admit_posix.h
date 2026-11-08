@@ -29,6 +29,14 @@ extern char** environ;
 
 static const std::string& admit_dir();
 
+// admit.h's config_path on POSIX paths: scskiller.cfg, else scskiller.ini only while no scskiller.cfg is there at all.
+static std::string config_path(const std::string& dir) {
+    if (dir.empty()) return "scskiller.ini";
+    const std::string cfg = dir + "scskiller.cfg";
+    struct stat st;
+    return lstat(cfg.c_str(), &st) && (errno == ENOENT || errno == ENOTDIR) ? dir + "scskiller.ini" : cfg;
+}
+
 static long long unix_ms() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
 
 // SHA-1 (FIPS 180-4), for the keys and the HMAC: nothing the layer links but libc.
@@ -465,7 +473,7 @@ static bool is_marker(const char* name, const std::vector<std::string>& markers)
 
 static thread_local const std::string* t_ini;
 
-// scskiller.ini's value of key, from the bytes admission read ("" when missing or longer than 1022).
+// scskiller.cfg's value of key, from the bytes admission read ("" when missing or longer than 1022).
 static std::wstring ini_string(const wchar_t* key) {
     if (!t_ini) return L"";
     std::wstring v = ini_value(*t_ini, key);
@@ -623,12 +631,26 @@ static bool holds_text(const std::string& dir, const std::string& path) {
     return !(lower_az(lexical(path)) + "/").compare(0, d.size(), d);
 }
 
-// Steam's folder, as SteamSource.NativeRoot: ~/.steam/root's target, else ~/.local/share/Steam. "" without a home.
+// Steam's folder, as SteamSource.Root: ~/.steam/root's target, else the Flatpak Steam's, else the Snap Steam's when it has
+// a steamapps, else ~/.local/share/Steam. A path that can't be checked is taken, so its Steam reads as unreadable, never as
+// absent. "" without a home.
 static std::string steam_root() {
     if (g_load_env.has_test_steam) return g_load_env.test_steam;
-    if (g_load_env.home.empty()) return "";
-    const std::string r = real_path(g_load_env.home + "/.steam/root");
-    return r.empty() ? g_load_env.home + "/.local/share/Steam" : r;
+    const std::string& h = g_load_env.home, home = h.empty() || h[0] != '/' ? h : lexical(h);
+    if (home.empty()) return "";
+    const std::string link = home + "/.steam/root";
+    if (char* r = realpath(link.c_str(), nullptr)) {
+        const std::string s = r;
+        free(r);
+        return s;
+    }
+    if (errno != ENOENT && errno != ENOTDIR) return link;
+    for (const char* sandbox : {"/.var/app/com.valvesoftware.Steam/.local/share/Steam", "/snap/steam/common/.local/share/Steam"}) {
+        struct stat st;
+        const std::string p = home + sandbox;
+        if (stat((p + "/steamapps").c_str(), &st) ? errno != ENOENT && errno != ENOTDIR : S_ISDIR(st.st_mode)) return p;
+    }
+    return home + "/.local/share/Steam";
 }
 
 // The Steam app's VAC: a Valve VAC title, or appinfo.vdf's info about it marks VAC or can't be had. nullptr: no VAC.
@@ -827,7 +849,8 @@ static bool in_game_of(const std::vector<std::pair<std::string, std::string>>& w
 // shortcut's id (2^31 and up) is a non-Steam game's, and so is an exe outside Steam's install and its libraries'
 // steamapps folders (admit.h passes one outside every library). A game run in a Steam app's Wine prefix is that app's
 // too, on any drive. A listed library or a game folder that doesn't exist (a drive not mounted, an uninstalled game) and
-// a prefix link whose target doesn't exist are skipped when the game's path isn't in them as text.
+// a prefix link whose target doesn't exist are skipped when the game's path isn't in them as text, and Steam's folder
+// without its steamapps lists no library.
 static const char* vac_now_unguarded() {
     std::string argv_path;
     const std::string exe = module_path(&argv_path);
@@ -840,14 +863,25 @@ static const char* vac_now_unguarded() {
     if (steam.empty()) return "VAC: Steam's folder is unknown";
     std::string text;
     Vdf top;
-    if (!read_file(steam + "/steamapps/libraryfolders.vdf", text) || !vdf_root(text, "libraryfolders", top))
-        return "VAC: Steam's libraryfolders.vdf can't be read";
-    std::vector<std::string> libs = {steam}, names;
+    std::vector<std::string> libs, names;
+    struct stat st;
+    if (!read_file(steam + "/steamapps/libraryfolders.vdf", text)) {
+        // no steamapps (no Steam, an uninstalled one's folder): no library, a game in it is no Steam game's (admit.h)
+        if (steam[0] != '/' || !stat((steam + "/steamapps").c_str(), &st) || (errno != ENOENT && errno != ENOTDIR)) return "VAC: Steam's libraryfolders.vdf can't be read";
+    } else if (!vdf_root(text, "libraryfolders", top)) return "VAC: Steam's libraryfolders.vdf is malformed";
+    else libs.push_back(steam);
+    // the Flatpak Steam names a folder of the home as its sandbox sees it, which can be in its own folder on the host
+    const std::string& h = g_load_env.home;
+    const std::string home = h.empty() || h[0] != '/' ? "" : lexical(h), flatpak = home + "/.var/app/com.valvesoftware.Steam";
+    const bool sandboxed = home.size() > 1 && under(lexical(steam), flatpak);
     for (auto& e : top.kids) {
         std::string p = e.value;
         if (e.object ? !vdf_one(e, "path", p) || p.empty() : all_digits(e.key) && p.empty())
             return "VAC: a library in Steam's libraryfolders.vdf has no single path";
-        if (e.object || all_digits(e.key)) libs.push_back(p);
+        if (!e.object && !all_digits(e.key)) continue;
+        libs.push_back(p);
+        const std::string l = sandboxed && p[0] == '/' ? lexical(p) : "";
+        if (!l.empty() && is_or_under(l, home) && !is_or_under(l, flatpak)) libs.push_back(flatpak + l.substr(home.size()));
     }
     const size_t listed = libs.size();
     const size_t sc = lower_az(exe).find("/steamapps/common/");
@@ -864,7 +898,6 @@ static const char* vac_now_unguarded() {
     bool in_steam = !root.empty() && reaches(walk, root), in_game = true;
     for (size_t i = 0; i < libs.size(); ++i) {
         const std::string dir = libs[i] + "/steamapps/", data = dir + "compatdata/";
-        struct stat st;
         if (!list_dir(dir, names)) {
             if (!i || i >= listed || libs[i][0] != '/' || !stat((libs[i] + "/steamapps").c_str(), &st) || errno != ENOENT)
                 return "VAC: a Steam library's folder can't be read";
@@ -1030,13 +1063,13 @@ static bool signed_by_app(const std::string& root) {
     return !want.empty() && to_utf8(sig) == want;
 }
 
-// scskiller.ini's bytes, read whole; false when it can't be, or is over 64 KB.
+// scskiller.cfg's bytes, read whole; false when it can't be, or is over 64 KB.
 static bool ini_bytes(const std::string& path, std::string& out) { return read_file(path, out, 65536); }
 
 // admit.h's admission_verdict on POSIX paths, in its order. A folder name ending in a dot or a space names one folder here:
 // no odd_name check.
 static const char* admission_verdict(bool whole, const std::string& read, bool elsewhere, bool& risk, std::string& seen) {
-    const std::string ini = admit_dir() + "scskiller.ini";
+    const std::string ini = config_path(admit_dir());
     std::string again;
     std::vector<std::string> markers;
     const std::string here = final_dir(admit_dir()), root = here.empty() ? "" : install_root(here);
@@ -1079,7 +1112,7 @@ static const char* admission_verdict(bool whole, const std::string& read, bool e
         const std::vector<std::string> loaded = anti_cheat_loaded();
         why = loaded.size() == 1 && loaded[0] == "?" ? "the process's libraries can't be listed" : decide(risk, riot_games(), found, found_why, loaded, vac_now(dirs), seen);
     }
-    if (!why && (!ini_bytes(ini, again) || again != read)) why = "scskiller.ini changed while deciding";
+    if (!why && (!ini_bytes(ini, again) || again != read || config_path(admit_dir()) != ini)) why = "scskiller.ini changed while deciding";
     if (!why && !rec_same()) why = "SCSKiller's recorder folder changed while deciding";
     if (!why) why = revoked_here();
     if (!why) why = armed_here();

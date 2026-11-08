@@ -824,7 +824,7 @@ public sealed class DetailVm(string id) : Bindable
         && (s.Status == GameStatus.NeedsRecording || RtAfter || s.Status == GameStatus.Unsupported && !NoAntiCheat && (s.StatusReason.StartsWith("needs a recording, which", StringComparison.Ordinal) || ScsKiller.AntiCheatHeld(s) || s.StatusReason.StartsWith(ScsKiller.AntiCheatNoRecordingStart, StringComparison.Ordinal)));
     public string DbTeaser => $"In the community database: {s.CommunityDbPsos:N0} pipeline{(s.CommunityDbPsos == 1 ? "" : "s")} recorded by other players. Patreon supporters compile them without recording.";
     public string DbTeaserLink => App.Account.SignedIn ? "Patreon membership" : "Sign in with Patreon";
-    public bool CanCompile => s.Status is GameStatus.Ready or GameStatus.Warmed or GameStatus.Stale || RtPartial;
+    public bool CanCompile => s.Status is GameStatus.Ready or GameStatus.Warmed or GameStatus.Stale || RtPartial || ScsKiller.MiddlewareOnly(s);
     public bool ShowMaxCompile => CanCompile && ScsKiller.MaxCompileAdds(App.Core.Vendor.Caps, s.Engine);
     public bool ShowRtOnly => CanCompile && !RtPartial && ScsKiller.RtOnlyAdds(s);
     public const string MaxCompileWhy = "Compiles every combination of this game's shaders, not just each one once. It takes longer and uses more disk space, but potentially fewer shaders compile while you play. Seems to help most on AMD.";
@@ -983,9 +983,10 @@ public sealed class DetailVm(string id) : Bindable
     public int CacheCapIndex => s.CacheCapGB is { } gb ? Array.IndexOf(ScsKiller.CacheCapsGB, gb) + 1 : 0;
     public bool ShowCacheCap => ScsKiller.HasCacheCap(s);
     // Windows' shader cache of the game, read off the UI thread: Clear cache clears it too, so it can be the only cache to clear.
-    BackgroundRead<long>? otherCaches;
+    BackgroundRead<(long, bool)>? otherCaches;
     long otherBytes;
-    public void ReadCaches() => (otherCaches ??= new("game caches", OtherCacheBytes, b => { otherBytes = b; Changed(); })).Request();
+    bool ownStore;
+    public void ReadCaches() => (otherCaches ??= new("game caches", () => (OtherCacheBytes(), OwnBlobStore.In(s.Game.InstallDir)), r => { (otherBytes, ownStore) = r; Changed(); })).Request();
     long OtherCacheBytes()
     {
         try { return App.Core.GameCaches(id).Where(p => p.Name != ScsKiller.DriverPart).Sum(p => p.Bytes); }
@@ -998,6 +999,8 @@ public sealed class DetailVm(string id) : Bindable
         : $"SCSKiller compiled {DiskValue} of cache for this game before it was marked {(s.NoStutter != null ? "as having no shader stutter" : "not supported")}."
         : null;
     public bool HasKeptCache => KeptCacheNote != null;
+    public string OwnCacheNote => OwnBlobStore.Note;
+    public bool HasOwnCacheNote => ownStore;
 
     // Maximum mode suggested for this game on this GPU vendor (Games.MaximumMode), or on for it alone
     public bool? MaximumPending { get; set; }
@@ -1149,7 +1152,7 @@ public sealed class DetailVm(string id) : Bindable
         Vk && p.FromDownload > 0 ? new("From Steam's shader download", Fmt.N(p.FromDownload)) : null,
         Vk && p.FromCommunity > 0 ? new("From the community database", Fmt.N(p.FromCommunity)) : null,
         Vk && FromPlay > 0 ? new(FromPlayLabel, Fmt.N(FromPlay), CommunityLine) : null,
-        p.CacheBudgetLeftOut is > 0 and var left ? new(ScsKiller.CacheBudgetTitle(App.Core.Vendor.Caps, s.Engine, s.PlanCacheCapGB), Fmt.N(left), ScsKiller.CacheBudgetNote(App.Core.Vendor.Caps, s.Engine, s.PlanCacheCapGB)) : null,
+        p.CacheBudgetLeftOut is > 0 and var left ? new(ScsKiller.CacheBudgetTitle(App.Core.Vendor.Caps, s.Engine, s.PlanCacheCapGB), Fmt.N(left), ScsKiller.CacheBudgetNote(App.Core.Vendor.Caps, s.Engine, s.PlanCacheCapGB, p)) : null,
         s.Official is { } o ? new("Official recording", $"{o.Psos:N0} pipelines", $"Published by SCSKiller for this version, downloaded {o.DownloadedAt.LocalDateTime:d}") : null,
         s.Community == null && s.InCommunityDb is { } inDb && !HasDbTeaser ? new("The community database", inDb ? "has a recording for this version" : "not in it yet") : null,
         p.MiddlewareItems > 0 ? new(p.MiddlewareSharedItems == 0 ? "Its upscalers, learned from recordings"
@@ -1459,6 +1462,7 @@ public sealed class DetailVm(string id) : Bindable
         : ScsKiller.AntiCheatOpen(s) ? ScsKiller.AntiCheatOpenRecordNote
         : ShowOffline
         ? ScsKiller.OfflineSessionNote + Kept
+        : s.RiskTrusted ? ScsKiller.TrustedNote
         : s.RiskNoLaunch ? ScsKiller.NoLaunchNote(Fmt.StoreName(s.Game))
         : !NoAntiCheat
         ? "Not available: the game contains anti-cheat, so it is compiled from its files only."
@@ -1471,8 +1475,10 @@ public sealed class DetailVm(string id) : Bindable
             : FramesOnly ? $"Adds a small {Fmt.RecorderFiles(s)} next to the game that times each frame for the graph above and records nothing else."
             : $"Adds a small {Fmt.RecorderFiles(s)} next to the game to catch anything the plan missed and time each frame, so this page shows what stuttered.")
           + " Remove any time. If a game has anti-cheat SCSKiller didn't detect, don't turn this on."
-          + (s.RecorderNote is { } note && note != s.RecorderFailure && note != ScsKiller.ForeignNote ? $" ({Sentence(note)})" : "")
-          + (s.RecorderRefused is { } why && !(s.Status == GameStatus.NeedsRecording && ScsKiller.NeverRecorded(s)) ? " " + why : "");   // else the status says it
+          + (s.RecorderNote is { } note && note != s.RecorderFailure && note != ScsKiller.ForeignNote ? $" ({Sentence(note)})" : "");
+    // null when the status line already says it
+    public string? LastRefusal => s.RecorderRefused is { } why && !(s.Status == GameStatus.NeedsRecording && ScsKiller.NeverRecorded(s)) ? why : null;
+    public bool HasLastRefusal => LastRefusal != null;
 
     // A mod's d3d12.dll where the recorder goes (ReShade, a wrapper): off = the game isn't recorded; on = the recorder chains to it
     public bool HasMod => s.RecorderMod != null && s.RecorderSkip is not (ScsKiller.SkipAntiCheat or ScsKiller.SkipShaderMod or ScsKiller.SkipManual or ScsKiller.SkipUnsupported or ScsKiller.SkipNotDx12 or ScsKiller.SkipStreamline or ScsKiller.SkipCrashes);

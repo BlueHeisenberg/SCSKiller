@@ -138,6 +138,20 @@ sealed class PlanBuilder
             else
             {
                 kept.UnionWith(recordedShaders);
+                void Rt()
+                {
+                    if (dx12 && !rayTracing) log?.Report("Ray tracing skipped (your setting): no state objects or collections planned");
+                    else if (dx12 && Planner.RtCollectionCache(caps))
+                        try { RtPlan(); }
+                        catch (RootSig.SerializeException e)   // the rule's global root signature: no collections, the PSOs still plan
+                        {
+                            rtItems.Clear();
+                            log?.Report($"warning: ray tracing: no collections: the runtime won't serialize the rule's global root signature ({e.Message})");
+                        }
+                }
+                // a limit's budget charges the collections, so they plan first
+                var rtFirst = caps.WarmCacheBudget != null;
+                if (rtFirst) Rt();
                 if (dx12 && UnitPolicy.For(caps) is { } policy) PerStage(policy);
                 else
                 {
@@ -148,14 +162,7 @@ sealed class PlanBuilder
                 if (stats.GetValueOrDefault("cross_product") is > 0 and var cross)
                     log?.Report($"{cross} stage sets left out from {crossPools.Count} pools whose signatures pair nearly every VS with every PS (largest {crossPools.Max().Pairs} pairs of "
                         + $"{crossPools.Max().Vs} VS and {crossPools.Max().Ps} PS), their shaders each in a planned or recorded PSO: only a recording says which the game draws");
-                if (dx12 && !rayTracing) log?.Report("Ray tracing skipped (your setting): no state objects or collections planned");
-                else if (dx12 && Planner.RtCollectionCache(caps))
-                    try { RtPlan(); }
-                    catch (RootSig.SerializeException e)   // the rule's global root signature: no collections, the PSOs still plan
-                    {
-                        rtItems.Clear();
-                        log?.Report($"warning: ray tracing: no collections: the runtime won't serialize the rule's global root signature ({e.Message})");
-                    }
+                if (!rtFirst) Rt();
             }
             if (Planner.SeedsPacks(engine) && (packs ?? sharedPacks) != null) SeedMiddleware();
             return Write();
@@ -982,9 +989,11 @@ sealed class PlanBuilder
         HashSet<Unit> recorded, Dictionary<UnitCover.Candidate, (Provenance Vs, Provenance Ps)> prov, IReadOnlyDictionary<UnitCover.Candidate, int> ranks)
     {
         var filtering = 1 + OtherSamplerSets().Count;
-        var rt = RtCharge();
+        var synthesizedRt = rtItems.Count + hitGroupItems.Count;
+        WithinBudgetRt(Math.Max(0, budgetPsos - recs.Count(Replays) - RtCharge() + synthesizedRt), picks.Count, filtering);
+        var rt = RtCharge();   // after the trim: a community state object is back for a collection it lost
         var room = (int)Math.Clamp((budgetPsos - recs.Count(Replays) - rt) / filtering, 0, int.MaxValue);
-        cacheLeftOut = Math.Max(0, picks.Count - room);
+        cacheLeftOut = Math.Max(0, picks.Count - room) + synthesizedRt - rtItems.Count - hitGroupItems.Count;
         extrasRoom = Math.Max(0, room - picks.Count);
         if (cacheLeftOut == 0) return picks;
         if (room == 0) return Kept([], 0);   // the recorded PSOs fill the budget: nothing to rank
@@ -1023,6 +1032,28 @@ sealed class PlanBuilder
                 + $"at {PsoBytesOf(caps) >> 10} KiB a PSO the plan stays under the {App.Format.Bytes(budgetPsos * PsoBytesOf(caps))} {(caps.WarmCacheBudget != null ? "the game's compile size limit allows" : caps.PerGameCacheCap != null ? "the driver keeps for one game" : "the driver's whole cache holds")}");
             return kept;
         }
+    }
+
+    /// <summary>The synthesized ray tracing items that fit <paramref name="free"/> PSOs of budget beside <paramref name="psos"/>: over it
+    /// both kinds lose the same share, so a limit leaves neither out whole while it has room.</summary>
+    void WithinBudgetRt(long free, long psos, int filtering)
+    {
+        long n = rtItems.Count + hitGroupItems.Count, want = psos * filtering + n;
+        if (n == 0 || want <= free) return;
+        var keep = Math.Min((n * free + want - 1) / want, Math.Max(1, free - filtering));   // rounded up, but not past the last PSO's room
+        IEnumerable<string> Libraries() => rtItems.Select(i => RtCollections.ParseItem(i).Library)
+            .Concat(hitGroupItems.Select(RedEngine.RedRayTracing.ParseItem).SelectMany(h => new[] { h.ClosestHit, h.AnyHit }).OfType<string>());
+        var before = Libraries().ToHashSet();
+        foreach (var list in new[] { rtItems, hitGroupItems })
+        {
+            long count = list.Count, kept = (count * keep + n - 1) / n;
+            // ponytail: evenly through the index, a recording could rank them
+            var stay = list.Where((_, i) => (i + 1) * kept / count != i * kept / count).ToList();
+            list.Clear();
+            list.AddRange(stay);
+        }
+        before.ExceptWith(Libraries());
+        rtUnbuildable.UnionWith(before);   // the limit's, not ray tracing a recording would add
     }
 
     /// <summary>A pairing plan on a cache with a warm budget (<see cref="VendorCaps.WarmCacheBudget"/>, NVIDIA on Linux): the
@@ -1085,10 +1116,11 @@ sealed class PlanBuilder
     /// <summary>What a PSO takes of <see cref="CacheBudgetOf"/>: the game's measured bytes (<see cref="VendorCaps.PsoBytes"/>), else <see cref="PsoBytes"/>.</summary>
     public static long PsoBytesOf(VendorCaps caps) => caps.PsoBytes is { } b && b > 0 ? b : PsoBytes;
 
-    /// <summary>The recorded state objects the warm replays, in PSOs of the budget: one each where the game's measured bytes
-    /// per pipeline (<see cref="VendorCaps.PsoBytes"/>) already average them in or the driver isn't AMD's, else
-    /// <see cref="RtStateObjectBytes"/> each.</summary>
-    long RtCharge() => ReplayableStateObjects().Count * (caps.PsoBytes is > 0 || !caps.Profile.StartsWith("amd") ? 1 : (RtStateObjectBytes + PsoBytes - 1) / PsoBytes);
+    /// <summary>The ray tracing items the warm compiles, in PSOs of the budget: synthesized ones one each, as a measured figure
+    /// averages them in. Recorded state objects one each where the game's measured bytes per pipeline
+    /// (<see cref="VendorCaps.PsoBytes"/>) already average them in or the driver isn't AMD's, else <see cref="RtStateObjectBytes"/> each.</summary>
+    long RtCharge() => rtItems.Count + hitGroupItems.Count
+        + ReplayableStateObjects().Count * (caps.PsoBytes is > 0 || caps.WarmCacheBudget != null || !caps.Profile.StartsWith("amd") ? 1 : (RtStateObjectBytes + PsoBytes - 1) / PsoBytes);
 
     static string RtNote(long rt) => rt > 0 ? $" and the ray tracing state objects (as {rt} PSOs)" : "";
 

@@ -298,7 +298,7 @@ public sealed record LaunchCheck(DateTimeOffset At, long Hits, long Compiles, lo
 /// <summary>A mod's d3d12.dll renamed to <paramref name="Name"/> in the exe folder, with the SHA-256 of its bytes.</summary>
 public sealed record ChainedDll(string Name, string Sha256);
 
-/// <summary>Whose a folder's scskiller.ini is (recorder-inis.json, by the folder's full path). <paramref name="Tracked"/>:
+/// <summary>Whose a folder's scskiller.cfg is (recorder-inis.json, by the folder's full path). <paramref name="Tracked"/>:
 /// the SHA-256 of SCSKiller's own ("a|b": either; "": not judged yet, it couldn't be read); <paramref name="Users"/>: the one
 /// there is the user's, until SCSKiller writes its own there; <paramref name="Remove"/>: SCSKiller's is to be taken out; <paramref name="Chain"/> and
 /// <paramref name="Install"/>: the next= and the install root= its writer gave it; <paramref name="Wrote"/>: the SHA-256 of each ini

@@ -2,7 +2,7 @@
 // committed resources at once: each create makes its memory resident and the calling thread waits on the paging fence.
 // Probe (always, in a hooked device): resource creation and residency calls timed per frame and thread; a frame whose
 // total reaches probe_ms is logged ("traversal: frame"), and the totals per call every 30 s.
-// Fix (scskiller.ini traversal_suballocate=1): a committed create that can live in a shared heap is placed in one of a
+// Fix (scskiller.cfg traversal_suballocate=1): a committed create that can live in a shared heap is placed in one of a
 // few heaps made ahead on a background thread, which are resident already: CREATE_NOT_ZEROED (or, with traversal_zeroed,
 // a DEFAULT or UPLOAD buffer without it) and no other heap flag; on the
 // DEFAULT heap a buffer or a texture without render target, depth stencil, simultaneous access or UAV; on the
@@ -1243,7 +1243,7 @@ static HRESULT STDMETHODCALLTYPE hk_enqueue(ID3D12Device3* dev, D3D12_RESIDENCY_
 }
 
 // A traversal_ key's value from the lines admission verified inside sig= (g_signed, set before any device), def without
-// its line: never scskiller.ini as it is now, which a hand edit could change after the check.
+// its line: never scskiller.cfg as it is now, which a hand edit could change after the check.
 static int key(const wchar_t* k, int def) {
     const std::wstring& t = ::g_signed.traversal;
     const std::wstring want = std::wstring(k) + L"=";
@@ -1519,7 +1519,7 @@ static void pool_main() {
         if (HRESULT hr = z.make(dev); FAILED(hr))
             g_zreuse_buf = false, logf("traversal: no COPY queue to zero freed ranges with (0x%08x): zeroed DEFAULT buffer ranges used once", (unsigned)hr);
     g_adapter = a;  // after the segments are set: a create's grow reads them
-    const std::wstring ini = g_dir + L"scskiller.ini";
+    const std::wstring ini = config_path(g_dir);
     bool on = g_on;
     uint64_t read_at = 0, pools_at = 0;
     for (bool told = false, by_time = false, zwake = false;;) {
@@ -1547,7 +1547,7 @@ static void pool_main() {
         if (GetTickCount64() >= read_at + 1000)
             read_at = GetTickCount64(),
             on = on && (GetFileAttributesW(ini.c_str()) == INVALID_FILE_ATTRIBUTES || GetPrivateProfileIntW(L"scskiller", L"traversal_suballocate", 0, ini.c_str()) == 1);
-        if (on != g_on) g_on = on, logf("traversal: suballocate off (scskiller.ini), empty heaps released; on again takes a new session");
+        if (on != g_on) g_on = on, logf("traversal: suballocate off (scskiller.cfg), empty heaps released; on again takes a new session");
         if (!told && g_filtered) told = true, logf("traversal: residency calls named placed resources: left out, their heaps stay resident");
         idle_release();
         // a wake only for zeroed ranges (traversal_zeroed_reuse): the budget and the pools at most every 100 ms

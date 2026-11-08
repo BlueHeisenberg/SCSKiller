@@ -1,10 +1,19 @@
-// What the proxy and the app (ScsKiller.FileKey, ScsKiller.Signed) share about the recorder's stamp in scskiller.ini.
+// What the proxy and the app (ScsKiller.FileKey, ScsKiller.Signed) share about the recorder's stamp in scskiller.cfg.
 #pragma once
 #include <windows.h>
 #include <shlobj.h>
 #include <bcrypt.h>
 #include <cstring>
 #include <string>
+
+// A folder on a local volume. Wine's GetVolumePathNameW fails on a \\?\unix\ path (ERROR_INVALID_NAME): under Wine that
+// is the Linux app's own folder, taken as local.
+inline bool local_folder(const std::wstring& dir) {
+    if (!dir.compare(0, 9, L"\\\\?\\unix\\")) return true;
+    wchar_t vol[MAX_PATH];
+    UINT type;
+    return GetVolumePathNameW(dir.c_str(), vol, MAX_PATH) && ((type = GetDriveTypeW(vol)) == DRIVE_FIXED || type == DRIVE_REMOVABLE || type == DRIVE_RAMDISK);
+}
 
 // The data folder of the SCSKiller copy that placed the recorder in <dir> (trailing backslash): the parent of the
 // armed\ path its scskiller.ledger names (UTF-8, absolute, one line; a portable or test copy's, ScsKiller.LedgerStamp). False:

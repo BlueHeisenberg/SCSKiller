@@ -1376,6 +1376,27 @@ public static class UnrealUserCache
     }
 }
 
+/// <summary>Unreal's driver-optimized PSO disk cache kept inside the install: files named <c>*D3DDriverByteCodeBlob*</c> in
+/// &lt;install&gt;\&lt;Project&gt;\Saved or a folder right under it (Phantom Blade Zero's <c>ProjectPBZ\Saved\Cache\PBZSplitPSO_*</c>).
+/// The game writes it at its own shader step and SCSKiller leaves it alone. Names only: no file is opened.</summary>
+public static class OwnBlobStore
+{
+    public const string Note = "This game keeps its own shader cache in its folder. SCSKiller doesn't clear or change it.";
+
+    public static bool In(string installDir)
+    {
+        var top = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
+        var saved = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint, RecurseSubdirectories = true, MaxRecursionDepth = 1, MatchCasing = MatchCasing.CaseInsensitive };
+        try
+        {
+            return Directory.Exists(installDir) && Directory.EnumerateDirectories(installDir, "*", top).Select(p => Path.Combine(p, "Saved"))
+                .Any(s => Directory.Exists(s) && !new DirectoryInfo(s).Attributes.HasFlag(FileAttributes.ReparsePoint)
+                    && Directory.EnumerateFiles(s, "*D3DDriverByteCodeBlob*", saved).Any());
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
+}
+
 /// <summary>Pipeline caches a game writes and rebuilds when they're gone, never a file it ships, each tied to its game's engine:
 ///   - Dawn (Guardians of the Galaxy): <c>bin\pipelineLibrary.cache</c> beside the shipped <c>bin\raw*.store2</c>
 ///     (<see cref="Carved.DawnStores"/>), a serialized ID3D12PipelineLibrary, which only loads on the GPU and driver that

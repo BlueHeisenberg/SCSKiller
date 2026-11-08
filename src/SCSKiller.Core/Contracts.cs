@@ -45,7 +45,8 @@ public sealed record EngineInfo(
     bool AftermathOff = false,   // Unreal: the config or the launch options turn Aftermath off: no retry with it
     bool KeyMissing = false,              // game files known to hold shaders stay encrypted, no key SCSKiller has opens them: the rest compiles, the user can add the key (Unreal: AES)
     bool KeyOptional = false,             // other game files stay encrypted, none known to hold shaders: the user can still add the key
-    string? FeatureLevel = null);         // a game shipping PCD3D_ES3_1 (Unreal: UnrealRhi.FeatureLevel): "ES3_1" the user runs it, "?" not known; null = its default
+    string? FeatureLevel = null,          // a game shipping PCD3D_ES3_1 (Unreal: UnrealRhi.FeatureLevel): "ES3_1" the user runs it, "?" not known; null = its default
+    bool VulkanOnly = false);             // the game has no DirectX renderer (CarvedReader.Hookshot): only Vulkan is offered
 
 /// <summary>Shader stage, numbered like D3D12_PIPELINE_STATE_SUBOBJECT_TYPE (the proxy's db uses the same numbers).</summary>
 public enum Stage { Vertex = 1, Pixel = 2, Domain = 3, Hull = 4, Geometry = 5, Compute = 6, Amplification = 24, Mesh = 25, Library = 100 }
@@ -472,6 +473,7 @@ public sealed record GameState(
     string? CompileFailedWhy = null,   // why, when CompileFailed and it was kept (GameRecord.CompileFailedWhy)
     bool RiskEligible = false,         // Settings.RecordAntiCheatGames on, an OS with risk sessions (none on macOS yet, on Linux the Vulkan route's and a Steam launch's DirectX 12 under Proton, ScsKiller.ProtonDx12), anti-cheat or VAC detected, an engine on D3D12 or where a D3D11 recording records (ScsKiller.Records11Api), supported or not, no server verdict against it, a store launch SCSKiller can start (StoreLaunch.Supported), not OfflineEligible: a session in a game with its anti-cheat may be offered
     bool RiskNoLaunch = false,         // RiskEligible but for its store's launch: the page says why there is no session
+    bool RiskTrusted = false,          // Settings.RecordAntiCheatGames on, anti-cheat or VAC detected, its exe holds a trusted launch check (ScsKiller.TrustedLaunch), not OfflineEligible: no risk session, the page says why (ScsKiller.TrustedNote)
     string? SessionNote = null,        // the last risk session ended with nothing recorded (ScsKiller.SessionNote); null = nothing to show
     BeforeAfterInfo? BeforeAfter = null,   // a before and after recording in progress or done (GameRecord.BeforeAfter); null = none
     KeptCache? Kept = null,   // AMD: its compiled cache kept aside (Settings.KeepCachesAside); null = none kept
