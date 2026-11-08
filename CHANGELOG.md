@@ -4,6 +4,12 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**Fixed**
+
+- A game whose Steam archives name no application now takes the download's, so its plan reads the pipelines Valve
+  shipped instead of asking for a launch that already happened. Steam writes no ApplicationInfo into this PC's runs or
+  its merge when Valve's download already named the app, and the bucket was then dropped for naming no engine.
+
 ## [1.4.6] - 2026-11-06
 
 **Improved**

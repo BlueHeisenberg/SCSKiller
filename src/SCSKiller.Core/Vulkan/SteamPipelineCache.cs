@@ -44,14 +44,21 @@ public static class SteamPipelineCache
         var download = Path.Combine(dir, Download);
         var apps = new List<FozApp>();
         // a bucket's applications differ only in what its hash leaves out: one of each archive tells it
-        foreach (var path in recorded.Count > 0 || hash == null ? recorded : File.Exists(download) ? [download] : [])
-            try
-            {
-                using var f = Open(path);
-                foreach (var e in hash == null ? Foz.List(f).Where(e => e.Tag == Foz.ApplicationInfo) : Foz.First(f, e => e.Tag == Foz.ApplicationInfo) is { } first ? [first] : [])
-                    if (FozApp.Parse(e.Hash, Foz.Payload(f, e)) is { } app && !apps.Contains(app)) apps.Add(app);
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) { log?.Report($"{path} can't be read: {e.Message}"); }
+        void ReadApps(IEnumerable<string> paths)
+        {
+            foreach (var path in paths)
+                try
+                {
+                    using var f = Open(path);
+                    foreach (var e in hash == null ? Foz.List(f).Where(e => e.Tag == Foz.ApplicationInfo) : Foz.First(f, e => e.Tag == Foz.ApplicationInfo) is { } first ? [first] : [])
+                        if (FozApp.Parse(e.Hash, Foz.Payload(f, e)) is { } app && !apps.Contains(app)) apps.Add(app);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) { log?.Report($"{path} can't be read: {e.Message}"); }
+        }
+        ReadApps(recorded.Count > 0 || hash == null ? recorded : File.Exists(download) ? [download] : []);
+        // Steam writes no ApplicationInfo into this PC's runs of an app whose info Valve's download already names, and its
+        // merge carries none either: a bucket whose recordings name no app takes the download's, or it names no engine
+        if (apps.Count == 0 && recorded.Count > 0 && File.Exists(download)) ReadApps([download]);
         return new(dir, hash, recorded, File.Exists(download) ? download : null, apps,
             recorded.Select(File.GetLastWriteTimeUtc).DefaultIfEmpty(DateTime.MinValue).Max());
     }
