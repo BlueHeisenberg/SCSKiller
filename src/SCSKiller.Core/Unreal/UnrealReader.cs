@@ -1439,8 +1439,8 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         return (Convert.ToHexStringLower(SHA1.HashData(container.Span)), container);
     }
 
-    // Shader code may be compressed with the project's shader format (Oodle in UE5, LZ4 or Oodle in UE4, a fork's Zstd): the
-    // codecs whose header the bytes start with first, LZ4 (no header) last.
+    // Shader code may be compressed with the project's shader format (Oodle in UE5, LZ4 or Oodle in UE4, a fork's Zstd).
+    // Try recognized headers first; otherwise try headerless LZ4 before probing the other codecs.
     internal static byte[] Decompress(byte[] src, int size) => Decompress(src, 0, src.Length, size);
 
     internal static byte[] Decompress(byte[] src, int offset, int count, int size)
@@ -1465,10 +1465,19 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     // Oodle's LZ block header: low 6 bits 0x0C (version 4), then a compressor id below 13
     static bool OodleBlock(ReadOnlySpan<byte> b) => b.Length >= 2 && (b[0] & 0x3F) == 0x0C && (b[1] & 0x7F) < 13;
 
+    // Zlib block header: low 4 bits 8 (deflate), and the 16-bit header is divisible by 31
+    static bool ZlibBlock(ReadOnlySpan<byte> b) => b.Length >= 2 && (b[0] & 0x0F) == 8 && (b[0] << 8 | b[1]) % 31 == 0;
+
+    // Zstd block header: first 4 bytes are the magic number 0xFD2FB528
+    static bool ZstdBlock(ReadOnlySpan<byte> b) => b.Length >= 4 && BinaryPrimitives.ReadUInt32LittleEndian(b) == 0xFD2FB528;
+
     static CompressionMethod[] InOrder(ReadOnlySpan<byte> b)
     {
-        bool zlib = b.Length >= 2 && (b[0] & 0x0F) == 8 && (b[0] << 8 | b[1]) % 31 == 0, zstd = b.Length >= 4 && BinaryPrimitives.ReadUInt32LittleEndian(b) == 0xFD2FB528;
-        return [.. new[] { (CompressionMethod.Oodle, OodleBlock(b)), (CompressionMethod.Zlib, zlib), (CompressionMethod.Zstd, zstd) }.OrderBy(c => !c.Item2).Select(c => c.Item1), CompressionMethod.LZ4];
+        bool oodle = OodleBlock(b);
+        bool zlib = ZlibBlock(b);
+        bool zstd = ZstdBlock(b);
+        
+        return [.. new[] { (CompressionMethod.Oodle, oodle), (CompressionMethod.Zlib, zlib), (CompressionMethod.Zstd, zstd), (CompressionMethod.LZ4, !oodle && !zlib && !zstd) }.OrderBy(c => !c.Item2).Select(c => c.Item1)];
     }
 
     static void InitCodecs() => Codecs.Load();
