@@ -1439,8 +1439,8 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         return (Convert.ToHexStringLower(SHA1.HashData(container.Span)), container);
     }
 
-    // Shader code may be compressed with the project's shader format (Oodle in UE5, LZ4 or Oodle in UE4, a fork's Zstd): the
-    // codecs whose header the bytes start with first, LZ4 (no header) last.
+    // Shader code may be compressed with the project's shader format (Oodle in UE5, LZ4 or Oodle in UE4, a fork's Zstd).
+    // Try recognized headers first; otherwise try headerless LZ4 before probing the other codecs.
     internal static byte[] Decompress(byte[] src, int size) => Decompress(src, 0, src.Length, size);
 
     internal static byte[] Decompress(byte[] src, int offset, int count, int size)
@@ -1449,7 +1449,9 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
         // a false anchor in carved package bytes claims up to 64 MB: one buffer for every codec tried, not one each
         // (a pool would keep its 64 MB buffers live after the read, counted against the plan's memory limit)
         var into = GC.AllocateUninitializedArray<byte>(size);
-        foreach (var m in InOrder(s))
+        Span<CompressionMethod> methods = stackalloc[] { CompressionMethod.Oodle, CompressionMethod.Zlib, CompressionMethod.Zstd, CompressionMethod.LZ4 };
+        InOrder(s, methods);
+        foreach (var m in methods)
             try
             {
                 Compression.Decompress(s, into, m);
@@ -1465,10 +1467,20 @@ public sealed partial class UnrealReader(string? dataDir = null) : IEngineReader
     // Oodle's LZ block header: low 6 bits 0x0C (version 4), then a compressor id below 13
     static bool OodleBlock(ReadOnlySpan<byte> b) => b.Length >= 2 && (b[0] & 0x3F) == 0x0C && (b[1] & 0x7F) < 13;
 
-    static CompressionMethod[] InOrder(ReadOnlySpan<byte> b)
+    // Zlib block header: low 4 bits 8 (deflate), and the 16-bit header is divisible by 31
+    static bool ZlibBlock(ReadOnlySpan<byte> b) => b.Length >= 2 && (b[0] & 0x0F) == 8 && (b[0] << 8 | b[1]) % 31 == 0;
+
+    // Zstd block header: first 4 bytes are the magic number 0xFD2FB528
+    static bool ZstdBlock(ReadOnlySpan<byte> b) => b.Length >= 4 && BinaryPrimitives.ReadUInt32LittleEndian(b) == 0xFD2FB528;
+
+    // Try the codec indicated by the header first, or headerless LZ4 if none matches. The remaining codecs keep
+    // their fallback order, since a header can match by chance.
+    static void InOrder(ReadOnlySpan<byte> b, Span<CompressionMethod> methods)
     {
-        bool zlib = b.Length >= 2 && (b[0] & 0x0F) == 8 && (b[0] << 8 | b[1]) % 31 == 0, zstd = b.Length >= 4 && BinaryPrimitives.ReadUInt32LittleEndian(b) == 0xFD2FB528;
-        return [.. new[] { (CompressionMethod.Oodle, OodleBlock(b)), (CompressionMethod.Zlib, zlib), (CompressionMethod.Zstd, zstd) }.OrderBy(c => !c.Item2).Select(c => c.Item1), CompressionMethod.LZ4];
+        var preferred = OodleBlock(b) ? CompressionMethod.Oodle : ZlibBlock(b) ? CompressionMethod.Zlib : ZstdBlock(b) ? CompressionMethod.Zstd : CompressionMethod.LZ4;
+        var index = methods.IndexOf(preferred);
+        methods[..index].CopyTo(methods[1..]);
+        methods[0] = preferred;
     }
 
     static void InitCodecs() => Codecs.Load();
