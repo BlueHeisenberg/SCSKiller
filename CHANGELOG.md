@@ -3,6 +3,8 @@
 All notable changes to the SCSKiller app and command line. Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+- Assassin’s Creed Valhalla indexes shaders and shipped stage combinations from its SBIN file and supported DX12 Forge archives.
+  A verified shader build can also precompile supported Forge and compute pipelines on NVIDIA without recording.
 
 ## [1.4.7] - 2026-11-08
 
