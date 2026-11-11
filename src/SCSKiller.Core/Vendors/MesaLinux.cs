@@ -3,11 +3,13 @@ using SCSKiller.Core.Games;
 
 namespace SCSKiller.Core.Vendors;
 
-/// <summary>Mesa's Vulkan drivers on Linux, RADV (AMD), ANV (Intel) and NVK (NVIDIA), as Proton runs the games and the warm on them. Mesa
+/// <summary>Mesa's Vulkan drivers on Linux, RADV (AMD), ANV (Intel), NVK (NVIDIA) and Turnip (Qualcomm Adreno), as Proton runs the games and the warm on them. Mesa
 /// keys its disk cache on what it compiles and the driver's build, never on a process or an app name (Steam's pre-cache
 /// relies on it): a warm that writes the folder the game reads is found by the game, so the warm and the game take the same variables
-/// (<see cref="CacheEnvironment"/>). The folder is the one Steam gives the game (<see cref="SteamCache"/>). ANV and NVK take
-/// RADV's path with their cache behaviour unmeasured (<see cref="GpuBackends.DriverNote"/>).</summary>
+/// (<see cref="CacheEnvironment"/>). The folder is the one Steam gives the game (<see cref="SteamCache"/>). ANV, NVK and Turnip
+/// take RADV's path with their cache behaviour unmeasured (<see cref="GpuBackends.DriverNote"/>): Turnip shares Mesa's
+/// disk cache (src/util/disk_cache.c) with RADV, and on arm64 Proton's ARM64 builds run the game's and the warm's Vulkan
+/// natively on it.</summary>
 public static class MesaLinux
 {
     public const string Profile = "mesa-linux-1";
@@ -23,10 +25,15 @@ public static class MesaLinux
     public static bool Is(VendorCaps caps) => caps.Profile == Profile;
 
     /// <summary>VkDriverId values (VkPhysicalDeviceDriverProperties::driverID).</summary>
-    public const uint AmdProprietary = 1, AmdOpenSource = 2, Radv = 3, NvidiaProprietary = 4, Anv = 6, Llvmpipe = 13, Nvk = 24;
+    public const uint AmdProprietary = 1, AmdOpenSource = 2, Radv = 3, NvidiaProprietary = 4, Anv = 6, QualcommProprietary = 8, Llvmpipe = 13,
+        Turnip = 18, Nvk = 24;
+
+    /// <summary>The Mesa drivers SCSKiller compiles on, as their vendor's GPUs run them.</summary>
+    public static bool Ours(GpuVendor vendor, uint driver) =>
+        (vendor, driver) is (GpuVendor.Amd, Radv) or (GpuVendor.Intel, Anv) or (GpuVendor.Nvidia, Nvk) or (GpuVendor.Qualcomm, Turnip);
 
     /// <summary>Why SCSKiller doesn't compile on <paramref name="a"/>'s Vulkan driver, for the Library's notice; null for RADV,
-    /// ANV, NVK and NVIDIA's own driver (also when Vulkan doesn't name NVIDIA's), and for an unknown vendor, whose notice says it.</summary>
+    /// ANV, NVK, Turnip and NVIDIA's own driver (also when Vulkan doesn't name NVIDIA's), and for an unknown vendor, whose notice says it.</summary>
     public static string? Refusal(DxgiAdapter a) => (a.Gpu.Vendor, a.Driver) switch
     {
         (_, Llvmpipe) => "SCSKiller doesn't compile on a software renderer.",
@@ -36,6 +43,9 @@ public static class MesaLinux
         (GpuVendor.Amd, 0) or (GpuVendor.Intel, 0) => "SCSKiller can't tell which Vulkan driver runs this GPU, so it doesn't compile on it.",
         (GpuVendor.Amd, not Radv) => "SCSKiller compiles on AMD GPUs with Mesa's RADV driver only.",
         (GpuVendor.Intel, not Anv) => "SCSKiller compiles on Intel GPUs with Mesa's ANV driver only.",
+        (GpuVendor.Qualcomm, QualcommProprietary) => "SCSKiller compiles on Qualcomm Adreno GPUs with Mesa's Turnip driver, not with Qualcomm's own Vulkan driver.",
+        (GpuVendor.Qualcomm, 0) => "SCSKiller can't tell which Vulkan driver runs this GPU, so it doesn't compile on it.",
+        (GpuVendor.Qualcomm, not Turnip) => "SCSKiller compiles on Qualcomm Adreno GPUs with Mesa's Turnip driver only.",
         _ => null,
     };
 

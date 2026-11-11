@@ -4,10 +4,12 @@
 // arguments, the protocol and the passes are warm.cpp's, and its other options are taken and change nothing here:
 //
 //   scskiller_warm <workdir> <game exe file name> --vulkan [--threads N] --adapter-luid <PCI address, hex>
-//                  [--stop-file <path>] [--alive-file <path> --alive-turns N] [--out <file>] [--err <file>]
+//                  [--adapter-vendor <vendor id, hex> --adapter-name <name>] [--stop-file <path>] [--alive-file <path> --alive-turns N] [--out <file>] [--err <file>]
 //
 // --adapter-luid: the PCI address the app's adapter list gives (GpuBackends.PciAddress), matched among the devices as the
-// replayer's instance lists them (every layer off), so the replay never runs on another GPU. The stop file, and the alive
+// replayer's instance lists them (every layer off), so the replay never runs on another GPU. A GPU with no PCI address
+// (a SoC's: Adreno under Turnip has no VK_EXT_pci_bus_info) is --adapter-luid 0 with its vendor id and device name, which
+// exactly one device must have. The stop file, and the alive
 // file once its write time has stayed the same for --alive-turns of the 100 ms turns, stop the replayer through the
 // patch's SCSKILLER_REPLAY_STOP file (third_party/fossilize): it creates nothing more and exits as when done. A
 // "stopping" line says so, and the replayer is ended only if it hasn't exited SCSKILLER_WARM_EXIT_S after that.
@@ -39,6 +41,8 @@
 struct Opts {
     int threads = 0;
     uint64_t luid = 0;
+    uint32_t vendor = 0;
+    std::string name;
     std::string stop_file, alive_file;
     int alive_turns = 0;
     std::set<std::string> skip_keys;  // 20 bytes each: pipelines that crashed or hung this driver in an earlier compile
@@ -50,6 +54,8 @@ static bool parse(int argc, char** argv, int i, Opts& o) {
         char* end = nullptr;
         if (k == "--threads") o.threads = (int)strtol(v.c_str(), &end, 10);
         else if (k == "--adapter-luid") o.luid = strtoull(v.c_str(), &end, 16);
+        else if (k == "--adapter-vendor") o.vendor = (uint32_t)strtoul(v.c_str(), &end, 16);
+        else if (k == "--adapter-name") o.name = v;
         else if (k == "--stop-file") o.stop_file = v;
         else if (k == "--alive-file") o.alive_file = v;
         else if (k == "--alive-turns") o.alive_turns = (int)strtol(v.c_str(), &end, 10);
@@ -142,7 +148,8 @@ static std::string pipeline_key(unsigned tag, uint64_t hash) {
 
 // fossilize-replay's --device-index of the device at this PCI address, counted as its instance counts them (the same
 // loader and environment); -1 when none is. driver: its driver's version and UUID, which a driver update changes.
-static int vk_device_index(uint64_t pci, std::string* driver = nullptr) {
+// pci 0: the one device of this vendor id and name, a GPU with no PCI address; -1 when none or several are.
+static int vk_device_index(uint64_t pci, std::string* driver = nullptr, uint32_t vendor = 0, const std::string& name = {}) {
     void* m = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
     auto gpa = m ? (PFN_vkGetInstanceProcAddr)dlsym(m, "vkGetInstanceProcAddr") : nullptr;
     auto create = gpa ? (PFN_vkCreateInstance)gpa(nullptr, "vkCreateInstance") : nullptr;
@@ -160,9 +167,24 @@ static int vk_device_index(uint64_t pci, std::string* driver = nullptr) {
         uint32_t n = 0;
         std::vector<VkPhysicalDevice> gpus;
         if (list && base && props && exts && list(inst, &n, nullptr) == VK_SUCCESS && (gpus.resize(n), list(inst, &n, gpus.data())) >= 0)
-            for (uint32_t i = 0; i < n && found < 0; ++i) {
+            for (uint32_t i = 0; i < n && (found < 0 || !pci); ++i) {
                 VkPhysicalDeviceProperties p1;
                 base(gpus[i], &p1);
+                if (!pci) {
+                    if (p1.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU || p1.vendorID != vendor || name.empty() || name != p1.deviceName) continue;
+                    if (found >= 0) {  // two of them: which one the game runs on can't be told
+                        found = -1;
+                        break;
+                    }
+                    found = (int)i;
+                    if (driver && p1.apiVersion >= VK_API_VERSION_1_1) {
+                        VkPhysicalDeviceIDProperties id{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+                        VkPhysicalDeviceProperties2 p{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &id};
+                        props(gpus[i], &p);
+                        *driver = std::to_string(p.properties.driverVersion) + ":" + std::string((const char*)id.driverUUID, VK_UUID_SIZE);
+                    }
+                    continue;
+                }
                 uint32_t e = 0;
                 std::vector<VkExtensionProperties> have;
                 if (p1.apiVersion < VK_API_VERSION_1_1 || exts(gpus[i], nullptr, &e, nullptr) != VK_SUCCESS) continue;
@@ -296,10 +318,10 @@ static int vulkan_warm(const Opts& o, const std::string& work, const std::string
     const std::string faulty_path = flat + "scskiller_faulty.txt";
     unstage.files.push_back(faulty_path);
     unsetenv("SCSKILLER_REPLAY_FAULTY");
-    if (!o.luid) return fail("no adapter given (--adapter-luid)");
+    if (!o.luid && (!o.vendor || o.name.empty())) return fail("no adapter given (--adapter-luid, or --adapter-vendor and --adapter-name)");
     std::string driver;
-    const int device = vk_device_index(o.luid, &driver);
-    if (device < 0) return fail("no Vulkan device is at the adapter's PCI address");
+    const int device = vk_device_index(o.luid, &driver, o.vendor, o.name);
+    if (device < 0) return fail(o.luid ? "no Vulkan device is at the adapter's PCI address" : "not exactly one Vulkan device has the adapter's vendor and name");
 
     using Ids = std::set<std::pair<unsigned, Hash>>;
     Ids known;  // --skip-keys: never replayed, named again in the done event's crashed
@@ -384,7 +406,7 @@ static int vulkan_warm(const Opts& o, const std::string& work, const std::string
         if (!now && !lost && (refusals == refusals_seen || turns - checked < 100)) return false;
         refusals_seen = refusals, checked = turns;
         std::string d;
-        gone = lost || vk_device_index(o.luid, &d) < 0 || d != driver;
+        gone = lost || vk_device_index(o.luid, &d, o.vendor, o.name) < 0 || d != driver;
         if (gone) close(open(stop_path.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, 0644)), stopping = true, stop_turn = turns;
         return gone;
     };
@@ -573,7 +595,7 @@ static int vulkan_warm(const Opts& o, const std::string& work, const std::string
 static int run(int argc, char** argv, bool vulkan) {
     Opts o;
     if (argc < 3 || !parse(argc, argv, 3, o) || o.alive_turns < 0 || (o.alive_turns > 0) == o.alive_file.empty()) {
-        fputs("usage: scskiller_warm <workdir> <game exe file name> --vulkan [--threads N] --adapter-luid <PCI address, hex>\n"
+        fputs("usage: scskiller_warm <workdir> <game exe file name> --vulkan [--threads N] --adapter-luid <PCI address, hex> [--adapter-vendor <hex> --adapter-name <name>]\n"
               "                      [--stop-file <path>] [--alive-file <path> --alive-turns N] [--out <file>] [--err <file>]\n", stderr);
         return fail("bad arguments");
     }

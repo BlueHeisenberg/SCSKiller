@@ -133,7 +133,7 @@ sealed class ProtonWarmHost : IWarmHost
         Job = new WarmJob(_work) { Log = log == null ? null : m => log.Report($"{game.Name}: {m}") };
         _gpuName = gpu.Name;
         _launchGpu = launchGpu ?? [];
-        _mesa = mesa ?? gpu.Vendor is GpuVendor.Amd or GpuVendor.Intel;
+        _mesa = mesa ?? gpu.Vendor is GpuVendor.Amd or GpuVendor.Intel or GpuVendor.Qualcomm;
         _cache = cache?.ToList() ?? (_mesa
             ? MesaLinux.CacheEnvironment(gameDir, game, steamRoot: ctx?.SteamRoot)
             : Wine.CacheEnvironment(Wine.CacheRoot(gameDir), Path.GetFileName(game.ExePath), cacheCap ?? NvidiaLinux.CacheSize).Warm);
@@ -201,7 +201,12 @@ sealed class ProtonWarmHost : IWarmHost
     public IReadOnlyList<string> StopArgs => ["--stop-file", WarmPath(_flatpak == null ? _stop : Path.Combine(FlatpakExchange.PathOf(_dataDir, _next), FlatpakExchange.StopName))];
 
     // under Proton the GPU goes by name in the environment, the native warm takes its PCI address
-    public IReadOnlyList<string> AdapterArgs(GpuInfo gpu) => _ctx == null && _wine == null ? ["--adapter-luid", gpu.AdapterLuid.ToString("X16")] : [];
+    // on arm64 a GPU with no PCI address (an SoC's, Adreno): its vendor and name, which the native warm matches among the
+    // devices instead; elsewhere the PCI address alone, as before
+    public IReadOnlyList<string> AdapterArgs(GpuInfo gpu) => _ctx != null || _wine != null ? []
+        : gpu.AdapterLuid != 0 || System.Runtime.InteropServices.RuntimeInformation.OSArchitecture != System.Runtime.InteropServices.Architecture.Arm64
+            ? ["--adapter-luid", gpu.AdapterLuid.ToString("X16")]
+            : ["--adapter-luid", 0L.ToString("X16"), "--adapter-vendor", ((uint)gpu.Vendor).ToString("X4"), "--adapter-name", gpu.Name];
 
     /// <summary>The warm's "no GPU adapter" with a DXVK device filter the prefix's registry sets named: Wine's registry
     /// environment overrides the one the warm starts with, and DXVK's DXGI lists no device that fails it.
