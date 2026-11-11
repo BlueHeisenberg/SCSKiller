@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.X86;
 using System.Security.Cryptography;
 using CUE4Parse.Compression;
@@ -16,9 +17,15 @@ public static partial class Codecs
     internal static string? DirOverride;
     static readonly Lock Gate = new();
 
-    /// <summary>The pinned Oodle build runs AVX2, BMI2 and MOVBE code with no CPU check, which kills the process on a CPU
-    /// without them. Without it CUE4Parse decodes Oodle data in managed code.</summary>
-    public static bool NativeOodle => Avx2.IsSupported && Bmi2.X64.IsSupported;
+    /// <summary>The pinned x86-64 Oodle build runs AVX2, BMI2 and MOVBE code with no CPU check, which kills the process on a
+    /// CPU without them; an arm64 Linux process takes the arm64 build pinned for it. Without it CUE4Parse decodes Oodle data
+    /// in managed code.</summary>
+    public static bool NativeOodle => OperatingSystem.IsLinux() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+        ? Pinned.ContainsKey(OodleHelper.OodleFileName)
+        : Avx2.IsSupported && Bmi2.X64.IsSupported;
+
+    /// <summary>A zlib-ng build is pinned for this OS and CPU (none for arm64): without one CUE4Parse decodes zlib in managed code.</summary>
+    public static bool NativeZlib => Pinned.ContainsKey(ZlibHelper.DllName);
 
     public const string NoNativeOodle = "This CPU lacks AVX2 and BMI2, which the Oodle codec needs.";
 
@@ -43,7 +50,8 @@ public static partial class Codecs
     // the system proxy: CUE4Parse's own download client bypasses it
     static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(2), MaxResponseContentBufferSize = 256 << 20 };
 
-    /// <summary>Loads Oodle (only where <see cref="NativeOodle"/>), and zlib-ng with <paramref name="zlib"/>; a no-op once
+    /// <summary>Loads Oodle (only where <see cref="NativeOodle"/>), and zlib-ng with <paramref name="zlib"/> (only where
+    /// <see cref="NativeZlib"/>); a no-op once
     /// loaded. Never throws: without a codec CUE4Parse decodes in managed code. Two readers may start at once (the lock:
     /// they'd race on the same download).</summary>
     public static void Load(bool zlib = true)
@@ -51,7 +59,7 @@ public static partial class Codecs
         lock (Gate)
         {
             if (NativeOodle && OodleHelper.Instance == null) TryLoad(OodleHelper.OodleFileName, DownloadOodle, p => OodleHelper.Initialize(p), Log);
-            if (zlib && ZlibHelper.Instance == null) TryLoad(ZlibHelper.DllName, DownloadZlib, p => ZlibHelper.Initialize(p), Log);
+            if (zlib && NativeZlib && ZlibHelper.Instance == null) TryLoad(ZlibHelper.DllName, DownloadZlib, p => ZlibHelper.Initialize(p), Log);
         }
     }
 

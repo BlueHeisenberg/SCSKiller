@@ -924,7 +924,7 @@ static int FetchCodecs(string dir)
     try
     {
         Console.WriteLine(Codecs.Ensure(OodleHelper.OodleFileName, Codecs.DownloadOodle, dir));
-        Console.WriteLine(Codecs.Ensure(ZlibHelper.DllName, Codecs.DownloadZlib, dir));
+        if (Codecs.NativeZlib) Console.WriteLine(Codecs.Ensure(ZlibHelper.DllName, Codecs.DownloadZlib, dir));   // none pinned for arm64
         return 0;
     }
     catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) { return Fail(e.Message); }

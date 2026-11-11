@@ -234,6 +234,66 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  # Public repo: the arm64 Linux package, natively on a hosted arm64 Ubuntu, exactly as the linux job makes the x86-64
+  # one: the same scripts pick the arm64 build from the machine (sniper's arm64 SDK for the layer, linux-arm64 .NET, vpk's
+  # arm64 AppImage, the -linux-arm64 feed). The Windows tools in native/ are the build job's x86-64 ones: Proton runs
+  # them under its x86-64 emulation (FEX) on an arm64 machine.
+  linux-arm64:
+    needs: build
+    if: ${{ !cancelled() && needs.build.result == 'success' && !github.event.repository.private }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    env:
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
+        with:
+          name: SCSKiller-native
+          path: dist
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68   # v6.0.0
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: 10.0.403
+
+      - name: Packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends squashfs-tools=1:4.6.1-1build1 desktop-file-utils=0.27-2build1 \
+            libvulkan1 mesa-vulkan-drivers
+          podman --version || docker --version
+
+      - name: Linux layer (sniper arm64 SDK)
+        run: bash build/ci-linux-package.sh --layer
+
+      - name: Linux package
+        env:
+          CI_LINUX_DOTNET: ${{ runner.temp }}/dotnet
+        run: bash build/ci-linux-package.sh --version "$VERSION" --pack --release dist/release-linux-arm64
+
+      - name: AppImage runs
+        run: |
+          d=$(mktemp -d) && cd "$d"
+          "$GITHUB_WORKSPACE/dist/release-linux-arm64/SCSKiller-aarch64.AppImage" --appimage-extract >/dev/null
+          got=$(SCSKILLER_DATA_DIR="$d/data" squashfs-root/AppRun --cli --version)
+          [ "$got" = "${VERSION#v}" ] || { echo "::error::the arm64 AppImage's --cli --version prints '$got', not ${VERSION#v}"; exit 1; }
+          echo "SCSKiller (arm64) --cli --version: $got"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: SCSKiller-linux-arm64
+          path: dist/release-linux-arm64/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
   # macOS: the UI and Core publish for Apple silicon and Intel, then --screenshots renders the design data on the
   # arm64 app. Private repo only, on the runner SCSK_MAC_RUNNER names, never a hosted one: skipped while it isn't set.
   mac:
