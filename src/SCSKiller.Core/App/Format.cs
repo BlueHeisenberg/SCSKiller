@@ -153,6 +153,7 @@ public static class Format
         {
             GpuVendor.Intel when intel => "Intel support is experimental. DirectX 12 games need a recording first.",
             GpuVendor.Intel => "Intel support is experimental and off. Turn it on in Settings.",
+            GpuVendor.Qualcomm when OperatingSystem.IsLinux() => "Qualcomm Adreno support is experimental: SCSKiller compiles through Mesa's Turnip driver, whose cache it hasn't measured yet.",
             GpuVendor.Qualcomm => "SCSKiller doesn't compile on Qualcomm GPUs yet: how Qualcomm's driver caches shaders hasn't been measured.",
             _ => "SCSKiller doesn't compile on this GPU yet: it only knows how NVIDIA and AMD drivers cache shaders.",
         });

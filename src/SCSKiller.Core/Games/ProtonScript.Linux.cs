@@ -199,7 +199,8 @@ sealed partial class ProtonScript
         ["not use_wined3d and not ( \"WINEDLLOVERRIDES\" in g_session . env and \"dxgi=b\" in g_session . env [ \"WINEDLLOVERRIDES\" ] )"] = _ => "True",
         ["\"disablenvapi\" not in g_session . compat_config or \"forcenvapi\" in g_session . compat_config"] = s => s.Nvapi(),
         ["( ( \"disablenvapi\" not in g_session . compat_config or \"forcenvapi\" in g_session . compat_config ) and g_proton . host_pe_arch != \"aarch64-windows\" )"] =
-            s => RuntimeInformation.OSArchitecture == Architecture.X64 ? s.Nvapi() : null,
+            // an ARM64 Proton's arm64 branch sets host_pe_arch to aarch64-windows (Arm64At): no NVAPI, whatever the GPU
+            s => s.Arm64At() != null ? "False" : RuntimeInformation.OSArchitecture is Architecture.X64 or Architecture.Arm64 ? s.Nvapi() : null,
         ["\"dxvkd3d8\" in g_session . compat_config"] = _ => "False",
     };
 
@@ -272,9 +273,38 @@ sealed partial class ProtonScript
     /// spells it: its folder as run, then /.</summary>
     string? ProtonPath(string name) => Attribute(name) is { } rel ? _proton + "/" + rel : null;
 
-    /// <summary>The path an attribute assignment self.&lt;name&gt; = self.path("...") gives, relative to its object's folder.</summary>
-    string? Attribute(string name) =>
-        Regex.Match(_text, $@"self\.{Regex.Escape(name)}[ \t]*=[ \t]*self\.path\([ \t]*([""'])([^""'\n]*)\1[ \t]*\)") is { Success: true } m ? m.Groups[2].Value : null;
+    /// <summary>The path an attribute assignment self.&lt;name&gt; = self.path("...") gives, relative to its object's folder: on
+    /// an ARM64 Proton that runs arm64 here (<see cref="Arm64At"/>) the assignment of its arm64 branch, where it has one
+    /// (default_pfx_dir: files/share/default_pfx_arm64/).</summary>
+    string? Attribute(string name)
+    {
+        var all = Regex.Matches(_text, $@"self\.{Regex.Escape(name)}[ \t]*=[ \t]*self\.path\([ \t]*([""'])([^""'\n]*)\1[ \t]*\)");
+        if (all.Count == 0) return null;
+        if (Arm64At() is { } at && all.FirstOrDefault(m => m.Index > at.Start && m.Index < at.End) is { } arm) return arm.Groups[2].Value;
+        return all[0].Groups[2].Value;
+    }
+
+    /// <summary>The arm64 branch of an ARM64 Proton's Proton.__init__ (Valve's ARM64 builds, Proton-CachyOS and GE's aarch64
+    /// ones), as text bounds, when it runs: this machine is arm64, the build has files/bin-arm64 and PROTON_USE_ARM64 is
+    /// unset or 1 (as a compile's run inherits it). The branch is the if block that sets host_pe_arch to aarch64-windows.</summary>
+    (int Start, int End)? Arm64At()
+    {
+        if (RuntimeInformation.OSArchitecture != Architecture.Arm64 || Environment.GetEnvironmentVariable("PROTON_USE_ARM64") is { } use && use != "1"
+            || !Directory.Exists(Path.Combine(_proton, "files", "bin-arm64"))) return null;
+        var set = Regex.Match(_text, @"^([ \t]+)self\.host_pe_arch[ \t]*=[ \t]*[""']aarch64-windows[""']", RegexOptions.Multiline);
+        if (!set.Success) return null;
+        var cond = Regex.Matches(_text[..set.Index], @"^[ \t]*if\b[^\n]*PROTON_USE_ARM64", RegexOptions.Multiline).LastOrDefault();
+        if (cond == null) return null;
+        // the block: the lines after the if indented as deep as the aarch64 assignment
+        var indent = set.Groups[1].Value;
+        var end = set.Index;
+        foreach (Match line in Regex.Matches(_text[set.Index..], @"^[^\n]*", RegexOptions.Multiline))
+        {
+            if (line.Value.Trim().Length > 0 && !line.Value.StartsWith(indent, StringComparison.Ordinal)) break;
+            end = set.Index + line.Index + line.Length;
+        }
+        return (cond.Index, end);
+    }
 
     /// <summary>migrate_user_paths's moves: the winxp-style path, the vista one and the link that replaces the first.</summary>
     List<(string Old, string New, string Link)>? Migration()

@@ -24,7 +24,7 @@ public static class Fmt
     public static string KeptSize(KeptCache k) => $"{Format.Bytes(k.Bytes)} · " + (k.Frees > 0 ? $"frees {Format.Bytes(k.Frees)}" : "takes no extra space");
     public static string Vendor(GpuVendor v) => v switch
     {
-        GpuVendor.Nvidia => "NVIDIA", GpuVendor.Amd => "AMD", GpuVendor.Intel => "Intel", _ => "GPU",
+        GpuVendor.Nvidia => "NVIDIA", GpuVendor.Amd => "AMD", GpuVendor.Intel => "Intel", GpuVendor.Qualcomm when OperatingSystem.IsLinux() => "Qualcomm", _ => "GPU",
     };
     public static string Engine(EngineInfo? e) => e is null ? "Unknown engine" : Format.Engine(e, e.Family == "Unreal" ? "UE" : null) + Guessed(e);
     public static string Guessed(EngineInfo e) => e.VersionGuessed ? " (guessed)" : "";

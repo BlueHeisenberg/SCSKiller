@@ -137,6 +137,7 @@ public static class LaunchGpu
                 var f when f.StartsWith("libvulkan_radeon", StringComparison.Ordinal) => MesaLinux.Radv,
                 var f when f.StartsWith("libvulkan_intel", StringComparison.Ordinal) => MesaLinux.Anv,
                 var f when f.StartsWith("libvulkan_nouveau", StringComparison.Ordinal) => MesaLinux.Nvk,
+                var f when f.StartsWith("libvulkan_freedreno", StringComparison.Ordinal) => MesaLinux.Turnip,
                 var f when f.StartsWith("libvulkan_lvp", StringComparison.Ordinal) => MesaLinux.Llvmpipe,
                 var f when f.StartsWith("libGLX_nvidia", StringComparison.Ordinal) || f.StartsWith("libnvidia-vulkan", StringComparison.Ordinal) => MesaLinux.NvidiaProprietary,
                 var f when f.StartsWith("amdvlk", StringComparison.Ordinal) => MesaLinux.AmdOpenSource,
