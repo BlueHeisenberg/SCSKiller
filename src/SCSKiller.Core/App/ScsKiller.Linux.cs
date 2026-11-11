@@ -33,6 +33,54 @@ public sealed partial class ScsKiller
         return k;
     }
 
+    /// <summary>On arm64 under Mesa's Turnip, a game whose own driver files pick a Turnip build of their own (Armada's
+    /// per-game pick, or VK_DRIVER_FILES in its launch options; <see cref="LaunchGpu.TurnipLibrary"/>) is compiled for that
+    /// build, not the one SCSKiller's Vulkan lists: its DriverId gains the build's file (path, size, time and a hash of its
+    /// content: Mesa keys its cache on the library's build id, else on that file's time, none of Armada's builds has an
+    /// id, and an image-based system such as Armada gives every file under /usr the same time, 1970), and its version
+    /// reads "Turnip &lt;build&gt;". So a new build of the game's own driver makes its compile stale, and one of the system's
+    /// alone doesn't. Read again at most every 10 s; a file's hash once per path, size and time.</summary>
+    partial void GameDriver(Game g, ref GpuSnapshot s)
+    {
+        if (s.Id == null || s.Id.Contains(TurnipTag, StringComparison.Ordinal)
+            || System.Runtime.InteropServices.RuntimeInformation.OSArchitecture != System.Runtime.InteropServices.Architecture.Arm64
+            || Vendor is not MesaLinuxBackend { Driver: MesaLinux.Turnip } || TurnipBuild(g) is not { } build) return;
+        s = s with { Id = s.Id + TurnipTag + build.Identity, Gpu = s.Gpu with { DriverVersion = $"Turnip {build.Name}" } };
+    }
+
+    const string TurnipTag = "|turnip:";
+    readonly Dictionary<string, (long At, (string Identity, string Name)? Build)> _turnipBuilds = [];
+    readonly Dictionary<string, string> _turnipHashes = [];   // "path|size|time" -> its content's SHA-256, the first 16 hex digits
+
+    (string Identity, string Name)? TurnipBuild(Game g)
+    {
+        var now = Environment.TickCount64;
+        lock (_turnipBuilds)
+            if (_turnipBuilds.TryGetValue(g.Id, out var c) && now - c.At < 10_000) return c.Build;
+        (string, string)? build = null;
+        try
+        {
+            if (LaunchGpu.TurnipLibrary(LaunchGpu.Of(g, (_warmer as Warmer)?.SteamRoot ?? SteamSource.Root())) is { } library && new FileInfo(library) is { Exists: true } f)
+            {
+                var dir = Path.GetDirectoryName(library)!;
+                // Armada's system builds sit in <name>/aarch64/, its users' in <name>/
+                var name = Path.GetFileName(dir) is "aarch64" or "lib" or "lib64" ? Path.GetFileName(Path.GetDirectoryName(dir)!) : Path.GetFileName(dir);
+                var file = $"{library}|{f.Length}|{f.LastWriteTimeUtc.Ticks}";
+                string? hash;
+                lock (_turnipHashes) _turnipHashes.TryGetValue(file, out hash);
+                if (hash == null)
+                {
+                    using (var stream = File.OpenRead(library)) hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream))[..16];
+                    lock (_turnipHashes) _turnipHashes[file] = hash;
+                }
+                build = ($"{file}|{hash}", name);
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        lock (_turnipBuilds) _turnipBuilds[g.Id] = (now, build);
+        return build;
+    }
+
     partial void WineBuiltinFirst(Game g, ref IReadOnlySet<string>? dlls) =>
         dlls = SteamLaunchOptions.BuiltinFirst(SCSKiller.Core.Unreal.UnrealRhi.LaunchOptions(g, (_warmer as Warmer)?.SteamRoot ?? SteamSource.Root()));
 
