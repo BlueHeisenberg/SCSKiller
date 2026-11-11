@@ -734,6 +734,7 @@ public static partial class GameFiles
         "Prereq", "setup", "redist", "installer", "unins",
         "ffmpeg",   // Once Human's ffmpeg.exe is larger than ONCE_HUMAN.exe beside it
         "HD2Arsenal",   // a HELLDIVERS 2 mod manager kept in the game's root, where the guess looks before bin\helldivers2.exe
+        "ModEditor",    // RoadCraft ships its larger mod editor beside the game
         "crs-handler", "crs-uploader", "crs-video"];   // Sony's PC crash reporter, beside the exe of its ports and still running after a crash
 
     /// <summary>An installer, redistributable or engine helper shipped beside a game's exe, by its file name.</summary>

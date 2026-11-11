@@ -11,7 +11,8 @@ using SCSKiller.Core.Unreal;
 
 namespace SCSKiller.Core.Swarm;
 
-/// <summary>Saber's Swarm engine (Warhammer 40,000: Space Marine 2). Every shader is in client_pc\root\paks\client\default\default.pak,
+/// <summary>Saber's Swarm engine (Warhammer 40,000: Space Marine 2 and RoadCraft). The shaders are in
+/// client_pc\root\paks\client\default\default.pak, or root\paks\client\default\default.pak in RoadCraft,
 /// a ZIP, under shader_cache/prebuild/pc/*.sdc (stored). An .sdc file, little endian:
 ///   - u32 block count, u32 entry count, u32 payload bytes, u32 not read;
 ///   - per block: u32 zlib bytes, u32 n, then n entries {u32 key, u32 size, u32 m}, each followed by m bytes;
@@ -25,7 +26,8 @@ namespace SCSKiller.Core.Swarm;
 public sealed class SwarmReader : IEngineReader
 {
     public const string Family = "Swarm", Version = "SDC";
-    const string Pak = @"client_pc\root\paks\client\default\default.pak", Folder = "shader_cache/prebuild/pc/";
+    const string SpaceMarinePak = @"client_pc\root\paks\client\default\default.pak", Folder = "shader_cache/prebuild/pc/";
+    const string RoadCraftPak = @"root\paks\client\default\default.pak";
 
     /// <summary>Bounds on what a file declares, past which it is left out: the pak's entries, an .sdc's entries, a block's
     /// inflated bytes (measured: 224, 291,145, 14 MB) and an entry's m bytes.</summary>
@@ -42,31 +44,37 @@ public sealed class SwarmReader : IEngineReader
     /// <summary>default.pak under the install folder, else under the root the exe (client_pc\root\bin\pc) sits in.</summary>
     public static string? Find(Game game)
     {
-        var exeRoot = Path.GetDirectoryName(game.ExePath) is { Length: > 0 } d ? Path.GetFullPath(Path.Combine(d, "..", "..", "..", "..")) : null;
-        return new[] { game.InstallDir, exeRoot }.OfType<string>().Where(Directory.Exists).Select(r => GameFiles.Find(r, Pak)).FirstOrDefault(File.Exists);
+        var exeDir = Path.GetDirectoryName(game.ExePath);
+        var exeRoot = exeDir is { Length: > 0 } ? Path.GetFullPath(Path.Combine(exeDir, "..", "..", "..", "..")) : null;
+        var roadRoot = exeDir is { Length: > 0 } ? Path.GetFullPath(Path.Combine(exeDir, "..", "..", "..")) : null;
+      
+        return new[] { (game.InstallDir, SpaceMarinePak), (exeRoot, SpaceMarinePak), (game.InstallDir, RoadCraftPak), (roadRoot, RoadCraftPak) }
+            .Where(x => x.Item1 != null && Directory.Exists(x.Item1))
+            .Select(x => GameFiles.Find(x.Item1!, x.Item2)).FirstOrDefault(File.Exists);
     }
 
     public EngineInfo? Detect(Game game)
     {
         if (Find(game) is not { } pak) return null;
-        EngineInfo Unsupported(string why) => new(Family, Version, null, "D3D12", false, why);
+        EngineInfo Result(string? why) => new(Family, Version, null, "D3D12", false, why);
         using var zip = Open(pak, out var error);
-        if (zip == null) return Unsupported($"{Path.GetFileName(pak)} doesn't open: {error}");
+        if (zip == null) return Result($"{Path.GetFileName(pak)} doesn't open: {error}");
         string? why = null;
         foreach (var e in Sdcs(zip).OrderBy(e => e.Length))   // smallest first: a whole install stops at the first
         {
             var found = false;
             try { Each(e, null, (_, v) => found |= Dxbc.Valid(v) && Dxbc.Kind(v) >= 0, CancellationToken.None); }
             catch (Exception x) when (x is InvalidDataException or IOException) { why ??= $"{e.Name} doesn't read: {x.Message}"; }
-            if (found) return new(Family, Version, null, "D3D12", false, null);
+            // if we found a valid shader, null out the reason why and return success immediately
+            if (found) return Result(why : null);
         }
-        return Unsupported(why ?? $"no shader in {Path.GetFileName(pak)}'s {Folder}");
+        return Result(why ?? $"no shader in {Path.GetFileName(pak)}'s shader caches");
     }
 
     public ShaderIndex Index(Game game, EngineInfo engine, IProgress<string>? log, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
-        var pak = Find(game) ?? throw new FileNotFoundException($"{game.InstallDir}: no {Pak}");
+        var pak = Find(game) ?? throw new FileNotFoundException($"{game.InstallDir}: no Swarm Pak");
         using var zip = Open(pak, out var error) ?? throw new InvalidDataException($"{Path.GetFileName(pak)} doesn't open: {error}");
         var locs = new Dictionary<string, Loc>();
         var shaders = new Dictionary<string, ShaderInfo>();
