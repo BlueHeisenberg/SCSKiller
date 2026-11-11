@@ -12,7 +12,8 @@ using SCSKiller.Core.App;
 //   verify <releases.<c>.json> [--pub <base64>] [--kid rel-a] [--channel <c>] checks <feed>.sig (no --pub: the pinned keys)
 //   sign-content <body.json> --name <name> --key <key-file> --kid rules-a     writes <name>.json beside the body
 //   verify-content <name>.json [--pub <base64>] [--kid rules-a]               checks it (no --pub: the pinned rules keys)
-// <c> is an update channel, or <channel>-linux for the Linux build's feed (releases.alpha-linux.json signs as alpha-linux).
+// <c> is an update channel, or <channel>-linux for the Linux build's feed (releases.alpha-linux.json signs as alpha-linux),
+// <channel>-linux-arm64 for the arm64 Linux build's.
 // sign and verify refuse a feed that lists another OS's package (a Windows feed names no -linux- package, a Linux one only those).
 // The key file must be outside every git work tree. Release keys sign feeds, rules keys sign content: never swap them.
 
@@ -152,10 +153,10 @@ static void OwnOsOnly(string feed, string channel, byte[] bytes)
 
 static string ChannelOf(string feed, string? channel)
 {
-    channel ??= Regex.Match(Path.GetFileName(feed), @"^releases\.([a-z]+(?:-linux)?)\.json$").Groups[1].Value;
-    return UpdateChannels.All.Any(c => channel == c || channel == c + "-linux") ? channel
-        : throw new ArgumentException($"no channel: name the feed releases.<channel>.json or releases.<channel>-linux.json, or pass --channel"
-            + $" {string.Join('|', UpdateChannels.All)} (with -linux for the Linux feed)");
+    channel ??= Regex.Match(Path.GetFileName(feed), @"^releases\.([a-z]+(?:-linux(?:-arm64)?)?)\.json$").Groups[1].Value;
+    return UpdateChannels.All.Any(c => channel == c || channel == c + "-linux" || channel == c + "-linux-arm64") ? channel
+        : throw new ArgumentException($"no channel: name the feed releases.<channel>.json, releases.<channel>-linux.json or releases.<channel>-linux-arm64.json, or pass --channel"
+            + $" {string.Join('|', UpdateChannels.All)} (with -linux or -linux-arm64 for a Linux feed)");
 }
 
 // Fails closed: only git's own "not a git repository" counts as outside.

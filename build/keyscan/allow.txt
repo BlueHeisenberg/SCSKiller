@@ -99,3 +99,4 @@ ee1bcfc11e41ce583e41ac55605a2e49dad0a86f80885e330de0dee3af3dd2cc System.IO.Hashi
 501e4f476b5c5d742ab5526561490a19ef5f752bec30e7c5b172d05897a98932 System.Private.CoreLib.dll System.Globalization.CalendricalCalculationsHelper::get_Coefficients1700to1799
 ff33a43dfbe14a8ab670fb9e94f5825c63dfea1b7dc870b763d4bbdb321158f0 SCSKiller.Core.dll SCSKiller.Core.App.Codecs::.cctor liboodle-data-shared.so pinned download hash
 c3f120c3e9819eb99d0e56dba5611bc9f37e7da3d0a6fafd7d4cd368379ae873 SCSKiller.Core.dll SCSKiller.Core.App.Codecs::.cctor libz-ng.so pinned download hash
+a9eb31f711f9d5be878da2ade91d455a33f4ec5de155b7cddf0d21be80ebed42 SCSKiller.Core.dll SCSKiller.Core.App.Codecs::.cctor liboodle-data-shared.so pinned download hash (OodleUE gcc-arm64-release)

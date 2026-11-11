@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Checks a finished dist/SCSKiller-linux (build/publish-linux.sh) from the outside, as build/ci-linux-package.sh does:
-#   - every file build/publish-linux.sh's header lists is there, codecs included (a release ships libz-ng.so), and
+#   - every file build/publish-linux.sh's header lists is there, codecs included (an x86-64 release ships libz-ng.so), and
 #     SCSKiller.Ui, scskiller, native/scskiller_warm and native/fossilize-replay are executable
-#   - every ELF file in it is 64-bit little-endian x86-64, the Linux native files among them
+#   - every ELF file in it is 64-bit little-endian x86-64 (aarch64 with SCSK_ARCH=aarch64, default this machine's CPU),
+#     the Linux native files among them
 #   - native/libVkLayer_scskiller.so, scskiller_warm and fossilize-replay need glibc 2.31 at most (readelf's version
 #     needs): they run inside the Steam Runtime's sniper container
 #   - a versioned package's native/fossilize-replay has none of the test hooks (SCSK_TEST_HOOKS, 0.0.0-internal builds)
@@ -15,11 +16,19 @@ dir=${1:-$repo/dist/SCSKiller-linux}
 [[ -d $dir ]] || die "no folder $dir"
 command -v python3 >/dev/null || die "python3 is needed"
 command -v readelf >/dev/null || die "readelf (binutils) is needed"
+# SCSK_ARCH: the CPU the package is for, default this machine's (x86_64 or aarch64); the package's own executables run
+# here, so it takes that CPU or qemu-user's binfmt for it
+case ${SCSK_ARCH:-$(uname -m)} in
+    x86_64 | amd64) arch=x86_64 rid=linux-x64 elf_machine=62 ;;
+    aarch64 | arm64) arch=aarch64 rid=linux-arm64 elf_machine=183 ;;
+    *) die "no Linux package for ${SCSK_ARCH:-$(uname -m)} (SCSK_ARCH: x86_64 or aarch64)" ;;
+esac
+codecs=(); [[ $arch != x86_64 ]] || codecs=(libz-ng.so)   # zlib-ng is pinned for x86-64 alone
 id=com.BlueHeisenberg.SCSKiller
 # the replayer's fault injection, which only a 0.0.0-internal build compiles in; the release step reads this line too
 replay_hooks=(SCSKILLER_REPLAY_CRASH SCSKILLER_REPLAY_HANG SCSKILLER_REPLAY_WAIT)
 
-for f in SCSKiller.Ui scskiller SCSKiller.Ui.deps.json libz-ng.so \
+for f in SCSKiller.Ui scskiller SCSKiller.Ui.deps.json "${codecs[@]}" \
     native/{scskiller_warm.exe,segheap/scskiller_warm.exe,d3d12.dll,scskiller_ags.dll,amd_ags_x64.dll,fossilize-replay.exe,VkLayer_scskiller.dll} \
     native/{libVkLayer_scskiller.so,VkLayer_scskiller.json,scskiller_warm,fossilize-replay} \
     "share/applications/$id.desktop" "share/icons/hicolor/256x256/apps/$id.png" "share/icons/hicolor/512x512/apps/$id.png" \
@@ -29,9 +38,9 @@ done
 for f in SCSKiller.Ui scskiller native/scskiller_warm native/fossilize-replay; do [[ -x $dir/$f ]] || die "$f must be executable"; done
 echo "the files publish-linux.sh lists are there"
 
-python3 -I - "$dir" native/{libVkLayer_scskiller.so,scskiller_warm,fossilize-replay} <<'PY'
+python3 -I - "$dir" "$elf_machine" "$arch" native/{libVkLayer_scskiller.so,scskiller_warm,fossilize-replay} <<'PY'
 import os, struct, sys
-top, need, elf, bad = sys.argv[1], set(sys.argv[2:]), 0, []
+top, machine, arch, need, elf, bad = sys.argv[1], int(sys.argv[2]), sys.argv[3], set(sys.argv[4:]), 0, []
 for root, _, files in os.walk(top):
     for name in files:
         path = os.path.join(root, name)
@@ -40,12 +49,12 @@ for root, _, files in os.walk(top):
         if h[:4] != b'\x7fELF': continue
         elf += 1
         need.discard(os.path.relpath(path, top))
-        # e_ident[EI_CLASS] 2 = 64-bit, [EI_DATA] 1 = little-endian, e_machine 62 = x86-64
-        if len(h) < 20 or h[4] != 2 or h[5] != 1 or struct.unpack_from('<H', h, 18)[0] != 62:
+        # e_ident[EI_CLASS] 2 = 64-bit, [EI_DATA] 1 = little-endian, e_machine 62 = x86-64, 183 = aarch64
+        if len(h) < 20 or h[4] != 2 or h[5] != 1 or struct.unpack_from('<H', h, 18)[0] != machine:
             bad.append(os.path.relpath(path, top))
 if need: sys.exit('check-linux-package: not ELF: ' + ', '.join(sorted(need)))
-if bad: sys.exit('check-linux-package: not x86-64 ELF: ' + ', '.join(sorted(bad)))
-print(f'{elf} ELF files, all x86-64')
+if bad: sys.exit(f'check-linux-package: not {arch} ELF: ' + ', '.join(sorted(bad)))
+print(f'{elf} ELF files, all {arch}')
 PY
 
 for f in native/{libVkLayer_scskiller.so,scskiller_warm,fossilize-replay}; do

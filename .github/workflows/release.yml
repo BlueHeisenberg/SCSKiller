@@ -1,6 +1,7 @@
 # A version tag builds, tests and packages exactly like build.yml, then creates a DRAFT GitHub Release with the
 # UNSIGNED zip, SHA256SUMS-unsigned.txt, the Linux release (build.yml's vpk pack: in the private repo's runner, in the
-# artifact with the zip, in the public repo its linux job's SCSKiller-linux) and the CHANGELOG.md section. CI stops there:
+# artifact with the zip, in the public repo its linux job's SCSKiller-linux, and its linux-arm64 job's
+# SCSKiller-linux-arm64) and the CHANGELOG.md section. CI stops there:
 # the release step (run locally) downloads these bytes, checks them, signs them (cloud HSM: no signing key or
 # certificate in CI, ever), runs vpk pack for Windows, signs both feeds with the offline key and publishes. Nothing
 # here publishes, and nothing here signs: the Linux feed goes into the draft unsigned.
@@ -46,10 +47,17 @@ jobs:
           name: SCSKiller-linux      # build.yml's linux job: the AppImage, the full package, its feed and sums
           path: release-linux
 
+      - if: ${{ !github.event.repository.private }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
+        with:
+          name: SCSKiller-linux-arm64   # build.yml's linux-arm64 job: the same, with the arm64 names
+          path: release-linux-arm64
+
       - name: Check the zip and the Linux release against the sums
         run: |
           grep '  SCSKiller.zip$' SHA256SUMS-unsigned.txt | sha256sum -c -
           (cd release-linux && sha256sum -c --strict SHA256SUMS-linux.txt)
+          if [ -d release-linux-arm64 ]; then (cd release-linux-arm64 && sha256sum -c --strict SHA256SUMS-linux-arm64.txt); fi
 
       # Provenance in Sigstore's public log: stable builds on the public repo only.
       - if: ${{ !github.event.repository.private }}
@@ -59,6 +67,8 @@ jobs:
             SCSKiller.zip
             release-linux/SCSKiller-x86_64.AppImage
             release-linux/*-linux-full.nupkg
+            release-linux-arm64/SCSKiller-aarch64.AppImage
+            release-linux-arm64/*-linux-arm64-full.nupkg
 
       - name: Release notes from CHANGELOG.md
         env:
@@ -76,5 +86,6 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           pre=(); [[ "$TAG" == *-* ]] && pre=(--prerelease)
-          gh release create "$TAG" SCSKiller.zip SHA256SUMS-unsigned.txt release-linux/* --draft --verify-tag "${pre[@]}" \
+          arm=(); [ -d release-linux-arm64 ] && arm=(release-linux-arm64/*)
+          gh release create "$TAG" SCSKiller.zip SHA256SUMS-unsigned.txt release-linux/* "${arm[@]}" --draft --verify-tag "${pre[@]}" \
             --title "SCSKiller $TAG" --notes-file notes.md

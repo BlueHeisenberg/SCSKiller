@@ -13,6 +13,8 @@
 #   --release  a release tag's build: the pack's release files go into <dir> (new or empty), and NuGet restores into
 #              folders of its own, as build.yml's Windows steps do for a tag
 # CI_LINUX_LOCK, CI_LINUX_LOCK_WAIT (seconds) and CI_LINUX_DOTNET replace the lock file, its wait and the SDK folder.
+# On an arm64 machine (or SCSK_ARCH=aarch64) everything is the arm64 build: the layer in proxy/build-linux-arm64, the
+# linux-arm64 package and its release files (build/pack-linux.sh's arm64 names).
 set -euo pipefail
 die() { echo "ci-linux-package: $*" >&2; exit 1; }
 
@@ -24,6 +26,11 @@ lock=${CI_LINUX_LOCK:-/var/lock/scskiller-linux-build} lock_wait=${CI_LINUX_LOCK
 export SCSK_MAKE_JOBS=16
 
 src=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+case ${SCSK_ARCH:-$(uname -m)} in
+    x86_64 | amd64) export SCSK_ARCH=x86_64; layer_dir=$src/proxy/build-linux ;;
+    aarch64 | arm64) export SCSK_ARCH=aarch64; layer_dir=$src/proxy/build-linux-arm64 ;;
+    *) die "no Linux build for ${SCSK_ARCH:-$(uname -m)}" ;;
+esac
 args=("$@") version=() layer_only= pack= release=
 while (($#)); do
     case $1 in
@@ -37,7 +44,7 @@ done
 
 if [[ -z $layer_only ]]; then
     [[ -d $src/dist/SCSKiller/native && -f $src/dist/SHA256SUMS-unsigned.txt ]] || die "no Windows publish in $src/dist"
-    [[ -d $src/proxy/build-linux ]] || die "no Linux layer build in $src/proxy/build-linux"
+    [[ -d $layer_dir ]] || die "no Linux layer build in $layer_dir"
     [[ -x $dotnet_dir/dotnet ]] || die "no $dotnet_dir/dotnet: the package is built with the .NET SDK $sdk_version there"
     [[ -f $dotnet_dir/shared/Microsoft.NETCore.App/$runtime_version/libcoreclr.so ]] || die "$dotnet_dir has no .NET runtime $runtime_version"
     export PATH=$dotnet_dir:$PATH DOTNET_ROOT=$dotnet_dir DOTNET=$dotnet_dir/dotnet
@@ -58,8 +65,8 @@ if [[ -z ${CI_LINUX_LOCKED-} ]]; then
 fi
 
 if [[ -n $layer_only ]]; then
-    sh "$src/build/linux-layer.sh" "$src/proxy/build-linux"
-    "$src/proxy/build-linux/selftest_linux" vkrec
+    sh "$src/build/linux-layer.sh" "$layer_dir"
+    "$layer_dir/selftest_linux" vkrec
     exit
 fi
 
@@ -73,11 +80,11 @@ if [[ -n $release ]]; then export NUGET_PACKAGES=$work/nuget/packages NUGET_HTTP
 git -c safe.directory="$src" clone -q --no-checkout "$src" "$work/repo"
 git -C "$work/repo" checkout -q --detach "$(git -c safe.directory="$src" -C "$src" rev-parse HEAD)"
 
-layer=$src/proxy/build-linux
+layer=$layer_dir
 if ((${#version[@]})); then
     layer=$work/layer
     # the tests' build fetched Fossilize's sources already: the configure checks their SHA-256 again
-    if [[ -d $src/proxy/build-linux/fossilize-archives ]]; then mkdir -p "$layer" && cp -r "$src/proxy/build-linux/fossilize-archives" "$layer/"; fi
+    if [[ -d $layer_dir/fossilize-archives ]]; then mkdir -p "$layer" && cp -r "$layer_dir/fossilize-archives" "$layer/"; fi
     SCSK_VERSION=${version[1]#v} sh "$work/repo/build/linux-layer.sh" "$layer"
 fi
 bash "$work/repo/build/publish-linux.sh" --windows "$src/dist/SCSKiller/native" --sums "$src/dist/SHA256SUMS-unsigned.txt" \
