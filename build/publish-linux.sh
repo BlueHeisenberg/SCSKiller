@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Builds dist/SCSKiller-linux/, the folder the Linux packages (AppImage, Flatpak) are made from. Runs on Linux.
 #
-#   SCSKiller.Ui              the app (Avalonia), self-contained .NET for linux-x64
+#   SCSKiller.Ui              the app (Avalonia), self-contained .NET for linux-x64 (linux-arm64: SCSK_ARCH=aarch64)
 #   scskiller                 the command line on the app's runtime: every file they both publish is byte-identical, so it
 #                             shares them (a cli/ folder of its own would add a second runtime)
-#   libz-ng.so                the pinned zlib-ng, seeding each user's codecs folder; no Oodle (not redistributed, the app
-#                             downloads it on first use)
+#   libz-ng.so                the pinned zlib-ng, seeding each user's codecs folder (x86-64 only: none is pinned for
+#                             arm64); no Oodle (not redistributed, the app downloads it on first use)
 #   native/                   the Windows tools that run under Proton, from the Windows build (build/publish.ps1's
 #                             SCSKiller.zip, or its native folder), checked against its SHA-256 sums and its version first
 #                             + the Linux builds (--linux-native, the layer build's output folder): the Vulkan recorder
@@ -30,7 +30,7 @@ usage: build/publish-linux.sh --windows <SCSKiller.zip | native dir> --sums <SHA
   --windows        the Windows build's SCSKiller.zip, or its extracted SCSKiller/native folder
   --sums           its SHA256SUMS (sha256sum format, paths relative to dist/: SCSKiller.zip, SCSKiller/native/...)
   --linux-native   the Linux build's output folder (proxy/build-linux): libVkLayer_scskiller.so, VkLayer_scskiller.json,
-                   scskiller_warm and fossilize-replay, x86-64 ELF needing glibc 2.31 at most
+                   scskiller_warm and fossilize-replay, ELF for the package's CPU needing glibc 2.31 at most
   --no-linux-native  without any of them (no Vulkan recording or warm on Linux then)
   --codec-cache    where the pinned codecs are kept between builds (default ~/.local/share/SCSKiller-build/codecs)
   --no-codecs      ship no codec: the app downloads zlib-ng on first use
@@ -56,6 +56,15 @@ while (($#)); do
     esac
 done
 [[ $(uname -s) == Linux ]] || die "runs on Linux (build/publish.ps1 builds the Windows package)"
+# SCSK_ARCH: the CPU the package is for, default this machine's (x86_64 or aarch64); the package's own executables run
+# here, so it takes that CPU or qemu-user's binfmt for it
+case ${SCSK_ARCH:-$(uname -m)} in
+    x86_64 | amd64) arch=x86_64 rid=linux-x64 elf_machine=62 ;;
+    aarch64 | arm64) arch=aarch64 rid=linux-arm64 elf_machine=183 ;;
+    *) die "no Linux package for ${SCSK_ARCH:-$(uname -m)} (SCSK_ARCH: x86_64 or aarch64)" ;;
+esac
+# zlib-ng is pinned for x86-64 alone (Codecs.Linux.cs)
+[[ $arch == x86_64 ]] || no_codecs=1
 [[ -n $windows && -n $sums ]] || { usage >&2; die "--windows and --sums are required"; }
 [[ -f $sums ]] || die "no sums file $sums"
 if [[ -n $linux_native && -n $no_linux_native ]] || [[ -z $linux_native && -z $no_linux_native ]]; then
@@ -79,7 +88,7 @@ if [[ -n $version ]]; then
     version_args=("-p:Version=$version" "-p:IncludeSourceRevisionInInformationalVersion=false")
 fi
 stamp=${version:-0.0.0-internal.0}
-echo "version: ${version:-0.0.0-internal.0 (dev)}"
+echo "version: ${version:-0.0.0-internal.0 (dev)}, $rid"
 
 dotnet=${DOTNET:-dotnet}
 if ! command -v "$dotnet" >/dev/null && [[ -x $HOME/.dotnet/dotnet ]]; then dotnet=$HOME/.dotnet/dotnet; fi   # a per-user SDK
@@ -121,11 +130,11 @@ def product_version(path):
     while j < len(d) and d[j:j + 2] != b'\0\0': j += 2
     print(d[i:j].decode('utf-16-le', 'replace'))
 
-def linux_binary(path):
-    # the layer loads into games inside the Steam Runtime's container (sniper: glibc 2.31)
+def linux_binary(path, machine):
+    # the layer loads into games inside the Steam Runtime's container (sniper: glibc 2.31); machine: e_machine, 62 x86-64, 183 aarch64
     d = open(path, 'rb').read()
-    if len(d) < 20 or d[:4] != b'\x7fELF' or d[4] != 2 or d[5] != 1 or struct.unpack_from('<H', d, 18)[0] != 0x3E:
-        sys.exit(f'publish-linux: {os.path.basename(path)} is not an x86-64 ELF file')
+    if len(d) < 20 or d[:4] != b'\x7fELF' or d[4] != 2 or d[5] != 1 or struct.unpack_from('<H', d, 18)[0] != int(machine):
+        sys.exit(f'publish-linux: {os.path.basename(path)} is not a 64-bit ELF file for e_machine {machine}')
     need = max(((int(a), int(b)) for a, b in re.findall(rb'GLIBC_(\d+)\.(\d+)', d)), default=(0, 0))
     if need > (2, 31): sys.exit(f'publish-linux: {os.path.basename(path)} needs glibc {need[0]}.{need[1]}, newer than 2.31')
 
@@ -263,7 +272,7 @@ if [[ -n $linux_native ]]; then
         [[ -f $linux_native/$f ]] || die "$linux_native has no $f"
         cp "$linux_native/$f" "$tmp/linux/$f"
     done
-    for f in libVkLayer_scskiller.so scskiller_warm fossilize-replay; do py linux-binary "$tmp/linux/$f"; done
+    for f in libVkLayer_scskiller.so scskiller_warm fossilize-replay; do py linux-binary "$tmp/linux/$f" "$elf_machine"; done
     py layer-manifest "$tmp/linux/VkLayer_scskiller.json"
     chmod 755 "$tmp/linux/scskiller_warm" "$tmp/linux/fossilize-replay"
 fi
@@ -272,7 +281,7 @@ echo "native: ${#natives[@]} Windows files match $sums, ${#linux_natives[@]} Lin
 # 2. app + CLI (no debug symbols: they embed the checkout path); the CLI joins the app's folder only where every file
 #    the two share is the same
 rm -rf "$out"
-common=(-c "$configuration" -f net10.0 -r linux-x64 --self-contained true -p:DebugType=None -p:DebugSymbols=false "${version_args[@]}")
+common=(-c "$configuration" -f net10.0 -r "$rid" --self-contained true -p:DebugType=None -p:DebugSymbols=false "${version_args[@]}")
 "$dotnet" publish "$repo/src/SCSKiller.Ui/SCSKiller.Ui.csproj" -o "$out" "${common[@]}"
 # .NET up to 10.0.12 keeps its named mutexes in /tmp, which a sandbox (bwrap, Flatpak) shows as another user's: every lock
 # would count as held
@@ -307,7 +316,7 @@ row="| .NET runtime (self-contained) |"
 sed "s/^$row [^|]* |/$row $runtime |/" "$repo/THIRD-PARTY-NOTICES.md" >"$out/THIRD-PARTY-NOTICES.md"
 grep -qF "$row $runtime |" "$out/THIRD-PARTY-NOTICES.md" || die "THIRD-PARTY-NOTICES.md has no '$row' row to put .NET $runtime in"
 chmod 644 "$out/THIRD-PARTY-NOTICES.md"
-install -D -m 644 "$nuget/microsoft.netcore.app.runtime.linux-x64/$runtime/THIRD-PARTY-NOTICES.TXT" "$out/notices/dotnet-THIRD-PARTY-NOTICES.txt"
+install -D -m 644 "$nuget/microsoft.netcore.app.runtime.$rid/$runtime/THIRD-PARTY-NOTICES.TXT" "$out/notices/dotnet-THIRD-PARTY-NOTICES.txt"
 for p in SkiaSharp HarfBuzzSharp; do
     dir=$(py package-path "$out/SCSKiller.Ui.deps.json" "$p.NativeAssets.Linux")
     install -m 644 "$nuget/$dir/THIRD-PARTY-NOTICES.txt" "$out/notices/$p-THIRD-PARTY-NOTICES.txt"
@@ -349,4 +358,4 @@ for rc in SCSKiller.Ui scskiller; do py framework-version "$out/$rc.runtimeconfi
 reported=$(SCSKILLER_DATA_DIR=$tmp/data "$out/scskiller" --version)
 [[ $reported == "$stamp" ]] || die "scskiller --version says '$reported', not $stamp"
 
-echo "dist/SCSKiller-linux: $(du -sm "$out" | cut -f1) MB, version $stamp"
+echo "dist/SCSKiller-linux: $(du -sm "$out" | cut -f1) MB, version $stamp, $rid"

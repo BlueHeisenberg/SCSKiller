@@ -4,6 +4,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**New on Linux**
+
+- A native arm64 (aarch64) build, `SCSKiller-aarch64.AppImage`, for arm64 Linux PCs and handhelds. It updates from its own
+  feeds, so it never installs the x86-64 package, and decodes Oodle with the arm64 build of the codec.
+
 ## [1.4.7] - 2026-11-08
 
 **New**
