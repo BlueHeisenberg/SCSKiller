@@ -4,6 +4,13 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**New on Linux**
+
+- Qualcomm Adreno GPUs compile through Mesa's Turnip driver on arm64, as AMD GPUs do through RADV. Turnip support is
+  experimental: its cache behaviour isn't measured yet.
+- On arm64, games on ARM64 Proton (Valve's, Proton-CachyOS and GE-Proton's aarch64 builds) compile, and a compile that
+  starts without a display, such as the one after a driver update, no longer hangs at Wine's start.
+
 ## [1.4.7] - 2026-11-08
 
 **New**
