@@ -10,6 +10,8 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
   experimental: its cache behaviour isn't measured yet.
 - On arm64, games on ARM64 Proton (Valve's, Proton-CachyOS and GE-Proton's aarch64 builds) compile, and a compile that
   starts without a display, such as the one after a driver update, no longer hangs at Wine's start.
+- On Armada, a game compiles for the Turnip build Armada picks for it, and a new build of that driver makes its compile
+  stale.
 
 ## [1.4.7] - 2026-11-08
 

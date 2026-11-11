@@ -863,7 +863,7 @@ public sealed partial class ScsKiller : IScsKiller
             {
                 var rec = Store.LoadGame(g.Id);
                 states.Add(listed with { Playing = IsPlaying(g.Id), NewShadersOverride = rec.NewShaders, RtSkipped = !RayTracing(rec), RayTracingOverride = rec.RayTracing, TraversalOverride = rec.Traversal, LeftOutOfAddAll = rec.LeftOutOfAddAll, SharedHashes = SharedHashesOn(g.Id, free: true), SharedChoice = SharedChoice(rec), CacheCapGB = rec.CacheCapGB, PlanCacheCapGB = rec.PlanCacheCapGB, ExeChosen = rec.ChosenExe != null });
-                driverStale.Add(rec.WarmedAt != null && !CurrentDriver(gpu, rec.WarmedDriverId, rec.WarmedDriverVersion));
+                driverStale.Add(rec.WarmedAt != null && !CurrentDriver(Of(g, gpu), rec.WarmedDriverId, rec.WarmedDriverVersion));
             }
             else
             {
@@ -1514,7 +1514,7 @@ public sealed partial class ScsKiller : IScsKiller
     {
         var rec = Store.LoadGame(g.Id);
         HoldTakenFolder(g, rec);
-        var gpuNow = Snapshot();
+        var gpuNow = Of(g, Snapshot());
         var exeDir = Path.GetDirectoryName(g.ExePath)!;
         // an earlier build's mark with no recorder folder named (MigrateInis): the game's exe folder's
         if (rec.IniIsUsers && (rec.RecorderExe ?? rec.RecorderMoveFrom ?? rec.OfflineSession?.Exe) == null && Directory.Exists(exeDir))
@@ -3168,7 +3168,7 @@ public sealed partial class ScsKiller : IScsKiller
     /// Shaders that read otherwise only because the engine reader changed since the warm (<see cref="Reread"/>) are the
     /// planner's change, not the game's.</summary>
     string? WarmChanged(Game g, GameRecord r, EngineInfo? e, GpuSnapshot? snapshot = null) =>
-        (snapshot ?? Snapshot()) is var gpu && !CurrentDriver(gpu, r.WarmedDriverId, r.WarmedDriverVersion) ? $"driver changed: {r.WarmedDriverVersion} -> {gpu.Gpu.DriverVersion}"
+        Of(g, snapshot ?? Snapshot()) is var gpu && !CurrentDriver(gpu, r.WarmedDriverId, r.WarmedDriverVersion) ? $"driver changed: {r.WarmedDriverVersion} -> {gpu.Gpu.DriverVersion}"
         : TrimmedReason(g.Id, r) is { } trimmed ? trimmed
         : Misses(r, snapshot ?? Snapshot()) ? MissesGameReason
         : r.AgsMissed && r.WarmedAgsApp != null ? AgsMissedReason(r)
@@ -3616,7 +3616,7 @@ public sealed partial class ScsKiller : IScsKiller
     bool CantReach(Game g, GameRecord r, GpuSnapshot gpu, EngineInfo? engine) =>
         r.MissedTwice && Misses(r, gpu) && !(engine is { } v && VulkanPlan.IsVulkan(v) && AmdVkFile(r) != null)   // the next AMD Vulkan warm names the game's file
         && !(Vendor.Caps.PackageKeyed && g.Store == Core.Store.Xbox && !(engine is { } e && VulkanPlan.IsVulkan(e)))
-        && (r.WarmedDriverId != null || r.WarmedDriverVersion != null) && CurrentDriver(gpu, r.WarmedDriverId, r.WarmedDriverVersion) && AgsFor(g, r, recover: true)?.App == r.WarmedAgsApp
+        && (r.WarmedDriverId != null || r.WarmedDriverVersion != null) && CurrentDriver(Of(g, gpu), r.WarmedDriverId, r.WarmedDriverVersion) && AgsFor(g, r, recover: true)?.App == r.WarmedAgsApp
         && WarmExeName(g, r) == (r.WarmedExeName ?? Path.GetFileName(g.ExePath)) && !AgsProbePending(g, r);
 
     /// <summary>A warm under an AGS app name whose game's own keys aren't known, and the game's first launch after it still
@@ -7162,6 +7162,17 @@ public sealed partial class ScsKiller : IScsKiller
     /// too: the warm runs there, with the game's GPU variables (<paramref name="env"/>) where its GPU is told. NotReadyException
     /// where the game's GPU takes another backend or is a software renderer.</summary>
     partial void GameGpu(Game g, ref GpuInfo? gpu, ref IReadOnlyList<(string Name, string Value)>? env);
+
+    /// <summary>The GPU snapshot as <paramref name="g"/>'s compiles are judged and recorded on it: the driver the game itself
+    /// runs on where that isn't the one SCSKiller's own Vulkan lists (Linux on arm64: a game's own Turnip build, Armada's
+    /// per-game pick). Unchanged everywhere else, and when it already is the game's.</summary>
+    partial void GameDriver(Game g, ref GpuSnapshot s);
+
+    GpuSnapshot Of(Game g, GpuSnapshot s)
+    {
+        GameDriver(g, ref s);
+        return s;
+    }
 
     /// <summary><see cref="PreloadHeldSkip"/> as the status says it, after "needs a recording, ".</summary>
     public static string PreloadHeldNoRecording(string held, bool byOptions = false) => byOptions ? "which WINEDLLOVERRIDES in its launch options blocks"
@@ -11883,7 +11894,7 @@ public sealed partial class ScsKiller : IScsKiller
                 RedetectGpu();   // the warm targets the adapter by LUID, which a driver update replaces
                 // what this warm launches on and is recorded for, even if a check during it sees a newer one; an unknown
                 // driver (DXGI gave no version yet) resets nothing and records none
-                var snap = Snapshot();
+                var snap = Of(game, Snapshot());
                 var (gpu, driverId) = (snap.Gpu, snap.Id);
                 if (AdoptDriverId(rec, snap)) Store.SaveGame(id, rec);   // an earlier build's keys for this driver are kept
                 if (OperatingSystem.IsWindows() && AgsProbePending(game, rec) && !await ProbeAgs(game, rec, engine, snap, work, ct)) continue;
@@ -13777,7 +13788,7 @@ public sealed partial class ScsKiller : IScsKiller
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"{StoppedFile} not removed: {e.Message}"); }
     }
 
-    string? FullReplayReason(Game g, GameRecord r, EngineInfo? e, GpuSnapshot snap, bool compiling = false) => ColdWarm(r, snap.Id) ? (r is { WarmedDriverId: LostD3DSCache, D3DSCacheDamaged: false } ? "once, because SCSKiller 1.3.0 removed this driver's cache after its compiles" : NothingOnRecord)
+    string? FullReplayReason(Game g, GameRecord r, EngineInfo? e, GpuSnapshot snap, bool compiling = false) => ColdWarm(r, Of(g, snap).Id) ? (r is { WarmedDriverId: LostD3DSCache, D3DSCacheDamaged: false } ? "once, because SCSKiller 1.3.0 removed this driver's cache after its compiles" : NothingOnRecord)
         : WarmChanged(g, r, e, snap) ?? ReplayAgain(r) ?? DeliveryChanged(g, r) ?? CacheFilesChanged(g.Id, r, compiling: compiling);
 
     /// <summary>The last complete warm left out what the game's Advanced Shader Delivery served, and that delivery is gone or another.</summary>

@@ -37,10 +37,13 @@ public static class LaunchGpu
 
     static IEnumerable<(string Name, string Value)> Own(Game g, string steamRoot)
     {
+        var id = SteamSource.AppId(g.Id) ?? SteamShortcuts.AppId(g.Id);
         var options = SteamSource.AppId(g.Id) is { } app ? SteamSource.LaunchOptions(steamRoot, app)
             : SteamShortcuts.AppId(g.Id) is { } shortcut ? SteamShortcuts.Find(steamRoot, shortcut)?.LaunchOptions : null;
-        return options != null ? SteamLaunchOptions.Variables(options, out _)
-            : LauncherPrefix.Is(g) && LauncherPrefix.Of(g, out _) is { Env: { } env } ? env : [];
+        if (options == null) return LauncherPrefix.Is(g) && LauncherPrefix.Of(g, out _) is { Env: { } env } ? env : [];
+        var own = SteamLaunchOptions.Variables(options, out _);
+        // Armada's wrapper sets the game's Turnip build itself (its tweaks' env applies over the options' variables)
+        return ArmadaLaunch.Wraps(options) && id is { } appId ? [.. own, .. ArmadaLaunch.Variables(appId, own)] : own;
     }
 
     /// <summary>The adapter of <paramref name="all"/> the variables run the game on; null when they pick none (the game takes
@@ -116,6 +119,43 @@ public static class LaunchGpu
             ? a => a.Gpu.AdapterLuid != 0 && a.Gpu.AdapterLuid == pci : null;
     }
 
+    /// <summary>The Turnip library the game's own driver files (<paramref name="vars"/>: VK_DRIVER_FILES, else
+    /// VK_ICD_FILENAMES) load on arm64: the first manifest that is there naming an aarch64 libvulkan_freedreno.so by path
+    /// (relative to the manifest's folder, as the loader takes it), its full path. Null: none (the system's driver: a bare
+    /// name is the loader's search path), or not arm64. Armada names a game's picked build so (<see cref="ArmadaLaunch"/>).</summary>
+    internal static string? TurnipLibrary(IReadOnlyList<(string Name, string Value)> vars)
+    {
+        if (System.Runtime.InteropServices.RuntimeInformation.OSArchitecture != System.Runtime.InteropServices.Architecture.Arm64) return null;
+        string? Var(string name) => vars.LastOrDefault(v => v.Name == name).Value is { Length: > 0 } v ? v : null;
+        if ((Var("VK_DRIVER_FILES") ?? Var("VK_ICD_FILENAMES")) is not { } files) return null;
+        foreach (var m in files.Split(':', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!File.Exists(m)) continue;
+            string? library = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(m));
+                library = doc.RootElement.GetProperty("ICD").GetProperty("library_path").GetString();
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or KeyNotFoundException or InvalidOperationException) { }
+            if (library == null || !Path.GetFileName(library).StartsWith("libvulkan_freedreno", StringComparison.Ordinal) || !library.Contains('/')) continue;
+            var path = Path.GetFullPath(library, Path.GetDirectoryName(Path.GetFullPath(m))!);
+            if (Aarch64(path)) return path;
+        }
+        return null;
+    }
+
+    static bool Aarch64(string path)
+    {
+        try
+        {
+            using var f = File.OpenRead(path);
+            Span<byte> h = stackalloc byte[20];
+            return f.Read(h) == 20 && h[0] == 0x7F && h[1] == (byte)'E' && h[2] == (byte)'L' && h[3] == (byte)'F' && h[4] == 2 && h[18] == 0xB7 && h[19] == 0;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
+
     /// <summary>The VkDriverIds of the drivers a VK_DRIVER_FILES entry loads, a driver manifest or a folder of them, by the
     /// library each names; 0 for one SCSKiller can't tell.</summary>
     static IEnumerable<uint> DriversIn(string path)
@@ -125,6 +165,9 @@ public static class LaunchGpu
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { manifests = [path]; }
         foreach (var m in manifests)
         {
+            // the loader skips a manifest that isn't there: on arm64 Armada lists the FEX guest's x86 Turnip manifests on the
+            // host too (elsewhere one still leaves the driver unknown, as before)
+            if (System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.Arm64 && !File.Exists(m)) continue;
             string? library = null;
             try
             {
