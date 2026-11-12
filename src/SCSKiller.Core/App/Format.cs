@@ -5,6 +5,7 @@ public static class Format
 {
     /// <summary>The game page's line before a session with the recorder; null for a game whose recorder can't go in.</summary>
     public static string? SessionHint(GameState s) => s.RecorderSkip is ScsKiller.SkipUnsupported or ScsKiller.SkipVulkanSteamOnly ? null
+        : s.OutsideEligible ? "Your last recorded session shows here: how much was ready and what still stuttered."
         : "Play with it on and your last session shows here: how much was ready and what still stuttered.";
 
     public const string Dash = "—";
@@ -193,7 +194,7 @@ public static class Format
             GameStatus.NeedsRecording when Starts("the recording has no draws") => "Play into the game world",
             GameStatus.NeedsRecording when s.RecorderInstalled => Sentence(FirstClause(r)),
             GameStatus.NeedsRecording when s.RecorderEffective && Games.Collections.RecordedBy(s.Game.Id) != null => "Recorder on: play 5 minutes",   // its collection's first game's
-            GameStatus.NeedsRecording when s.RiskEligible => "Record a session on its page",
+            GameStatus.NeedsRecording when s.RiskEligible || s.OutsideEligible => "Record a session on its page",
             GameStatus.NeedsRecording when s.RecorderSkip != null => "Recorder not available",
             GameStatus.NeedsRecording => "Turn on Record and play",
             GameStatus.Ready when Has("ray-traced effects aren't compiled") => !s.AnyAntiCheat || s.RiskEligible || s is { AntiCheatUnfinished: true, Vac: false } ? "Ray tracing not compiled" : "Ray tracing not compiled, contains anti-cheat",

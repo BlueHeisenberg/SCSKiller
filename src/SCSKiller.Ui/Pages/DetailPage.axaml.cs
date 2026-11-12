@@ -762,6 +762,50 @@ public sealed partial class DetailPage : UserControl, INavigable
         await StartSession(vm, () => Host.Core.StartOfflineSession(id, confirmed: true));
     }
 
+    // "Record every Steam launch": the player picks how the launch option gets into Steam, SCSKiller editing Steam's settings
+    // or they pasting it themselves. The switch then shows what Steam's settings say, which a paste reaches only once Steam saves.
+    async void OnOutsideAlwaysToggled(object? _, RoutedEventArgs __)
+    {
+        var on = OutsideAlwaysSwitch.IsChecked == true;
+        if (on == Vm.OutsideAlwaysOn || Vm.OutsideLaunchOption is not { } option) return;
+        var (vm, id) = (Vm, Vm.Row.Id);
+        vm.OutsideAlwaysPending = on;   // the switch stays as clicked, and off for a second click, until the dialog is answered
+        vm.Refresh();
+        var answer = await App.ShowAsync(new ContentDialog
+        {
+            Title = on ? $"Record every Steam launch of {vm.Name}?" : $"Stop recording Steam launches of {vm.Name}?",
+            Content = Text(on ? ScsKiller.OutsideAlwaysOnText(option) : ScsKiller.OutsideAlwaysOffText),
+            PrimaryButtonText = on ? "Add it for me" : "Remove it for me", SecondaryButtonText = on ? "Copy it" : null, CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+        });
+        string? error = null;
+        try
+        {
+            if (answer == ContentDialogResult.Primary) error = await Task.Run(() => Host.Core.SetOutsideAlways(id, on));
+            else if (answer == ContentDialogResult.Secondary && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
+            {
+                var item = new Avalonia.Input.DataTransferItem();
+                item.Set(Avalonia.Input.DataFormat.Text, option);
+                var data = new Avalonia.Input.DataTransfer();
+                data.Add(item);
+                await clipboard.SetDataAsync(data);
+                await clipboard.FlushAsync();
+                await App.ShowAsync(new ContentDialog { Title = "Launch option copied", Content = Text(ScsKiller.OutsideCopiedText), CloseButtonText = "OK" });
+            }
+        }
+        catch (Exception ex) { error = Describe(ex); }
+        (vm.Error, vm.OutsideAlwaysPending) = (error, null);
+        vm.Refresh();
+    }
+
+    // A game that takes no recorder file in its folder (GameState.OutsideEligible): each session confirmed, as the others
+    async void OnRecordOutside(object? _, RoutedEventArgs __)
+    {
+        var (vm, id) = (Vm, Vm.Row.Id);
+        if (!await App.ConfirmAsync($"Start {vm.Name} and record this session?", Text(ScsKiller.OutsideConfirm), "Start and record")) return;
+        await StartSession(vm, () => Host.Core.StartOutsideSession(id, confirmed: true));
+    }
+
     // A fresh check first, so the confirmation names the anti-cheat that is there now; the core refuses if it finds another.
     async Task RecordRisk(DetailVm vm, string id)
     {

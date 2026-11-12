@@ -6893,6 +6893,41 @@ static void hook_opti() {
     logf("opti: loaded as OptiScaler's %ls, System32's D3D12CreateDevice %s", kOptiOriginal, hooked ? "hooked" : "not hooked (entry not recognized)");
 }
 
+// scskiller_d3d12.dll comes in through an import SCSKiller adds to the exe's headers in the suspended process, and RE Engine
+// games trap on headers that differ from the exe's file: the import and bound import directories go back to the file's.
+// Here, in DllMain: every import of the exe is bound by now, and none of its code has run. 1 restored, 0 nothing to
+// restore (loaded another way), -1 couldn't.
+static int restore_exe_imports() {
+    BYTE* base = (BYTE*)GetModuleHandleW(nullptr);
+    auto* nt = (IMAGE_NT_HEADERS64*)(base + ((IMAGE_DOS_HEADER*)base)->e_lfanew);
+    wchar_t path[1024];
+    const DWORD n = GetModuleFileNameW(nullptr, path, 1024);
+    if (!n || n >= 1024 || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return -1;
+    HANDLE f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return -1;
+    IMAGE_DOS_HEADER dos{};
+    IMAGE_NT_HEADERS64 file{};
+    DWORD got = 0;
+    const bool read = ReadFile(f, &dos, sizeof dos, &got, nullptr) && got == sizeof dos && dos.e_magic == IMAGE_DOS_SIGNATURE
+        && SetFilePointer(f, dos.e_lfanew, nullptr, FILE_BEGIN) != INVALID_SET_FILE_POINTER
+        && ReadFile(f, &file, sizeof file, &got, nullptr) && got == sizeof file && file.Signature == IMAGE_NT_SIGNATURE
+        && file.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC;
+    CloseHandle(f);
+    if (!read) return -1;
+    int changed = 0;
+    for (int i : {IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT}) {
+        IMAGE_DATA_DIRECTORY& mem = nt->OptionalHeader.DataDirectory[i];
+        const IMAGE_DATA_DIRECTORY& disk = file.OptionalHeader.DataDirectory[i];
+        if (mem.VirtualAddress == disk.VirtualAddress && mem.Size == disk.Size) continue;
+        DWORD prot = 0;
+        if (!VirtualProtect(&mem, sizeof mem, PAGE_READWRITE, &prot)) return -1;
+        mem = disk;
+        VirtualProtect(&mem, sizeof mem, prot, &prot);
+        changed = 1;
+    }
+    return changed;
+}
+
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     if (reason == DLL_PROCESS_DETACH) {
         // reserved != nullptr: the process is terminating (not a plain FreeLibrary). Best effort, no lock: the loader lock
@@ -6912,10 +6947,18 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     if (reason != DLL_PROCESS_ATTACH) return TRUE;
     DisableThreadLibraryCalls(self);
     g_dir = own_dir(self);
+    // injected (scskiller_d3d12.dll, from outside the game folder: RE Engine games trap on any module loaded from their own
+    // folder that they don't ship): its cfg, keys, db and log stay in the exe's folder, files there are never loaded
+    if (const std::wstring me = module_path(self); !_wcsicmp(me.c_str() + (me.find_last_of(L'\\') + 1), L"scskiller_d3d12.dll"))
+        g_dir = module_dir(nullptr);
     g_elsewhere = _wcsicmp(g_dir.c_str(), module_dir(nullptr).c_str()) != 0;
     // loaded as d3d11.dll (the app installs it under that name in a D3D11 game): the D3D11 recorder, over the system d3d11.dll
     const std::wstring own = module_path(self);
     g_api11 = !_wcsicmp(own.c_str() + (own.find_last_of(L'\\') + 1), L"d3d11.dll");
+    // scskiller_d3d12.dll: loaded into the game by SCSKiller from outside its folder (see g_dir above): System32's
+    // d3d12.dll's device creates are patched at their entry to come here
+    const bool injected = !_wcsicmp(own.c_str() + (own.find_last_of(L'\\') + 1), L"scskiller_d3d12.dll");
+    const int headers = injected ? restore_exe_imports() : 0;   // first: before anything that can fail or return
     wchar_t p[MAX_PATH];
     g_frames_only = g_api11 && GetPrivateProfileIntW(L"scskiller", L"frames_only", 0, config_path(g_dir).c_str()) == 1;  // not cfg(): ini only
     const wchar_t* sys_dll = g_api11 ? L"d3d11.dll" : L"d3d12.dll";
@@ -6926,7 +6969,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     GetSystemDirectoryW(p, MAX_PATH);
     const std::wstring sys_path = std::wstring(p) + L"\\" + sys_dll;
     if (!g_api11 && sdk_path && !*sdk_path && GetProcAddress(exe, "D3D12SDKVersion") && !GetModuleHandleW(sys_path.c_str()))
-        return FALSE;
+        return injected ? TRUE : FALSE;  // injected: too early to load d3d12, nothing is recorded
     g_real = LoadLibraryW(sys_path.c_str());
     if (!g_real) return FALSE;
     g_cs_locked = (decltype(g_cs_locked))GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlIsCriticalSectionLockedByThread");
@@ -6959,6 +7002,15 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     FALLBACK(Ordinal99)
 #undef FALLBACK
     real_CreateDevice = (PFN_CreateDevice)res("D3D12CreateDevice");
+    if (injected && !g_api11) {
+        // the game calls System32's exports, not ours: their entries jump to ours, real_* become the trampolines
+        void* create = (void*)GetProcAddress(g_real, "D3D12CreateDevice");
+        void* iface = (void*)GetProcAddress(g_real, "D3D12GetInterface");
+        const bool c_ok = create && hook_fn(create, (void*)Proxy_D3D12CreateDevice, (void**)&real_CreateDevice, false, nullptr, 0, 0, true);
+        const bool i_ok = iface && hook_fn(iface, (void*)Proxy_D3D12GetInterface, (void**)&real_D3D12GetInterface, false, nullptr, 0, 0, true);
+        logf("injected: System32's D3D12CreateDevice %s, D3D12GetInterface %s; the exe's import headers %s", c_ok ? "hooked" : "not hooked",
+             i_ok ? "hooked" : "not hooked", headers > 0 ? "restored" : headers < 0 ? "not restored" : "as its file's");
+    }
     // Only scskiller_warm (and selftest) export SCSKiller_WarmHost; its staged child runs under the game's exe name, so the
     // name can't tell. A game given mode=warm records instead.
     const bool warm_asked = cfg(L"SCSKILLER_MODE", L"mode", L"record") == L"warm";

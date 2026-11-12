@@ -442,7 +442,7 @@ public sealed class DetailVm(string id) : Bindable
         : Enough ? Sentence(s.StatusReason) + "."
         : $"{TurnOnAndPlay} as usual for about 5 minutes. SCSKiller learns this game's shader layout from it, then it can compile.";
     // a collection's other game is recorded by its first game's recorder, switched on that game's page
-    string TurnOnAndPlay => Collections.RecordedBy(s.Game.Id) is { } by ? $"Turn on recording on {Collections.Member(by)!.Value.Game.Name}'s page and play this game" : "Turn on recording and play";
+    string TurnOnAndPlay => s.OutsideEligible ? "Start a recorded session below and play" : Collections.RecordedBy(s.Game.Id) is { } by ? $"Turn on recording on {Collections.Member(by)!.Value.Game.Name}'s page and play this game" : "Turn on recording and play";
     public bool ShowRecordAction => !RecordOn && CanToggleRecord && NoAntiCheat;   // an anti-cheat game records only through its session card
 
     // Shader coverage (PlanStats), in words: how much of what the planner found gets compiled, where it comes from, what's
@@ -861,6 +861,18 @@ public sealed class DetailVm(string id) : Bindable
         + "SCSKiller isn't responsible if your account gets banned.";
     public string? SessionNote => s.SessionNote;
     public bool HasSessionNote => s.SessionNote != null;
+    // a game whose protection takes no recorder file in its folder (ScsKiller.OutsideOnly): no switch, a session per click
+    public bool ShowOutside => s.OutsideEligible;
+    public bool CanStartOutside => !s.OfflineRunning && !s.Playing && !OfflineStarting;
+    public string OutsideButtonText => s.OfflineRunning ? "Session running…" : "Start the game and record";
+    public string OutsideText => ScsKiller.OutsideNote;
+    // every Steam launch recorded, through a launch option (GameState.OutsideLaunchOption): the switch shows what Steam's settings say
+    public bool ShowOutsideAlways => s.OutsideLaunchOption != null;
+    public string? OutsideLaunchOption => s.OutsideLaunchOption;
+    public bool? OutsideAlwaysPending { get; set; }
+    public bool OutsideAlwaysOn => OutsideAlwaysPending ?? s.OutsideAlways;
+    public bool CanToggleOutsideAlways => OutsideAlwaysPending == null;
+    public string OutsideAlwaysNote => ScsKiller.OutsideAlwaysNote;
     public string? RecorderFailure => s.RecorderFailure is { } f ? $"Recorder {f}." : null;
     public bool HasRecorderFailure => s.RecorderFailure != null;
 

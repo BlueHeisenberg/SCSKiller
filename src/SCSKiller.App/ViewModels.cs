@@ -364,6 +364,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.Ready => "Ready to compile",
         _ when ScsKiller.CheckingAntiCheat(s) => ScsKiller.AntiCheatHeld(s) ? ScsKiller.HeldAntiCheatTitle : ScsKiller.CheckingAntiCheatTitle,
         _ when ScsKiller.NeedsOfflineSession(s) => "Needs an offline session",
+        _ when ScsKiller.NeedsOutsideSession(s) => ScsKiller.NeedsOutsideTitle,
         _ when ScsKiller.NeedsSteamStart(s) => "Start it once from Steam",
         GameStatus.NeedsRecording when ScsKiller.NeverRecorded(s) => ScsKiller.NothingRecordedTitle,
         GameStatus.NeedsRecording => ScsKiller.RecordedEnough(s) ? "Needs a recording" : "Needs a 5-min recording",
@@ -382,6 +383,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.Warmed => $"driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? " · a recording compiles the rest"
             : ScsKiller.RtAfterRecording(s) ? " · " + ScsKiller.RtAfterRecordingNote : "") + Format.KeyNote(s),
         _ when ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsSteamStart(s) => s.StatusReason,
+        _ when ScsKiller.NeedsOutsideSession(s) => ScsKiller.NeedsOutsideNote,
         _ when ScsKiller.CheckingAntiCheat(s) => ScsKiller.AntiCheatHeld(s) ? ScsKiller.HeldAntiCheatNote : ScsKiller.CheckingAntiCheatNote,
         GameStatus.NeedsRecording when s.AnyAntiCheat && !s.RiskEligible => "Contains anti-cheat",
         GameStatus.NeedsRecording when s.RecordingPaused => ScsKiller.PausedNote(App.Core.Settings),
@@ -412,11 +414,11 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     public bool IsAdd => s.Status is GameStatus.Ready or GameStatus.Stale && !s.CompileUnreached;
     public string AddText => queued ? "In queue" : "Add to queue";
     public bool CanAdd => !queued;
-    public bool IsRecord => s.Status == GameStatus.NeedsRecording && !s.RecorderInstalled && s.NoStutter == null && !ScsKiller.NeedsOfflineSession(s) && !ScsKiller.NeedsSteamStart(s) && !s.RiskEligible && !Shared && !ScsKiller.CheckingAntiCheat(s) && !AmdVkAntiCheat;
+    public bool IsRecord => s.Status == GameStatus.NeedsRecording && !s.RecorderInstalled && s.NoStutter == null && !ScsKiller.NeedsOfflineSession(s) && !ScsKiller.NeedsSteamStart(s) && !s.RiskEligible && !s.OutsideEligible && !Shared && !ScsKiller.CheckingAntiCheat(s) && !AmdVkAntiCheat;
     bool AmdVkAntiCheat => s.StatusReason == ScsKiller.AmdVkAntiCheatReason;   // its page, where an own-risk session is offered
     bool Shared => Collections.RecordedBy(s.Game.Id) != null;   // recorded by its collection's first game's recorder, switched on that game's page
     public bool CanRecord => !s.AnyAntiCheat;
-    public bool IsDetails => s.Status == GameStatus.Warmed || ScsKiller.IsUnchecked(s) || s.CompileUnreached || ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsSteamStart(s) || ScsKiller.CheckingAntiCheat(s) || (s.Status == GameStatus.NeedsRecording && (s.RecorderInstalled || s.NoStutter != null || s.RiskEligible || Shared || AmdVkAntiCheat));
+    public bool IsDetails => s.Status == GameStatus.Warmed || ScsKiller.IsUnchecked(s) || s.CompileUnreached || ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsOutsideSession(s) || ScsKiller.NeedsSteamStart(s) || ScsKiller.CheckingAntiCheat(s) || (s.Status == GameStatus.NeedsRecording && (s.RecorderInstalled || s.NoStutter != null || s.RiskEligible || Shared || AmdVkAntiCheat));
     public bool IsWhy => s.Status == GameStatus.Unsupported && !ScsKiller.IsUnchecked(s) && !ScsKiller.CheckingAntiCheat(s);
     public string Reason => s.StatusReason;
 
@@ -1112,7 +1114,7 @@ public sealed class DetailVm(string id) : Bindable
         : Enough ? Sentence(s.StatusReason) + "."
         : $"{TurnOnAndPlay} as usual for about 5 minutes. SCSKiller learns this game's shader layout from it, then it can compile.";
     // a collection's other game is recorded by its first game's recorder, switched on that game's page
-    string TurnOnAndPlay => Collections.RecordedBy(s.Game.Id) is { } by ? $"Turn on recording on {Collections.Member(by)!.Value.Game.Name}'s page and play this game" : "Turn on recording and play";
+    string TurnOnAndPlay => s.OutsideEligible ? "Start a recorded session below and play" : Collections.RecordedBy(s.Game.Id) is { } by ? $"Turn on recording on {Collections.Member(by)!.Value.Game.Name}'s page and play this game" : "Turn on recording and play";
     public bool ShowRecordAction => !RecordOn && CanToggleRecord && NoAntiCheat;   // an anti-cheat game records only through its session card
 
     // Shader coverage (PlanStats), in words: how much of what the planner found gets compiled, where it comes from, what's
@@ -1514,6 +1516,18 @@ public sealed class DetailVm(string id) : Bindable
         + "SCSKiller isn't responsible if your account gets banned.";
     public string? SessionNote => s.SessionNote;
     public bool HasSessionNote => s.SessionNote != null;
+    // a game whose protection takes no recorder file in its folder (ScsKiller.OutsideOnly): no switch, a session per click
+    public bool ShowOutside => s.OutsideEligible;
+    public bool CanStartOutside => !s.OfflineRunning && !s.Playing && !OfflineStarting;
+    public string OutsideButtonText => s.OfflineRunning ? "Session running…" : "Start the game and record";
+    public string OutsideText => ScsKiller.OutsideNote;
+    // every Steam launch recorded, through a launch option (GameState.OutsideLaunchOption): the switch shows what Steam's settings say
+    public bool ShowOutsideAlways => s.OutsideLaunchOption != null;
+    public string? OutsideLaunchOption => s.OutsideLaunchOption;
+    public bool? OutsideAlwaysPending { get; set; }
+    public bool OutsideAlwaysOn => OutsideAlwaysPending ?? s.OutsideAlways;
+    public bool CanToggleOutsideAlways => OutsideAlwaysPending == null;
+    public string OutsideAlwaysNote => ScsKiller.OutsideAlwaysNote;
     public string? RecorderFailure => s.RecorderFailure is { } f ? $"Recorder {f}." : null;
     public bool HasRecorderFailure => s.RecorderFailure != null;
 

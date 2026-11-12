@@ -174,7 +174,8 @@ static partial class Screenshots
         if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") == "anticheat")
         {
             fake.ShowGames();
-            foreach (var (name, id) in new[] { ("anticheat", "hoyoplay:nap_global"), ("anticheat-offline", "steam:1245620"), ("wegame-held", "wegame:2009999") })
+            foreach (var (name, id) in new[] { ("anticheat", "hoyoplay:nap_global"), ("anticheat-offline", "steam:1245620"), ("wegame-held", "wegame:2009999"),
+                         ("outside-session", "steam:Sample.GlassVigil") })
             {
                 main.Navigate(typeof(LibraryPage));
                 await Task.Delay(800);
