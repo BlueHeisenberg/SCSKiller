@@ -24,8 +24,9 @@ public sealed partial class ScsKiller
 
     public const string SkipOutside = "this game closes itself with any added file loaded from its folder: record a session instead";
 
-    // the exes, by name, of the games known to do it
-    static readonly HashSet<string> OutsideExes = new(StringComparer.OrdinalIgnoreCase);
+    // Resident Evil Requiem and Onimusha: Way of the Sword: EXCEPTION_ILLEGAL_INSTRUCTION a few seconds after the first frame
+    // with any dll of ours, or a copy of System32's d3d12.dll, loaded from the exe's folder
+    static readonly HashSet<string> OutsideExes = new(["re9", "OnimushaWotS"], StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The game page's line for a <see cref="GameState.OutsideEligible"/> game, above its session button.</summary>
     public const string OutsideNote = "This game closes itself when the recorder is in its folder, so SCSKiller records it one session at a time. "
