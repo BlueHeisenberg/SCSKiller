@@ -37,6 +37,12 @@ const string Usage = """
         (cache set / nvidia-auto-shader, as the app runs them elevated: --yes skips the question, --result <file>
          writes the outcome as a JSON line, --for-user <SID> refuses a different account's elevation)
       record install|uninstall <game>
+      record launch <game> -- <exe> [arguments]   what a Steam launch option runs for such a game (record launch <game> -- %command%):
+                                                  starts it recorded, or plainly when it can't be, and ends when the game does
+      record always <game> on|off|show            for such a Steam game: put that launch option into Steam's settings, take it out
+                                                  (Steam closed for both), or show it to paste by hand
+      record session <game>                       start a game that takes no recorder file in its folder, with the recorder
+                                                  loaded from outside it, and record until it exits (asks first)
       record remove-all                           take the recorder out of every game, as SCSKiller's uninstall does
       record clear <game>                         delete the game's recording (the recorder's data files and SCSKiller's copy, asks first)
       record alongside <game> on|off              let the recorder chain to a mod's d3d12.dll (renamed, put back on removal)
@@ -674,12 +680,42 @@ async Task<int> UseShared()
     return 0;
 }
 
+// What a Steam launch option runs in place of the game: record launch <game> -- %command%. The game always starts: with the
+// recorder loaded from outside its folder when a session can start, plainly otherwise (why goes to stderr). Ends when the
+// game does, as Steam counts this process as the game.
+async Task<int> RecordLaunch()
+{
+    var sep = Array.IndexOf(args, "--");
+    if (sep != 3 || args.Length < 5) return Fail("record launch <game> -- <exe> [arguments]");
+    var (exe, rest) = (args[4], args[5..]);
+    Task? session = null;
+    try
+    {
+        var k = await Open(game: args[2]);
+        session = k.StartOutsideSession(Match(k.Games, args[2]).Game.Id, confirmed: true, exe, rest);   // the launch option is the user's standing yes
+    }
+    catch (Exception e) { Console.Error.WriteLine($"not recorded: {e.Message}"); }
+    if (session != null)
+    {
+        await session;
+        return 0;
+    }
+    var plain = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(exe))! };
+    foreach (var a in rest) plain.ArgumentList.Add(a);
+    using var game = Process.Start(plain);
+    if (game == null) return Fail($"couldn't start {exe}");
+    await game.WaitForExitAsync();
+    return 0;
+}
+
 async Task<int> Record()
 {
     if (args.ElementAtOrDefault(1) == "remove-all") return Stray(2, "record remove-all") ?? RemoveAll();
+    if (args.ElementAtOrDefault(1) == "launch") return await RecordLaunch();
     bool alongside = args.Length > 3 && args[1] == "alongside" && args[3] is "on" or "off";
-    if (!alongside && (args.Length < 3 || args[1] is not ("install" or "uninstall" or "clear" or "grant")))
-        return Fail("record install|uninstall|clear|grant <game> | record alongside <game> on|off | record remove-all");
+    bool always = args.Length > 3 && args[1] == "always" && args[3] is "on" or "off" or "show";
+    if (!alongside && !always && (args.Length < 3 || args[1] is not ("install" or "uninstall" or "clear" or "grant" or "session")))
+        return Fail("record install|uninstall|clear|grant|session <game> | record alongside <game> on|off | record always <game> on|off|show | record remove-all");
     var k = await Open();
     var g = Match(k.Games, args[2]);
     if (args[1] == "clear")
@@ -689,6 +725,32 @@ async Task<int> Record()
                      "the game creates them again while recording, and the compile plan goes back to what the game's files give.")) return 1;
         k.ClearRecording(g.Game.Id);   // a refusal throws InvalidOperationException: printed as "error: <reason>"
         Console.WriteLine($"cleared {g.Game.Name}'s recording");
+        return 0;
+    }
+    if (always)
+    {
+        if (g.OutsideLaunchOption is not { } option) return Fail($"{g.Game.Name}: recording every Steam launch isn't available for this game");
+        if (args[3] == "show")
+        {
+            Console.WriteLine($"Steam launch options {(g.OutsideAlways ? "hold" : "don't hold")} it. To record every Steam launch, they need:");
+            Console.WriteLine(option);
+            return 0;
+        }
+        if (args[3] == "on" && !Confirm(ScsKiller.OutsideAlwaysOnText(option) + "\n\nAdd it to Steam's settings now?")) return 1;
+        IScsKiller core = k;
+        if (core.SetOutsideAlways(g.Game.Id, args[3] == "on") is { } why) return Fail(why);
+        Console.WriteLine($"{g.Game.Name}: Steam launches are {(args[3] == "on" ? "recorded from now on" : "no longer recorded")}");
+        return 0;
+    }
+    if (args[1] == "session")
+    {
+        if (!g.OutsideEligible) return Fail($"{g.Game.Name}: recording a session isn't available for this game");
+        if (!Confirm($"Start {g.Game.Name} now and record this session? SCSKiller starts the game itself, with its recorder loaded from outside the game folder.")) return 1;
+        var session = k.StartOutsideSession(g.Game.Id, confirmed: true);   // a refusal throws InvalidOperationException: printed as "error: <reason>"
+        Console.WriteLine($"{g.Game.Name}: session started. Play, then quit the game.");
+        await session;
+        var after = k.Games.Single(x => x.Game.Id == g.Game.Id);
+        Console.WriteLine(after.SessionNote ?? $"session ended: {after.RecordedPipelines} pipelines in its recording");
         return 0;
     }
     if (args[1] == "grant")
