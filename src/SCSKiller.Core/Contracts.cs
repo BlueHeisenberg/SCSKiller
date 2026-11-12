@@ -454,6 +454,9 @@ public sealed record GameState(
     bool RecordedEnough = false,       // GameRecord.RecordedLong: asking for "5 minutes" again says nothing
     bool OfflineEligible = false,      // an EasyAntiCheat game of Games.OfflineEac on D3D12, an OS with offline sessions (none on Linux yet): an offline session may be offered
     bool OfflineRecord = false,        // the user allowed offline sessions for it (IScsKiller.SetOfflineRecording)
+    string? OutsideLaunchOption = null,   // OutsideEligible, a Steam game, and this install has its command line: the Steam launch option that records every launch (IScsKiller.SetOutsideAlways), for the page to show and copy
+    bool OutsideAlways = false,        // the game's Steam launch options hold it (as Steam's settings file last said: Steam writes what the user types there only later)
+    bool OutsideEligible = false,      // no anti-cheat, on D3D12, and its protection ends it with any added module loaded from its folder (ScsKiller.OutsideOnly): no recorder goes into its folder, a session that loads it from outside may be offered (IScsKiller.StartOutsideSession)
     bool OfflineRunning = false,       // a session SCSKiller started runs, or its files aren't out of the game folder yet (not one waiting for an Always record launch)
     bool AlwaysRecord = false,         // RiskEligible with "Always record" on (IScsKiller.SetAlwaysRecord): every launch records as a confirmed session would
     CommunityInfo? Official = null,    // the maintainer's official recording in use (ScsKiller.OfficialAllowed); null = none
@@ -830,6 +833,15 @@ public interface IScsKiller
     /// InvalidOperationException, with nothing written, unless the user confirmed this launch, allowed it for the game and
     /// the game is eligible and not running. The task ends once the game exited and its folder is back to how it was.</summary>
     Task StartOfflineSession(string gameId, bool confirmed);
+    /// <summary>Starts the exe of a <see cref="GameState.OutsideEligible"/> game itself with the recorder loaded from outside its
+    /// folder, and records that process only: no dll is placed in the folder. Throws InvalidOperationException, with nothing
+    /// written, unless the user confirmed this launch and the game is eligible and not running. The task ends once the game
+    /// exited and its folder is back to how it was.</summary>
+    Task StartOutsideSession(string gameId, bool confirmed);
+    /// <summary>"Record every Steam launch" for a <see cref="GameState.OutsideEligible"/> Steam game: puts SCSKiller's part
+    /// (<see cref="GameState.OutsideLaunchOption"/>) into the game's Steam launch options, or takes it out, around the user's
+    /// own. Null when done, else why not; nothing is changed while Steam runs. Never throws for the game's state.</summary>
+    string? SetOutsideAlways(string gameId, bool on);
     /// <summary>A fresh full anti-cheat check of the game's install, for the confirmation to name what is there now.</summary>
     Task<AntiCheatCheck> CheckAntiCheatAsync(string gameId);
     /// <summary>Puts the recorder in, starts the game through its normal launch with its anti-cheat present, and records that

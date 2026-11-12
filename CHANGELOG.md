@@ -4,6 +4,13 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**New on Windows**
+
+- Resident Evil Requiem and Onimusha: Way of the Sword close themselves while the recorder is in their folder, so it no
+  longer goes there. `scskiller record session <game>` starts the game with the recorder loaded from outside its folder
+  and records until it exits, and `scskiller record always <game> on` makes every Steam launch do that through a launch
+  option.
+
 ## [1.4.7] - 2026-11-08
 
 **New**

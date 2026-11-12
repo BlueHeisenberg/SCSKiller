@@ -499,6 +499,8 @@ public sealed class FakeScsKiller : IScsKiller
         }
         GameChanged?.Invoke(g);
     }
+    public Task StartOutsideSession(string gameId, bool confirmed) => Task.CompletedTask;
+    public string? SetOutsideAlways(string gameId, bool on) => ScsKiller.SteamMustClose;   // the design data changes no Steam setting
     public Task StartOfflineSession(string gameId, bool confirmed) => Task.CompletedTask;   // the design data starts no game
     public Task<AntiCheatCheck> CheckAntiCheatAsync(string gameId)
     {

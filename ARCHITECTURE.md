@@ -255,6 +255,17 @@ nothing else, and sets only the game page's similar-systems line.
   `RecorderEffective` and "Record in all compatible games" never place the recorder in an anti-cheat game, and turning
   the setting off clears each such game's switch and removes a leftover session's files. Any other launch is a
   pass-through.
+- *Outside sessions (`ScsKiller.Outside.cs`).* A game without anti-cheat whose protection ends it when any module it
+  doesn't ship is loaded from its own folder (`ScsKiller.OutsideOnly`, by exe name) gets no recorder file there
+  (`SkipOutside`). SCSKiller starts its exe suspended (`StartAttested`) and adds the recorder, a copy in its data folder
+  named `scskiller_d3d12.dll`, as the first import of the exe in that process's memory (`AttachOutside`): Windows' own
+  loader loads it before any of the game's code runs, and no thread is started in the game. Under that name the proxy
+  puts the exe's import headers back as its file has them (`restore_exe_imports`: these games check them too), patches
+  System32's `D3D12CreateDevice` and `D3D12GetInterface` at their entry and keeps its data files in the exe's folder.
+  The journal, the signed ini bound to that process and the cleanup are an offline session's. Never beside anti-cheat:
+  the start refuses on a fresh full check. `record launch <game> -- %command%` is the same session for a launch Steam
+  makes, and starts the game plainly when the session is refused; `SetOutsideAlways` puts that command into the game's
+  Steam launch options, around the user's own, or takes it out, only while Steam is closed.
 
 **The stamp.** `scskiller.cfg`'s `exe_size=` and `exe_time=` are taken before a full anti-cheat check and written,
 with `sig=`, only when it is clean and no finding or removal came since (`ScsKiller.RemovalGen`). `sig=` is an
