@@ -218,6 +218,10 @@ public sealed class FakeScsKiller : IScsKiller
                 { WarmedDriverVersion = "610.88", WarmedAt = DateTimeOffset.Now.AddDays(-3), LastWarmTime = TimeSpan.FromSeconds(240) },
             G("1245620", "ELDEN RING", "-", "eldenring.exe", null, GameStatus.NeedsRecording, ScsKiller.OfflineSessionNote) with { AntiCheat = AntiCheat.EasyAntiCheat,
                 Engine = new EngineInfo("FromSoft", "Dantelion", null, "D3D12", false, null), OfflineEligible = true, OfflineRecord = true },
+            // a game that takes no recorder file in its folder: a session with the recorder loaded from outside it
+            G("Sample.GlassVigil", "Glass Vigil", "-", "GlassVigil.exe", null, GameStatus.NeedsRecording, Core.Planning.Planner.Record) with
+                { Engine = new EngineInfo("RE Engine", "PAK 4.2", null, "D3D12", false, null), OutsideEligible = true, RecorderSkip = ScsKiller.SkipOutside,
+                  OutsideLaunchOption = @"""C:\Users\you\AppData\Local\SCSKiller\current\cli\scskillerw.exe"" record launch steam:Sample.GlassVigil -- %command%" },
             // anti-cheat games the Settings option allows a session for; the VAC one's last launch ran unattached
             G("381210", "Dead by Daylight", "5.4", "DeadByDaylight-Win64-Shipping.exe", null, GameStatus.NeedsRecording, Core.Planning.Planner.Record) with
                 { AntiCheat = AntiCheat.EasyAntiCheat, RiskEligible = true, OfflineRecord = true },

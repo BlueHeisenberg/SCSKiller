@@ -487,6 +487,26 @@
                                     Visibility="{x:Bind Vm.ShowSessionButton, Mode=OneWay}"
                                     AutomationProperties.Name="{x:Bind Vm.OfflineButtonText, Mode=OneWay}" />
                         </StackPanel>
+                        <StackPanel Spacing="14" Visibility="{x:Bind Vm.ShowOutside, Mode=OneWay}">
+                            <InfoBar IsOpen="True" IsClosable="False" Severity="Informational" Message="{x:Bind Vm.OutsideText, Mode=OneWay}" />
+                            <Grid ColumnSpacing="12" Visibility="{x:Bind Vm.ShowOutsideAlways, Mode=OneWay}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Record every Steam launch" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                    <TextBlock Text="{x:Bind Vm.OutsideAlwaysNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <ToggleSwitch x:Name="OutsideAlwaysSwitch" Grid.Column="1" MinWidth="0" VerticalAlignment="Top" OnContent="" OffContent=""
+                                              IsOn="{x:Bind Vm.OutsideAlwaysOn, Mode=OneWay}" IsEnabled="{x:Bind Vm.CanToggleOutsideAlways, Mode=OneWay}" Toggled="OnOutsideAlwaysToggled"
+                                              AutomationProperties.Name="Record every Steam launch" AutomationProperties.HelpText="{x:Bind Vm.OutsideAlwaysNote, Mode=OneWay}" />
+                            </Grid>
+                            <InfoBar Severity="Informational" IsClosable="False" IsOpen="{x:Bind Vm.HasSessionNote, Mode=OneWay}" Visibility="{x:Bind Vm.HasSessionNote, Mode=OneWay}"
+                                     Message="{x:Bind Vm.SessionNote, Mode=OneWay}" />
+                            <Button HorizontalAlignment="Right" Content="{x:Bind Vm.OutsideButtonText, Mode=OneWay}" Click="OnRecordOutside" IsEnabled="{x:Bind Vm.CanStartOutside, Mode=OneWay}"
+                                    AutomationProperties.Name="{x:Bind Vm.OutsideButtonText, Mode=OneWay}" />
+                        </StackPanel>
                         <Grid ColumnSpacing="12" Visibility="{x:Bind Vm.HasMod, Mode=OneWay}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition />

@@ -460,6 +460,21 @@
                                     IsVisible="{Binding ShowSessionButton}"
                                     AutomationProperties.Name="{Binding OfflineButtonText}" />
                         </StackPanel>
+                        <StackPanel Spacing="14" IsVisible="{Binding ShowOutside}">
+                            <c:InfoBar Severity="Informational" IsClosable="False" Message="{Binding OutsideText}" />
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" IsVisible="{Binding ShowOutsideAlways}">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Record every Steam launch" Classes="BodyStrong" />
+                                    <TextBlock Text="{Binding OutsideAlwaysNote}" Classes="Secondary" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <ToggleSwitch x:Name="OutsideAlwaysSwitch" Grid.Column="1" IsChecked="{Binding OutsideAlwaysOn, Mode=OneWay}" IsEnabled="{Binding CanToggleOutsideAlways}"
+                                              IsCheckedChanged="OnOutsideAlwaysToggled" AutomationProperties.Name="Record every Steam launch"
+                                              AutomationProperties.HelpText="{Binding OutsideAlwaysNote}" />
+                            </Grid>
+                            <c:InfoBar Severity="Informational" IsClosable="False" IsVisible="{Binding HasSessionNote}" Message="{Binding SessionNote}" />
+                            <Button HorizontalAlignment="Right" Content="{Binding OutsideButtonText}" Click="OnRecordOutside" IsEnabled="{Binding CanStartOutside}"
+                                    AutomationProperties.Name="{Binding OutsideButtonText}" />
+                        </StackPanel>
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" IsVisible="{Binding HasMod}">
                             <StackPanel Spacing="2">
                                 <TextBlock Text="{Binding AlongsideTitle}" Classes="BodyStrong" TextWrapping="Wrap" />
