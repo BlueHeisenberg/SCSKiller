@@ -45,6 +45,7 @@
     <EmbeddedResource Include="Games\collections.json" LogicalName="SCSKiller.Core.Games.collections.json" />
     <EmbeddedResource Include="Planning\confirmed-engines.json" LogicalName="SCSKiller.Core.Planning.confirmed-engines.json" />
     <EmbeddedResource Include="Planning\plan-rules.json" LogicalName="SCSKiller.Core.Planning.plan-rules.json" />
+    <EmbeddedResource Include="Swarm\swarm-data-locations.json" LogicalName="SCSKiller.Core.Swarm.swarm-data-locations.json" />
     <EmbeddedResource Include="App\welcome.json" LogicalName="SCSKiller.Core.App.welcome.json" />
     <EmbeddedResource Include="..\..\CHANGELOG.md" LogicalName="SCSKiller.Core.CHANGELOG.md" />
   </ItemGroup>
