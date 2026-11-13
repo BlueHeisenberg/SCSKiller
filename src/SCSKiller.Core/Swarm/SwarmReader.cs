@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using SCSKiller.Core.App;
 using SCSKiller.Core.Carved;
 using SCSKiller.Core.ForzaTech;
 using SCSKiller.Core.Games;
@@ -11,7 +13,7 @@ using SCSKiller.Core.Unreal;
 
 namespace SCSKiller.Core.Swarm;
 
-/// <summary>Saber's Swarm engine (Warhammer 40,000: Space Marine 2 and RoadCraft). The shaders are in
+/// <summary>Saber's Swarm engine (Warhammer 40,000: Space Marine 2, RoadCraft and World War Z). The shaders are in
 /// client_pc\root\paks\client\default\default.pak, or root\paks\client\default\default.pak in RoadCraft,
 /// a ZIP, under shader_cache/prebuild/pc/*.sdc (stored). An .sdc file, little endian:
 ///   - u32 block count, u32 entry count, u32 payload bytes, u32 not read;
@@ -22,23 +24,47 @@ namespace SCSKiller.Core.Swarm;
 /// permutation's 4-byte shader index, or one of the file's tables (sources, define names, permutations, the shaders' PDB names).
 /// No container carries RTS0 (the game builds its root signatures at run time), so a plan needs a recording. The game's PSO
 /// list (default_pso_cache_dump.pak) names passes and material settings, never a shader: maps are one pool per .sdc.
+/// World War Z stores its renderer-specific .sdc files in en_us\client\preload\paks\initial.pak under
+/// [project]/prebuild/shaders_cache/prebuild/pc/; pc_sm50 is DirectX 11 and pc_dx12 is DirectX 12.
 /// SnowRunner's fork stores DirectX 11 shaders in preload\paks\client\shader.pak: its common .sdc files use the same
 /// block format, and shadercachedx11.sdc contains one zlib stream of length-prefixed DXBC containers.
 /// EngineInfo: Family "Swarm", Version "SDC" or "SDC-D3D11".</summary>
 public sealed class SwarmReader : IEngineReader
 {
     public const string Family = "Swarm", Version = "SDC", D3D11Version = "SDC-D3D11";
-    const string SpaceMarinePak = @"client_pc\root\paks\client\default\default.pak", Folder = "shader_cache/prebuild/pc/";
-    const string RoadCraftPak = @"root\paks\client\default\default.pak";
-    const string D3D11Pak = @"preload\paks\client\shader.pak";
-    const string D3D11Folder = "[project]/prebuild/shaders_cache/prebuild/pc/";
-    const string D3D11Cache = "[project]/prebuild/shaders_cache_mr/shadercachedx11.sdc";
+    public int ReaderVersion(EngineInfo engine) => 2;
     const uint D3D11CacheVersion = 20230112;
     const int MaxD3D11Cache = 512 << 20;
 
     /// <summary>Bounds on what a file declares, past which it is left out: the pak's entries, an .sdc's entries, a block's
     /// inflated bytes (measured: 224, 291,145, 14 MB) and an entry's m bytes.</summary>
     const int MaxPakEntries = 1 << 20, MaxEntries = 1 << 22, MaxBlock = 64 << 20, MaxExtra = 1 << 10;
+
+    /// <summary>One game profile. Keys in the AppData file are Game.Id values; Name is only a human-readable label.</summary>
+    sealed record Profile(
+        string? Name = null,
+        string[]? Aliases = null,
+        string[]? PakPaths = null,
+        string? ShaderFolder = null,
+        string? GraphicsApi = null,
+        bool ApiGuessed = false,
+        string? D3D11ShaderPrefix = null,
+        string? D3D12ShaderPrefix = null,
+        string? D3D11CacheEntry = null);
+    static readonly Dictionary<string, Profile> Config = LoadDataLocations();
+
+    /// <summary>The editable config lives beside the user's other SCSKiller data and is seeded from the bundled defaults on first run.</summary>
+    static Dictionary<string, Profile> LoadDataLocations()
+    {
+        var path = Path.Combine(AppStore.DefaultDir, "swarm-data-locations.json");
+        Directory.CreateDirectory(AppStore.DefaultDir);
+
+        if (!File.Exists(path)) File.WriteAllText(path, ContentFile.Embedded("SCSKiller.Core.Swarm.swarm-data-locations.json"));
+
+        var config = JsonSerializer.Deserialize<Dictionary<string, Profile>>(File.ReadAllText(path))
+            ?? throw new InvalidDataException($"Swarm data location config is empty: {path}");
+        return config;
+    }
 
     /// <param name="Block">where the block's zlib stream starts in the .sdc</param>
     /// <param name="Offset">the value's offset in the inflated block</param>
@@ -48,30 +74,33 @@ public sealed class SwarmReader : IEngineReader
     /// ReadShaders re-indexes when it runs without an Index in the same process.</summary>
     readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, Loc>> located = new();
 
-    /// <summary>The Space Marine 2, RoadCraft or SnowRunner shader pak under the install folder; D3D12 also under the exe's root.</summary>
+    /// <summary>The configured Swarm shader pak under the game's install folder.</summary>
     public static string? Find(Game game)
     {
-        var exeDir = Path.GetDirectoryName(game.ExePath);
-        var exeRoot = exeDir is { Length: > 0 } ? Path.GetFullPath(Path.Combine(exeDir, "..", "..", "..", "..")) : null;
-        var roadRoot = exeDir is { Length: > 0 } ? Path.GetFullPath(Path.Combine(exeDir, "..", "..", "..")) : null;
-        return new[] { (game.InstallDir, SpaceMarinePak), (exeRoot, SpaceMarinePak), (game.InstallDir, RoadCraftPak), (roadRoot, RoadCraftPak) }
-            .Where(x => x.Item1 != null && Directory.Exists(x.Item1))
-            .Select(x => GameFiles.Find(x.Item1!, x.Item2)).FirstOrDefault(File.Exists)
-            ?? (GameFiles.Find(game.InstallDir, D3D11Pak) is { } snow && File.Exists(snow) ? snow : null);
+        if (ProfileFor(game) is not { } profile) return null;
+
+        foreach (var pakPath in profile.PakPaths ?? [])
+        {
+            var pak = GameFiles.Find(game.InstallDir, pakPath);
+            if (File.Exists(pak)) return pak;
+        }
+
+        return null;
     }
 
     public EngineInfo? Detect(Game game)
     {
         if (Find(game) is not { } pak) return null;
-        var d3d11 = IsD3D11Pak(pak);
-        EngineInfo Result(string? why) => new(Family, d3d11 ? D3D11Version : Version, null, d3d11 ? "D3D11" : "D3D12", false, why);
+        var profile = ProfileFor(game)!;
+        var d3d11 = IsD3D11Pak(pak, profile);
+        EngineInfo Result(string? why) => new(Family, d3d11 ? D3D11Version : Version, null, d3d11 ? "D3D11" : profile.GraphicsApi ?? "D3D12", false, why, ApiGuessed: profile.ApiGuessed);
         using var zip = Open(pak, out var error);
         if (zip == null) return Result($"{Path.GetFileName(pak)} doesn't open: {error}");
-        var entries = Sdcs(zip, d3d11).ToList();
+        var entries = Sdcs(zip, d3d11, profile, false).ToList();
         if (d3d11 && entries.Count == 0) return null;
         if (d3d11)
         {
-            if (entries.FirstOrDefault(IsD3D11Cache) is not { } main) return Result("the DirectX 11 shader cache is missing or unreadable");
+            if (entries.FirstOrDefault(e => IsD3D11Cache(e, profile)) is not { } main) return Result("the DirectX 11 shader cache is missing or unreadable");
             try { using var s = main.Open(); ReadD3D11Header(s, main.Length); }
             catch (Exception x) when (x is InvalidDataException or IOException) { return Result($"{main.Name} doesn't read: {x.Message}"); }
         }
@@ -82,7 +111,7 @@ public sealed class SwarmReader : IEngineReader
             try { EachCache(e, null, (_, v) => found |= Dxbc.Valid(v) && Dxbc.Kind(v) >= 0, CancellationToken.None); }
             catch (Exception x) when (x is InvalidDataException or IOException) { why ??= $"{e.Name} doesn't read: {x.Message}"; }
             // if we found a valid shader, null out the reason why and return success immediately
-            if (found) return Result(why : null);
+            if (found) return Result(why: null);
         }
         return Result(why ?? $"no shader in {Path.GetFileName(pak)}'s shader caches");
     }
@@ -92,9 +121,10 @@ public sealed class SwarmReader : IEngineReader
         var sw = Stopwatch.StartNew();
         var pak = Find(game) ?? throw new FileNotFoundException($"{game.InstallDir}: no Swarm shader pak");
         using var zip = Open(pak, out var error) ?? throw new InvalidDataException($"{Path.GetFileName(pak)} doesn't open: {error}");
-        var d3d11 = IsD3D11Pak(pak);
-        var entries = Sdcs(zip, d3d11).ToList();
-        if (d3d11 && !entries.Any(IsD3D11Cache)) throw new InvalidDataException("the DirectX 11 shader cache is missing or unreadable");
+        var profile = ProfileFor(game)!;
+        var d3d11 = IsD3D11Pak(pak, profile);
+        var entries = Sdcs(zip, d3d11, profile, engine.GraphicsApi.Contains("D3D12")).ToList();
+        if (d3d11 && !entries.Any(e => IsD3D11Cache(e, profile))) throw new InvalidDataException("the DirectX 11 shader cache is missing or unreadable");
         var locs = new Dictionary<string, Loc>();
         var shaders = new Dictionary<string, ShaderInfo>();
         var maps = new List<ShaderMap>();
@@ -187,14 +217,22 @@ public sealed class SwarmReader : IEngineReader
     }
 
     /// <summary>The .sdc entries by name. A name the pak holds twice is left out: ReadShaders finds an entry by its name.</summary>
-    static bool IsD3D11Pak(string pak) => Path.GetFileName(pak).Equals("shader.pak", StringComparison.OrdinalIgnoreCase);
+    static Profile? ProfileFor(Game game) => Config.FirstOrDefault(p => p.Key.Equals(game.Id, StringComparison.OrdinalIgnoreCase)).Value
+        ?? Config.Values.FirstOrDefault(p => (p.Aliases ?? []).Append(p.Name).OfType<string>()
+            .Any(name => game.Name.Equals(name, StringComparison.OrdinalIgnoreCase)));
+    static bool IsD3D11Pak(string pak, Profile profile) => profile.D3D11CacheEntry != null
+        && (profile.PakPaths ?? []).Any(pakPath => pak.EndsWith(pakPath.Replace('\\', Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase));
     static string EntryName(ZipArchiveEntry e) => e.FullName.Replace('\\', '/');
-    static bool IsD3D11Cache(ZipArchiveEntry e) => EntryName(e).Equals(D3D11Cache, StringComparison.OrdinalIgnoreCase);
+    static bool IsD3D11Cache(ZipArchiveEntry e, Profile profile) => profile.D3D11CacheEntry != null
+        && EntryName(e).Equals(profile.D3D11CacheEntry, StringComparison.OrdinalIgnoreCase);
+    static bool IsD3D11Cache(ZipArchiveEntry e) => Config.Values.Any(p => IsD3D11Cache(e, p));
 
-    static IEnumerable<ZipArchiveEntry> Sdcs(ZipArchive zip, bool d3d11) => zip.Entries
-        .Where(e => EntryName(e) is var name && (d3d11 && IsD3D11Cache(e)
-            || name.StartsWith(d3d11 ? D3D11Folder : Folder, StringComparison.OrdinalIgnoreCase)
-            && name.IndexOf('/', (d3d11 ? D3D11Folder : Folder).Length) < 0
+    static IEnumerable<ZipArchiveEntry> Sdcs(ZipArchive zip, bool d3d11, Profile profile, bool dx12) => zip.Entries
+        .Where(e => EntryName(e) is var name && (d3d11 && IsD3D11Cache(e, profile)
+            || name.StartsWith(profile.ShaderFolder ?? "", StringComparison.OrdinalIgnoreCase)
+            && name.IndexOf('/', (profile.ShaderFolder ?? "").Length) < 0
+            && (d3d11 || (dx12 ? profile.D3D12ShaderPrefix : profile.D3D11ShaderPrefix) is not { } prefix
+                || Path.GetFileName(name).StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             && name.EndsWith(".sdc", StringComparison.OrdinalIgnoreCase)))
         .GroupBy(e => e.FullName, StringComparer.Ordinal).Where(g => g.Count() == 1).Select(g => g.First()).Where(e => !e.IsEncrypted)
         .OrderBy(e => e.FullName, StringComparer.Ordinal);

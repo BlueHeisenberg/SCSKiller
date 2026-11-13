@@ -6,6 +6,7 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 - RoadCraft is detected and its prebuilt Swarm shaders can be compiled.
 - SnowRunner is detected and its prebuilt Swarm shaders can be compiled.
+- Swarm game profiles are editable in `%LOCALAPPDATA%\SCSKiller\swarm-data-locations.json`, so support for additional Swarm games can be configured without rebuilding SCSKiller.
 
 ## [1.4.8] - 2026-11-15
 

@@ -1,0 +1,44 @@
+{
+  "steam:2183900": {
+    "Name": "Warhammer 40,000: Space Marine 2",
+    "PakPaths": [
+      "client_pc\\root\\paks\\client\\default\\default.pak"
+    ],
+    "ShaderFolder": "shader_cache/prebuild/pc/",
+    "GraphicsApi": "D3D12"
+  },
+  "steam:2104890": {
+    "Name": "RoadCraft",
+    "PakPaths": [
+      "root\\paks\\client\\default\\default.pak"
+    ],
+    "ShaderFolder": "shader_cache/prebuild/pc/",
+    "GraphicsApi": "D3D12"
+  },
+  "steam:1465360": {
+    "Name": "SnowRunner",
+    "PakPaths": [
+      "preload\\paks\\client\\shader.pak"
+    ],
+    "ShaderFolder": "[project]/prebuild/shaders_cache/prebuild/pc/",
+    "GraphicsApi": "D3D11",
+    "D3D11CacheEntry": "[project]/prebuild/shaders_cache_mr/shadercachedx11.sdc"
+  },
+  "steam:699130": {
+    "Name": "World War Z",
+    "Aliases": [
+      "World War Z - Aftermath",
+      "World War Z: Aftermath",
+      "WWZ"
+    ],
+    "PakPaths": [
+      "en_us\\client\\preload\\paks\\initial.pak",
+      "preload\\paks\\initial.pak"
+    ],
+    "ShaderFolder": "[project]/prebuild/shaders_cache/prebuild/pc/",
+    "GraphicsApi": "D3D11",
+    "ApiGuessed": true,
+    "D3D11ShaderPrefix": "pc_sm50",
+    "D3D12ShaderPrefix": "pc_dx12"
+  }
+}
