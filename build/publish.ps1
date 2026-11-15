@@ -60,7 +60,8 @@ function Run([string]$exe, [string[]]$argv) {
 }
 # no game key in anything built: the removed ones by hash, any other key-shaped constant unless reviewed (tools/keyscan)
 function KeyScan([string[]]$paths) {
-    Run $dotnet (@("run", "--project", (Join-Path $repo "tools\keyscan"), "-c", "Release", "--", "--known", (Join-Path $repo "build\keyscan\known-keys.txt"),
+    # the workflow's VERSION env (with its v) reaches MSBuild as the Version property: restore fails on it
+    Run $dotnet (@("run", "--project", (Join-Path $repo "tools\keyscan"), "-c", "Release") + $versionArgs + @("--", "--known", (Join-Path $repo "build\keyscan\known-keys.txt"),
         "--allow", (Join-Path $repo "build\keyscan\allow.txt")) + $paths)
 }
 
