@@ -51,6 +51,7 @@ static Hash sha1(const void* p, size_t n) {
 }
 
 static std::wstring g_dir;  // this dll's folder, trailing backslash
+static std::wstring g_out;  // where the db and the log go: g_dir, or out_folder() under a signed out=1 (set by admit)
 static const std::wstring& admit_dir() { return g_dir; }
 static bool g_elsewhere;    // not the exe's folder: a mod loaded a copy from elsewhere
 
@@ -160,7 +161,7 @@ static FILE* own_file(const std::wstring& path, DWORD share) {
 // The keys the db holds. A torn tail (a crash mid-write) is cut so appends stay parseable, as proxy.cpp's load_file does;
 // when it can't be read or cut, nothing is recorded.
 static void load_db() {
-    const std::wstring path = g_dir + L"scskiller.db";
+    const std::wstring path = g_out + L"scskiller.db";
     // deny-write: a second process of the folder records nothing rather than interleaving with this one's records
     g_db = own_file(path, FILE_SHARE_READ);
     if (!g_db) return logf("d3d9: scskiller.db can't be opened (another process has it?): nothing is recorded in this one");
@@ -204,7 +205,7 @@ static void load_db() {
     }
     if (size > good) logf("d3d9: truncated a torn tail (%lld -> %lld bytes)", size, good);
     g_db_bytes = (uint64_t)good;
-    load_keys(g_dir + L"scskiller.keys");
+    load_keys(g_out + L"scskiller.keys");
     wchar_t cap[32];
     GetPrivateProfileStringW(L"scskiller", L"max_db_bytes", L"", cap, 32, config_path(g_dir).c_str());
     g_db_capped = *cap, g_db_cap = _wcstoui64(cap, nullptr, 10);
@@ -853,10 +854,13 @@ static void admit() {
         bool risk = false;
         std::string seen;
         const char* why = admission_verdict(whole, read, g_elsewhere, risk, seen);
+        std::wstring out;
+        if (!why && ini_string(L"out") == L"1" && (out = out_folder()).empty()) why = kNoOutFolder;
+        g_out = out.empty() ? g_dir : out;
         t_ini = nullptr;
         refused(why);
         if (why) return;
-        g_log = own_file(g_dir + L"scskiller.log", FILE_SHARE_READ | FILE_SHARE_WRITE);
+        g_log = own_file(g_out + L"scskiller.log", FILE_SHARE_READ | FILE_SHARE_WRITE);
         if (risk) logf("risk=1: recording at the user's own risk, anti-cheat seen: %s", seen.c_str());
         logf("d3d9: recording (%d-bit)", (int)sizeof(void*) * 8);
         load_db();

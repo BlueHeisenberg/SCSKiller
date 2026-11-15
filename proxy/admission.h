@@ -1,8 +1,10 @@
 // The parts of the recorder's admission that read values alone, shared with `selftest admission`: the stamp sig= covers and
 // the verdict from what the checks found.
 #pragma once
+#include <cstdlib>
 #ifdef _WIN32
 #include <windows.h>
+#include <intrin.h>
 #else
 #include <strings.h>
 #include <wchar.h>
@@ -41,10 +43,12 @@ static inline std::string to_utf8(const std::wstring& w) {
     return s;
 }
 #endif
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 // why with the path of the one file it is about, for the app to show ("<why>: <path>"), until this thread's next call. The
@@ -77,10 +81,11 @@ inline const char* with_path(const char* why, const std::string& p) {
 }
 
 // The stamp lines sig= covers, as ScsKiller.Signed writes them: exe_size=, exe_time=, arm= when it is there, then pid= and
-// pid_time= when pid= is there, then risk= when it is there, then the others and the traversal_ lines (traversal_lines).
+// pid_time= when pid= is there, then risk= when it is there, then the others, the traversal_ lines (traversal_lines), shaders= and out=.
 inline std::wstring signed_stamp(const std::wstring& size, const std::wstring& time, const std::wstring& pid, const std::wstring& pid_time, const std::wstring& risk,
                                  const std::wstring& vendor = L"", const std::wstring& overlay = L"", const std::wstring& play_s = L"", const std::wstring& tag = L"",
-                                 const std::wstring& traversal = L"", const std::wstring& arm = L"") {
+                                 const std::wstring& traversal = L"", const std::wstring& arm = L"", const std::wstring& shaders = L"",
+                                 const std::wstring& out = L"") {
     std::wstring s = L"exe_size=" + size + L"\r\nexe_time=" + time + L"\r\n";
     if (!arm.empty()) s += L"arm=" + arm + L"\r\n";
     if (!pid.empty()) s += L"pid=" + pid + L"\r\npid_time=" + pid_time + L"\r\n";
@@ -89,7 +94,9 @@ inline std::wstring signed_stamp(const std::wstring& size, const std::wstring& t
     if (!overlay.empty()) s += L"overlay=" + overlay + L"\r\n";
     if (!play_s.empty()) s += L"ab_play_s=" + play_s + L"\r\n";
     if (!tag.empty()) s += L"ab_tag=" + tag + L"\r\n";
-    return s + traversal;
+    s += traversal;
+    if (!shaders.empty()) s += L"shaders=" + shaders + L"\r\n";
+    return out.empty() ? s : s + L"out=" + out + L"\r\n";
 }
 
 // traversal.h's keys, in the order ScsKiller.TraversalKeys writes them: sig= covers their lines, so a hand edit can't turn the
@@ -210,7 +217,7 @@ static const wchar_t* const kAntiCheatMarkers[] = {  // GameFiles.Markers; "*x":
     L"BlackCall.aes", L"BlackCall64.aes", L"BlackCat64.sys", L"HShield", L"PunkBuster", L"PnkBstrA.exe", L"pbsvc.exe", L"pbsv.dll",
     L"equ8_conf.json", L".build.info", L".product.db", L"Warframe.x64.exe", L"ONCE_HUMAN.exe",
     L"Marvel-Win64-Shipping.exe", L"Marvel-Win64-Test.exe", L"Marvel.exe", L"MarvelRivals_Launcher.exe", L"FragPunk.exe", L"nshm.exe",
-    L"NarakaBladepoint.exe", L"Discovery.exe", L"Discovery-e.exe", L"Discovery-d.exe", L"DungeonCrawler.exe", L"ModernWarfare.exe", L"cod.exe",
+    L"NarakaBladepoint.exe", L"wwm.exe", L"Discovery.exe", L"Discovery-e.exe", L"Discovery-d.exe", L"DungeonCrawler.exe", L"ModernWarfare.exe", L"cod.exe",
     L"forzahorizon5.exe", L"forzahorizon6.exe",
     L"PathOfExile.exe", L"PathOfExile_x64.exe", L"PathOfExileSteam.exe", L"PathOfExile_x64Steam.exe", L"PathOfExileEGS.exe",
     L"PathOfExile_x64EGS.exe", L"PathOfExile_KG.exe", L"PathOfExile_x64_KG.exe",
@@ -288,6 +295,33 @@ static bool vdf_one(const Vdf& o, const char* key, std::string& v) {
 }
 
 static bool all_digits(const std::string& s) { return !s.empty() && s.find_first_not_of("0123456789") == std::string::npos; }
+
+// A Steam manifest's claim on its folder: 2 when it has bytes there (SizeOnDisk) and is fully installed (StateFlags 4), 1 with
+// bytes otherwise, 0 without. A pack or licence that installs into another app's folder writes SizeOnDisk 0.
+static int folder_claim(const Vdf& app) {
+    std::string s, f;
+    if (!vdf_one(app, "sizeondisk", s) || !all_digits(s) || s.find_first_not_of('0') == std::string::npos) return 0;
+    return vdf_one(app, "stateflags", f) && all_digits(f) && f.size() <= 10 && (strtoull(f.c_str(), nullptr, 10) & 4) ? 2 : 1;
+}
+
+// Several Steam apps' manifests name the game's folder (claims: each one's folder_claim): apps becomes the one with bytes in
+// it, fully installed, when it is the only one with bytes and vac_of clears every other. Else the refusal.
+template <class VacOf>
+static const char* folder_owner(std::vector<uint32_t>& apps, const std::vector<int>& claims, const VacOf& vac_of) {
+    const char* const two = "VAC: two Steam manifests name the game's folder";
+    size_t own = apps.size();
+    for (size_t i = 0; i < apps.size(); ++i) {
+        if (!claims[i]) continue;
+        if (own < apps.size()) return two;
+        own = i;
+    }
+    if (own == apps.size() || claims[own] != 2) return two;
+    for (size_t i = 0; i < apps.size(); ++i)
+        if (i != own && vac_of(apps[i])) return two;
+    apps = {apps[own]};
+    return nullptr;
+}
+
 static const uint32_t kValveVac[] = {10, 80, 240, 300, 320, 440, 500, 550, 570, 730, 4000, 1422450};  // Games.Vac.Valve
 // vac_of's findings that Steam has no info about the app, compared by address
 static const char kVacNoSteam[] = "VAC: Steam's folder is unknown";
@@ -353,3 +387,92 @@ struct Kv {
         }
     }
 };
+
+// The binding's refusal (admit.h's bound_here): the cfg names another process.
+static const char* const kBoundElsewhere = "bound to another process";
+// How long a successor's recorder waits for the app's handover (ScsKiller.HandoverCap): the app decides within 8 s.
+static const unsigned kHandoverCapMs = 10000;
+
+// ScsKiller.HandoverFile's note, "<pid> <pid_time> <app pid> <app's creation time>", names the binding pid and at; app and
+// app_at: the app that wrote it.
+inline bool handover_names(const std::string& note, uint64_t pid, uint64_t at, uint64_t& app, uint64_t& app_at) {
+    unsigned long long p, t, a, b;
+    char end;
+    if (sscanf(note.c_str(), "%llu %llu %llu %llu%c", &p, &t, &a, &b, &end) != 4) return false;
+    app = a, app_at = b;
+    return p == pid && t == at;
+}
+
+// A successor's wait for its handover: while why is the binding's refusal and due() holds (the note names the binding, its app
+// runs), again(why) every 25 ms, the verdict on a changed cfg (why while it is unchanged), until one isn't the binding's or
+// cap_ms pass. Once due() fails, again() once more: the app may have signed this process's cfg and named it in the note since.
+template <class Due, class Again> const char* handover_wait(const char* why, Due due, Again again, unsigned cap_ms) {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(cap_ms);
+    while (why && !strcmp(why, kBoundElsewhere) && std::chrono::steady_clock::now() < end) {
+        if (!due()) return again(why);
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        why = again(why);
+    }
+    return why;
+}
+
+#ifdef _WIN32
+static uint64_t created_of(HANDLE h) {
+    FILETIME c, x1, x2, x3;
+    return GetProcessTimes(h, &c, &x1, &x2, &x3) ? (uint64_t)c.dwHighDateTime << 32 | c.dwLowDateTime : 0;
+}
+// The process pid runs, created at at (FILETIME, UTC).
+static bool process_runs(uint64_t pid, uint64_t at) {
+    HANDLE h = pid && pid <= MAXDWORD ? OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid) : nullptr;
+    const bool runs = h && created_of(h) == at && WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+    if (h) CloseHandle(h);
+    return runs;
+}
+// This thread holds the loader lock (the PEB's LoaderLock); unknown counts as held.
+static bool under_loader_lock() {
+#ifdef _WIN64
+    void* cs = *(void* const*)((const uint8_t*)__readgsqword(0x60) + 0x110);
+#else
+    void* cs = *(void* const*)((const uint8_t*)__readfsdword(0x30) + 0xa0);
+#endif
+    using Locked = BOOL(NTAPI*)(void*);
+    static const auto locked = (Locked)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlIsCriticalSectionLockedByThread");
+    return !locked || !cs || locked(cs);
+}
+// The pid of h's parent as it was at h's start; 0 when it can't be read.
+
+static uint64_t parent_of(HANDLE h) {
+    struct Basic {
+        LONG status;
+        void* peb;
+        ULONG_PTR affinity;
+        LONG priority;
+        ULONG_PTR pid, parent;
+    } b{};
+    using Query = LONG(WINAPI*)(HANDLE, int, void*, ULONG, ULONG*);
+    static const auto query = (Query)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess");
+    ULONG n = 0;
+    return query && query(h, 0 /* ProcessBasicInformation */, &b, sizeof b, &n) >= 0 ? b.parent : 0;
+}
+// The process pid, created at at, started this one, directly or through up to 3 between: each still running and created
+// before the one it started (a pid reused since can't pass).
+static bool descends_from(uint64_t pid, uint64_t at) {
+    HANDLE h = GetCurrentProcess();
+    uint64_t made = created_of(h);
+    bool yes = false;
+    for (int step = 0; step < 4 && made; ++step) {
+        const uint64_t up = parent_of(h);
+        if (h != GetCurrentProcess()) CloseHandle(h);
+        h = up && up <= MAXDWORD ? OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)up) : nullptr;
+        const uint64_t t = h ? created_of(h) : 0;
+        if (!t || t >= made) break;
+        if (up == pid) {
+            yes = t == at;
+            break;
+        }
+        made = t;
+    }
+    if (h && h != GetCurrentProcess()) CloseHandle(h);
+    return yes;
+}
+#endif

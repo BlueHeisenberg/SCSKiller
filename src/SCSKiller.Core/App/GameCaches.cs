@@ -1313,6 +1313,8 @@ public static partial class D3DSCache
     [DllImport(Sqlite)] static extern int sqlite3_step(nint stmt);
     [DllImport(Sqlite)] internal static extern nint sqlite3_column_text(nint stmt, int col);
     [DllImport(Sqlite)] internal static extern long sqlite3_column_int64(nint stmt, int col);
+    [DllImport(Sqlite)] internal static extern nint sqlite3_column_blob(nint stmt, int col);
+    [DllImport(Sqlite)] internal static extern int sqlite3_column_bytes(nint stmt, int col);
     [DllImport(Sqlite)] static extern int sqlite3_finalize(nint stmt);
     [DllImport(Sqlite)] static extern nint sqlite3_errstr(int rc);
     [DllImport(Sqlite)] static extern void sqlite3_progress_handler(nint db, int ops, Progress? check, nint arg);

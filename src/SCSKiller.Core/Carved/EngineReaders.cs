@@ -42,11 +42,15 @@ public sealed class EngineReaders(params (string Family, IEngineReader Reader)[]
 
     IEngineReader Of(EngineInfo e) => readers.FirstOrDefault(r => r.Family == e.Family).Reader ?? throw new NotSupportedException($"no reader for {e.Family}");
 
-    public ShaderIndex Index(Game game, EngineInfo engine, IProgress<string>? log, CancellationToken ct) => Of(engine).Index(game, engine, log, ct);
+    public ShaderIndex Index(Game game, EngineInfo engine, IProgress<string>? log, CancellationToken ct) => Index(game, engine, log, null, ct);
 
+    // a keyless game's files don't open: its recording is the whole plan, as a packed game's
     public ShaderIndex Index(Game game, EngineInfo engine, IProgress<string>? log, IProgress<(int Done, int Total)>? progress, CancellationToken ct) =>
-        Of(engine).Index(game, engine, log, progress, ct);
+        CarvedReader.Keyless(engine) ? new(ShaderIndex.EmptyContentHash, [CarvedReader.Platform], new Dictionary<string, ShaderInfo>(), [])
+        : Of(engine).Index(game, engine, log, progress, ct);
 
-    public void ReadShaders(Game game, EngineInfo engine, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct) =>
-        Of(engine).ReadShaders(game, engine, sha1s, sink, ct);
+    public void ReadShaders(Game game, EngineInfo engine, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct)
+    {
+        if (!CarvedReader.Keyless(engine)) Of(engine).ReadShaders(game, engine, sha1s, sink, ct);
+    }
 }

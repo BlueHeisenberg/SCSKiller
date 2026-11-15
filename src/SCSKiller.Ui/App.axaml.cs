@@ -205,6 +205,7 @@ public partial class App : Application
         real.ActiveCheck = new ActiveCheck(AppStore.DefaultDir, () => ActiveCheck.Allowed(real.Settings), real.Vendor.Vendor);
         // only the data folder's one instance writes game folders, and not in the unattended --driver-updated start until the window shows
         real.ManageRecorders = Activation.ManagesRecorders && !Activation.Unattended(args);
+        real.AwaitWelcome();
         real.CleanupHelper = ScsKiller.AppProgram;
         RefreshMenuEntry(real);
         real.CheckPlans = true;

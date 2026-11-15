@@ -2,8 +2,8 @@
 .SYNOPSIS
 Builds dist\SCSKiller\ and dist\SCSKiller.zip:
 
-  SCSKiller.exe            the app (src\SCSKiller.Ui, Avalonia), self-contained (.NET + Windows App SDK Foundation), + oodle-data-shared.dll, zlib-ng2.dll
-  cli\scskiller.exe        command line, self-contained, same Core project and commit, + the two codec DLLs
+  SCSKiller.exe            the app (src\SCSKiller.Ui, Avalonia), self-contained (.NET + Windows App SDK Foundation), + oodle-data-shared.dll, zlib-ng2.dll, the VC++ runtime (VC-REDIST.txt)
+  cli\scskiller.exe        command line, self-contained, same Core project and commit, + the two codec DLLs and the VC++ runtime
   cli\scskillerw.exe       the same CLI flagged as a GUI-subsystem exe: what the scheduled task runs (no console window)
   native\                  scskiller_warm.exe + the proxy d3d12.dll + the DirectX 9 recorder d3d9.dll (x86\ for 32-bit
                            games) (the app looks in native\, the CLI in ..\native\)
@@ -58,6 +58,11 @@ function Run([string]$exe, [string[]]$argv) {
     & $exe @argv
     if ($LASTEXITCODE -ne 0) { throw "$exe $argv failed with exit code $LASTEXITCODE" }
 }
+# no game key in anything built: the removed ones by hash, any other key-shaped constant unless reviewed (tools/keyscan)
+function KeyScan([string[]]$paths) {
+    Run $dotnet (@("run", "--project", (Join-Path $repo "tools\keyscan"), "-c", "Release", "--", "--known", (Join-Path $repo "build\keyscan\known-keys.txt"),
+        "--allow", (Join-Path $repo "build\keyscan\allow.txt")) + $paths)
+}
 
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 
@@ -78,7 +83,7 @@ Run cmake @("--build", $build86, "--config", "Release")
 New-Item -ItemType Directory -Force (Join-Path $native "x86") | Out-Null
 Copy-Item (Join-Path $build "Release\d3d9.dll") $native
 Copy-Item (Join-Path $build86 "Release\d3d9.dll") (Join-Path $native "x86")
-if ($NativeOnly) { Write-Host "dist\SCSKiller\native only"; return }
+if ($NativeOnly) { KeyScan @($native); Write-Host "dist\SCSKiller\native only"; return }
 
 # 2. app + CLI
 # the SDK reuses obj\...\apphost.exe until the assembly changes, so a CETCompat change alone would ship the old flag
@@ -129,6 +134,32 @@ $cache = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "SCSKi
 Run (Join-Path $cli "scskiller.exe") @("fetch-codecs", $cache)
 foreach ($c in $codecs) { Copy-Item (Join-Path $cache $c) $cli; Copy-Item (Join-Path $cache $c) $out }
 
+# 4a. the VC++ runtime next to both executables: libsodium and the codecs import vcruntime140.dll and Windows doesn't
+#     ship it (step 5 checks every import). App-local copies from this machine's Visual Studio redist (VC\redist is
+#     distributable code, Redist.txt), Microsoft-signed, never the system's.
+$vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+$vs = & $vswhere -latest -products "*" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+if (-not $vs) { throw "no Visual Studio with the x64 C++ tools (vswhere): the VC++ runtime DLLs come from its redist" }
+$vsVersion = & $vswhere -path $vs -property installationVersion
+$redistVersion = (Get-Content (Join-Path $vs "VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt") -TotalCount 1).Trim()
+$crt = @(Get-ChildItem (Join-Path $vs "VC\Redist\MSVC\$redistVersion\x64") -Directory -Filter "Microsoft.VC14*.CRT")
+if ($crt.Count -ne 1) { throw "VC\Redist\MSVC\$redistVersion\x64 has $($crt.Count) Microsoft.VC14*.CRT folders, not one" }
+$crtFiles = foreach ($f in "vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll") {
+    $p = Join-Path $crt[0].FullName $f
+    $sig = Get-AuthenticodeSignature $p
+    if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch '(^|, )O=Microsoft Corporation(,|$)') { throw "$p isn't signed by Microsoft ($($sig.Status))" }
+    $p
+}
+# the redist folder name can lag the DLLs' own version, so the shipped files are the record
+$crtVersions = @($crtFiles | ForEach-Object { $v = (Get-Item $_).VersionInfo; "$($v.FileMajorPart).$($v.FileMinorPart).$($v.FileBuildPart).$($v.FilePrivatePart)" } | Sort-Object -Unique)
+if ($crtVersions.Count -ne 1) { throw "the VC++ runtime DLLs in $($crt[0].FullName) differ in version: $($crtVersions -join ', ')" }
+$crtVersion = $crtVersions[0]
+foreach ($d in $out, $cli) { Copy-Item $crtFiles $d }
+$crtSource = "VC\Redist\MSVC\$redistVersion\x64\$($crt[0].Name)"
+Write-Host "VC++ runtime $crtVersion (app-local): $($crt[0].FullName)"
+[IO.File]::WriteAllText((Join-Path $out "VC-REDIST.txt"), "Microsoft Visual C++ runtime $crtVersion (x64), app-local next to SCSKiller.exe and cli\scskiller.exe: " +
+    "$(($crtFiles | Split-Path -Leaf) -join ', ')`r`nFrom Visual Studio $vsVersion, $crtSource`r`n")
+
 # 4b. licences: our notices and licence (GPL-3.0-or-later + the section 7 permission), plus the large notice files of the Microsoft packages as shipped
 foreach ($l in "LICENSE", "LICENSE-EXCEPTION.txt") { Copy-Item (Join-Path $repo $l) $out }
 $nuget = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $env:USERPROFILE ".nuget\packages" }
@@ -139,6 +170,9 @@ $runtime = ((Get-Content (Join-Path $out "SCSKiller.runtimeconfig.json") -Raw | 
 $row = "| .NET runtime (self-contained) |"
 $notices = [IO.File]::ReadAllText((Join-Path $repo "THIRD-PARTY-NOTICES.md")) -replace "(?m)^$([regex]::Escape($row)) [^|]* \|", "$row $runtime |"
 if (-not $notices.Contains("$row $runtime |")) { throw "THIRD-PARTY-NOTICES.md has no $row row to put .NET $runtime in" }
+$row = "| Microsoft Visual C++ runtime (vcruntime140.dll, vcruntime140_1.dll, msvcp140.dll) |"
+$notices = $notices -replace "(?m)^$([regex]::Escape($row)) [^|]* \|", "$row $crtVersion |"
+if (-not $notices.Contains("$row $crtVersion |")) { throw "THIRD-PARTY-NOTICES.md has no $row row to put $crtVersion in" }
 [IO.File]::WriteAllText((Join-Path $out "THIRD-PARTY-NOTICES.md"), $notices, [Text.UTF8Encoding]::new($true))
 $libs = (Get-Content (Join-Path $repo "src\SCSKiller.Ui\obj\project.assets.json") -Raw | ConvertFrom-Json).libraries.PSObject.Properties.Name   # the restore that built it
 function PackageVersion($id) {
@@ -157,7 +191,7 @@ foreach ($n in @(
 
 # 5. layout check, including self-contained .NET (no "install .NET" prompt): the runtime next to each exe and
 #    runtimeconfig.json listing includedFrameworks rather than a shared framework
-$expected = "SCSKiller.exe", "oodle-data-shared.dll", "zlib-ng2.dll", "cli\scskiller.exe", "cli\scskillerw.exe",
+$expected = "SCSKiller.exe", "oodle-data-shared.dll", "zlib-ng2.dll", "vcruntime140.dll", "VC-REDIST.txt", "cli\scskiller.exe", "cli\scskillerw.exe", "cli\vcruntime140.dll",
     "cli\oodle-data-shared.dll", "cli\zlib-ng2.dll", "native\scskiller_warm.exe", "native\segheap\scskiller_warm.exe", "native\d3d12.dll", "native\amd_ags_x64.dll", "native\scskiller_ags.dll", "native\fossilize-replay.exe",
     "native\VkLayer_scskiller.dll", "native\d3d9.dll", "native\x86\d3d9.dll", "native\preload\winmm.dll", "native\preload\version.dll", "native\preload\dinput8.dll",
     "hostfxr.dll", "coreclr.dll", "cli\hostfxr.dll", "cli\coreclr.dll", "Microsoft.WindowsAppRuntime.dll",
@@ -172,6 +206,7 @@ if (Get-ChildItem $out -Recurse -Filter "*.pdb") { throw "debug symbols must not
 foreach ($rc in "SCSKiller.runtimeconfig.json", "cli\scskiller.runtimeconfig.json") {
     if ((Get-Content (Join-Path $out $rc) -Raw) -notmatch '"includedFrameworks"') { throw "$rc is framework-dependent" }
 }
+& (Join-Path $PSScriptRoot "check-vcruntime.ps1") -Dir $out
 
 # 6. zip (with the SCSKiller\ folder at its root)
 if (-not $NoZip) {
@@ -180,6 +215,8 @@ if (-not $NoZip) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [IO.Compression.ZipFile]::CreateFromDirectory($out, $zip, [IO.Compression.CompressionLevel]::Optimal, $true)
 }
+# 7. no game key in the published files or the zip
+KeyScan (@($out) + @(if (-not $NoZip) { $zip }))
 $msg = "dist\SCSKiller: {0:N0} MB" -f ((Get-ChildItem $out -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
 if (-not $NoZip) { $msg += ", dist\SCSKiller.zip: {0:N0} MB" -f ((Get-Item $zip).Length / 1MB) }
 Write-Host $msg

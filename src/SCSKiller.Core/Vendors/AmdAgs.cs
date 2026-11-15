@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using SCSKiller.Core.App;
 using SCSKiller.Core.Carved;
@@ -57,22 +58,23 @@ public static class AmdAgs
         if (dxc.Count == 0 || dxc.Contains(AmdAppCache.DxcKey(exeName))) return null;
         var fi = new FileInfo(g.ExePath);
         if (!fi.Exists) return null;
-        // ponytail: in-memory per exe stamp and keys, so a restart scans again; persist on the GameRecord if that shows
-        var stamp = (fi.FullName.ToLowerInvariant(), fi.Length, fi.LastWriteTimeUtc, string.Join(',', dxc));
-        if (!names.TryGetValue(stamp, out var app))
+        var keys = string.Join(',', dxc);
+        string? app;
+        if (Known(fi) is { } read && read.HeldKeys == keys) app = read.App;
+        else
         {
             var hashes = dxc.Select(k => uint.TryParse(k.AsSpan(AmdAppCache.D3D12Prefix.Length), System.Globalization.NumberStyles.HexNumber, null, out var h) ? h : 0).ToHashSet();
             try
             {
                 using var s = new FileStream(fi.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.SequentialScan);
-                names[stamp] = app = StringsHashing(s, hashes) is [var one] ? one : null;
+                app = StringsHashing(s, hashes) is [var one] ? one : null;
+                Keep(fi, r => r with { HeldKeys = keys, App = app });
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }   // not cached: a later read may succeed
         }
         return app == null || app.Equals(exeName, StringComparison.OrdinalIgnoreCase) ? null : new(app, engine.Family);
     }
 
-    static readonly ConcurrentDictionary<(string, long, DateTime, string), string?> names = new();
     const int MaxName = 64;
     static readonly uint CreateDeviceHash = AmdAppCache.Fnv1a(CreateDevice);
 
@@ -134,7 +136,49 @@ public static class AmdAgs
         public void Reset() => (length, over, hash) = (0, false, 0x811C9DC5);
     }
 
-    static readonly ConcurrentDictionary<(string, long, DateTime), bool> statics = new();
+    /// <summary>What was read of an exe of this size and write time; null: not read. <paramref name="App"/> answers
+    /// <paramref name="HeldKeys"/> (<see cref="Recovered"/>).</summary>
+    sealed record ExeRead(long Length, DateTime Written, bool? Static = null, bool? Exports = null, string? HeldKeys = null, string? App = null);
+
+    static readonly ConcurrentDictionary<string, ExeRead> reads = new();   // lowercased full path -> what was read of it
+    static long readsVersion;
+    static readonly Dictionary<string, long> readsSaved = new(StringComparer.OrdinalIgnoreCase);   // file -> the version it holds
+    static readonly Lock readsGate = new();
+
+    static ExeRead? Known(FileInfo fi) =>
+        reads.TryGetValue(fi.FullName.ToLowerInvariant(), out var r) && r.Length == fi.Length && r.Written == fi.LastWriteTimeUtc ? r : null;
+
+    static void Keep(FileInfo fi, Func<ExeRead, ExeRead> add)
+    {
+        reads.AddOrUpdate(fi.FullName.ToLowerInvariant(), _ => add(new(fi.Length, fi.LastWriteTimeUtc)),
+            (_, r) => add(r.Length == fi.Length && r.Written == fi.LastWriteTimeUtc ? r : new(fi.Length, fi.LastWriteTimeUtc)));
+        Interlocked.Increment(ref readsVersion);
+    }
+
+    /// <summary>Adds the reads <see cref="SaveReads"/> wrote to <paramref name="file"/>: a start then reads no exe again while
+    /// it stays the same. One that can't be read adds none.</summary>
+    public static void LoadReads(string file)
+    {
+        try
+        {
+            if (File.Exists(file) && JsonSerializer.Deserialize<Dictionary<string, ExeRead>>(File.ReadAllBytes(file)) is { } kept)
+                foreach (var (path, read) in kept)
+                    if (read != null) reads.TryAdd(path, read);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { }
+    }
+
+    /// <summary>Writes the reads to <paramref name="file"/> when one was made since it was last written.</summary>
+    public static void SaveReads(string file)
+    {
+        lock (readsGate)
+        {
+            var version = Interlocked.Read(ref readsVersion);
+            if (readsSaved.GetValueOrDefault(file) == version) return;
+            AppStore.WriteAtomic(file, JsonSerializer.SerializeToUtf8Bytes(reads));
+            readsSaved[file] = version;
+        }
+    }
 
     /// <summary>AGS linked into the exe, no <see cref="DllName"/> beside it: the exe holds the name of AGS's device entry and of
     /// the driver extension entry AGS resolves at run time. Null: the exe can't be read.</summary>
@@ -143,12 +187,13 @@ public static class AmdAgs
         if (File.Exists(Path.Combine(Path.GetDirectoryName(exePath) ?? "", DllName))) return false;
         var fi = new FileInfo(exePath);
         if (!fi.Exists) return false;
-        var stamp = (fi.FullName.ToLowerInvariant(), fi.Length, fi.LastWriteTimeUtc);
-        if (statics.TryGetValue(stamp, out var known)) return known;
+        if (Known(fi)?.Static is { } known) return known;
         try
         {
             using var s = OpenExe(fi.FullName);
-            return statics[stamp] = Holds(s, "agsDriverExtensionsDX12_CreateDevice\0"u8, "AmdExtD3DCreateInterface\0"u8);
+            var found = Holds(s, "agsDriverExtensionsDX12_CreateDevice\0"u8, "AmdExtD3DCreateInterface\0"u8);
+            Keep(fi, r => r with { Static = found });
+            return found;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }   // not cached: a later read may succeed
     }
@@ -289,8 +334,6 @@ public static class AmdAgs
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return bundled; }
     }
 
-    static readonly ConcurrentDictionary<(string, long, DateTime), bool?> exports = new();
-
     /// <summary>The game creates its device through AGS: an <see cref="DllName"/> next to the exe, or AGS linked into the exe
     /// (its static library declares every function dllexport, so a monolithic UE exe exports them). Null: the exe can't be
     /// read (access denied, as an Xbox app game's Shipping exe is), so it isn't known.</summary>
@@ -299,15 +342,17 @@ public static class AmdAgs
         if (File.Exists(Path.Combine(Path.GetDirectoryName(exePath) ?? "", DllName))) return true;
         var fi = new FileInfo(exePath);
         if (!fi.Exists) return false;
-        return exports.GetOrAdd((fi.FullName.ToLowerInvariant(), fi.Length, fi.LastWriteTimeUtc), _ =>
+        if (Known(fi)?.Exports is { } known) return known;
+        var found = false;
+        try
         {
-            try
-            {
-                using var pe = PeFile.Open(fi.FullName);
-                return PeFile.ExportNames(pe).Contains(CreateDevice);
-            }
-            catch (UnauthorizedAccessException) { return null; }
-            catch (Exception e) when (e is IOException or BadImageFormatException or InvalidOperationException) { return false; }
-        });
+            using var pe = PeFile.Open(fi.FullName);
+            found = PeFile.ExportNames(pe).Contains(CreateDevice);
+        }
+        catch (UnauthorizedAccessException) { return null; }
+        catch (IOException) { return false; }   // not cached: a later read may succeed
+        catch (Exception e) when (e is BadImageFormatException or InvalidOperationException) { }
+        Keep(fi, r => r with { Exports = found });
+        return found;
     }
 }

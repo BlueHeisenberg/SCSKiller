@@ -378,13 +378,9 @@ public sealed class ManualSource(AppStore store) : IGameSource, ILeavesOut
         "EpicGames", "GOG Games", "GOG Galaxy", "EA Games", "Origin Games", "Ubisoft Game Launcher", "Battle.net", "WeGameApps", "rail_apps", "Program Files", "Program Files (x86)",
         "ProgramData", "Windows", "Users", "Desktop", "Downloads", "Documents", "OneDrive"];
 
-    /// <summary>Why <paramref name="root"/> can't be confirmed as the game's folder; null = it can. Refused: a missing folder, a
-    /// drive or share root, a store's or Windows' folder of many (<see cref="Libraries"/>, steamapps\common, the user's own
-    /// folder), a folder that holds another game SCSKiller lists (<paramref name="listed"/>), or one whose subfolders look like
-    /// several games (two or more with a program directly in them, not counting one with a program named like <paramref name="exe"/>,
-    /// nor, when <paramref name="exe"/> is directly in the root, one whose programs show no sign of a game: <see cref="GameSign"/>),
-    /// or one that doesn't hold <paramref name="exe"/>.</summary>
-    public static string? RootProblem(string root, string exe, IEnumerable<Game> listed)
+    /// <summary>Why <paramref name="root"/> can't be any game's folder, whatever it holds: not a folder, missing, a drive or share
+    /// root, or a store's or Windows' folder of many (<see cref="Libraries"/>). Null = it may be one.</summary>
+    public static string? FolderProblem(string root)
     {
         string full;
         try { full = GameFiles.DirKey(root); }
@@ -393,7 +389,20 @@ public sealed class ManualSource(AppStore store) : IGameSource, ILeavesOut
         var mine = GameFiles.Spellings(full);
         if (mine.Any(d => Path.GetPathRoot(d) is { } drive && GameFiles.DirKey(drive).Equals(d, StringComparison.OrdinalIgnoreCase)))
             return $"{full} is a whole drive: pick the game's own folder.";
-        if (mine.Any(IsLibrary)) return $"{full} holds many programs or games: pick the game's own folder.";
+        return mine.Any(IsLibrary) ? $"{full} holds many programs or games: pick the game's own folder." : null;
+    }
+
+    /// <summary>Why <paramref name="root"/> can't be confirmed as the game's folder; null = it can. Refused: a missing folder, a
+    /// drive or share root, a store's or Windows' folder of many (<see cref="Libraries"/>, steamapps\common, the user's own
+    /// folder), a folder that holds another game SCSKiller lists (<paramref name="listed"/>), or one whose subfolders look like
+    /// several games (two or more with a program directly in them, not counting one with a program named like <paramref name="exe"/>,
+    /// nor, when <paramref name="exe"/> is directly in the root, one whose programs show no sign of a game: <see cref="GameSign"/>),
+    /// or one that doesn't hold <paramref name="exe"/>.</summary>
+    public static string? RootProblem(string root, string exe, IEnumerable<Game> listed)
+    {
+        if (FolderProblem(root) is { } problem) return problem;
+        var full = GameFiles.DirKey(root);
+        var mine = GameFiles.Spellings(full);
         if (!GameFiles.Inside(full, exe)) return $"{full} doesn't hold {Path.GetFileName(exe)}: pick the folder it's in.";
         List<(string Dir, bool Self)> above;
         try { above = [.. GameFiles.LinkedAncestors(full)]; }

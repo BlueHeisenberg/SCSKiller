@@ -135,6 +135,7 @@ public static partial class D3DSCache
         internal DbRow(nint st) => this.st = st;
         public string? Text(int column) => Marshal.PtrToStringUTF8(sqlite3_column_text(st, column));
         public long Long(int column) => sqlite3_column_int64(st, column);
+        public unsafe byte[] Blob(int column) => sqlite3_column_bytes(st, column) is var n and > 0 ? new ReadOnlySpan<byte>((void*)sqlite3_column_blob(st, column), n).ToArray() : [];
     }
 
     /// <summary>The app_id rows' identities into <paramref name="into"/>.</summary>

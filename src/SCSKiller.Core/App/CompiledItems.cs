@@ -5,15 +5,17 @@ namespace SCSKiller.Core.App;
 /// <summary>What complete warms created since the last full one (<see cref="File"/> in the game's folder), so that a
 /// recompile on the same driver, exe and plan settings, its cache intact, replays only the rest (ScsKiller.FullReplayReason).
 /// An item is a pipeline, a state object or a plan item ('G' 'C' 'S' 'R' 'A' 'P'), keyed by the key of its last 'N' record
-/// when it has one (the NVAPI state is in NVIDIA's key; Planner.PlanInputs keys it so), else by its own. D3D11 items are
-/// always replayed.</summary>
+/// when it has one (the NVAPI state is in NVIDIA's key; Planner.PlanInputs keys it so), else by its own. D3D11 items
+/// ('1' '2' '3') go on record only where the caller of <see cref="Created"/> says so (ScsKiller.D3D11OnRecord).</summary>
 public static class CompiledItems
 {
     public const string File = "compiled.keys";
 
     static ReadOnlySpan<byte> Magic => "SCSKCMP1"u8;
 
-    static bool IsItem(char tag) => tag is 'G' or 'C' or 'S' or 'P' || IsStateObject(tag);
+    static bool IsItem(char tag) => tag is 'G' or 'C' or 'S' or 'P' || IsStateObject(tag) || IsD3D11(tag);
+
+    static bool IsD3D11(char tag) => tag is '1' or '2' or '3';
 
     /// <summary>Each record's key -> the key of its last 'N' across <paramref name="records"/>, in the order the proxy reads
     /// them (scskiller.db, then scskiller_gen.db: its g_nvext keeps the last).</summary>
@@ -27,8 +29,10 @@ public static class CompiledItems
 
     /// <summary>The items of a warm's work dbs it created: all but those a <see cref="Recordings.FailedFile"/> names, and
     /// those before scskiller_warm's item <paramref name="from"/> (its --start: a resumed warm's last part) or from item
-    /// <paramref name="to"/> on (a stopped warm's first unfinished one). <paramref name="psosOnly"/>: no state objects.</summary>
-    public static HashSet<string> Created(IReadOnlyList<string> dbs, IEnumerable<string> failed, long from = 0, long to = long.MaxValue, bool psosOnly = false)
+    /// <paramref name="to"/> on (a stopped warm's first unfinished one). <paramref name="psosOnly"/>: no state objects and no
+    /// D3D11 items. <paramref name="d3d11"/>: the D3D11 items too.</summary>
+    public static HashSet<string> Created(IReadOnlyList<string> dbs, IEnumerable<string> failed, long from = 0, long to = long.MaxValue, bool psosOnly = false,
+        bool d3d11 = false)
     {
         var notCreated = new HashSet<string>(StringComparer.Ordinal);
         foreach (var f in failed.Where(System.IO.File.Exists))
@@ -37,13 +41,14 @@ public static class CompiledItems
         var nv = LastNv(existing.SelectMany(db => Read(db).Where(r => r.Tag == 'N')));
         // the proxy's item numbers: each record key once in file order, then the plan items ('P'), then D3D11's; a db ends at
         // a zero tag for it (a zero-filled tail)
-        var (recs, plans) = (new HashSet<string>(StringComparer.Ordinal), 0L);
-        var items = new List<(string Key, long At, bool Plan)>();
+        var (recs, plans, items11) = (new HashSet<string>(StringComparer.Ordinal), 0L, 0L);
+        var items = new List<(string Key, long At, char Kind)>();
         foreach (var r in existing.SelectMany(db => Read(db).TakeWhile(r => r.Tag != '\0').Where(r => r.Tag != 'B')))
-            if (r.Tag is 'N' or 'W' or 'D' or '1' or '2' or '3') continue;
-            else if (r.Tag == 'P') items.Add((r.Key, plans++, true));
-            else if (recs.Add(r.Key) && IsItem(r.Tag) && !(psosOnly && IsStateObject(r.Tag))) items.Add((r.Key, recs.Count - 1, false));
-        return items.Where(x => (x.Plan ? recs.Count + x.At : x.At) is var at && at >= from && at < to && !notCreated.Contains(x.Key))
+            if (r.Tag is 'N' or 'W' or 'D') continue;
+            else if (IsD3D11(r.Tag)) { if (d3d11 && !psosOnly) items.Add((r.Key, items11, '1')); items11++; }
+            else if (r.Tag == 'P') items.Add((r.Key, plans++, 'P'));
+            else if (recs.Add(r.Key) && IsItem(r.Tag) && !(psosOnly && IsStateObject(r.Tag))) items.Add((r.Key, recs.Count - 1, 'G'));
+        return items.Where(x => (x.At + x.Kind switch { 'P' => recs.Count, '1' => recs.Count + plans, _ => 0 }) is var at && at >= from && at < to && !notCreated.Contains(x.Key))
             .Select(x => nv.GetValueOrDefault(x.Key, x.Key)).ToHashSet();
     }
 
@@ -71,8 +76,9 @@ public static class CompiledItems
     /// plan item's template. Everything else stays. Returns how many items were left out. <paramref name="held"/> gets the
     /// keys of <paramref name="compiled"/> the dbs hold, left out or not. A compiled item whose record key <paramref name="again"/>
     /// holds stays, its key added to <paramref name="redone"/>.</summary>
-    public static long LeaveOut(IReadOnlyList<string> dbs, IReadOnlySet<string> compiled, ISet<string>? held = null, IReadOnlySet<string>? again = null,
-        ISet<string>? redone = null) => LeaveOut(dbs, Compiled(compiled, held, again, redone), d3d11: false);
+    public static long? LeaveOut(IReadOnlyList<string> dbs, IReadOnlySet<string> compiled, ISet<string>? held = null, IReadOnlySet<string>? again = null,
+        ISet<string>? redone = null, IProgress<string>? log = null, Func<string, long?>? freeBytes = null) =>
+        LeaveOut(dbs, Compiled(compiled, held, again, redone), log, freeBytes);
 
     static Func<Rec, string, bool> Compiled(IReadOnlySet<string> compiled, ISet<string>? held, IReadOnlySet<string>? again, ISet<string>? redone) => (r, key) =>
     {
@@ -86,7 +92,7 @@ public static class CompiledItems
     /// takes out of work dbs holding <paramref name="records"/>, in the proxy's order, and how many items that is.</summary>
     internal static (HashSet<string> Dropped, long Items) LeftOut(IReadOnlyList<Rec> records, IReadOnlySet<string> compiled, ISet<string> held, IReadOnlySet<string> again, ISet<string> redone)
     {
-        var (dropped, items, _) = Dropped(records, records, Compiled(compiled, held, again, redone), false);
+        var (dropped, items) = Dropped(records, records, Compiled(compiled, held, again, redone));
         return (dropped, items);
     }
 
@@ -127,7 +133,7 @@ public static class CompiledItems
     /// <summary>Rewrites a warm's work dbs to their ray tracing items (ScsKiller.CompileRtOnly): the state objects, the PSOs
     /// and plan items with a shader that traces rays inline (SFI0's RayQuery flag), and what they need. D3D11 items go too.
     /// Returns how many items were left out.</summary>
-    public static long KeepRayTracing(IReadOnlyList<string> dbs)
+    public static long? KeepRayTracing(IReadOnlyList<string> dbs, IProgress<string>? log = null)
     {
         var existing = dbs.Where(System.IO.File.Exists).ToList();
         var rayQuery = new HashSet<string>(StringComparer.Ordinal);
@@ -149,51 +155,67 @@ public static class CompiledItems
             }
             catch (Exception e) when (e is ArgumentException or IndexOutOfRangeException or OverflowException) { return true; }   // kept as LeaveOut keeps one it can't parse
         }
-        return LeaveOut(dbs, (r, _) => !Traces(r), d3d11: true);
+        return LeaveOut(dbs, (r, _) => !Traces(r), log, null);
     }
 
     /// <summary>Rewrites the work dbs without the items <paramref name="drop"/> (the record, its key as <see cref="LastNv"/>
-    /// maps it) picks, but those a kept item needs; with <paramref name="d3d11"/> without the D3D11 items too.</summary>
-    static long LeaveOut(IReadOnlyList<string> dbs, Func<Rec, string, bool> drop, bool d3d11)
+    /// maps it) picks, but those a kept item needs. Every db's copy is written before one replaces its db. Null when the drive
+    /// has no room for a copy (its db's length and a margin of a tenth, at least 1 GB, by <paramref name="freeBytes"/>, or a
+    /// write that finds the disk full): the dbs stay as they were and the caller replays every item.</summary>
+    static long? LeaveOut(IReadOnlyList<string> dbs, Func<Rec, string, bool> drop, IProgress<string>? log, Func<string, long?>? freeBytes)
     {
-        static bool IsD3D11(char tag) => tag is '1' or '2' or '3';
         var existing = dbs.Where(System.IO.File.Exists).ToList();
-        var (dropped, count, anyD3D11) = Dropped(existing.SelectMany(db => Read(db).Where(r => r.Tag == 'N')), existing.SelectMany(db => Read(db)), drop, d3d11);
-        if (dropped.Count == 0 && !anyD3D11) return 0;
-        foreach (var db in existing)
+        var (dropped, count) = Dropped(existing.SelectMany(db => Read(db).Where(r => r.Tag == 'N')), existing.SelectMany(db => Read(db)), drop);
+        if (dropped.Count == 0) return 0;
+        var tmps = new List<string>();
+        try
         {
-            var tmp = db + ".tmp";
             try
             {
-                using (var f = new BufferedStream(System.IO.File.Create(tmp), 1 << 20))
+                foreach (var db in existing)
+                {
+                    var length = new FileInfo(db).Length;
+                    var need = length + Math.Max(1L << 30, length / 10);
+                    if ((freeBytes ?? D3DSCache.FreeBytes)(db) is { } free && free < need)
+                    {
+                        log?.Report(FormattableString.Invariant($"{Path.GetFileName(db)}: no room to leave out what was compiled, {need >> 20:N0} MB needed and {free >> 20:N0} MB free: every pipeline is replayed"));
+                        return null;
+                    }
+                    tmps.Add(db + ".tmp");
+                    using var f = new BufferedStream(System.IO.File.Create(tmps[^1]), 1 << 20);
                     foreach (var r in Read(db))
-                        if (!(IsItem(r.Tag) && dropped.Contains(r.Key) || d3d11 && IsD3D11(r.Tag))) Write(f, r.Tag, r.Payload);
-                System.IO.File.Move(tmp, db, true);
+                        if (!(IsItem(r.Tag) && dropped.Contains(r.Key))) Write(f, r.Tag, r.Payload);
+                }
             }
-            finally { System.IO.File.Delete(tmp); }
+            catch (IOException e) when (IoErrors.DiskFull(e))
+            {
+                log?.Report($"{Path.GetFileName(tmps[^1])}: no room to leave out what was compiled ({e.Message}): every pipeline is replayed");
+                return null;
+            }
+            // outside the catch: once a db is replaced, a skip would replay a db without its left-out items
+            for (var i = 0; i < existing.Count; i++) System.IO.File.Move(tmps[i], existing[i], true);
+            return count;
         }
-        return count;
+        finally { foreach (var tmp in tmps) System.IO.File.Delete(tmp); }
     }
 
-    static (HashSet<string> Dropped, long Items, bool AnyD3D11) Dropped(IEnumerable<Rec> nvRecords, IEnumerable<Rec> records, Func<Rec, string, bool> drop, bool d3d11)
+    static (HashSet<string> Dropped, long Items) Dropped(IEnumerable<Rec> nvRecords, IEnumerable<Rec> records, Func<Rec, string, bool> drop)
     {
         var items = new List<(string Key, bool Compiled, List<string> Needs)>();
         var nv = LastNv(nvRecords);
-        var anyD3D11 = false;
         foreach (var r in records)
             if (IsItem(r.Tag) && Needs(r) is var needs)
             {
                 var done = drop(r, nv.GetValueOrDefault(r.Key, r.Key));
                 items.Add((r.Key, needs != null && done, needs ?? []));
             }
-            else anyD3D11 |= d3d11 && r.Tag is '1' or '2' or '3';
         // what an item needs comes before it in the files: one pass from the end
         var needed = new HashSet<string>(StringComparer.Ordinal);
         var dropped = new HashSet<string>(StringComparer.Ordinal);
         for (var i = items.Count - 1; i >= 0; i--)
             if (items[i].Compiled && !needed.Contains(items[i].Key)) dropped.Add(items[i].Key);
             else needed.UnionWith(items[i].Needs);
-        return (dropped, items.Count(x => dropped.Contains(x.Key)), anyD3D11);
+        return (dropped, items.Count(x => dropped.Contains(x.Key)));
     }
 
     /// <summary>The records an item is created on; null when it doesn't parse (it is then never left out).</summary>

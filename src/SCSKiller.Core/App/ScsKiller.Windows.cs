@@ -56,12 +56,74 @@ public sealed partial class ScsKiller
         throw new IOException($"couldn't open the {LedgerStamp} in {dir}", hr);
     }
 
+    private static partial HeldInbox? HoldInbox(string dir, string final)
+    {
+        if (Vendors.Wine.Running) return Directory.Exists(dir) ? new(dir, final, dir, null) : null;   // Wine's sharing holds only within its server
+        // no delete sharing, with an access that takes part in it: while it's held nothing renames or replaces it, nor one above it
+        var h = CreateFileW(dir, 0x00010000 /* DELETE */ | 0x81 /* FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES */, 3 /* FILE_SHARE_READ | WRITE */, 0, 3 /* OPEN_EXISTING */,
+            0x02000000 /* FILE_FLAG_BACKUP_SEMANTICS */ | 0x00200000 /* FILE_FLAG_OPEN_REPARSE_POINT */, 0);
+        if (h.IsInvalid)
+        {
+            var (error, hr) = (Marshal.GetLastWin32Error(), Marshal.GetHRForLastWin32Error());
+            h.Dispose();
+            if (error is 2 or 3) return null;   // not there
+            throw new IOException($"couldn't open {dir}", hr);
+        }
+        var tag = new byte[8];
+        if (!GetFileInformationByHandleEx(h, 9 /* FileAttributeTagInfo */, tag, tag.Length) || (BitConverter.ToUInt32(tag, 0) & 0x400) != 0
+            || GameFiles.FinalPath(h) is not { } at || !at.Equals(final, StringComparison.Ordinal))
+        {
+            h.Dispose();
+            throw new IOException($"{dir} is a link or isn't {final}");
+        }
+        return new(dir, final, at, h);
+    }
+
+    private static partial void DeleteHeld(HeldInbox inbox)
+    {
+        if (inbox.Handle is not { } h)
+        {
+            foreach (var f in Directory.EnumerateFiles(inbox.Path)) File.Delete(f);
+            Directory.Delete(inbox.Path, false);
+            return;
+        }
+        foreach (var f in Directory.EnumerateFiles(inbox.Path)) DeleteIfOurs(f, (_, _) => true);   // the held folder's final path: nothing on it can change
+        byte delete = 1;   // gone when the held handle closes; refused while anything is left in it
+        if (!SetFileInformationByHandle(h, 4 /* FileDispositionInfo */, ref delete, 1))
+            throw new IOException($"couldn't delete {inbox.Dir}", Marshal.GetHRForLastWin32Error());
+    }
+
     private static partial void DeleteOpen(Microsoft.Win32.SafeHandles.SafeFileHandle h, string path, string dir)
     {
         byte delete = 1;
         if (!SetFileInformationByHandle(h, 4 /* FileDispositionInfo */, ref delete, 1))
             throw new IOException($"couldn't delete the {LedgerStamp} in {dir}", Marshal.GetHRForLastWin32Error());
     }
+
+    private static partial bool DeleteIfOurs(string path, Func<Microsoft.Win32.SafeHandles.SafeFileHandle, long, bool> ours)
+    {
+        // DELETE | GENERIC_READ, no sharing, FILE_FLAG_OPEN_REPARSE_POINT: the link itself, never its target
+        using var h = CreateFileW(path, 0x00010000 | 0x80000000, 0, 0, 3 /* OPEN_EXISTING */, 0x00200000, 0);
+        if (h.IsInvalid)
+        {
+            var (error, hr) = (Marshal.GetLastWin32Error(), Marshal.GetHRForLastWin32Error());
+            if (error is 2 or 3) return false;   // not there
+            throw new IOException($"couldn't open {path}", hr);
+        }
+        var (tag, standard) = (new byte[8], new byte[24]);
+        if (!GetFileInformationByHandleEx(h, 9 /* FileAttributeTagInfo */, tag, tag.Length) || !GetFileInformationByHandleEx(h, 1 /* FileStandardInfo */, standard, standard.Length))
+            throw new IOException($"couldn't read {path}'s attributes", Marshal.GetHRForLastWin32Error());
+        if ((BitConverter.ToUInt32(tag, 0) & 0x400) != 0 || BitConverter.ToUInt32(standard, 16) != 1)   // a reparse point, or a hard link's other name
+            throw new IOException(path + LinkRefused);
+        if (!ours(h, RandomAccess.GetLength(h))) return false;
+        byte delete = 1;
+        if (!SetFileInformationByHandle(h, 4 /* FileDispositionInfo */, ref delete, 1))
+            throw new IOException($"couldn't delete {path}", Marshal.GetHRForLastWin32Error());
+        return true;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetFileInformationByHandleEx(Microsoft.Win32.SafeHandles.SafeFileHandle file, int infoClass, byte[] info, int size);
 
     private static partial bool Alive(OfflineSession s)
     {

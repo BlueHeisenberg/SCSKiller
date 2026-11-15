@@ -560,6 +560,23 @@ extern "C" int fake_sl_marker(uint32_t m, const void* f) {
     static const bool fwd = GetEnvironmentVariableW(L"SCSKILLER_SELFTEST_SL_FWD", nullptr, 0) > 0;
     return fwd ? ((int (*)(uint32_t, const void*))slReflexSetMarker)(m, f) : 0;
 }
+// As Streamline 1.x's sl.interposer.dll (`selftest slload`): 0 its load of System32's d3d12.dll (1.1.1's hook.cpp), 1 and
+// 2 the same through LoadLibraryA and LoadLibraryExW, 3 dxgi.dll so, 4 d3d12.dll by name (2.x), 5 a data load of it.
+extern "C" __declspec(dllexport) HMODULE WINAPI FakeNext_SlLoad(int how) {
+    wchar_t sys[MAX_PATH];
+    char sysa[MAX_PATH];
+    GetSystemDirectoryW(sys, MAX_PATH), GetSystemDirectoryA(sysa, MAX_PATH);
+    const std::wstring w = sys;
+    switch (how) {
+    case 0: return LoadLibraryW((w + L"/d3d12.dll").c_str());
+    case 1: return LoadLibraryA((std::string(sysa) + "\\D3D12.DLL").c_str());
+    case 2: return LoadLibraryExW((w + L"\\d3d12.dll").c_str(), nullptr, 0);
+    case 3: return LoadLibraryW((w + L"/dxgi.dll").c_str());
+    case 4: return LoadLibraryW(L"d3d12.dll");
+    case 5: return LoadLibraryExW((w + L"\\d3d12.dll").c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE);
+    }
+    return nullptr;
+}
 // The marker function as a game that fetched it before the recorder came holds it, and how many calls reached it
 extern "C" __declspec(dllexport) void* WINAPI FakeNext_SlMarkerFn() { return (void*)slPCLSetMarker; }
 extern "C" __declspec(dllexport) LONG WINAPI FakeNext_SlMarkers() { return g_sl_markers; }

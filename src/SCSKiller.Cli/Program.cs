@@ -151,6 +151,7 @@ static async Task<ScsKiller> Open(bool rescan = false, string? game = null, bool
     var k = ScsKiller.CreateDefault(game == null ? null : g => Asked(g.Id, g.Name)
         || collection && SCSKiller.Core.Games.Collections.Member(g.Id) is { } m && m.All.Any(e => Asked(e.Id, e.Name)));
     k.Log = new StderrLog();   // synchronous: a message logged just before exit still prints
+    k.AwaitWelcome();
     var account = new Account(AppStore.DefaultDir);
     k.DbEntitled = () => account.SignedIn;   // entitlements are never read here: signed in counts as entitled
     await (rescan ? k.RescanAsync(CancellationToken.None) : k.ScanAsync(CancellationToken.None));
@@ -269,7 +270,7 @@ async Task<int> Status(string? query)
           shared     {(g.SharedHashes ? "used" : "not used: nothing is downloaded for this game and its plans leave the downloads out")}, {(g.SharedChoice == null ? "follows Settings" : "set for this game (shared <game> follow)")}
           warmed     {(g.WarmedAt is { } w ? $"{w:yyyy-MM-dd HH:mm} for driver {g.WarmedDriverVersion} in {Hms(g.LastWarmTime)}" + (ScsKiller.WarmCounts(g.LastWarmFailed ?? 0, g.LastWarmSkipped ?? 0, g.LastWarmCrashed ?? 0, g.LastWarmDriverSkipped ?? 0, g.LastWarmUnbuilt ?? 0, g.Plan, g.LastWarmInvalid ?? 0, g.LastWarmUnsupported ?? 0, g.LastWarmKnown ?? 0, g.LastWarmFailedBy, g.LastWarmCrashedBefore ?? 0) is { } counts ? $", {counts}" : "") : "never")}
           failed     {ScsKiller.RefusedLine(g) ?? "-"}{(k.WhyFailed(g.Game.Id) is { } failedWhy ? $" Why: {failedWhy}" : "")}
-          covered    {(ScsKiller.ShownPercent(g) is { } pct ? $"{pct}%" : "-")} for {(g.Engine is { } api && ScsKiller.ApiKey(api.GraphicsApi) is { } key ? ScsKiller.KeyName(key) : "-")}{(g.WarmedRoomLeft is > 0 and var unreached ? $", {unreached:N0} of those not compiled" : "")}
+          covered    {(ScsKiller.ShownPercent(g) is { } pct ? $"{pct}%" : "-")} for {(g.Engine is { } api ? ScsKiller.CoveredApi(api.GraphicsApi, g.Plan) : "-")}{(g.WarmedRoomLeft is > 0 and var unreached ? $", {unreached:N0} of those not compiled" : "")}
           other APIs {(g.KeptApis is { Count: > 0 } kept ? string.Join(", ", kept.Select(a => $"{ScsKiller.KeyName(a.Api)} compiled {a.WarmedAt:yyyy-MM-dd HH:mm} for driver {a.DriverVersion}{(a.CurrentDriver ? "" : " (an older driver)")}")) : "-")}
           cache      {(g.CacheOnDisk is { } c ? $"{Format.Bytes(c)} on disk{(Format.InUseShown(c, g.CacheInUse) ? $", {Format.Bytes(g.CacheInUse)} in use" : "")} (driver-cache files its warms or the game had open)" : "-")}{(g.WindowsCache is { } wc ? $", {Format.Bytes(wc)} in its D3DSCache folder" : "")}
           keys       {(rec.CacheKeys.Count > 0 ? string.Join(", ", rec.CacheKeys.Order()) : "-")}{(k.WarmAgs(g.Game.Id) is { } ags ? $" (compiles register its AGS app name {ags.App} as the game does: the exe name's case doesn't matter)" : AmdAppCache.IsNameHashed(rec.CacheKeys, ScsKiller.WarmExeName(g.Game, rec)) == false ? " (an app profile's key, not the exe name's hash: the name's case doesn't matter)" : "")}
@@ -328,7 +329,7 @@ async Task<int> RunQueue(ScsKiller k, IReadOnlyList<GameState> targets, bool whe
     if (run.Start(targets.Select(t => t.Game.Id), whenIdle) && whenIdle)
         Console.WriteLine($"waiting until the PC has been idle for {k.IdleAfter.TotalMinutes:0} min (pauses on input)");
     await k.WhenQueueIdle();
-    return !run.Stopped && k.Queue.Count > 0 && k.Queue.All(q => q.Stage == QueueStage.Done) ? 0 : 1;   // Ctrl+C: not everything compiled
+    return run.Done ? 0 : 1;
 }
 
 // SIGTERM (a service manager, kill) and SIGHUP (the terminal closed) stop the queue as Ctrl+C does, a later one too,
@@ -807,7 +808,8 @@ async Task<int> Index()
     if (args.Length < 2 || Opt("--out") is not { } outDir) return Fail("index <game> --out <dir>");
     var (_, _, _, engine, index) = await OpenIndex(args[1], new Progress<string>(Console.WriteLine));
     Directory.CreateDirectory(outDir);
-    await File.WriteAllTextAsync(Path.Combine(outDir, "index.json"), JsonSerializer.Serialize(new { engine, index }, AppStore.Json));
+    // streamed: a whole-string JSON of 100,000 shaders took GBs on top of the index
+    await using (var json = File.Create(Path.Combine(outDir, "index.json"))) await JsonSerializer.SerializeAsync(json, new { engine, index }, AppStore.Json);
     Console.WriteLine($"{index.Shaders.Count} shaders, {index.Maps.Count} shader maps, content hash {index.ContentHash} -> {outDir}");
     return 0;
 }

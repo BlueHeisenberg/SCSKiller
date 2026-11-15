@@ -9,8 +9,8 @@ using Microsoft.Win32.SafeHandles;
 namespace SCSKiller.Core.FromSoft;
 
 /// <summary>FromSoftware's containers, read-only and in memory (layouts as documented by SoulsFormats,
-/// github.com/soulsmods/SoulsFormatsNEXT, and UXM Selective Unpack; re-implemented here, nothing copied):
-///   - BHD5 (the archive header next to each .bdt): RSA-"encrypted" with the game's private key, so the published public key
+/// github.com/soulsmods/SoulsFormatsNEXT; re-implemented here, nothing copied):
+///   - BHD5 (the archive header next to each .bdt): RSA-"encrypted" with the game's private key, so the public key
 ///     decrypts it (raw RSA, 256-byte blocks -> 255 bytes); buckets of file headers (name hash, size, offset in the .bdt,
 ///     optional AES-128-ECB key + encrypted ranges);
 ///   - DCX: one compressed file (DFLT = zlib, KRAK = Oodle Kraken, ZSTD), big-endian header, payload at 0x4C;

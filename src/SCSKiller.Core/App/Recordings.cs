@@ -306,7 +306,7 @@ public static class Recordings
 
     /// <summary>What a layer made by every recording on this PC, read from disk (not from the scan's games, which a
     /// first scan publishes only once evaluated): every games\*\recording.db, and the recorder's inbox (scskiller.db)
-    /// next to each recorded exe in state.json. Files are stamped by metadata and sampled contents; the set is rebuilt
+    /// next to each recorded exe in state.json, or in its out folder (ScsKiller.OutDir). Files are stamped by metadata and sampled contents; the set is rebuilt
     /// only when one of them changed. Anything there that can't be listed, stat'ed or read throws (a recording not whole
     /// yet: <see cref="IncompleteLayerList"/>): what is shared is checked against it.</summary>
     public static HashSet<string> LayerMadeOnDisk(string dataDir)
@@ -337,7 +337,7 @@ public static class Recordings
         return [.. keys];
     }
 
-    /// <summary>The recorder inboxes a game's state.json names (next to its recorded exe, and the two of a move), parsed
+    /// <summary>The recorder inboxes a game's state.json names (next to its recorded exe or in its out folder, and the two of a move), parsed
     /// again only when the file changed.</summary>
     static string[] Inboxes(FileInfo state)
     {
@@ -352,7 +352,7 @@ public static class Recordings
                 System.Text.Json.JsonValueKind.Null => null,
                 _ => throw new InvalidDataException($"{state.FullName}: {n} is a {exe.ValueKind}, not a path"),
             })
-            .OfType<string>().Where(p => p.Length > 0).Select(p => Path.Combine(Path.GetDirectoryName(p)!, "scskiller.db"))];
+            .OfType<string>().Where(p => p.Length > 0).SelectMany(p => new[] { Path.Combine(Path.GetDirectoryName(p)!, "scskiller.db"), Path.Combine(ScsKiller.OutDir(p), "scskiller.db") })];
         lock (DiskGate) InboxesOf[state.FullName] = (stamp, inboxes);
         return inboxes;
     }

@@ -257,15 +257,16 @@ public sealed partial class LibraryPage : UserControl
         App.Main.Navigate(typeof(QueuePage));
     }
 
-    // Unsupported: say why; an encrypted game can be unlocked with its AES key (stored on this PC only).
+    // Unsupported: say why; an encrypted game can be unlocked with its key (stored on this PC only).
     async void OnWhy(object? sender, RoutedEventArgs e)
     {
         e.Handled = true;
         var row = RowOf(sender);
         var title = $"Why can't {row.Name} be compiled?";
-        if (!ScsKiller.NeedsAesKey(row.State))
+        var (aes, file) = (ScsKiller.NeedsAesKey(row.State), ScsKiller.NeedsFileKey(row.State));
+        if (!aes && !file)
             await App.ShowAsync(new ContentDialog { Title = title, Content = row.Reason, CloseButtonText = "Close" });
-        else if (await AesKeyDialog.ShowAsync(row.Id, title, row.Reason)) Vm.Rescan();
+        else if (await AesKeyDialog.ShowAsync(row.Id, title, row.Reason, aes, file)) Vm.Rescan();
     }
 
     async void OnRecord(object? sender, RoutedEventArgs e)

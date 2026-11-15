@@ -1,0 +1,147 @@
+--- CUE4Parse.csproj
++++ CUE4Parse.csproj
+@@ -2,7 +2,8 @@
+ 
+   <PropertyGroup>
+     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+-    <Description>C# Parser for Unreal Engine packages &amp; assets</Description>
++    <Description>C# Parser for Unreal Engine packages &amp; assets. SCSKiller's build: game keys and decryption constants removed (MODIFIED.txt).</Description>
++    <PackageId>SCSKiller.CUE4Parse</PackageId>
+   </PropertyGroup>
+ 
+   <ItemGroup>
+@@ -29,6 +30,7 @@
+   </ItemGroup>
+ 
+   <ItemGroup>
++    <None Include="..\LICENSE;..\NOTICE;..\MODIFIED.txt" Pack="true" PackagePath="" Visible="false" />
+     <None Remove="Resources\ACE7Key.bin" />
+     <EmbeddedResource Include="Resources\ACE7Key.bin" />
+     <None Remove="Resources\PUBGNameHashMap.json" />
+--- GameTypes/Theia/Encryption/TheiaDecryptor.cs
++++ GameTypes/Theia/Encryption/TheiaDecryptor.cs
+@@ -46,9 +46,6 @@
+ 
+ public class TheiaDecryptor
+ {
+-    public static readonly uint[] ArcRaidersKey = default !;
+-    public static readonly uint[] MarvelTokonKey = default !;
+-    public static readonly uint[] HighguardKey = default !;
+     private delegate void CompressDelegate(ReadOnlySpan<uint> chainingValue, ReadOnlySpan<uint> blockWords, ulong counter, uint blockLength, uint flags, Span<uint> output);
+     private static readonly CompressDelegate Compress = CreateCompress();
+     private static CompressDelegate CreateCompress()
+@@ -72,17 +69,13 @@
+     private readonly uint[] _masterKey;
+     private readonly TheiaPageKey[] _pageKeys = [];
+     private readonly ConcurrentDictionary<int, TheiaState> _pageStates = [];
+-    public TheiaDecryptor(byte[] meta, long fileSize, EGame game)
++    public TheiaDecryptor(byte[] meta, long fileSize, ReadOnlySpan<byte> constKey)
+     {
+         if (meta.Length < MetaMagic.Length || !meta.AsSpan(0, MetaMagic.Length).SequenceEqual(MetaMagic))
+             throw new InvalidDataException("Invalid Theia metadata: missing metadat0 magic");
+-        _constKey = game switch
+-        {
+-            GAME_ArcRaiders => ArcRaidersKey,
+-            GAME_MARVELTokonFightingSouls => MarvelTokonKey,
+-            GAME_Highguard => HighguardKey,
+-            _ => throw new ArgumentOutOfRangeException(nameof(game), game, $"TheiaDecryption is not supported for {game}"),
+-        };
++        if (constKey.Length != 32)
++            throw new ArgumentException("A Theia key is 32 bytes", nameof(constKey));
++        _constKey = constKey.Cast<byte, uint>().ToArray();
+         using var Ar = new GenericBufferReader(meta);
+         Ar.Position = ArchiveSizeOffset;
+         if (Ar.Read<long>() != fileSize)
+--- GameTypes/Theia/FileProvider/TheiaFileProvider.cs
++++ GameTypes/Theia/FileProvider/TheiaFileProvider.cs
+@@ -1,5 +1,6 @@
+ using CUE4Parse.FileProvider;
+ using CUE4Parse.GameTypes.Theia.Readers;
++using CUE4Parse.UE4.Exceptions;
+ using CUE4Parse.UE4.Readers;
+ using CUE4Parse.UE4.Versions;
+ 
+@@ -16,7 +17,11 @@
+     public TheiaFileProvider(DirectoryInfo directory, DirectoryInfo[] extraDirectories, SearchOption searchOption, VersionContainer? versions = null, StringComparer? pathComparer = null)
+         : base(directory, extraDirectories, searchOption, versions, pathComparer) { }
+ 
+-    private FArchive OpenContainerArchive(string path) => File.Exists(path + ".meta") ? new FTheiaArchive(path, Versions) : new FRandomAccessFileStreamArchive(path, Versions);
++    public byte[]? TheiaKey { get; set; }
++
++    private FArchive OpenContainerArchive(string path) => File.Exists(path + ".meta")
++        ? new FTheiaArchive(path, TheiaKey ?? throw new InvalidAesKeyException("Theia containers need the game's Theia key"), Versions)
++        : new FRandomAccessFileStreamArchive(path, Versions);
+ 
+     public override void RegisterVfs(FileInfo file) => RegisterVfs(file.FullName);
+     public override void RegisterVfs(string file) => RegisterVfs(OpenContainerArchive(file), null, OpenContainerArchive);
+--- GameTypes/Theia/Readers/FTheiaArchive.cs
++++ GameTypes/Theia/Readers/FTheiaArchive.cs
+@@ -18,13 +18,13 @@
+         _decryptor = decryptor;
+     }
+ 
+-    public FTheiaArchive(string filePath, VersionContainer? versions) : base(versions)
++    public FTheiaArchive(string filePath, ReadOnlySpan<byte> constKey, VersionContainer? versions) : base(versions)
+     {
+         Name = filePath;
+         _fileHandle = File.OpenHandle(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, FileOptions.Asynchronous | FileOptions.RandomAccess);
+         Length = RandomAccess.GetLength(_fileHandle);
+         var meta = File.ReadAllBytes(filePath + ".meta");
+-        _decryptor = new TheiaDecryptor(meta, Length, Versions.Game);
++        _decryptor = new TheiaDecryptor(meta, Length, constKey);
+     }
+ 
+     public override string Name { get; }
+--- UE4/IO/IoStoreReader.cs
++++ UE4/IO/IoStoreReader.cs
+@@ -71,11 +71,11 @@
+     public IoStoreReader(string tocPath, RandomAccessStream tocStream, Func<string, FRandomAccessStreamArchive> openContainerStreamFunc, EIoStoreTocReadOptions readOptions = EIoStoreTocReadOptions.ReadDirectoryIndex, VersionContainer? versions = null)
+         : this(new FRandomAccessStreamArchive(tocPath, tocStream, versions), openContainerStreamFunc, readOptions) { }
+ 
+-    public IoStoreReader(FArchive tocStream, Func<string, FArchive> openContainerStreamFunc, EIoStoreTocReadOptions readOptions = EIoStoreTocReadOptions.ReadDirectoryIndex)
++    public IoStoreReader(FArchive tocStream, Func<string, FArchive> openContainerStreamFunc, EIoStoreTocReadOptions readOptions = EIoStoreTocReadOptions.ReadDirectoryIndex, FAesKey? tocKey = null)
+         : base(tocStream.Name, tocStream.Versions)
+     {
+         Length = tocStream.Length;
+-        TocResource = new FIoStoreTocResource(tocStream, readOptions);
++        TocResource = new FIoStoreTocResource(tocStream, readOptions, tocKey);
+         CompressionMethods = TocResource.CompressionMethods;
+ 
+         List<FArchive> containerStreams;
+--- UE4/IO/Objects/FIoStoreTocResource.cs
++++ UE4/IO/Objects/FIoStoreTocResource.cs
+@@ -35,7 +35,10 @@
+                 return null;
+             if (_tocAr.Game is GAME_TheFinals or GAME_ArcRaiders)
+             {
+-                throw new System.NotSupportedException("needs a key SCSKiller doesn't ship");
++                var start = DirectoryIndexBufferOffset & ~((long)Aes.ALIGN - 1);
++                var skip = (int)(DirectoryIndexBufferOffset - start);
++                var block = _tocAr.ReadBytesAt(start, (int)((skip + Header.DirectoryIndexSize).Align(Aes.ALIGN))).Decrypt(TocKeyOrThrow(_tocKey));
++                return block.AsSpan(skip, (int)Header.DirectoryIndexSize).ToArray();
+             }
+ 
+             return _tocAr.ReadBytesAt(DirectoryIndexBufferOffset, (int)Header.DirectoryIndexSize);
+@@ -44,14 +47,20 @@
+         public readonly long DirectoryIndexBufferOffset = -1;
+         public readonly long DirectoryIndexBufferSize = -1;
+         public readonly FIoStoreTocEntryMeta[]? ChunkMetas;
+-        public FIoStoreTocResource(FArchive Ar, EIoStoreTocReadOptions readOptions = EIoStoreTocReadOptions.Default)
++        private readonly FAesKey? _tocKey;
++
++        private static FAesKey TocKeyOrThrow(FAesKey? key) => key ?? throw new InvalidAesKeyException("This game's .utoc is encrypted: it needs its .utoc key");
++
++        public FIoStoreTocResource(FArchive Ar, EIoStoreTocReadOptions readOptions = EIoStoreTocReadOptions.Default, FAesKey? tocKey = null)
+         {
+             _tocAr = Ar;
++            _tocKey = tocKey;
+             var streamBuffer = new byte[Ar.Length];
+             Ar.Read(streamBuffer, 0, streamBuffer.Length);
+             if (Ar.Game is GAME_TheFinals or GAME_ArcRaiders)
+             {
+-                throw new System.NotSupportedException("needs a key SCSKiller doesn't ship");
++                var decrypted = streamBuffer.Decrypt(FIoStoreTocHeader.SIZE, (int)(Ar.Length - FIoStoreTocHeader.SIZE), TocKeyOrThrow(tocKey));
++                Array.Copy(decrypted, 0, streamBuffer, FIoStoreTocHeader.SIZE, decrypted.Length);
+             }
+ 
+             using var archive = new FByteArchive(Ar.Name, streamBuffer, Ar.Versions);

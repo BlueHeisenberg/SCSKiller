@@ -159,8 +159,9 @@ public sealed class XboxSource(IEnumerable<string>? driveRoots = null) : IGameSo
     static string? FindExeFallback(string content)
     {
         var opts = new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 3, IgnoreInaccessible = true, AttributesToSkip = 0 };
+        var excluded = NotTheGame(content);
         return Directory.EnumerateFiles(content, "*.exe", opts)
-            .Where(Pickable)
+            .Where(f => Pickable(f) && !GameFiles.NotTheGameExe(content, f, excluded))
             .Select(f => new FileInfo(f)).MaxBy(f => f.Length)?.FullName;
     }
 

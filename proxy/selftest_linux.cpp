@@ -343,7 +343,7 @@ static long long start_time(pid_t pid) {
 }
 
 // exe with args; before(pid) runs while the child waits, before it execs (the pid and start time it keeps).
-static int run(const std::string& exe, const std::vector<std::string>& args, const std::function<void(pid_t)>& before = nullptr) {
+static int run(const std::string& exe, const std::vector<std::string>& args, const std::function<void(pid_t)>& before = nullptr, const std::string& argv0 = "") {
     fflush(stdout);
     int go[2];
     if (pipe(go)) return -1;
@@ -353,7 +353,7 @@ static int run(const std::string& exe, const std::vector<std::string>& args, con
         char c;
         close(go[1]);
         if (read(go[0], &c, 1) != 1) _exit(126);
-        std::vector<char*> argv{(char*)exe.c_str()};
+        std::vector<char*> argv{(char*)(argv0.empty() ? exe : argv0).c_str()};
         for (auto& a : args) argv.push_back((char*)a.c_str());
         argv.push_back(nullptr);
         execv(exe.c_str(), argv.data());
@@ -437,7 +437,7 @@ static int vkrec(const std::string& bin) {
         const std::string kv = obj("appinfo") + obj("common") + str("name", "x") + (vac ? obj("category") + str("category_8", "1") + end : "") + end + end + end;
         return u32(id) + u32(60 + (uint32_t)kv.size()) + u32(2) + std::string(56, '\0') + kv;
     };
-    CHECK(write_file(steam + "/appcache/appinfo.vdf", u32(0x07564428) + u32(1) + app(4242, false) + app(4343, true) + u32(0)));
+    CHECK(write_file(steam + "/appcache/appinfo.vdf", u32(0x07564428) + u32(1) + app(4242, false) + app(4343, true) + app(4545, false) + app(4646, true) + u32(0)));
     setenv("SCSKILLER_TEST_STEAM_ROOT", steam.c_str(), 1);
     std::string key;
     for (int i = 0; i < 64; ++i) key += "0123456789abcdef"[rd() & 15];
@@ -642,6 +642,57 @@ static int vkrec(const std::string& bin) {
     CHECK(write_file(steam + "/steamapps/appmanifest_4545.acf", "\"AppState\"\n{\n\t\"appid\"\t\t\"4545\"\n\t\"installdir\"\t\t\"scskalias\"\n}\n"));
     Seen w = play("W");
     bad += !nothing(w) || !w.refused || read_all(refusal).find(" VAC: two Steam manifests name the game's folder") == std::string::npos;
+    auto acf = [&](const char* id, const char* folder, const char* flags, const char* size) {
+        return write_file(steam + "/steamapps/appmanifest_" + id + ".acf", std::string("\"AppState\"\n{\n\t\"appid\"\t\t\"") + id + "\"\n\t\"StateFlags\"\t\t\"" + flags +
+                                                                               "\"\n\t\"installdir\"\t\t\"" + folder + "\"\n\t\"SizeOnDisk\"\t\t\"" + size + "\"\n}\n");
+    };
+    // a pack installing into the game's folder (no bytes of its own): the game's manifest, fully installed with its bytes, decides
+    CHECK(acf("4242", "scskgame", "68", "1000") && acf("4545", "scskalias", "4", "0"));
+    Seen wp = play("WP");
+    bad += wp.code != 0 || wp.foz < 1 || wp.refused;
+    CHECK(acf("4545", "scskalias", "4", "10"));
+    Seen wf = play("WF");
+    bad += !nothing(wf) || !wf.refused || read_all(refusal).find(" VAC: two Steam manifests name the game's folder") == std::string::npos;
+    CHECK(!unlink((steam + "/steamapps/appmanifest_4545.acf").c_str()) && acf("4646", "scskalias", "4", "0"));  // Steam marks the pack's app VAC
+    Seen wv = play("WV");
+    bad += !nothing(wv) || !wv.refused || read_all(refusal).find(" VAC: two Steam manifests name the game's folder") == std::string::npos;
+    // under Proton, started as the pack: the game runs in the pack's prefix. Wine as FakeProton shows it: the dynamic linker
+    // as wine64-preloader maps the exe, argv0 its Windows path, WINEPREFIX the prefix
+    std::string linker;
+    const std::string maps = read_all("/proc/self/maps", 1 << 20);
+    for (size_t at = maps.find('/'); at != std::string::npos && linker.empty(); at = maps.find('/', maps.find('\n', at))) {
+        const std::string p = maps.substr(at, maps.find('\n', at) - at);
+        if (!base_name(p).compare(0, 8, "ld-linux")) linker = p;
+    }
+    const std::string loader = dir + "wine/wine64-preloader", wexe = game + "scskwine.exe";
+    fs::create_directories(dir + "wine", ec);
+    CHECK(!linker.empty() && fs::copy_file(linker, loader, ec) && fs::copy_file(exe, wexe, ec) && arm(game, wexe, rec));
+    std::string win = "Z:" + wexe;
+    std::replace(win.begin(), win.end(), '/', '\\');
+    const std::string wout = rec + "/vulkan/" + file_key(wexe) + "/", wrefusal = rec + "/refused/" + file_key(wexe);
+    auto proton = [&](const char* tag, const char* id) {  // the refusal, "" when it recorded, "-" when neither
+        const std::string pfx = steam + "/steamapps/compatdata/" + id + "/pfx";
+        std::error_code e;
+        fs::create_directories(pfx, e), fs::remove_all(wout, e), unlink(wrefusal.c_str());
+        setenv("WINEPREFIX", pfx.c_str(), 1);
+        const int code = run(loader, {wexe, "vkchild"}, nullptr, win);
+        unsetenv("WINEPREFIX");
+        const std::string why = read_all(wrefusal);
+        const bool recorded = !files(wout).empty();
+        printf("%s: exit %d, %s\n", tag, code, !why.empty() ? why.c_str() : recorded ? "recorded" : "nothing");
+        return code != 0 ? std::string("-") : !why.empty() ? why : recorded ? "" : "-";
+    };
+    CHECK(!unlink((steam + "/steamapps/appmanifest_4646.acf").c_str()) && acf("4545", "scskalias", "4", "0"));
+    bad += !proton("PA", "4545").empty();
+    bad += proton("PX", "4343").find(" VAC: two Steam apps hold the game's folder or its Wine prefix") == std::string::npos;  // another app's prefix
+    CHECK(acf("4545", "scskalias", "4", "10"));
+    bad += proton("P2", "4545").find(" VAC: two Steam manifests name the game's folder") == std::string::npos;
+    CHECK(!unlink((steam + "/steamapps/appmanifest_4545.acf").c_str()) && acf("4646", "scskalias", "4", "0"));
+    bad += proton("PV", "4646").find(" VAC: two Steam manifests name the game's folder") == std::string::npos;
+    // an owner's id in the shortcut range is still its app's, checked though the pack's prefix is passed over
+    CHECK(!unlink((steam + "/steamapps/appmanifest_4646.acf").c_str()) && !unlink((steam + "/steamapps/appmanifest_4242.acf").c_str()));
+    CHECK(acf("4545", "scskalias", "4", "0") && acf("2147483649", "scskgame", "68", "1000"));
+    bad += proton("PH", "4545").find(" VAC: the game isn't in Steam's appinfo.vdf") == std::string::npos;
     clean();
     unsetenv("VK_LOADER_LAYERS_DISABLE");
     if (!bad) fs::remove_all(dir, ec);

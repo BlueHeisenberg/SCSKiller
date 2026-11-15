@@ -47,10 +47,16 @@ public static partial class Hookshot
 
     static partial void RecoverAll(string gamesDir, IProgress<string>? log);
 
-    static readonly System.Collections.Concurrent.ConcurrentDictionary<int, bool> Running = new();
+    /// <summary>A process of a precompile run of this process (the port, anything it starts, or its start before
+    /// CreateProcessW returns): SCSKiller's own, never the player's game (Hookshot.Windows.cs).</summary>
+    public static bool Ours(int pid)
+    {
+        var ours = false;
+        InRun(pid, ref ours);
+        return ours;
+    }
 
-    /// <summary>A hookshot.exe a precompile run of this process started: SCSKiller's own, never the player's game.</summary>
-    public static bool Ours(int pid) => Running.ContainsKey(pid);
+    static partial void InRun(int pid, ref bool ours);
 
     static string TranslatingNote(TimeSpan t, double? share = null) => $"translating Hookshot's shaders, {(share is { } f ? $"{f * 100:0}%, " : "")}{ScsKiller.Duration(t)}";
     static string SavingNote(TimeSpan t) => $"letting Hookshot save its pipelines, {ScsKiller.Duration(t)}";

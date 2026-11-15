@@ -83,6 +83,32 @@ public static class Dxbc
         return min == 0 && max == uint.MaxValue ? null : (min, max);
     }
 
+    /// <summary>A DXIL shader's resource bindings from PSV0: after the runtime info (u32 size, at least PSVRuntimeInfo0's 24
+    /// bytes, then data), a u32 count, a u32 entry size (16 before PSV version 2, 24 from it) and entries of u32 type
+    /// (1 sampler, 2 CBV, 3-5 SRV, 6-9 UAV), space, lower and upper bound (0xFFFFFFFF = unbounded). Null when PSV0 is missing
+    /// or anything in it is out of range: a type, a register space the runtime reserves, an upper bound below its lower.</summary>
+    public static (uint Type, uint Space, uint Lo, uint Hi)[]? PsvBindings(ReadOnlySpan<byte> c)
+    {
+        var psv = Part(c, "PSV0"u8);
+        if (psv.Length < 8 || U(psv, 0) < 24) return null;
+        var p = 4L + U(psv, 0);
+        if (p + 4 > psv.Length) return null;
+        var n = U(psv, (int)p);
+        if (n == 0) return [];
+        if (p + 8 > psv.Length) return null;
+        var size = U(psv, (int)p + 4);
+        p += 8;
+        if (size is not (16 or 24) || n > (psv.Length - p) / size) return null;
+        var o = new (uint, uint, uint, uint)[n];
+        for (var i = 0; i < n; i++)
+        {
+            var e = (int)(p + i * size);
+            o[i] = (U(psv, e), U(psv, e + 4), U(psv, e + 8), U(psv, e + 12));
+            if (o[i].Item1 is < 1 or > 9 || o[i].Item2 >= 0xFFFFFFF0 || o[i].Item4 < o[i].Item3) return null;
+        }
+        return o;
+    }
+
     /// <summary>A DXIL shader that traces rays inline (RayQuery): SFI0's D3D_SHADER_REQUIRES_RAYTRACING_TIER_1_1.</summary>
     public static bool InlineRayTracing(ReadOnlySpan<byte> c) =>
         Valid(c) && Part(c, "SFI0"u8) is { Length: >= 8 } f && (BinaryPrimitives.ReadUInt64LittleEndian(f) & 0x100000) != 0;

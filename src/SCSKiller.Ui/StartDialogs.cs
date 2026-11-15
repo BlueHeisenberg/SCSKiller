@@ -48,9 +48,20 @@ static class StartDialogs
 
     static async Task<ContentDialogResult?> TryShowAsync(ContentDialog dialog)
     {
-        if (App.Main.TryShowDialog(dialog) is not { } shown) return null;
+        if (App.Main.TryShowDialog(dialog) is not { } shown)
+        {
+            await DialogLayer.Dropped(dialog);
+            return null;
+        }
         dialogShown = true;
         return await shown;
+    }
+
+    // a start question waits for a dialog opened before it: dropped, a first run's welcome would hold the recorders
+    static async Task<ContentDialogResult?> AskAsync(ContentDialog dialog)
+    {
+        dialogShown = true;
+        return await App.Main.Dialogs.ShowWhenFreeAsync(dialog);
     }
 
     /// <summary>Checked once per opening, last. A skipped opening costs no try, and a try is spent as it shows: quitting from it counts as X.</summary>
@@ -95,7 +106,10 @@ static class StartDialogs
     static async Task<WelcomeAnswer?> AskWelcomeAsync(Task<WelcomeContent?> fetch)
     {
         var (dialog, answer) = Welcome(await fetch ?? WelcomeContent.Default);
-        return await TryShowAsync(dialog) is { } result ? answer(result) : null;
+        Host.Log?.Report("first-run welcome: opening");
+        var result = await AskAsync(dialog);
+        Host.Log?.Report($"first-run welcome: closed ({result})");
+        return result is { } r ? answer(r) : null;
     }
 
     /// <summary>The server's text or the bundled one, as plain text.</summary>
@@ -104,12 +118,19 @@ static class StartDialogs
         var panel = new StackPanel { Spacing = 12 };
         foreach (var p in c.Paragraphs) panel.Children.Add(new TextBlock { Text = p, TextWrapping = TextWrapping.Wrap });
         if (c.Link != null) panel.Children.Add(new HyperlinkButton { Content = c.Link.Text, NavigateUri = new Uri(c.Link.Url), Padding = new(0) });
+        // an install from before the box has none: its setting stays
+        var record = Host.Core is ScsKiller { AwaitsWelcome: false } ? null : new CheckBox { IsChecked = ScsKiller.RecorderTicked && Host.Core.Settings.RecordAllGames, Content = new TextBlock { Text = "Record in all compatible games", TextWrapping = TextWrapping.Wrap } };
+        if (record != null)
+        {
+            AutomationProperties.SetName(record, "Record in all compatible games");
+            panel.Children.Add(record);
+        }
         var share = Box(c.Share);
         var diagnostics = Box("Share diagnostics to help fix problems");
         var active = Box("Send an anonymous daily check", "Helps us count active installs so we can size our servers. Once a day, the app's version and GPU vendor, no identifier.");
         panel.Children.AddRange([share, diagnostics, active]);
         var dialog = new ContentDialog { Title = c.Title, Content = panel, PrimaryButtonText = c.SignIn, CloseButtonText = c.Dismiss, DefaultButton = ContentDialogButton.Primary };
-        return (dialog, result => new(share.IsChecked == true, diagnostics.IsChecked == true, active.IsChecked == true, result == ContentDialogResult.Primary));
+        return (dialog, result => new(share.IsChecked == true, diagnostics.IsChecked == true, active.IsChecked == true, result == ContentDialogResult.Primary, record == null ? null : record.IsChecked == true));
     }
 
     // never pre-ticked: that isn't consent
@@ -122,7 +143,7 @@ static class StartDialogs
         return box;
     }
 
-    static async Task<bool?> AskActiveCheckAsync() => await TryShowAsync(ActiveCheckDialog()) is { } r ? r == ContentDialogResult.Primary : null;
+    static async Task<bool?> AskActiveCheckAsync() => await AskAsync(ActiveCheckDialog()) is { } r ? r == ContentDialogResult.Primary : null;
 
     public static ContentDialog ActiveCheckDialog() => new()
     {
@@ -144,7 +165,7 @@ static class StartDialogs
         PrimaryButtonText = "Turn it on", CloseButtonText = "Keep it off", DefaultButton = ContentDialogButton.None,   // no nudge either way
     };
 
-    static async Task<TraversalMode?> AskTraversalAsync() => await TryShowAsync(TraversalDialog(TraversalFix.LowVram(Host.Core.Vendor.Gpu))) is { } r
+    static async Task<TraversalMode?> AskTraversalAsync() => await AskAsync(TraversalDialog(TraversalFix.LowVram(Host.Core.Vendor.Gpu))) is { } r
         ? r == ContentDialogResult.Primary ? TraversalMode.All : TraversalMode.Off : null;
 
     /// <summary>Primary: all games, Keep it off or Esc: off.</summary>
@@ -224,7 +245,7 @@ static class StartDialogs
         PrimaryButtonText = n.Compile ? ScsKiller.OldPlansClear : ScsKiller.OldVersionsClear, CloseButtonText = ScsKiller.OldPlansKeep, DefaultButton = ContentDialogButton.Close,
     };
 
-    static async Task<bool?> AskDiagnosticsAsync() => await TryShowAsync(new ContentDialog
+    static async Task<bool?> AskDiagnosticsAsync() => await AskAsync(new ContentDialog
     {
         Title = "Share diagnostics to help fix problems?",
         Content = "When a compile fails, send its error codes, once per compile. You can change this in Settings.",

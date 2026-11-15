@@ -88,6 +88,19 @@ static partial class Libc
         return ((*(ushort*)(buf + 28) & 0xF000) == 0xA000, *(uint*)(buf + 16));   // stx_mode's S_IFMT is S_IFLNK, stx_nlink
     }
 
+    /// <summary>The hard link count of the open file <paramref name="h"/>; null when it can't be had.</summary>
+    public static unsafe uint? Links(SafeFileHandle h)
+    {
+        var added = false;
+        var buf = stackalloc byte[256];
+        try
+        {
+            h.DangerousAddRef(ref added);
+            return statx((int)h.DangerousGetHandle(), "", AtEmptyPath, StatxNlink, buf) == 0 ? *(uint*)(buf + 16) : null;   // stx_nlink
+        }
+        finally { if (added) h.DangerousRelease(); }
+    }
+
     /// <summary>A read handle on <paramref name="path"/>, its symlinks followed, when it is a regular file; null for a FIFO,
     /// socket or device, which is never opened: the check is on an O_PATH handle, and the read handle reopens that file.</summary>
     public static unsafe SafeFileHandle? OpenRegular(string path)

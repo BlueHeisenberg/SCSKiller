@@ -24,65 +24,102 @@ namespace SCSKiller.Core.ReEngine;
 /// EngineInfo: Family "RE Engine", Version "PAK 4.2" (the package format this reads), Fork the exe's name (<see cref="Fork"/>).
 /// ponytail: shader files are found by magic; a title keeping its shaders under another magic is missed (Detect then
 /// reports none found, naming the commonest magics). Add its magic to <see cref="ShaderMagics"/>.</summary>
-/// <param name="dataDir">the app's data folder, where a user puts a game's table-key modulus (<see cref="ModulusFile"/>)</param>
-/// <param name="download">fetches a URL's text (null on failure): <see cref="Download.Text"/>, a fake in tests</param>
-public sealed class ReEngineReader(string dataDir, Func<string, string?>? download = null) : IEngineReader
+/// <param name="dataDir">the app's data folder, where a game's table-key modulus is kept (<see cref="ModulusFile"/>)</param>
+/// <param name="download">fetches a URL's bytes (null on failure): <see cref="Download.Get"/>, a fake in tests</param>
+/// <param name="pinned">the download's expected SHA-256 (tests pass their fake's)</param>
+public sealed class ReEngineReader(string dataDir, Func<string, byte[]?>? download = null, string pinned = ReEngineReader.ReePakRsSha256) : IEngineReader
 {
     public const string Family = "RE Engine";
 
     /// <summary>The public RSA modulus the packages' table keys are made with (<see cref="RePak.Key"/>). None is shipped, and
     /// the game doesn't carry it in the clear (PRAGMATA's exe is packed: the modulus isn't in any of its files on disk, in
     /// either byte order): this file, local only (never in plans, logs or anything shared), hex in either byte order (the
-    /// one that opens the packages wins; "0x" and separators are ignored). A user may write it; else it is downloaded
-    /// (<see cref="ReePakRs"/>) when an encrypted table needs it, and kept here only if it opens the base package.</summary>
+    /// one that opens the packages wins; "0x" and separators are ignored). The user gives it (<see cref="SetKey"/>), else it
+    /// is downloaded (<see cref="ReePakRs"/>) when an encrypted table needs it, and kept only if it opens the packages.</summary>
     public string ModulusFile(Game game) => Path.Combine(new AppStore(dataDir).GameDir(game.Id), "pak.modulus");
 
     /// <summary>The community's published modulus: ree-pak-rs's table-key cipher (a Rust byte array, little endian), pinned
-    /// to commit 25562e6a (2026-04-02) so an upstream edit can't change what is fetched.</summary>
+    /// to commit 25562e6a (2026-04-02) and to <see cref="ReePakRsSha256"/>, so an upstream edit can't change what is used.</summary>
     public const string ReePakRs = "https://raw.githubusercontent.com/eigeen/ree-pak-rs/25562e6a6f9a52a43b80d54be91e4feb7ac7668b/ree-pak-core/src/pak/cipher/pak.rs";
+
+    /// <summary>SHA-256 of <see cref="ReePakRs"/> as served (1,745 bytes).</summary>
+    public const string ReePakRsSha256 = "c4530382c068074dd51fc39e8434944cc6bc40bf8a3963d339fefa9a5d6bf883";
 
     List<BigInteger> Moduli(Game game)
     {
-        try
-        {
-            var hex = string.Concat(File.ReadAllText(ModulusFile(game)).Replace("0x", "", StringComparison.OrdinalIgnoreCase).Where(Uri.IsHexDigit));
-            return hex.Length is 0 || hex.Length % 2 != 0 ? [] : BothOrders(Convert.FromHexString(hex));
-        }
+        try { return Hex(File.ReadAllText(ModulusFile(game))) is { } b ? BothOrders(b) : []; }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
+    }
+
+    static byte[]? Hex(string text)
+    {
+        var hex = string.Concat(text.Replace("0x", "", StringComparison.OrdinalIgnoreCase).Where(Uri.IsHexDigit));
+        return hex.Length is 0 || hex.Length % 2 != 0 ? null : Convert.FromHexString(hex);
     }
 
     static List<BigInteger> BothOrders(byte[] b) =>
         new[] { new BigInteger(b, isUnsigned: true), new BigInteger(b, isUnsigned: true, isBigEndian: true) }.Where(m => m > 1).ToList();
 
-    /// <summary>Every byte array of 64+ bytes in Rust source ("[0x12, 0x34, ...]"): the candidate moduli (the 4-byte
-    /// exponent and anything else short left out).</summary>
-    public static List<byte[]> ReePakModuli(string source) =>
-        Regex.Matches(source, @"\[([^\[\]]*)\]").Select(m => m.Groups[1].Value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+    /// <summary>Every byte array of 64+ bytes in a text ("[0x12, 0x34, ...]", "{ ... }"): candidate moduli, the short
+    /// arrays beside them left out.</summary>
+    public static List<byte[]> ByteArrays(string text) =>
+        Regex.Matches(text, @"[\[{]([^\[\]{}]*)[\]}]").Select(m => m.Groups[1].Value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
             .Where(t => t.Length >= 64 && t.All(x => Regex.IsMatch(x, "^0x[0-9A-Fa-f]{1,2}$")))
             .Select(t => t.Select(x => Convert.ToByte(x[2..], 16)).ToArray()).ToList();
 
-    /// <summary>The game's packages, or why they can't be read (a missing modulus says where to put it).</summary>
-    Paks Open(Game game, string dir)
+    /// <summary>The moduli a user's text may hold: all of it as hex, a byte array, or a long run of hex digits. 2048 bytes
+    /// at most: a modulus of a whole file's size would take minutes to try.</summary>
+    static List<byte[]> Given(string text) =>
+        ByteArrays(text).Concat(Regex.Matches(text, "(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{2}){64,2048}(?![0-9A-Fa-f])").Select(m => Convert.FromHexString(m.Value))).Prepend(Hex(text))
+            .OfType<byte[]>().Where(b => b.Length is >= 64 and <= 2048).ToList();
+
+    /// <summary>The first modulus in the user's text that opens the base package and its patches is stored, and only its
+    /// value. An encrypted table decrypts to all plausible sizes only with the right one (<see cref="RePak"/>).</summary>
+    public (bool Stored, IReadOnlyList<string> Refused) SetKey(Game game, string text)
     {
-        var paks = new Paks(dir, Moduli(game));
-        if (paks.Error?.EndsWith(RePak.NoModulus) != true) return paks;
-        // none given: the published one, kept only if it opens the package that needs it (tried every Detect until one does)
-        if ((download ?? Download.Text)(ReePakRs) is { } source && ReePakModuli(source).FirstOrDefault(b => Opens(paks.Failed!, BothOrders(b))) is { } m)
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(ModulusFile(game))!);
-            File.WriteAllText(ModulusFile(game), Convert.ToHexString(m));
-            paks.Dispose();
-            return new Paks(dir, BothOrders(m));
-        }
-        paks.Error += $", and none that opens it could be downloaded (ree-pak-rs's): put the game's table-key modulus (hex) in {ModulusFile(game)}";
-        return paks;
+        if (Find(game) is not { } dir) return (false, ["the game's files aren't found"]);
+        using (var plain = new Paks(dir, []))
+            if (plain.Error == null) return (false, ["the game's files aren't encrypted"]);
+        return Store(game, dir, Given(text)) != null ? (true, []) : (false, [ScsKiller.KeyRefused]);
     }
 
-    static bool Opens(string pak, List<BigInteger> moduli)
+    // a Detect and an Index of one game may both store it: a torn .tmp would read as a refused key
+    static readonly Lock Gate = new();
+
+    /// <summary>The first of <paramref name="candidates"/> that opens the base package and its patches, stored alone; null: none does.</summary>
+    byte[]? Store(Game game, string dir, IEnumerable<byte[]> candidates)
     {
-        try { RePak.Open(pak, moduli).Dispose(); return true; }
-        catch (Exception e) when (e is InvalidDataException or IOException or UnauthorizedAccessException) { return false; }
+        foreach (var m in candidates)
+        {
+            using var paks = new Paks(dir, BothOrders(m));
+            if (paks.Error != null) continue;
+            var file = ModulusFile(game);
+            lock (Gate)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                File.WriteAllText(file + ".tmp", Convert.ToHexString(m));
+                File.Move(file + ".tmp", file, overwrite: true);
+            }
+            return m;
+        }
+        return null;
     }
+
+    /// <summary>The game's packages with the stored modulus; none stored and a table needing one, with the downloaded one if
+    /// it opens them. A failed or unpinned download leaves the key state.</summary>
+    Paks Open(Game game, string dir, IProgress<string>? log)
+    {
+        var paks = new Paks(dir, Moduli(game));
+        if (paks.Error?.EndsWith(RePak.NoModulus) != true || Download.Pinned(download, ReePakRs, pinned, log) is not { } got) return paks;
+        byte[]? m;
+        try { m = Store(game, dir, ByteArrays(Encoding.UTF8.GetString(got))); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { log?.Report($"{game.Name}: the downloaded key couldn't be stored ({e.GetType().Name}), the game stays keyless"); return paks; }
+        if (m == null) { log?.Report($"key download {ReePakRs}: no modulus in it opens {game.Name}'s packages, the game stays keyless"); return paks; }
+        paks.Dispose();
+        return new Paks(dir, BothOrders(m));
+    }
+
+    public static bool NeedsKey(EngineInfo e) => e is { Family: Family, Encrypted: true };
 
     /// <summary>First 4 bytes (little endian) of the files that hold shader containers: "SDF\0", "OCIO".</summary>
     static readonly uint[] ShaderMagics = [0x00464453, 0x4F49434F];
@@ -104,11 +141,15 @@ public sealed class ReEngineReader(string dataDir, Func<string, string?>? downlo
 
     public int ReaderVersion(EngineInfo engine) => 4;
 
+    // the scan cache keeps a refused package until its key changes: a failed download is tried again at a refresh
+    public string DetectStamp(Game game, EngineInfo? engine) => KeyFiles.Stamp(ModulusFile(game)) ?? "";
+
     public EngineInfo? Detect(Game game)
     {
         if (Find(game) is not { } dir) return null;
-        using var paks = Open(game, dir);
-        var version = paks.Base is { } b ? $"PAK {b.Major}.{b.Minor}" : "PAK ?";
+        using var paks = Open(game, dir, Download.Log);
+        var version = paks.Version is { } v ? $"PAK {v.Major}.{v.Minor}" : "PAK ?";
+        if (paks.Error?.EndsWith(RePak.NoModulus) == true) return new(Family, version, Fork(game), Api(dir, null), true, null, Note: Download.FailedNote);
         if (paks.Error != null) return new(Family, version, Fork(game), Api(dir, null), false, paks.Error);
         // the first shader file that holds a container settles it (PRAGMATA: within the first few hundred entries)
         var magics = new Dictionary<uint, int>();
@@ -132,7 +173,7 @@ public sealed class ReEngineReader(string dataDir, Func<string, string?>? downlo
     {
         var sw = Stopwatch.StartNew();
         var dir = Find(game) ?? throw new DirectoryNotFoundException($"{game.InstallDir}: no re_chunk_000.pak");
-        using var paks = Open(game, dir);
+        using var paks = Open(game, dir, log);
         if (paks.Error != null) throw new InvalidDataException(paks.Error);
         var final = paks.Final().ToList();
         int encrypted = 0, unreadable = 0;
@@ -154,6 +195,7 @@ public sealed class ReEngineReader(string dataDir, Func<string, string?>? downlo
         // title ships material files in the hundreds of MB
         Parallel.ForEach(files, ReaderLoops.Options(ct), f =>
         {
+            using var gate = ReadGate.Enter(ct);
             byte[] data;
             try { data = f.Pak.Read(f.Pak.Entries[f.Index]); }
             catch (Exception e) when (e is InvalidDataException or IOException or ZstdSharp.ZstdException) { Interlocked.Increment(ref unreadable); return; }
@@ -322,8 +364,8 @@ public sealed class ReEngineReader(string dataDir, Func<string, string?>? downlo
     {
         public readonly List<RePak> All = [];
         public readonly RePak? Base;
+        public readonly (int Major, int Minor)? Version;
         public string? Error;
-        public string? Failed;   // the package Error is about
 
         static readonly Regex Patch = new(@"\.patch_(\d+)\.pak$", RegexOptions.IgnoreCase);
 
@@ -342,9 +384,10 @@ public sealed class ReEngineReader(string dataDir, Func<string, string?>? downlo
                 catch (Exception e) when (e is InvalidDataException or IOException or UnauthorizedAccessException)
                 {
                     // a patch replaces base files: without it the index would be of the unpatched game. A DLC package only adds.
-                    if (Path.GetFileName(p).Equals("re_chunk_000.pak", StringComparison.OrdinalIgnoreCase) || Patch.IsMatch(p)) (Error, Failed) = (Error ?? $"{Path.GetFileName(p)}: {e.Message}", Failed ?? p);
+                    if (Path.GetFileName(p).Equals("re_chunk_000.pak", StringComparison.OrdinalIgnoreCase) || Patch.IsMatch(p)) Error ??= $"{Path.GetFileName(p)}: {e.Message}";
                 }
             Base = All.FirstOrDefault(p => Path.GetFileName(p.Path).Equals("re_chunk_000.pak", StringComparison.OrdinalIgnoreCase));
+            Version = Base is { } b ? (b.Major, b.Minor) : RePak.HeaderVersion(GameFiles.Find(dir, "re_chunk_000.pak"));
         }
 
         /// <summary>Each file's last version (empty entries left out), in package then table order.</summary>

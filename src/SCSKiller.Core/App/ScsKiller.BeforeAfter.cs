@@ -61,8 +61,8 @@ public sealed partial class ScsKiller
             : AntiCheatOpen(s) ? "Not until its anti-cheat check finishes"
             : s.AnyAntiCheat ? "Not for games with anti-cheat"
             : s.NoStutter != null ? "Not for games without shader compilation stutter"
-            : !(frames11 ? RecorderWanted(s.RecorderOverride, Settings.RecordAllGames, skip, true) : s.RecorderEffective)
-                ? skip != null ? $"The recorder can't run in this game: {skip}" : "Turn the recorder on for this game first"
+            : !(frames11 && !RecorderOffByDefault(s.Game) ? RecorderWanted(s.RecorderOverride, Settings.RecordAllGames, skip, true) : s.RecorderEffective)
+                ? skip != null ? $"The recorder can't run in this game: {SkipShown(s, skip)}" : "Turn the recorder on for this game first"
             // a note the recorder's set-up already fixed ("play again") doesn't keep the next launch from being recorded
             : s.RecorderRefused is { } refused && refused != GameChangedNote && !refused.StartsWith(RanOtherExe) ? refused
             : s.Status is not (GameStatus.Ready or GameStatus.Warmed or GameStatus.Stale or GameStatus.NeedsRecording) ? s.StatusReason
@@ -627,11 +627,22 @@ public sealed partial class ScsKiller
                         + (done.Skipped.Count > 0 ? $", {done.Skipped.Count} left in use" : ""));
                     // a run nothing saw may have used a file left, or a same-named game's key, which is kept
                     var exe = Path.GetFileName(s.Game.ExePath);
-                    gap = AppCache is NvidiaAppCache && (done.Skipped.Count > 0
-                        || Games.Any(o => o.Game.Id != gameId && Path.GetFileName(o.Game.ExePath).Equals(exe, StringComparison.OrdinalIgnoreCase)));
+                    gap = AppCache is NvidiaAppCache ? done.Skipped.Count > 0
+                        || Games.Any(o => o.Game.Id != gameId && Path.GetFileName(o.Game.ExePath).Equals(exe, StringComparison.OrdinalIgnoreCase))
+                        : GameFileLeft(done, exe);
                 }
             }
         return (Survivors(), gap);
+    }
+
+    /// <summary>AMD: a file the set-aside left may be of the game's unknown key, unless other apps hold a file of its key open
+    /// (the driver holds a running app's own files, and a pair isn't armed while the game runs).</summary>
+    static bool GameFileLeft(DxQuarantine.Journal done, string exe)
+    {
+        HashSet<nuint> Holders(string f) => done.Holders?.GetValueOrDefault(f) ?? [];
+        var pids = done.Skipped.SelectMany(Holders).ToHashSet();
+        return done.Skipped.GroupBy(f => AmdAppCache.Key(Path.GetFileName(f), d3d12: false) ?? f, StringComparer.OrdinalIgnoreCase).Any(key => key.All(f => Holders(f).Count == 0))
+            || pids.Count > 0 && Core.Warming.ProcessTree.Snapshot().Any(p => pids.Contains((nuint)p.Pid) && p.Exe.Equals(exe, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>One of the files is open in a process, or that can't be told (ProcessesUsing finds none when it can't ask): all

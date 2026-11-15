@@ -28,12 +28,18 @@ public static class Vac
     /// <param name="LaunchExes">the file names of the exes its launch options start, every branch's</param>
     sealed record SteamApp(bool? Vac, string[] LaunchExes);
 
-    /// <summary>The Steam app the game is: by its "steam:" id, else by the library folder it's in. Steam: whether it is in
+    /// <summary>The Steam app the game is: by its "steam:" id, else by the library folder it's in, the folder's owner when a pack
+    /// shares it (<see cref="SteamSource.FolderOwner"/>). Steam: whether it is in
     /// Steam at all (false: outside every Steam library, VAC doesn't apply); a null id with Steam = no manifest names it.</summary>
     public static uint? AppId(Game g, string steamRoot, out bool steam)
     {
         steam = true;
-        if (g.Id.StartsWith("steam:", StringComparison.Ordinal)) return SteamSource.AppId(g.Id);
+        if (g.Id.StartsWith("steam:", StringComparison.Ordinal))
+        {
+            var id = SteamSource.AppId(g.Id);
+            try { return SteamSource.FolderOwner(g.InstallDir, id); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return id; }
+        }
         bool? exeWeGame = null;
         // a WeGame install folder no manifest names is no Steam game's, as the proxy's vac_now takes the exe and its final path
         bool WeGame(string path)
@@ -49,9 +55,9 @@ public static class Vac
         {
             try
             {
-                if (SteamSource.AppAt(steamRoot, path) is { InLibrary: true } at && (at.Id != null || !WeGame(path))) return at.Id;
+                if (SteamSource.AppAt(steamRoot, path) is { InLibrary: true } at && (at.Id != null || !WeGame(path))) return SteamSource.FolderOwner(path, at.Id);
                 // through a link, as the proxy resolves the exe: a hand-added folder can be a junction into a library
-                if (GameFiles.FinalPath(path) is { } real && SteamSource.AppAt(steamRoot, real) is { InLibrary: true } linked && (linked.Id != null || !WeGame(real))) return linked.Id;
+                if (GameFiles.FinalPath(path) is { } real && SteamSource.AppAt(steamRoot, real) is { InLibrary: true } linked && (linked.Id != null || !WeGame(real))) return SteamSource.FolderOwner(real, linked.Id);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {

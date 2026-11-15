@@ -1631,6 +1631,132 @@ static void list_new_cache(const DxrSnap& start) {
     for (auto& p : made) printf("  %ls\n", p.c_str());
 }
 
+// `selftest finaldir <folder> <decoy>` (no GPU): final_dir of a folder, plainly, then under Wine while a hook answers its
+// name query as a game's own hook does there (a lowercased device path, which Wine's GetFinalPathNameByHandleW refuses):
+// the same path. While FileNameInfo also names another folder (decoy), it refuses.
+using QueryObject = NTSTATUS(NTAPI*)(HANDLE, OBJECT_INFORMATION_CLASS, PVOID, ULONG, PULONG);
+using QueryFile = NTSTATUS(NTAPI*)(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
+static QueryObject g_query_object;
+static QueryFile g_query_file;
+static wchar_t g_device_name[32768];
+static std::wstring g_decoy;  // without its drive
+static NTSTATUS NTAPI device_name_query(HANDLE h, OBJECT_INFORMATION_CLASS c, PVOID p, ULONG n, PULONG used) {
+    const NTSTATUS s = g_query_object(h, c, p, n, used);
+    if (s < 0 || c != (OBJECT_INFORMATION_CLASS)1 || !p) return s;  // ObjectNameInformation
+    auto& name = *(UNICODE_STRING*)p;
+    std::wstring t = L"\\device\\harddiskvolume1" + std::wstring(name.Buffer, name.Length / sizeof(wchar_t)).substr(6);  // past \??\Z:
+    for (auto& ch : t) ch = towlower(ch);
+    wcsncpy_s(g_device_name, t.c_str(), _TRUNCATE);
+    name.Buffer = g_device_name, name.Length = (USHORT)(wcslen(g_device_name) * sizeof(wchar_t)), name.MaximumLength = sizeof g_device_name;
+    return s;
+}
+static NTSTATUS NTAPI decoy_file_name(HANDLE h, PIO_STATUS_BLOCK io, PVOID p, ULONG n, FILE_INFORMATION_CLASS c) {
+    const NTSTATUS s = g_query_file(h, io, p, n, c);
+    if (s < 0 || c != (FILE_INFORMATION_CLASS)9 || n < sizeof(ULONG) + g_decoy.size() * sizeof(wchar_t)) return s;  // FileNameInformation
+    auto* info = (FILE_NAME_INFO*)p;
+    info->FileNameLength = (DWORD)(g_decoy.size() * sizeof(wchar_t));
+    memcpy(info->FileName, g_decoy.data(), info->FileNameLength);
+    return s;
+}
+// kernelbase's import of ntdll's name, pointed at hook; the one before, or nullptr when it isn't imported.
+static void* hook_ntdll_import(const char* name, void* hook) {
+    auto* base = (BYTE*)GetModuleHandleW(L"kernelbase.dll");
+    if (!base) return nullptr;
+    auto* nt = (IMAGE_NT_HEADERS*)(base + ((IMAGE_DOS_HEADER*)base)->e_lfanew);
+    const auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    for (auto* imp = (IMAGE_IMPORT_DESCRIPTOR*)(base + dir.VirtualAddress); dir.VirtualAddress && imp->Name; ++imp) {
+        if (_stricmp((char*)base + imp->Name, "ntdll.dll") || !imp->OriginalFirstThunk) continue;
+        auto* names = (IMAGE_THUNK_DATA*)(base + imp->OriginalFirstThunk);
+        auto* slots = (IMAGE_THUNK_DATA*)(base + imp->FirstThunk);
+        for (; names->u1.AddressOfData; ++names, ++slots) {
+            if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal) || strcmp(((IMAGE_IMPORT_BY_NAME*)(base + names->u1.AddressOfData))->Name, name)) continue;
+            DWORD old;
+            if (!VirtualProtect(&slots->u1.Function, sizeof slots->u1.Function, PAGE_READWRITE, &old)) return nullptr;
+            void* was = (void*)slots->u1.Function;
+            slots->u1.Function = (ULONGLONG)hook;
+            VirtualProtect(&slots->u1.Function, sizeof slots->u1.Function, old, &old);
+            return was;
+        }
+    }
+    return nullptr;
+}
+static int final_dir_rules(const std::wstring& folder, const std::wstring& decoy) {
+    const std::wstring dir = folder.back() == L'\\' ? folder : folder + L'\\';
+    FILE_ID_INFO want, got, other;
+    CHECK(open_id(dir, want) && open_id(decoy, other) && memcmp(&want, &other, sizeof want));
+    const auto same = [&](const std::wstring& f) { return !f.empty() && open_id(f, got) && !memcmp(&got, &want, sizeof got); };
+    const std::wstring plain = final_dir(dir);
+    printf("finaldir plain: %ls\n", plain.c_str());
+    CHECK(same(plain));
+    if (!under_wine()) return printf("finaldir OK (the hooks run under Wine only)\n"), 0;
+    const std::wstring d = final_dir(decoy);
+    g_decoy = d.size() > 3 ? d.substr(2, d.size() - 3) : L"";
+    g_query_object = (QueryObject)hook_ntdll_import("NtQueryObject", (void*)device_name_query);
+    CHECK(g_query_object);
+    const std::wstring hooked = final_dir(dir);
+    printf("finaldir hooked: %ls\n", hooked.c_str());
+    if (towupper(plain[0]) != towupper(dir[0])) {  // Wine names the folder by another drive letter than the one given: refused
+        hook_ntdll_import("NtQueryObject", (void*)g_query_object);
+        CHECK(hooked.empty());
+        return printf("finaldir OK (another drive letter)\n"), 0;
+    }
+    // FileNameInfo names an existing folder that isn't this one, on the drive given: refused by identity
+    CHECK(!g_decoy.empty() && open_id(dir.substr(0, 2) + g_decoy, got) && memcmp(&got, &want, sizeof got));
+    g_query_file = (QueryFile)hook_ntdll_import("NtQueryInformationFile", (void*)decoy_file_name);
+    const std::wstring lied = final_dir(dir);
+    if (g_query_file) hook_ntdll_import("NtQueryInformationFile", (void*)g_query_file);
+    hook_ntdll_import("NtQueryObject", (void*)g_query_object);
+    printf("finaldir with a decoy name: \"%ls\"\n", lied.c_str());
+    CHECK(hooked == plain && same(hooked));
+    CHECK(g_query_file && lied.empty());
+    printf("finaldir OK\n");
+    return 0;
+}
+
+// `selftest wineid` (no GPU): under Wine, while a hook makes up every folder handle's identity as a game's hook does there
+// (no link, an id the same for every folder or new per open), wine_made_up sees it in the exe's folder, and not without it.
+static bool g_per_open;
+static ULONG g_opens;
+static bool is_folder(HANDLE h) {
+    static const auto query = (QueryFile)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationFile");
+    IO_STATUS_BLOCK io;
+    FILE_BASIC_INFO basic;
+    return query && query(h, &io, &basic, sizeof basic, (FILE_INFORMATION_CLASS)4) >= 0 && (basic.FileAttributes & FILE_ATTRIBUTE_DIRECTORY);  // FileBasicInformation
+}
+static NTSTATUS NTAPI made_up_file_info(HANDLE h, PIO_STATUS_BLOCK io, PVOID p, ULONG n, FILE_INFORMATION_CLASS c) {
+    const NTSTATUS s = g_query_file(h, io, p, n, c);
+    if (s < 0 || !p || !is_folder(h)) return s;
+    if (c == (FILE_INFORMATION_CLASS)59 && n >= sizeof(FILE_ID_INFO)) {  // FileIdInformation
+        auto& id = *(FILE_ID_INFO*)p;
+        const ULONG k = ++g_opens;
+        id = g_per_open ? FILE_ID_INFO{0x01ffb930ull + k, {}} : FILE_ID_INFO{0, {{4, 0, 0, 0, 0, 0, 0, 0, 4}}};
+        if (g_per_open) memcpy(id.FileId.Identifier, &k, sizeof k), id.FileId.Identifier[2] = 3;
+    }
+    if (c == (FILE_INFORMATION_CLASS)5 && n >= 24) *(ULONG*)((BYTE*)p + 16) = 0;   // FileStandardInformation: no link
+    if (c == (FILE_INFORMATION_CLASS)18 && n >= 64) *(ULONG*)((BYTE*)p + 56) = 0;  // FileAllInformation's standard part
+    return s;
+}
+static int wine_id_rules() {
+    std::wstring exe(32768, L'\0');
+    exe.resize(GetModuleFileNameW(nullptr, exe.data(), (DWORD)exe.size()));
+    const std::wstring bare = exe.substr(0, exe.find_last_of(L'\\'));
+    if (!under_wine()) return printf("wineid OK (Wine only)\n"), 0;
+    bool made_up = true;
+    CHECK(wine_made_up(bare, exe, made_up) && !made_up);
+    g_query_file = (QueryFile)hook_ntdll_import("NtQueryInformationFile", (void*)made_up_file_info);
+    CHECK(g_query_file);
+    bool seen[2] = {};
+    bool read[2] = {};
+    for (int per_open = 0; per_open < 2; ++per_open) g_per_open = per_open, read[per_open] = wine_made_up(bare, exe, seen[per_open]);
+    hook_ntdll_import("NtQueryInformationFile", (void*)g_query_file);
+    printf("wineid: one id read %d made up %d, per open read %d made up %d\n", read[0], seen[0], read[1], seen[1]);
+    CHECK(read[0] && seen[0] && read[1] && seen[1]);
+    CHECK(wine_made_up(bare, exe, made_up) && !made_up);
+    CHECK(!wine_made_up(bare + L"\\gone", exe, made_up) && !made_up);   // can't be read: false, refused by its caller
+    printf("wineid OK\n");
+    return 0;
+}
+
 // `selftest ledgerdir`: stamped_recorder_dir on scskiller.ledger files as a copy writes them and as garbage.
 static int ledger_dir_rules() {
     wchar_t tmp[MAX_PATH];
@@ -1736,6 +1862,7 @@ static int admission_rules() {
     // ScsKiller.SignedLines after the binding: vendor=, then the countdown's three lines
     CHECK(signed_stamp(L"1", L"2", L"", L"", L"", L"amd", L"1", L"420", L"before") == L"exe_size=1\r\nexe_time=2\r\nvendor=amd\r\noverlay=1\r\nab_play_s=420\r\nab_tag=before\r\n");
     CHECK(signed_stamp(L"1", L"2", L"3", L"4", L"1", L"amd") == L"exe_size=1\r\nexe_time=2\r\npid=3\r\npid_time=4\r\nrisk=1\r\nvendor=amd\r\n");
+    CHECK(signed_stamp(L"1", L"2", L"", L"", L"", L"", L"", L"", L"", L"traversal_x=1\r\n", L"", L"1") == L"exe_size=1\r\nexe_time=2\r\ntraversal_x=1\r\nshaders=1\r\n");  // ScsKiller.SignedLines: shaders= last
     CHECK(risk_well_formed(L"", L"") && risk_well_formed(L"3", L"") && risk_well_formed(L"3", L"1"));
     CHECK(!risk_well_formed(L"", L"1") && !risk_well_formed(L"3", L"2") && !risk_well_formed(L"3", L"yes"));
     // the verdict: a finding refuses unless the session takes the risk, and the log then names them all
@@ -1760,6 +1887,56 @@ static int admission_rules() {
     CHECK(!strcmp(decide(true, false, {"?"}, beside, none, nullptr, seen), beside));  // a folder couldn't be listed
     CHECK(!strcmp(decide(true, false, none, nullptr, none, "VAC: Steam's files couldn't be checked", seen), "VAC: Steam's files couldn't be checked"));
     CHECK(seen.empty());
+    // a successor's wait for its handover (admit.h's successor_wait): only while the app's note names the binding and that app
+    // runs, until a verdict that isn't the binding's or the cap
+    {
+        using namespace std::chrono;
+        uint64_t app = 0, app_at = 0;
+        CHECK(handover_names("12 34 56 78", 12, 34, app, app_at) && app == 56 && app_at == 78);
+        CHECK(!handover_names("12 35 56 78", 12, 34, app, app_at) && !handover_names("12 34 56", 12, 34, app, app_at) && !handover_names("12 34 56 78 9", 12, 34, app, app_at));
+        const uint64_t self = GetCurrentProcessId(), born = created_of(GetCurrentProcess());
+        CHECK(process_runs(self, born) && !process_runs(self, born + 1));
+        CHECK(!under_loader_lock());   // a plain thread: only a DllMain's holds it
+
+        STARTUPINFOW si{sizeof si};
+        PROCESS_INFORMATION pi;
+        wchar_t cmd[] = L"cmd.exe /d /c exit";
+        CHECK(CreateProcessW(nullptr, cmd, nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi));
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        const uint64_t gone = pi.dwProcessId, gone_at = created_of(pi.hProcess);
+        CloseHandle(pi.hProcess), CloseHandle(pi.hThread);
+        HANDLE up = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)parent_of(GetCurrentProcess()));
+        CHECK(up);
+        const uint64_t parent = parent_of(GetCurrentProcess()), parent_at = created_of(up);
+        CloseHandle(up);
+        CHECK(descends_from(parent, parent_at) && !descends_from(parent, parent_at + 1) && !descends_from(self, born) && !descends_from(gone, gone_at));
+        auto ms = [](auto f) {
+            const auto t0 = steady_clock::now();
+            f();
+            return duration_cast<milliseconds>(steady_clock::now() - t0).count();
+        };
+        auto same = [](const char* last) { return last; };
+        auto due_for = [&](uint64_t a, uint64_t a_at) {
+            const std::string note = std::to_string(parent) + " " + std::to_string(parent_at) + " " + std::to_string(a) + " " + std::to_string(a_at);
+            return [=] {
+                uint64_t x, x_at;
+                return handover_names(note, parent, parent_at, x, x_at) && process_runs(x, x_at);
+            };
+        };
+        const char* w = nullptr;
+        // the app gone: no wait, refused at once
+        CHECK(ms([&] { w = handover_wait(kBoundElsewhere, due_for(gone, gone_at), same, 5000); }) < 100 && w == kBoundElsewhere);
+        // the app runs but never signs: refused at the cap
+        CHECK(ms([&] { w = handover_wait(kBoundElsewhere, due_for(self, born), same, 400); }) >= 400 && w == kBoundElsewhere);
+        // the app signs this process's cfg: admitted at that verdict
+        int n = 0;
+        CHECK(ms([&] { w = handover_wait(kBoundElsewhere, due_for(self, born), [&](const char* last) { return ++n == 3 ? nullptr : last; }, 5000); }) < 1000 && !w);
+        // the note taken out (a handover refused): the refusal at once
+        n = 0;
+        CHECK(ms([&] { w = handover_wait(kBoundElsewhere, [&] { return ++n < 3; }, same, 5000); }) < 1000 && w == kBoundElsewhere);
+        // any other refusal never waits
+        CHECK(ms([&] { w = handover_wait("exe not as checked", due_for(self, born), same, 5000); }) < 100 && !strcmp(w, "exe not as checked"));
+    }
     printf("admission OK\n");
     return 0;
 }
@@ -5555,6 +5732,34 @@ static int frames_fs30_rows(const std::wstring& dir, const wchar_t* how) {
     return 0;
 }
 
+// `selftest slload [first]`: fakenext.dll as Streamline 1.x's sl.interposer.dll, loaded after the proxy (first: before
+// it), loads System32's d3d12.dll by full path (FakeNext_SlLoad) and makes a WARP device from that module's export, as
+// Streamline 1.1 does. Prints "full|upper|ex <1: the proxy>", "dxgi <1: System32's>", "byname <1: the proxy>", "data <1:
+// not the proxy>", "exe <1: this exe's own load gets System32's>" and "device <1: made>".
+static int sl_load_rows(const std::wstring& dir, bool first) {
+    SetEnvironmentVariableW(L"SCSKILLER_MODE", L"record");
+    HMODULE sl = first ? LoadLibraryW((dir + L"sl.interposer.dll").c_str()) : nullptr;
+    HMODULE proxy = LoadLibraryW((dir + L"d3d12.dll").c_str());
+    if (!first) sl = LoadLibraryW((dir + L"sl.interposer.dll").c_str());
+    auto load = sl ? (HMODULE(WINAPI*)(int))GetProcAddress(sl, "FakeNext_SlLoad") : nullptr;
+    CHECK(proxy && load);
+    wchar_t s[MAX_PATH];
+    GetSystemDirectoryW(s, MAX_PATH);
+    const std::wstring sys = s;
+    printf("full %d\nupper %d\nex %d\n", load(0) == proxy, load(1) == proxy, load(2) == proxy);
+    printf("dxgi %d\n", load(3) == LoadLibraryW((sys + L"\\dxgi.dll").c_str()));
+    printf("byname %d\ndata %d\n", load(4) == proxy, load(5) != proxy);
+    HMODULE own = LoadLibraryW((sys + L"/d3d12.dll").c_str());
+    printf("exe %d\n", own && own != proxy && own == GetModuleHandleW((sys + L"\\d3d12.dll").c_str()));
+    auto create = (decltype(&D3D12CreateDevice))GetProcAddress(load(0), "D3D12CreateDevice");
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* warp = nullptr;
+    ID3D12Device* dev = nullptr;
+    CHECK(create && SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumWarpAdapter(IID_PPV_ARGS(&warp))));
+    printf("device %d\n", SUCCEEDED(create(warp, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))));
+    return 0;
+}
+
 // `selftest framesfg slg`: Streamline with DLSS frame generation. fakenext.dll as sl.interposer.dll upgrades the game's
 // swap chain to its proxy (slUpgradeInterface), and with nvngx_dlssg.dll loaded remakes the window's swap chain from a
 // copy named sl.dlss_g.dll (through its ffxCreateContext, on an unnamed queue). The game presents 3 times on its swap
@@ -6697,7 +6902,7 @@ static void arm_self(const std::wstring& dir, const std::wstring& exe) {
             }
     }
     WritePrivateProfileStringW(L"scskiller", L"arm", arm.c_str(), ini.c_str());
-    const std::wstring stamp = signed_stamp(size, time, L"", L"", L"", line(L"vendor"), line(L"overlay"), line(L"ab_play_s"), line(L"ab_tag"), L"", arm);
+    const std::wstring stamp = signed_stamp(size, time, L"", L"", L"", line(L"vendor"), line(L"overlay"), line(L"ab_play_s"), line(L"ab_tag"), L"", arm, line(L"shaders"), line(L"out"));
     const std::wstring sig = recorder_sig(std::string(key, n), file_key(exe), file_key(dir.substr(0, dir.size() - 1)), stamp, root, file_key(root_dir));
     if (!sig.empty()) WritePrivateProfileStringW(L"scskiller", L"sig", sig.c_str(), ini.c_str());
     // the path form in stamps\, as ScsKiller.Signed keeps it
@@ -7273,7 +7478,10 @@ static int overlay_rows(const std::wstring& dir, const std::wstring& mode) {
             spy_dump("stutter", out, 640, 200);
             for (ULONGLONG gone = GetTickCount64() + 2500; GetTickCount64() < gone;) sc->Present(0, 0), Sleep(15);
         }
-        if (log.find("s of play counted, done") != std::string::npos || log.find("not drawn: frame generation") != std::string::npos) break;
+        // fg: with the panel on, an FSR queue's swap chain may be FSR 3.0 built in, whose frame times are decided after a 5 s lookup
+        if (log.find("s of play counted, done") != std::string::npos ||
+            (log.find("not drawn: frame generation") != std::string::npos && log.find("dxgi's Present unhooked for this launch") != std::string::npos))
+            break;
     }
     g_spy_want = true;
     sc->Present(0, 0);
@@ -7515,8 +7723,8 @@ static int nvopts_parent(const std::wstring& a, const std::wstring& bin, const s
 }
 
 // D3D11 warm: under Wine (SCSKILLER_TEST_WINE) a worker recreates its device every SCSKILLER_TEST_RECYCLE11 items and
-// still counts every item ok once, natively it never does. One thread: 64 items are 4 batches, a recreation after each
-// but the last.
+// still counts every item ok once, natively it never does. One thread: 65 items are 5 batches, a recreation after each
+// but the last. The last item's blob isn't there: its key alone is in scskiller_failed.keys.
 static int recycle11_rows(const std::wstring& d) {
     ID3DBlob* cs = compile("RWBuffer<uint> b : register(u0); [numthreads(1,1,1)] void main() { b[0] = 1; }", "cs_5_0");
     if (!cs) return printf("FAIL: recycle11: the CS didn't compile\n"), 1;
@@ -7524,10 +7732,14 @@ static int recycle11_rows(const std::wstring& d) {
     auto rec = [](char tag, const std::string& p) { const uint32_t n = (uint32_t)p.size(); return tag + std::string((const char*)&n, 4) + p; };
     std::string gen = rec('B', h + bytes);
     for (int i = 0; i < 64; ++i) gen += rec('1', std::string("\x06\0\0\0", 4) + h);  // stage 6: CS
+    const std::string missing = std::string("\x06\0\0\0", 4) + std::string(20, '\x22');
+    gen += rec('1', missing);
+    const Hash20 missing_key = sha1_of('1', missing);
     for (bool wine : {true, false}) {
         if (!wine && GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version")) { printf("recycle11 native: skipped, this is Wine\n"); continue; }
         const std::wstring sub = d + (wine ? L"recycle11wine\\" : L"recycle11native\\");
         CreateDirectoryW(sub.c_str(), nullptr);
+        DeleteFileW((sub + L"scskiller.log").c_str()), DeleteFileW((sub + L"scskiller_failed.keys").c_str());  // the log appends
         if (!CopyFileW((d + L"selftest.exe").c_str(), (sub + L"selftest.exe").c_str(), FALSE) || !CopyFileW((d + L"d3d12.dll").c_str(), (sub + L"d3d12.dll").c_str(), FALSE))
             return printf("FAIL: recycle11: its folder couldn't be made\n"), 1;
         FILE* f = _wfopen((sub + L"scskiller_gen.db").c_str(), L"wb");
@@ -7541,9 +7753,11 @@ static int recycle11_rows(const std::wstring& d) {
         const std::string log = read_all(sub + L"scskiller.log");
         size_t made = 0;
         for (size_t at = 0; (at = log.find("warm11: device recreated after 16 items", at)) != std::string::npos; ++at) ++made;
-        if (made != (wine ? 3u : 0u) || log.find("warm11: CS ok x64") == std::string::npos || log.find("failed:") != std::string::npos)
-            return printf("FAIL: recycle11 %s: %zu recreations, or not every item ok:\n%s\n", wine ? "wine" : "native", made, log.c_str()), 1;
-        printf("recycle11 %s: %zu recreations, 64 items ok\n", wine ? "wine" : "native", made);
+        if (made != (wine ? 4u : 0u) || log.find("warm11: CS ok x64") == std::string::npos || log.find("CS failed: missing blob x1") == std::string::npos
+            || read_all(sub + L"scskiller_failed.keys") != std::string((const char*)missing_key.data(), 20))
+            return printf("FAIL: recycle11 %s: %zu recreations, or not 64 items ok and the one without its blob in the failed keys:\n%s\n",
+                          wine ? "wine" : "native", made, log.c_str()), 1;
+        printf("recycle11 %s: %zu recreations, 64 items ok, the one without its blob in the failed keys\n", wine ? "wine" : "native", made);
     }
     return 0;
 }
@@ -7584,6 +7798,7 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 2 && !wcscmp(argv[1], L"framesfg") && !wcscmp(argv[2], L"fs30")) return frames_fs30_rows(dir, argc > 3 ? argv[3] : nullptr);
     if (argc > 2 && !wcscmp(argv[1], L"framesfg") && !wcscmp(argv[2], L"ffx"))
         return frames_ffx_rows(dir, argc > 3 && !wcscmp(argv[3], L"play"), argc > 3 && !wcscmp(argv[3], L"late"), argc <= 4 ? 0 : !wcscmp(argv[4], L"rtss") ? 1 : !wcscmp(argv[4], L"rtsskeep") ? 2 : !wcscmp(argv[4], L"ucrtss") ? 3 : !wcscmp(argv[4], L"rtssuc") ? 4 : !wcscmp(argv[4], L"uclate") ? 5 : !wcscmp(argv[4], L"uconly") ? 6 : !wcscmp(argv[4], L"ucdisp") ? 7 : !wcscmp(argv[4], L"ucrax") ? 8 : !wcscmp(argv[4], L"ucpush") ? 9 : 0);
+    if (argc > 1 && !wcscmp(argv[1], L"slload")) return sl_load_rows(dir, argc > 2 && !wcscmp(argv[2], L"first"));
     if (argc > 1 && !wcscmp(argv[1], L"framescapture")) return frames_capture_rows(dir);
     if (argc > 1 && !wcscmp(argv[1], L"framesstorm")) return frames_storm_rows(dir);
     if (argc > 1 && !wcscmp(argv[1], L"framesdummy")) return frames_dummy_rows(dir);
@@ -7596,6 +7811,7 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 2 && !wcscmp(argv[1], L"anticheat")) return anticheat_rows(dir, argv[2], argc > 3 ? argv[3] + std::wstring(L"\\") : L"");
     if (argc > 1 && !wcscmp(argv[1], L"factoryrejected")) return factory_rejected_rows(dir);
     if (argc > 2 && !wcscmp(argv[1], L"factorylate")) return factory_late_rows(dir, argv[2]);
+    if (argc > 1 && !wcscmp(argv[1], L"recycle11")) return recycle11_rows(dir);
     if (argc > 2 && !wcscmp(argv[1], L"rec11frames")) return rec11_frames(dir, _wtoi(argv[2]));
     if (argc > 2 && !wcscmp(argv[1], L"rec11")) return rec11_rows(dir, argv[2], argc > 3 && !wcscmp(argv[3], L"ctx"));
     if (argc > 2 && !wcscmp(argv[1], L"chain")) return chain_rows(dir, (unsigned)_wtoi(argv[2]), argc > 3 && !wcscmp(argv[3], L"swap"));
@@ -7651,6 +7867,8 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 3 && !wcsncmp(argv[1], L"fields", 6)) return fields_child(argv[1][6] - L'0', (unsigned)_wtoi(argv[2]), argv[3]);
     if (argc > 1 && !wcscmp(argv[1], L"gpulock")) return gpu_lock_rules();
     if (argc > 1 && !wcscmp(argv[1], L"ledgerdir")) return ledger_dir_rules();
+    if (argc > 3 && !wcscmp(argv[1], L"finaldir")) return final_dir_rules(argv[2], argv[3]);
+    if (argc > 1 && !wcscmp(argv[1], L"wineid")) return wine_id_rules();
     if (argc > 2) return child(dir, argv[1], (unsigned)_wtoi(argv[2]));
     int r = in_run(L"selftest", false, [&](const std::wstring& d) {  // the proxy writes its db and log next to itself: in there
         if (!CopyFileW(a.c_str(), (d + L"selftest.exe").c_str(), TRUE) || !CopyFileW((dir + L"d3d12.dll").c_str(), (d + L"d3d12.dll").c_str(), TRUE)) return 1;

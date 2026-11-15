@@ -124,22 +124,85 @@ public sealed partial class ScsKiller
 
     /// <summary>Every inbox the game's layer may have written: its exe's now and the ones the exe had while it recorded
     /// (Steam replacing the exe gives it another file key).</summary>
-    static List<string> VulkanInboxDirs(Game g, GameRecord rec) =>
-        [.. rec.VulkanInboxes.Select(MovedInbox).Append(VulkanInboxDir(g)).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase)];
+    List<string> VulkanInboxDirs(Game g, GameRecord rec) =>
+        [.. rec.VulkanInboxes.Select(MovedInbox).Append(VulkanInboxDir(g)).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).Where(OwnInbox)];
+
+    bool OwnInbox(string inbox) => OwnInboxFinal(inbox) != null;
+
+    /// <summary>Where an inbox lies when it is this data folder's: in its vulkan folder, reached through no link below the data
+    /// folder (a copied, moved or restored state.json can name another data folder's, or a link lead to it). Null for another's.</summary>
+    string? OwnInboxFinal(string inbox) =>
+        FinalUnder(SameDir(Store.DataDir, RecorderDir) || GameFiles.Inside(Store.DataDir, RecorderDir, GameFiles.Names) ? Store.DataDir : RecorderDir,
+            Path.Combine(RecorderDir, "vulkan"), inbox);
+
+    /// <summary>Where <paramref name="path"/> lies when it is in <paramref name="tree"/> (a folder in <paramref name="anchor"/>),
+    /// reached through no link below <paramref name="anchor"/>: its expected final path, also when it isn't there. Null otherwise.</summary>
+    static string? FinalUnder(string anchor, string tree, string path)
+    {
+        try
+        {
+            var full = Path.GetFullPath(path);
+            if (!GameFiles.Inside(tree, full, GameFiles.Names) || GameFiles.FinalPath(anchor) is not { } root) return null;
+            var want = Path.Combine(root, Path.GetRelativePath(anchor, full));
+            var at = full;   // one that isn't there: its nearest folder that is
+            while (!Path.Exists(at) && Path.GetDirectoryName(at) is { } up && up.Length >= Path.GetFullPath(anchor).Length) at = up;
+            // ordinal: a case-sensitive folder's twin differs only in case
+            var expected = Path.GetRelativePath(anchor, at) is "." ? root : Path.Combine(root, Path.GetRelativePath(anchor, at));
+            return GameFiles.FinalPath(at) is { } final && Path.TrimEndingDirectorySeparator(final).Equals(Path.TrimEndingDirectorySeparator(expected), StringComparison.Ordinal) ? want : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return null; }
+    }
+
+    /// <summary>An inbox of this data folder held while it is read and emptied: <see cref="Path"/> reaches the folder checked
+    /// whatever its path names meanwhile (on Windows its final path, nothing at or above a held folder can be renamed; on
+    /// Linux its descriptor's /proc path). Without a handle (Wine, macOS) it is the path.</summary>
+    sealed class HeldInbox(string dir, string final, string path, Microsoft.Win32.SafeHandles.SafeFileHandle? handle) : IDisposable
+    {
+        public string Dir => dir;
+        public string Final => final;
+        public string Path => path;
+        public Microsoft.Win32.SafeHandles.SafeFileHandle? Handle => handle;
+        public void Dispose() => handle?.Dispose();
+    }
+
+    /// <summary>The inbox held, opened through no link and checked to be the folder <paramref name="final"/>; null when it isn't there.</summary>
+    private static partial HeldInbox? HoldInbox(string dir, string final);
+
+    /// <summary>Deletes the held inbox's files and then the inbox, through the held folder. A file that is a link or has
+    /// another name, or a subfolder, leaves it.</summary>
+    private static partial void DeleteHeld(HeldInbox inbox);
+
+    /// <summary>Each of <paramref name="dirs"/> that is this data folder's (<see cref="OwnInboxFinal"/>) and there, held.</summary>
+    List<HeldInbox> HoldInboxes(IEnumerable<string> dirs)
+    {
+        var held = new List<HeldInbox>();
+        foreach (var d in dirs)
+            try { if (OwnInboxFinal(d) is { } final && HoldInbox(d, final) is { } h) held.Add(h); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log?.Report($"Vulkan inbox {d} left as it is: {e.Message}"); }
+        return held;
+    }
+
+    /// <summary>Drops the record's inboxes outside this data folder (<see cref="OwnInbox"/>), leaving them on disk.</summary>
+    void DropForeignInboxes(Game g, GameRecord rec)
+    {
+        var foreign = rec.VulkanInboxes.Where(i => !OwnInbox(MovedInbox(i))).ToList();
+        if (foreign.Count == 0) return;
+        rec.VulkanInboxes.RemoveAll(foreign.Contains);
+        Store.SaveGame(g.Id, rec);
+        foreach (var i in foreign) Log?.Report($"{g.Name}: a recorded Vulkan inbox outside this data folder is dropped and left as it is ({i})");
+    }
 
     /// <summary>An inbox a record kept from before the recorder files moved into the recorder folder, where it is now.</summary>
     static string MovedInbox(string inbox) =>
         PreMoveLedger(LedgerDir) is { } old && Path.Combine(Path.GetDirectoryName(old)!, "vulkan") + Path.DirectorySeparatorChar is var was
         && inbox.StartsWith(was, StringComparison.Ordinal) ? Path.Combine(RecorderDir, "vulkan", inbox[was.Length..]) : inbox;
 
-    static IEnumerable<string> VulkanInboxes(Game g, GameRecord rec) =>
-        VulkanInboxDirs(g, rec).Where(Directory.Exists).SelectMany(d => Directory.EnumerateFiles(d, VulkanPlan.InboxPattern));
-
-    /// <summary>The layer's output for the game: its inboxes' archives and session files.</summary>
-    IEnumerable<string> VulkanFiles(Game g)
+    /// <summary>The layer's output for the game: its inboxes' archives and session files, in <paramref name="held"/> when given.</summary>
+    IEnumerable<string> VulkanFiles(Game g, IReadOnlyList<HeldInbox>? held = null)
     {
-        var rec = Store.LoadGame(g.Id);
-        return [.. VulkanInboxes(g, rec), .. VulkanInboxDirs(g, rec).SelectMany(d => SessionFiles.Select(f => Path.Combine(d, f))).Where(File.Exists)];
+        var dirs = held?.Select(h => h.Path).ToList() ?? VulkanInboxDirs(g, Store.LoadGame(g.Id));
+        return [.. dirs.Where(Directory.Exists).SelectMany(d => Directory.EnumerateFiles(d, VulkanPlan.InboxPattern)),
+            .. dirs.SelectMany(d => SessionFiles.Select(f => Path.Combine(d, f))).Where(File.Exists)];
     }
 
     /// <summary>Merges the layer's archives into the game's <see cref="FozPath"/> (<see cref="VulkanPlan.Import"/>), keeps the
@@ -148,6 +211,7 @@ public sealed partial class ScsKiller
     bool ImportVulkan(Game g, GameRecord rec, CancellationToken ct)
     {
         if (Collections.RecordedBy(g.Id) != null || Foreign(g)) return false;
+        DropForeignInboxes(g, rec);
         var now = VulkanInboxDir(g);
         var dirs = VulkanInboxDirs(g, rec);
         // the newest session's, also when it is an earlier exe's inbox (Steam replaced the exe since): read before it goes
@@ -165,24 +229,34 @@ public sealed partial class ScsKiller
             if (moved) Log?.Report($"{g.Name}: " + (env == null ? "the last launch's Vulkan cache isn't redirected" : "the last launch's Vulkan cache is redirected (Steam's shader pre-caching)"));
         }
         var added = new List<string>();
-        if (dirs.Any(d => Directory.Exists(d) && Directory.EnumerateFiles(d, VulkanPlan.InboxPattern).Any()))
-            using (Recordings.Lock(RecordingPath(g.Id), ct: ct))
-            {
-                foreach (var d in dirs)
-                    added.AddRange(VulkanPlan.Import(d, FozPath(g.Id), Log));
-                if (added.Count > 0)
-                    try { rec.RecordedPipelines = Foz.List(FozPath(g.Id)).Count(e => Foz.IsPipeline(e.Tag)); }
-                    catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) { }   // the last count stays
-            }
-        foreach (var old in dirs.Where(d => !d.Equals(now, StringComparison.OrdinalIgnoreCase)))
-            try
-            {
-                if (Directory.Exists(old) && Directory.EnumerateFiles(old, VulkanPlan.InboxPattern).Any()) continue;   // still held: next time
-                if (!OperatingSystem.IsWindows() && VulkanPlan.Held(Path.Combine(old, "scskiller_creates.csv"))) continue;   // a recording that made no archive yet
-                if (Directory.Exists(old)) Directory.Delete(old, true);
-                rec.VulkanInboxes.RemoveAll(i => MovedInbox(i).Equals(old, StringComparison.OrdinalIgnoreCase));
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        var held = HoldInboxes(dirs);
+        try
+        {
+            var paths = held.Select(h => h.Path).ToList();
+            if (paths.Any(d => Directory.EnumerateFiles(d, VulkanPlan.InboxPattern).Any()))
+                using (Recordings.Lock(RecordingPath(g.Id), ct: ct))
+                {
+                    foreach (var d in paths)
+                        added.AddRange(VulkanPlan.Import(d, FozPath(g.Id), Log));
+                    if (added.Count > 0)
+                        try { rec.RecordedPipelines = Foz.List(FozPath(g.Id)).Count(e => Foz.IsPipeline(e.Tag)); }
+                        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) { }   // the last count stays
+                }
+            foreach (var old in dirs.Where(d => !d.Equals(now, StringComparison.OrdinalIgnoreCase)))
+                try
+                {
+                    if (held.FirstOrDefault(h => h.Dir == old) is { } h)
+                    {
+                        if (Directory.EnumerateFiles(h.Path, VulkanPlan.InboxPattern).Any()) continue;   // still held: next time
+                        if (!OperatingSystem.IsWindows() && VulkanPlan.Held(Path.Combine(h.Path, "scskiller_creates.csv"))) continue;   // a recording that made no archive yet
+                        DeleteHeld(h);
+                    }
+                    else if (Directory.Exists(old)) continue;   // couldn't be held: left
+                    rec.VulkanInboxes.RemoveAll(i => MovedInbox(i).Equals(old, StringComparison.OrdinalIgnoreCase));
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+        finally { foreach (var h in held) h.Dispose(); }
         if (added.Count == 0) return false;
         rec.RecordingImportedAt = DateTimeOffset.Now;
         Log?.Report($"{g.Name}: {added.Count:N0} Vulkan pipelines recorded");
@@ -263,7 +337,7 @@ public sealed partial class ScsKiller
             return changed;
         }
         // off the route (the game runs on DirectX now, or has no layer key): out, and the next reconcile is the DirectX one
-        var want = !LeftOut(g) && VulkanRoute(g, s.Engine) && !Hookshot.Is(g) && RecorderWanted(rec.Recorder ?? RecorderOverride.Default, Settings.RecordAllGames && s.NoStutter == null, RecorderSkip(s, null), false);
+        var want = !LeftOut(g) && VulkanRoute(g, s.Engine) && !Hookshot.Is(g) && RecorderWanted(rec.Recorder ?? RecorderOverride.Default, Settings.RecordAllGames && s.NoStutter == null && !RecorderOffByDefault(g), RecorderSkip(s, null), false);
         if (want && VulkanBlocked(g, key!, manifest) is { } blocked) (want, note) = (false, blocked);
         else if (want && rec.RanElevated != null) note = ElevatedSessionNote;   // the loader skips HKCU's layers and settings for it
         var placed = rec.VulkanLayer != null;
@@ -536,12 +610,8 @@ public sealed partial class ScsKiller
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return File.Exists(path); }
     }
 
-    /// <summary>The manifest is in <paramref name="store"/>'s own vulkan-layer folder.</summary>
-    static bool OursUnder(string manifest, AppStore store)
-    {
-        try { return Path.GetFullPath(manifest).StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(store.DataDir, VulkanLayer.Folder))) + Path.DirectorySeparatorChar, GameFiles.Names); }
-        catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
-    }
+    /// <summary>The manifest is in <paramref name="store"/>'s own vulkan-layer folder, reached through no link.</summary>
+    static bool OursUnder(string manifest, AppStore store) => FinalUnder(store.DataDir, Path.Combine(store.DataDir, VulkanLayer.Folder), manifest) != null;
 
     /// <summary>NVIDIA's cache variables as Steam's shader pre-caching sets them for a game on Windows (measured): the driver
     /// writes the game's cache under Steam's nvidiav1 folder of its app, in files of this app name.</summary>
@@ -635,6 +705,30 @@ public sealed partial class ScsKiller
         Log?.Report($"{g.Name}: the compile writes Steam's Vulkan cache of the game in {dir}");
         return SteamCacheVars(OwnDriver, dir);
     }
+
+    /// <summary><paramref name="env"/> with the game's device for the replay of a <paramref name="vulkan"/> plan on NVIDIA
+    /// (<see cref="NvidiaDevice"/>): the line as recorded, without <see cref="VulkanPlan.UnderSteamLayer"/> (measured).</summary>
+    Dictionary<string, string>? WithRecordedDevice(GameRecord rec, bool vulkan, Dictionary<string, string>? env) =>
+        rec.VulkanDevice is not { } device || !(vulkan && NvidiaDevice) ? env
+        : new Dictionary<string, string>(env ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
+            { [VulkanPlan.DeviceVariable] = device };
+
+    /// <summary>NVIDIA on Windows keys its Vulkan pipelines on the device's enabled extensions and features (measured: a warm
+    /// under the replayer's own device, robustness on, missed the game's launch), so a Vulkan plan replays under the game's
+    /// recorded device. ponytail: Windows only as measured, add Linux once a native Vulkan game's hit is measured there.</summary>
+    bool NvidiaDevice => OperatingSystem.IsWindows() && Vendor.Vendor == GpuVendor.Nvidia;
+
+    /// <summary>At most this many device lines are kept as warmed (<see cref="GameRecord.WarmedVulkanDevices"/>), the oldest dropped.</summary>
+    const int WarmedDevicesKept = 4;
+
+    /// <summary><see cref="NvidiaDevice"/>, a Vulkan plan whose complete warms since the cache was last reset didn't replay
+    /// under the game's recorded device: they reached none of its pipelines.</summary>
+    bool DeviceUnwarmed(GameRecord rec) =>
+        NvidiaDevice && rec is { WarmedAt: not null, VulkanDevice: { } device, Plan.Platform: VulkanPlan.Platform } && rec.WarmedVulkanDevices?.Contains(device) != true;
+
+    /// <summary>The warmed device lines with <paramref name="device"/> added last (<see cref="WarmedDevicesKept"/>); null without one.</summary>
+    static List<string>? WarmedDevices(List<string>? warmed, string? device) =>
+        device == null ? null : [.. (warmed ?? []).Where(d => d != device).TakeLast(WarmedDevicesKept - 1), device];
 
     /// <summary>The game's driver-cache bytes: its keys' files (NVIDIA: its <see cref="LiveKeys"/>') and its files in Steam's
     /// GLCache folder (<see cref="SteamGlFiles"/>). Null: none known.</summary>

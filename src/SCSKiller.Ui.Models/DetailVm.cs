@@ -24,6 +24,7 @@ public sealed class DetailVm(string id) : Bindable
         if (now != null && (now != s || Row.Icon != Host.Icons.Get(now.Game.ExePath))) { s = now; Row = new GameRow(now); }   // or its icon failed: the tile
         ReadBlocked();
         ReadSteamCacheNote();
+        limit?.Changed();
         Changed();
     }
 
@@ -94,7 +95,7 @@ public sealed class DetailVm(string id) : Bindable
             + (Row.Note != null ? ". " + Sentence(s.StatusReason) : ""),
         GameStatus.NeedsRecording => HasDbTeaser ? NoDbNote(Row.FullNote) : Row.FullNote,   // the teaser says it
         _ when ScsKiller.AntiCheatHeld(s) => ScsKiller.HeldAntiCheatNote,
-        _ when s.Engine?.Encrypted == true => "needs the game's AES key",   // the title: "Encrypted game files"
+        _ when s.Engine?.Encrypted == true => ScsKiller.NeedsFileKey(s) ? "needs the game's key" : "needs the game's AES key",   // the title: "Encrypted game files"
         _ => HasDbTeaser ? NoDbNote(s.StatusReason) : s.StatusReason,
     })
         + (ScsKiller.LaunchLine(s) is { } launch ? ". " + launch : "") + (IsPartlyCompiled || s.CompileUnreached ? "." : "") + Format.ModNote(s);
@@ -104,6 +105,8 @@ public sealed class DetailVm(string id) : Bindable
     public bool HasAesKey => Host.Core.HasEncryptionKey(id);
     public bool CanChangeAesKey => HasAesKey && !NeedsAesKey;
     public bool NeedsGameKey => ScsKiller.NeedsGameKey(s);
+    public bool NeedsFileKey => ScsKiller.NeedsFileKey(s);
+    public bool RecordsWithoutKey => ScsKiller.RecordsWithoutKey(s);
     public const string RemoveAesKeyNote = "The key is deleted from this PC. The compiled cache stays. The next compile plans without the shaders the key unlocked, and if the game's exe holds the key, SCSKiller finds it again.";
     public string PartlyCompiledWhy => s.LastWarmFailedBy switch
     {
@@ -273,7 +276,7 @@ public sealed class DetailVm(string id) : Bindable
     public static readonly string[] NewShadersLabels = ["Off", "Notify me", "Compile automatically and notify me", "Compile automatically, silently"];
     public List<string> NewShadersChoices => Same(ref newShadersChoices, [$"Use the global setting ({NewShadersLabels[(int)NewShaders.Global(Host.Core.Settings)]})", .. NewShadersLabels]);
     // the same list while its labels hold: a new one resets the selection
-    List<string>? newShadersChoices, rayTracingChoices, cacheCapChoices, traversalChoices;
+    List<string>? newShadersChoices, rayTracingChoices, traversalChoices;
     static List<string> Same(ref List<string>? kept, List<string> now) => kept != null && kept.SequenceEqual(now) ? kept : kept = now;
     public int NewShadersIndex => s.NewShadersOverride is { } m ? (int)m + 1 : 0;
     // 0 = the global setting, 1 = on, 2 = off
@@ -287,8 +290,17 @@ public sealed class DetailVm(string id) : Bindable
     public string TraversalWarning => TraversalFix.LowVramWarning;
     // no plan, or one from before inline ray tracing was counted: unknown, so the choice shows
     public bool ShowRayTracing => P?.RtInline == null || s.RayTracingOverride != null || ScsKiller.HasRayTracing(P);
-    public List<string> CacheCapChoices => Same(ref cacheCapChoices, ["No limit", .. ScsKiller.CacheCapsGB.Select(gb => $"{gb} GB")]);
-    public int CacheCapIndex => s.CacheCapGB is { } gb ? Array.IndexOf(ScsKiller.CacheCapsGB, gb) + 1 : 0;
+    LimitPick? limit;
+    public LimitPick Limit => limit ??= new(() => s.CacheCapGB, async gb =>
+    {
+        try
+        {
+            await Task.Run(() => Host.Core.SetGameCacheCap(id, gb));
+            Error = null;
+        }
+        catch (Exception e) { Error = BeforeAfterUi.Describe(e); }
+        Refresh();
+    }, () => s.DiskBytes);
     public bool ShowCacheCap => ScsKiller.HasCacheCap(s);
     // Windows' shader cache of the game, read off the UI thread: Clear cache clears it too, so it can be the only cache to clear.
     BackgroundRead<(long, bool)>? otherCaches;
@@ -381,13 +393,13 @@ public sealed class DetailVm(string id) : Bindable
     // or a carved game whose API nothing tells, packed shaders too: it may run Vulkan at run time (SDL)
     public bool ShowApiPicker => s is { ApiDetected: not null } or { ApiOverride: not null } && s.Engine is { Unsupported: null, Encrypted: false }
         || s.Engine is { Encrypted: false } e && Core.Carved.CarvedReader.Carved(e) && s.ApiDetected == Core.Unreal.UnrealRhi.Ambiguous;
-    public string ApiTip => id == ScsKiller.FortniteId ? "The Fortnite mode SCSKiller compiles for." : "The DirectX SCSKiller compiles for. Auto uses the detected one.";
+    public string ApiTip => ScsKiller.IsFortnite(s.Game) ? "The Fortnite mode SCSKiller compiles for." : "The DirectX SCSKiller compiles for. Auto uses the detected one.";
     public bool? ApiPending { get; set; }
     public bool CanPickApi => ApiPending == null && !Host.Core.Queue.Any(q => q.GameId == id && Format.Running(q));   // its plan check too: the core refuses a change meanwhile
     IReadOnlyList<DxApi> ApiChoices => ScsKiller.ApiChoices(s, Host.Core.Vendor.Caps);
-    public int ApiIndex => id == ScsKiller.FortniteId ? (ScsKiller.FortnitePerformance(s) ? 1 : 0) : s.ApiOverride is { } a ? ApiChoices.ToList().IndexOf(a) + 1 : 0;
+    public int ApiIndex => ScsKiller.IsFortnite(s.Game) ? (ScsKiller.FortnitePerformance(s) ? 1 : 0) : s.ApiOverride is { } a ? ApiChoices.ToList().IndexOf(a) + 1 : 0;
     /// <summary>The API of the picker's item <paramref name="i"/>; null = Auto.</summary>
-    public DxApi? ApiAt(int i) => id == ScsKiller.FortniteId ? (i == 1 ? DxApi.D3D11 : DxApi.D3D12) : i <= 0 ? null : ApiChoices[i - 1];
+    public DxApi? ApiAt(int i) => ScsKiller.IsFortnite(s.Game) ? (i == 1 ? DxApi.D3D11 : DxApi.D3D12) : i <= 0 ? null : ApiChoices[i - 1];
     string[]? apiItems;
     public string[] ApiItems
     {
@@ -396,7 +408,7 @@ public sealed class DetailVm(string id) : Bindable
             var auto = s.Engine?.GraphicsApi.EndsWith(ScsKiller.RecordingSuffix, StringComparison.Ordinal) == true ? $"Auto ({Dx(s.Engine.GraphicsApi)} from your recording)"
                 : s.ApiDetected == Core.Unreal.UnrealRhi.Ambiguous ? "Auto (DirectX 11 and 12)"
                 : s.ApiDetected is { } d ? $"Auto ({Dx(d)})" : "Auto";
-            string[] items = id == ScsKiller.FortniteId ? ["Normal", "Performance"] : [auto, .. ApiChoices.Select(ScsKiller.ApiName)];
+            string[] items = ScsKiller.IsFortnite(s.Game) ? ["Normal", "Performance"] : [auto, .. ApiChoices.Select(ScsKiller.ApiName)];
             if (apiItems == null || !apiItems.SequenceEqual(items)) apiItems = items;   // the same array while the labels hold: a new one resets the selection
             return apiItems;
         }
@@ -460,11 +472,12 @@ public sealed class DetailVm(string id) : Bindable
     public bool HasMeter => Pct != null;
     public bool LowCoverage => !s.CompileUnreached && (Pct is { } pct ? pct < 90 : Partial);   // more than 10% left out, like ScsKiller.IsPartial (the test for a plan without the count)
     public bool GoodCoverage => HasMeter && !LowCoverage;
-    bool Dx11Only => P is { StageSets: 0, Generated: 0, D3D11Shaders: > 0 };
+    bool Dx11Only => P is { StageSets: 0, Generated: 0, D3D11Shaders: > 0 } && !ScsKiller.OnlyRecorded(s);
     public string CoverageHeadline => P == null ? "Known once its first compile starts"
         : s.CompileUnreached ? "Its compile isn't used by this game"
         : DriverChanged ? $"Its last compile was for driver {s.WarmedDriverVersion}"
         : Dx11Only && Pct is null or 100 ? (Compiled ? "Covers" : "Will cover") + " every DirectX 11 shader in the game files" + (Core.Planning.Planner.D3D11CoversVs(Host.Core.Vendor.Caps) || P.D3D11Draws > 0 ? "" : " but the vertex shaders")
+        : ScsKiller.OnlyRecorded(s) ? "Compiles only the recorded pipelines"
         : Pct is not { } pct ? "Measured again on the next compile"
         : (Compiled || s.NewOnly ? "Covers" : s.WarmedAt != null ? "Its last compile covered" : "Will cover")
           + ScsKiller.CoverageWhat(s, pct, RecordOn);
@@ -503,7 +516,7 @@ public sealed class DetailVm(string id) : Bindable
     long FromPlay => P is { } p ? p.Recorded - (p.FromDownload ?? 0) - (p.FromCommunity ?? 0) : 0;
     string FromPlayLabel => P?.FromDownload == null ? "Recorded pipelines" : "From your play";   // a plan from before the split was counted
     // the recording as of its last import, which a plan built before that session doesn't count yet
-    long Recorded => s.RecordedPipelines ?? FromPlay;
+    long Recorded => ScsKiller.OnlyRecorded(s) && P is { D3D11Shaders: > 0 } p ? p.D3D11Shaders : s.RecordedPipelines ?? FromPlay;
 
     /// <summary>The recorded row's label: whose recordings the plan's recorded pipelines come from.</summary>
     string RecordingSource
@@ -571,7 +584,7 @@ public sealed class DetailVm(string id) : Bindable
     public string LeftTitle => Rt || RtUnseen ? "Ray-traced effects aren't compiled yet" : "Some shaders still compile while you play";
 
     public string CoverageValue => Pct is { } pct ? $"{pct}%" : Dx11Only && !s.CompileUnreached ? "All" : Format.Dash;
-    public string CoverageLabel => s.CompileUnreached ? "not used" : Pct != null || Dx11Only ? "covered" : "not yet";
+    public string CoverageLabel => s.CompileUnreached ? "not used" : Pct != null || Dx11Only ? "covered" : ScsKiller.OnlyRecorded(s) ? "recorded only" : "not yet";
     /// <summary>The ring's arc as path data, in a 120 px box with a 12 px stroke; null when it isn't drawn in that colour.</summary>
     public string? GoodArc => GoodCoverage ? Arc() : null;
     public string? LowArc => LowCoverage ? Arc() : null;
@@ -795,16 +808,17 @@ public sealed class DetailVm(string id) : Bindable
         : s.RiskTrusted ? ScsKiller.TrustedNote
         : s.RiskNoLaunch ? ScsKiller.NoLaunchNote(Fmt.StoreName(s.Game))
         : !NoAntiCheat
-        ? Host.Platform.RecordAntiCheatGames ? ScsKiller.RiskNotHere(s) ?? "Not available: the game contains anti-cheat, so it is compiled from its files only." : NoAntiCheatSessions
+        ? Host.Platform.RecordAntiCheatGames ? ScsKiller.RiskNotHere(s) ?? "Not available: the game contains anti-cheat." : NoAntiCheatSessions
         : PairFramesOnly ? "Frame times only, for the before and after recording."
         : s.RecorderSkip == ScsKiller.SkipManual ? "Not available until you confirm the game's folder (Game folder… above): SCSKiller checks all of it for anti-cheat before it records."
         : s.RecorderSkip == ScsKiller.SkipModNotChainable ? $"Not available: {ScsKiller.NotChainableReason(s.RecorderMod, RecorderDll)}."
         : s.RecorderSkip == ScsKiller.SkipAgsMod && s.AgsMod is { } agsMod && !(agsMod == "ReShade" && s.ShaderModLayer && s.ShaderModAsD3D12) ? $"Not available: {ScsKiller.SkipAgsMod}. {ScsKiller.AgsModHint(agsMod)}"   // else ShaderModNote says it
-        : s.RecorderSkip is { } skip ? $"Not available: {skip}."
+        : s.RecorderSkip is { } skip ? $"Not available: {ScsKiller.SkipShown(s, skip)}."
         : (s.Engine is { } vk && Core.Vulkan.VulkanPlan.IsVulkan(vk) ? ScsKiller.VulkanRecorderNote
             : FramesOnly ? $"Adds a small {Fmt.RecorderFiles(s)} next to the game that times each frame for the graph above and records nothing else."
             : $"Adds a small {Fmt.RecorderFiles(s)} next to the game to catch anything the plan missed and time each frame, so this page shows what stuttered.")
           + " Remove any time. If a game has anti-cheat SCSKiller didn't detect, don't turn this on."
+          + (ScsKiller.OffByDefaultNote(s.Game) is { } off ? " " + off : "")
           + (s.RecorderNote is { } note && note != s.RecorderFailure && note != ScsKiller.ForeignNote ? $" ({Sentence(note)})" : "");
     // null when the status line already says it
     public string? LastRefusal => s.RecorderRefused is { } why && !(s.Status == GameStatus.NeedsRecording && ScsKiller.NeverRecorded(s)) ? why : null;

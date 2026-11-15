@@ -1,0 +1,17 @@
+# Cipher variants and header masks of games that still read with the user's key. build.ps1 -StripKept removes them too.
+# Undawn (pak cipher), Snowbreak (per-pak key derivation, index and entry masks), MindsEye, Roco Kingdom World (pak
+# key mutation), Promise Mascot Agency (cipher and footer masks), Uncharted Waters Origin, Spectre Divide (whitening)
+gut GameTypes/UDWN/Encryption/**
+gut GameTypes/Snowbreak/Encryption/Aes/*
+gut-if UE4/Pak/Objects/FPakEntry.cs GAME_Snowbreak
+gut GameTypes/MindsEye/Encryption/**
+gut GameTypes/RocoKingdomWorld/Encryption/**
+gut GameTypes/PMA/Encryption/**
+gut GameTypes/UWO/Encryption/**
+gut GameTypes/SD/Encryption/**
+# Tower of Fantasy, Kart Rider: Drift, Wild Assault (footer and summary masks), World of Jade Dynasty (field masks)
+gut-if UE4/Pak/Objects/FPakInfo.cs GAME_Snowbreak GAME_PromiseMascotAgency GAME_TowerOfFantasy GAME_KartRiderDrift GAME_WildAssault
+gut-if UE4/Objects/UObject/FPackageFileSummary.cs GAME_TowerOfFantasy
+gut-if UE4/Objects/Meshes/FPositionVertexBuffer.cs GAME_WorldofJadeDynasty
+gut-if UE4/Assets/Exports/Texture/FTexture2DMipMap.cs GAME_WorldofJadeDynasty
+gut-if UE4/Assets/Exports/Animation/USkeleton.cs GAME_WorldofJadeDynasty

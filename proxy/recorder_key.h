@@ -5,6 +5,7 @@
 #include <bcrypt.h>
 #include <cstring>
 #include <string>
+#include <vector>
 
 // A folder on a local volume. Wine's GetVolumePathNameW fails on a \\?\unix\ path (ERROR_INVALID_NAME): under Wine that
 // is the Linux app's own folder, taken as local.
@@ -146,16 +147,51 @@ inline std::wstring file_key(const std::wstring& path) {
     return path_key(path);
 }
 
+inline bool open_id(const std::wstring& path, FILE_ID_INFO& out) {
+    HANDLE f = CreateFileW(long_path(path).c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    const bool ok = GetFileInformationByHandleEx(f, FileIdInfo, &out, sizeof out);
+    CloseHandle(f);
+    return ok;
+}
+
+// Under Wine, the handle's path on the drive dir names: its name without the drive (FileNameInfo, which Wine reads on its
+// Unix side, links resolved as for GetFinalPathNameByHandleW), when that path opens the same file. A game's own hook can
+// answer the name query GetFinalPathNameByHandleW makes with one Wine refuses. "" otherwise.
+// The name is relative to the drive Wine picks, as GetFinalPathNameByHandleW's is: no other letter may open the same file
+// by it, so that drive is the one given (another letter on the same folder refuses, as can an inode of another file system).
+inline std::wstring wine_final_path(HANDLE f, const std::wstring& dir) {
+    const std::wstring p = dir.rfind(L"\\\\?\\", 0) == 0 ? dir.substr(4) : dir;
+    if (p.size() < 3 || p[1] != L':' || p[2] != L'\\') return L"";
+    std::vector<BYTE> b(sizeof(FILE_NAME_INFO) + 65536);
+    auto* n = reinterpret_cast<FILE_NAME_INFO*>(b.data());
+    FILE_ID_INFO held, named;
+    if (!GetFileInformationByHandleEx(f, FileNameInfo, n, (DWORD)b.size()) || n->FileNameLength < sizeof(wchar_t) || n->FileNameLength % sizeof(wchar_t)
+        || n->FileName[0] != L'\\' || !GetFileInformationByHandleEx(f, FileIdInfo, &held, sizeof held))
+        return L"";
+    const std::wstring name(n->FileName, n->FileNameLength / sizeof(wchar_t)), path = p.substr(0, 2) + name;
+    if (!open_id(path, named) || memcmp(&held, &named, sizeof held)) return L"";
+    for (wchar_t l = L'A'; l <= L'Z'; ++l) {  // every letter: GetLogicalDrives misses a dosdevices link the mount manager hasn't seen
+        if (l == towupper(p[0])) continue;
+        if (open_id(std::wstring(1, l) + L":" + name, named)) {
+            if (!memcmp(&named.FileId, &held.FileId, sizeof held.FileId)) return L"";
+        } else if (const DWORD e = GetLastError(); e != ERROR_FILE_NOT_FOUND && e != ERROR_PATH_NOT_FOUND && e != ERROR_NOT_READY && e != ERROR_INVALID_DRIVE)
+            return L"";
+    }
+    return path;
+}
+
 // The folder's final path (links, junctions and 8.3 names resolved; no \\?\) with a trailing backslash; "" when it can't
 // be had (no drive letter maps its volume, for one).
 inline std::wstring final_dir(const std::wstring& dir) {
     HANDLE f = CreateFileW(long_path(dir).c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (f == INVALID_HANDLE_VALUE) return L"";
     std::wstring final(32768, L'\0');
-    DWORD m = GetFinalPathNameByHandleW(f, final.data(), (DWORD)final.size(), 0);
+    const DWORD m = GetFinalPathNameByHandleW(f, final.data(), (DWORD)final.size(), 0);
+    if (m && m < final.size()) final.resize(m);
+    else final = under_wine() ? wine_final_path(f, dir) : L"";
     CloseHandle(f);
-    if (!m || m >= final.size()) return L"";
-    final.resize(m);
+    if (final.empty()) return L"";
     final = final.rfind(L"\\\\?\\UNC\\", 0) == 0 ? L"\\\\" + final.substr(8) : final.rfind(L"\\\\?\\", 0) == 0 ? final.substr(4) : final;
     return final.back() == L'\\' ? final : final + L'\\';
 }
@@ -166,14 +202,6 @@ inline bool made_up_id(const FILE_ID_INFO& dir, const FILE_ID_INFO& exe) {
     unsigned long long half[2];
     memcpy(half, dir.FileId.Identifier, sizeof half);
     return !dir.VolumeSerialNumber && exe.VolumeSerialNumber && half[0] < 16 && half[1] < 16;
-}
-
-inline bool open_id(const std::wstring& path, FILE_ID_INFO& out) {
-    HANDLE f = CreateFileW(long_path(path).c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return false;
-    const bool ok = GetFileInformationByHandleEx(f, FileIdInfo, &out, sizeof out);
-    CloseHandle(f);
-    return ok;
 }
 
 // tests: a process exporting SCSKiller_WarmHost (selftest) with SCSKILLER_TEST_MADE_UP_ID set sees every folder's identity as
@@ -206,6 +234,25 @@ inline bool made_up_here(const std::wstring& dir, const std::wstring& exe) {
     if (under_wine() || !open_id(dir, d) || !open_id(exe, e)) return false;
     test_made_up(d);
     return made_up_id(d, e);
+}
+
+// Under Wine (folder ids: the drive's serial, the exe's through the same letter, and an inode of at most 64 bits, with a
+// link): made_up, the exe's folder dir reads otherwise in this process. A game's hook there makes up every folder handle's
+// identity and name (serial 0, id 4:4, no link in DD2 Character Creator, a new id per open in SF6) and can crash on a call
+// past these. False when they can't be read.
+inline bool wine_made_up(const std::wstring& dir, const std::wstring& exe, bool& made_up) {
+    made_up = false;
+    FILE_ID_INFO d, e;
+    BY_HANDLE_FILE_INFORMATION info;
+    HANDLE f = CreateFileW(long_path(dir).c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    const bool read = GetFileInformationByHandleEx(f, FileIdInfo, &d, sizeof d) && GetFileInformationByHandle(f, &info);
+    CloseHandle(f);
+    if (!read || !open_id(exe, e)) return false;
+    unsigned long long half[2];
+    memcpy(half, d.FileId.Identifier, sizeof half);
+    made_up = !info.nNumberOfLinks || d.VolumeSerialNumber != e.VolumeSerialNumber || half[1];
+    return true;
 }
 
 // A folder's key by its path (ScsKiller.PathFolderKey): path_key of its final path without the trailing backslash, as the

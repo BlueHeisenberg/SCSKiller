@@ -4,16 +4,16 @@ using SCSKiller.Core.App;
 
 namespace SCSKiller.App.Pages;
 
-/// <summary>The user's own AES keys for an encrypted Unreal game, or a BlackSpace game's key: checked against the game's
+/// <summary>The user's own AES keys for an encrypted Unreal game, or another engine's game key: checked against the game's
 /// files and stored on this PC only.</summary>
 static class AesKeyDialog
 {
     /// <summary>True once a key that opens the game's files is stored; the caller then re-reads the game.
-    /// <paramref name="reason"/>: the Library's Why?, shown above the key.</summary>
-    public static async Task<bool> ShowAsync(XamlRoot root, string id, string title, string? reason = null, bool aes = true)
+    /// <paramref name="reason"/>: the Library's Why?, shown above the key. <paramref name="file"/>: the key or a file's path.</summary>
+    public static async Task<bool> ShowAsync(XamlRoot root, string id, string title, string? reason = null, bool aes = true, bool file = false, bool keyless = false)
     {
-        var box = new TextBox { PlaceholderText = aes ? MultiKeyHint : "0x followed by 64 hex digits", Header = aes ? "AES key" : "Game key", AcceptsReturn = aes, MaxHeight = 160 };
-        var panel = new StackPanel { Spacing = 12, Children = { new TextBlock { TextWrapping = TextWrapping.Wrap, Text = (aes ? AesIntro : GameKeyIntro) +
+        var box = new TextBox { PlaceholderText = aes ? MultiKeyHint : file ? "The key, or the path of a file that holds it" : "0x followed by 64 hex digits", Header = aes ? "AES key" : "Game key", AcceptsReturn = aes || file, MaxHeight = 160 };
+        var panel = new StackPanel { Spacing = 12, Children = { new TextBlock { TextWrapping = TextWrapping.Wrap, Text = (aes ? AesIntro : keyless ? RecordedIntro : file ? FileKeyIntro : GameKeyIntro) +
             " If you have the key, paste it here: it's checked against the game's files and kept on this PC only." }, box } };
         if (reason != null) panel.Children.Insert(0, new TextBlock { Text = reason, TextWrapping = TextWrapping.Wrap });
         var dialog = new ContentDialog
@@ -38,4 +38,6 @@ static class AesKeyDialog
     const string MultiKeyHint = "0x and 64 hex digits, one key per line";
     const string AesIntro = "SCSKiller couldn't find this game's key in its exe (protected exes hide it).";
     const string GameKeyIntro = "With this game's key, SCSKiller compiles it without a recording.";
+    const string FileKeyIntro = "SCSKiller can't read all of this game's shaders without its key.";
+    const string RecordedIntro = "Without its key, SCSKiller compiles only the pipelines it records while you play. The key adds the shaders in the game's files.";
 }

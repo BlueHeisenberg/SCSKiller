@@ -88,6 +88,7 @@ public sealed class GameRecord
     public bool ResumeAftermath { get; set; }                // ...starting NVIDIA Aftermath as the game does (its shader debug info is another key)
     public bool ResumeLeftOut { get; set; }                  // ...leaving out what earlier warms compiled (CompiledItems): its item numbers count in that set
     public bool ResumeUnnamed { get; set; }                  // ...a process of its segments died and was retried (WarmResult.DiedUnnamed): only the last segment goes on record
+    public Dictionary<string, string>? ResumeFileIds { get; set; }   // ...and where the driver's files decide it, the file id of each it wrote to (null: not known, only the last segment goes on record)
     public long ResumeSkipEnd { get; set; }                  // where the window the last give-up skipped ends (ScsKiller.GiveUpSkip)...
     public long ResumeSkipWidth { get; set; }                // ...and its items
     public long? UncleanAt { get; set; }                     // the first unfinished item of the last warm that ended uncleanly naming no culprit (WarmResult.DiedAt): a second such end there skips past it; any other end clears it
@@ -136,6 +137,7 @@ public sealed class GameRecord
     public List<string> VulkanInboxes { get; set; } = [];   // the layer's inboxes the exe had while it recorded (its file key changes when Steam replaces it)
     public Dictionary<string, string>? VulkanCacheEnv { get; set; }   // the last session's driver-cache variables (VulkanLayer.CacheEnv); null = none
     public string? VulkanDevice { get; set; }   // the last session's Vulkan device (VulkanLayer.Device); null = none recorded
+    public List<string>? WarmedVulkanDevices { get; set; }   // the device lines complete Vulkan warms replayed under since the cache was last reset, the last one last; null = not known
     public DateTimeOffset? RanElevated { get; set; }   // the last launch seen ran as administrator, which loads no Vulkan recorder; null = not seen so
     public string? RecorderMoveFrom { get; set; }            // a recorder moving next to the game's exe: the old exe, until SCSKiller's files are out of its folder
     public string? RunsExe { get; set; }                    // the exe of its install the game was seen running when discovery named another: used instead (ScsKiller.Following)
@@ -166,6 +168,7 @@ public sealed class GameRecord
     public string? HeldKeys { get; set; }                    // AMD: the D3D12 ones its process held at the last sighting that held any, comma-separated (a string: arrays merge as sets); null = none seen since this was kept
     public HashSet<string>? WarmedKeys { get; set; }         // ...the ones the last complete warm held open; null = not recorded
     public HashSet<string>? WarmedParts { get; set; }        // AMD: the D3D12 file sets the last complete warm held open (Vendors.AmdAppCache.Part); null = not recorded
+    public DateTimeOffset? KeysMissedAt { get; set; }        // the game's process first seen holding keys the last complete warm missed, after that warm (ScsKiller.CantReach)
     public bool MissedTwice { get; set; }                    // the warm before the last complete one missed the game too (ScsKiller.CantReach)
     public Dictionary<string, string> GameParts { get; set; } = [];   // AMD: sets of its keys a launch after the warm used instead of the warm's, with the driver as in GameKeyDrivers
     public bool KeysByPath { get; set; }                     // its keys shared with a game of the same exe name were sorted out (ScsKiller.SortTwinKeys)
@@ -286,7 +289,7 @@ public sealed record StoppedCreated(string Driver, string Index, string Exe, str
 
 /// <param name="Warmed">NVIDIA: the warm's own pipelines the launch created (ScsKiller.WarmedCreates' Seen); null = not judged</param>
 /// <param name="WarmedCold">...and of them, the ones created cold (at least ScsKiller.UnreachedMedianMs)</param>
-/// <param name="TupleKnown">of the compiles, the ones whose shaders and root signature the last compile had (the csv's tuple_known); null = not read</param>
+/// <param name="TupleKnown">of the compiles, the ones whose shaders and root signature the last compile had (the csv's tuple_known); null = not read, or a Vulkan launch (its rows compare nothing)</param>
 public sealed record LaunchCheck(DateTimeOffset At, long Hits, long Compiles, long? Warmed = null, long? WarmedCold = null, long? TupleKnown = null)
 {
     public double Compiled => Hits + Compiles > 0 ? (double)Compiles / (Hits + Compiles) : 0;
@@ -330,9 +333,8 @@ public sealed record WindowBounds(int Left, int Top, int Width, int Height, bool
 public sealed record PendingCount(string Key, long Recorded, long? Planned, bool Unknown, long Upscaler = 0);
 
 /// <summary>The expensive part of a scan (engine detection, planner check, anti-cheat), reused while <see cref="Key"/>
-/// (exe stamp, store version, vendor profile, recording, SCSKiller build) is unchanged. <paramref name="Clean"/>: the
-/// <see cref="ScsKiller.FolderStamp"/> at the last full anti-cheat check that found none.</summary>
-public sealed record Evaluation(string Key, EngineInfo? Engine, AntiCheat AntiCheat, PlanCheck Check, string? Clean = null,
+/// (exe stamp, store version, vendor profile, recording, SCSKiller build) is unchanged.</summary>
+public sealed record Evaluation(string Key, EngineInfo? Engine, AntiCheat AntiCheat, PlanCheck Check,
     bool StreamlineFirst = false, IReadOnlyList<string>? StreamlineFiles = null, string? StreamlineStamp = null,   // GameFiles.StreamlineFirst
     string? ApiDetected = null,    // GameState.ApiDetected; Engine has the API the choice or the recording gave
     string? Found = null, string? FoundAt = null)   // an anti-cheat verdict's ScsKiller.FolderStamp and the marker it found; null: not known
@@ -495,7 +497,25 @@ public sealed class AppStore(string dataDir)
        
         DriverUpdateMode.Ask, BackgroundThreads: 8, PauseWhileGaming: true);
 
-    public Settings LoadSettings() => Load<Settings>(Path.Combine(DataDir, "settings.json")) ?? DefaultSettings;
+    public Settings LoadSettings()
+    {
+        var path = Path.Combine(DataDir, "settings.json");
+        if (Load<Settings>(path) is { } s) return s;
+        // the next save replaces it: the copy keeps the user's settings and says this isn't a new install (ScsKiller.AwaitWelcome)
+        try { if (File.Exists(path)) File.Copy(path, $"{path}.unreadable-{File.GetLastWriteTimeUtc(path).Ticks}"); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        return DefaultSettings;
+    }
+
+    public bool SettingsWereUnreadable
+    {
+        get
+        {
+            try { return Directory.Exists(DataDir) && Directory.EnumerateFiles(DataDir, "settings.json.unreadable-*").Any(); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return true; }
+        }
+    }
+
     public void SaveSettings(Settings s) => Save(Path.Combine(DataDir, "settings.json"), s);
 
     /// <summary>Null until a window was saved, or when the file can't be read or has no size: the default size then.</summary>
@@ -640,10 +660,14 @@ public sealed class AppStore(string dataDir)
     {
         LoadingGame?.Invoke(gameId);
         var r = Load<GameRecord>(Path.Combine(GameDir(gameId), "state.json")) ?? new GameRecord();
-        // a plan saved under another data folder (the portable build's copy, a moved portable folder): the one in this game's folder
-        if (r.Plan is { } p && Path.GetDirectoryName(p.FilePath) != GameDir(gameId) && Path.Combine(GameDir(gameId), Path.GetFileName(p.FilePath)) is var here && File.Exists(here))
-            r.Plan = p with { FilePath = here };
+        // a plan saved under another data folder (the portable build's copy, a moved or restored folder): the one in this game's
+        // folder, there or not, never the other folder's
+        if (r.Plan is { } p && Path.GetDirectoryName(p.FilePath) != GameDir(gameId))
+            r.Plan = p with { FilePath = Path.Combine(GameDir(gameId), p.FilePath[(p.FilePath.LastIndexOfAny(['\\', '/', ':']) + 1)..]) };   // a Windows app's path read on Linux too
+        // its keys are file names in the exe folder, deleted by hash: a hand-edited path leaves the folder
+        foreach (var k in r.RecorderFiles.Keys.Where(k => k is "" or "." or ".." || k.IndexOfAny(['\\', '/', ':']) >= 0).ToList()) r.RecorderFiles.Remove(k);
         _held.AddOrUpdate(r, JsonSerializer.SerializeToNode(r, Json)!.AsObject());
+        if (r is { PlanApi: "vk", FirstLaunch: { TupleKnown: not null } f }) r.FirstLaunch = f with { TupleKnown = null };   // the Vulkan layer's rows compare nothing
         return r;
     }
 

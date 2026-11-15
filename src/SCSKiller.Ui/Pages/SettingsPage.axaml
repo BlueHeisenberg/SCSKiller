@@ -457,6 +457,7 @@
                                                Classes="Caption" TextWrapping="Wrap" />
                                 </StackPanel>
                             </CheckBox>
+                            <TextBlock Text="{Binding RiskFilesLeft}" IsVisible="{Binding HasRiskFilesLeft}" Foreground="{DynamicResource WarnBrush}" Classes="Caption" TextWrapping="Wrap" Margin="28,0,0,0" />
                             <HyperlinkButton Content="Details" Click="OnAntiCheatDetails" Padding="0" Margin="28,0,0,0" AutomationProperties.Name="Details on recording in games with anti-cheat" />
                         </StackPanel>
                         <StackPanel Spacing="4" IsVisible="{Binding ShowsTraversal, Mode=OneTime}">

@@ -152,7 +152,7 @@ SCSKiller while the game runs.
 **What does it write, and where?** Settings and per-game plans go in `%LOCALAPPDATA%\SCSKiller\` (the `data` folder of
 a portable copy), and the compiled pipelines go in your driver's own shader cache. Game files are never modified. The
 optional recorder adds `d3d12.dll` and `scskiller.cfg` to the folder of a game you turn it on for, and turning it off
-removes exactly those files. It never goes into a game with anti-cheat, and comes out the moment SCSKiller finds
+removes exactly those files. On a new install it goes in no game folder until you close the welcome, whose box sets "Record in all compatible games". It never goes into a game with anti-cheat, and comes out the moment SCSKiller finds
 anti-cheat: when it scans, when the game exits or updates, and every 2 minutes while it runs. `scskiller.cfg` names the
 game's exe as it was when SCSKiller last found no anti-cheat in its folders, and a game records only while its exe is
 still that one and no anti-cheat is next to it. Uninstalling SCSKiller removes these files and the recordings from every

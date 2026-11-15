@@ -140,7 +140,7 @@ public sealed partial class DetailPage : UserControl, INavigable
     async void OnSetGameKey(object? _, RoutedEventArgs __)
     {
         var vm = Vm;
-        if (await AesKeyDialog.ShowAsync(vm.Row.Id, $"Set the game key for {vm.Name}", aes: false)) vm.RefreshGame();
+        if (await AesKeyDialog.ShowAsync(vm.Row.Id, $"Set the game key for {vm.Name}", aes: false, file: vm.NeedsFileKey, keyless: vm.RecordsWithoutKey)) vm.RefreshGame();
     }
 
     void OnRefreshGame(object? _, RoutedEventArgs __) => Vm.RefreshGame();
@@ -441,6 +441,13 @@ public sealed partial class DetailPage : UserControl, INavigable
         App.Main.Navigate(typeof(LibraryPage));
     }
 
+    /// <summary>Screenshots: the compile size limit near the top.</summary>
+    public void ScrollToLimit()
+    {
+        if (LimitHeader.TranslatePoint(new(0, 0), (Control)Scroller.Content!) is { } at)
+            Scroller.Offset = new(0, Math.Clamp(at.Y - 40, 0, Math.Max(0, Scroller.Extent.Height - Scroller.Viewport.Height)));
+    }
+
     /// <summary>Screenshots: the bottom of the page; false when it all fits.</summary>
     public bool ScrollToEnd()
     {
@@ -528,19 +535,6 @@ public sealed partial class DetailPage : UserControl, INavigable
     void OnSharedFollow(object? _, RoutedEventArgs __) => Set((vm, p) => vm.SharedPending = p, Vm.SharedOn, id => Host.Core.SetGameUseShared(id, null));
 
     void SetCareful(bool on) => Set((vm, p) => vm.CarefulPending = p, on, id => Host.Core.SetCarefulCompile(id, on));
-
-    async void OnCacheCapChanged(object? _, SelectionChangedEventArgs __)
-    {
-        var (vm, id, i) = (Vm, Vm.Row.Id, CacheCapBox.SelectedIndex);
-        if (i < 0 || i == vm.CacheCapIndex) return;
-        try
-        {
-            await Task.Run(() => Host.Core.SetGameCacheCap(id, i == 0 ? null : ScsKiller.CacheCapsGB[i - 1]));
-            vm.Error = null;
-        }
-        catch (Exception ex) { vm.Error = Describe(ex); }
-        vm.Refresh();
-    }
 
     async void OnRayTracingChanged(object? _, SelectionChangedEventArgs __)
     {

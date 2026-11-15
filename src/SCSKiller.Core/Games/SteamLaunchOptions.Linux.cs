@@ -17,6 +17,16 @@ static class SteamLaunchOptions
     internal static List<(string Name, string Value)> Variables(string? options, out string? unread) =>
         [.. Variables(options, out unread, out _, out _).Select(v => (v.Name, v.Value))];
 
+    /// <summary>The compatdata folder the options give Proton (STEAM_COMPAT_DATA_PATH, set after Steam's own), its pfx the
+    /// game's prefix; null when they set none or one SCSKiller can't take as the shell does: an env option it doesn't read, a
+    /// line that isn't plain (an unquoted ~ the shell may expand, a $ or ` outside single quotes), or a value that isn't an
+    /// absolute path (a quoted ~ stays literal).</summary>
+    internal static string? CompatData(string? options)
+    {
+        var path = Variables(options, out var unread, out var plain, out _).LastOrDefault(v => v.Name == "STEAM_COMPAT_DATA_PATH").Value;
+        return unread == null && plain && path != null && Path.IsPathFullyQualified(path) ? path : null;
+    }
+
     // each with the index of the word that set it in what comes before %command%: those words, as Words gives them with plain
     static List<(string Name, string Value, int At)> Variables(string? options, out string? unread, out bool plain, out List<(string Word, int QuotedFrom)> words)
     {

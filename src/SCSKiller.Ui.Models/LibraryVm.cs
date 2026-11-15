@@ -69,7 +69,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     /// <summary>The shader mod by name, else plain ReShade; null = neither, or not looked (anti-cheat).</summary>
     internal static TagChip? ModChip(GameState s) => s.ShaderMod is { } mod
         ? new(mod, s.ShaderModBlocks ? "Stops this game compiling" : s.ShaderModLayer ? "Compiled through your mod" : "A few modded shaders aren't precompiled")
-        : s.ReShade ? new("ReShade", "Changes no pipelines") : null;
+        : s.ReShade ? new(s.Luma ? "Luma" : "ReShade", "Changes no pipelines") : null;
     public string Shaders => Fmt.N(s.ShaderCount);
     public string Pipelines => Fmt.N(ScsKiller.PlanPipelines(s));
     public string Cache => Fmt.Cache(s);

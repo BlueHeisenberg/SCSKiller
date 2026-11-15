@@ -31,7 +31,7 @@ public sealed record UploadDll(string Name, string Sha1);
 /// <see cref="Keys"/>: four base64url strings, each the record keys (20 bytes each, back to back) whose slowest create took
 /// under 10 ms, 10-50, 50-200, and 200 ms or more. <see cref="HitCheck"/>: the run's misses read from the game's adapter db,
 /// sent only to a server that takes them ("hitcheck"). <see cref="ColdTupleKnown"/>: of the cold creates, the ones whose
-/// shaders and root signature the compile had (the csv's tuple_known), sent only to a server that takes it ("tuple_known").
+/// shaders and root signature the compile had (the csv's tuple_known), sent only to a server that takes it ("tuple_known"), never for a Vulkan launch (its rows compare nothing).
 /// A run the recorder didn't log has no cold creates and no keys: both are left out, never 0 (<see cref="HitCheckOnly"/>).</summary>
 public sealed record OutcomeReport(string ContentHash, string Vendor, string? GpuModel, string? DriverVersion, string AppVersion, string? RsRule,
     int PlannerVersion,
@@ -80,7 +80,7 @@ public sealed record OutcomeReport(string ContentHash, string Vendor, string? Gp
             // the hit check goes only with the launch it was read after: a skipped short run's would describe another
             var hits = hitRun is { } w && w.From.ToUnixTimeMilliseconds() <= start && start <= w.To.ToUnixTimeMilliseconds() ? about.HitCheck : null;
             return about with { Cold = cold, Keys = [.. buckets.Select(b => Base64Url.EncodeToString([.. b]))], HitCheck = hits,
-                ColdTupleKnown = about.ColdTupleKnown != null ? tupleKnown : null };
+                ColdTupleKnown = about.ColdTupleKnown != null && !l.Vulkan ? tupleKnown : null };
         }
         return null;
     }

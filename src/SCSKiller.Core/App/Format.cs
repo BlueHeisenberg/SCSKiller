@@ -202,7 +202,7 @@ public static class Format
             GameStatus.Ready when s.Engine?.KeyMissing == true => Sentence(ScsKiller.KeyForFullCoverage),
             GameStatus.Ready when ScsKiller.IsPartial(s.Plan) => "Partly covered",
             GameStatus.Ready when Has(Planning.Planner.UntestedNote) => "Not tested on this engine version",
-            GameStatus.Ready when Has("for DirectX 12, ") => !s.AnyAntiCheat || s.RiskEligible || s is { AntiCheatUnfinished: true, Vac: false } ? "DirectX 11, DirectX 12 needs a recording" : "DirectX 11 only, contains anti-cheat",
+            GameStatus.Ready when Has("for DirectX 12, ") && s.RecorderSkip != ScsKiller.SkipCrashes => !s.AnyAntiCheat || s.RiskEligible || s is { AntiCheatUnfinished: true, Vac: false } ? "DirectX 11, DirectX 12 needs a recording" : "DirectX 11 only, contains anti-cheat",
             GameStatus.Ready when Has("also compiles every DirectX 11 shader") => "DirectX 11 and 12",
             GameStatus.Ready when Starts("compiles every DirectX 11 shader") => "DirectX 11",
             GameStatus.Ready => null,

@@ -54,6 +54,8 @@
 // it returns; the app removes one whose process is gone. These four are this process's own too.
 #define NOMINMAX
 #include <windows.h>
+#include <psapi.h>
+#include <tlhelp32.h>
 #include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
@@ -67,6 +69,8 @@
 #include <string>
 #include <thread>
 #include <atomic>
+#include <deque>
+#include <mutex>
 #include <vector>
 #include <bcrypt.h>
 #include <memory>
@@ -120,6 +124,7 @@ static std::wstring beat_name(DWORD parent) { return L"Local\\SCSKiller.Beat." +
 static std::wstring final_name(DWORD parent) { return L"Local\\SCSKiller.Final." + std::to_wstring(parent); }
 static std::wstring started_name(DWORD parent) { return L"Local\\SCSKiller.Started." + std::to_wstring(parent); }
 static std::wstring loading_name(DWORD parent) { return L"Local\\SCSKiller.Loading." + std::to_wstring(parent); }
+static std::wstring writing_name(DWORD parent) { return L"Local\\SCSKiller.Writing." + std::to_wstring(parent); }
 static std::wstring entered_name(DWORD parent) { return L"Local\\SCSKiller.Entered." + std::to_wstring(parent); }
 static std::wstring stop_name(DWORD parent) { return L"Local\\SCSKiller.Stop." + std::to_wstring(parent); }
 static std::wstring pipe_name(DWORD parent, int fd) { return L"\\\\.\\pipe\\SCSKiller.Warm." + std::to_wstring(parent) + L"." + std::to_wstring(fd); }
@@ -296,6 +301,234 @@ static void err_printf(const wchar_t* fmt, ...) {
     fflush(stderr);
 }
 
+// Its own mapped files, so another app's cache is never read: reading a .parc counts as a use in the driver's eviction.
+static std::set<std::wstring> mapped_parcs() {
+    std::set<std::wstring> parcs;
+    MEMORY_BASIC_INFORMATION m;
+    wchar_t name[1024];
+    for (char* p = nullptr; VirtualQuery(p, &m, sizeof m); p = (char*)m.BaseAddress + m.RegionSize)
+        if (m.Type == MEM_MAPPED && K32GetMappedFileNameW(GetCurrentProcess(), p, name, 1024))
+            if (const size_t n = wcslen(name); n > 5 && !_wcsicmp(name + n - 5, L".parc")) parcs.insert(std::wstring(L"\\\\?\\GLOBALROOT") + name);
+#ifdef SCSK_TEST_HOOKS
+    if (GetEnvironmentVariableW(L"SCSKILLER_TEST_WARM_PARC", name, 1024)) parcs.insert(name);  // (tests): a file read as the driver's mapped cache
+#endif
+    return parcs;
+}
+
+// Records fill a preallocated .parc through a map: neither its length nor its write time shows one, the end of its non-zero part does.
+static uint64_t parc_tail(const std::wstring& path) {
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return 0;
+    constexpr int64_t kChunk = 1 << 20;
+    std::vector<char> chunk(kChunk);
+    LARGE_INTEGER size{};
+    GetFileSizeEx(f, &size);
+    uint64_t tail = 0;
+    for (int64_t end = size.QuadPart; end > 0 && !tail;) {  // from the end: a zero block among the records doesn't hide what's past it
+        const int64_t start = (end - 1) / kChunk * kChunk;
+        DWORD got = 0;
+        OVERLAPPED at{};
+        at.Offset = (DWORD)start, at.OffsetHigh = (DWORD)(start >> 32);
+        if (ReadFile(f, chunk.data(), (DWORD)(end - start), &got, &at))
+            for (DWORD i = got; i > 0 && !tail; --i)
+                if (chunk[i - 1]) tail = start + i;
+        end = start;
+    }
+    CloseHandle(f);
+    return tail;
+}
+
+static uint64_t parcs_tail() {
+    uint64_t tail = 0;
+    for (const auto& p : mapped_parcs()) tail += parc_tail(p);
+    return tail;
+}
+
+// The runtime names its workers, and nothing else reads their count back.
+static int background_threads() {
+    int n = 0;
+    HANDLE all = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    THREADENTRY32 e = {sizeof e};
+    for (BOOL more = Thread32First(all, &e); more; more = Thread32Next(all, &e)) {
+        if (e.th32OwnerProcessID != GetCurrentProcessId()) continue;
+        HANDLE t = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, e.th32ThreadID);
+        wchar_t* name = nullptr;
+        if (t && SUCCEEDED(GetThreadDescription(t, &name)) && name) n += !wcsncmp(name, L"D3D Background Thread", 21), LocalFree(name);
+        if (t) CloseHandle(t);
+    }
+    CloseHandle(all);
+    return n;
+}
+
+static bool amd_on_windows(const DXGI_ADAPTER_DESC1& adapter) {
+    return adapter.VendorId == 0x1002 && !GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version");
+}
+
+// AMD's queue behind the creates runs on the runtime's background workers, 4 by default: measured, 16 end it three times as fast.
+// As many as the compile's threads, never under the 4. Set before the device, so a later change of the running workers leaves it.
+// Undocumented, so a runtime that ignores it leaves 4 and the longer wait. The proxy's forward fails harmlessly where the export is absent.
+// SCSKILLER_TEST_WARM_BG_THREADS=N (tests): N on any GPU, 0 not at all
+static void more_background_threads(void* set, const DXGI_ADAPTER_DESC1& adapter, void(WINAPI* workers)(uint32_t*)) {
+    wchar_t w[8] = {};
+    uint32_t threads[2] = {0, 0};  // of, the compile's threads as this run got them
+    if (workers) workers(threads);
+#ifdef SCSK_TEST_HOOKS
+    const bool test = GetEnvironmentVariableW(L"SCSKILLER_TEST_WARM_BG_THREADS", w, 8);
+#else
+    constexpr bool test = false;
+#endif
+    const int count = test ? _wtoi(w) : (int)threads[1];
+    if (!set || (test ? !count : count <= 4 || !amd_on_windows(adapter))) return;
+    static char behavior[48];  // the runtime keeps the pointer, and it replaces any compat string this process had
+    const int len = sprintf_s(behavior, "BackgroundThreadCount=%d;", count);
+    ((void(WINAPI*)(SIZE_T, const char*))set)(len + 1, behavior);
+    err_printf(L"asked the D3D12 runtime for %d background threads\n", count);
+}
+
+constexpr int kMostWritingS = 7200;  // a process's wait for the driver's writes
+static std::atomic<uint64_t> g_marked;  // the items a mark's event says are written, 0: no marks
+static std::atomic<bool> g_marks_over;  // no more marks: the final commit's turn, or a stop
+static std::mutex g_commit_gate;  // a mark's call never races the final commit's
+
+// The adapter's user-mode driver version, as Device Manager shows it.
+static std::wstring driver_version(ID3D12Device* dev) {
+    IDXGIFactory4* f = nullptr;
+    IDXGIAdapter* a = nullptr;
+    LARGE_INTEGER v{};
+    wchar_t s[48] = L"unknown";
+    if (dev && SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&f))) && SUCCEEDED(f->EnumAdapterByLuid(dev->GetAdapterLuid(), IID_PPV_ARGS(&a))) &&
+        SUCCEEDED(a->CheckInterfaceSupport(__uuidof(IDXGIDevice), &v)))
+        swprintf_s(s, L"%u.%u.%u.%u", HIWORD(v.HighPart), LOWORD(v.HighPart), HIWORD(v.LowPart), LOWORD(v.LowPart));
+    if (a) a->Release();
+    if (f) f->Release();
+    return s;
+}
+
+// AMD's D3D12 driver writes behind the creates and an exit drops what's queued. COMMIT_RESULTS' event ends the wait: allowed on
+// retail, and no bytes came after it. Without it, the end of the records going quiet: gaps of 54 s measured on 4 workers.
+// Polls, not time: a suspended process (a pause) counts none. False: a stop ended the writes, or the event the call took never
+// came (quiet or at the limit), so what was queued may be lost: only the marks say what was written.
+static bool wait_for_driver_cache(ID3D12Device* dev, HANDLE stop, HANDLE parent, DWORD parent_pid, bool stopping) {
+    constexpr int kPollMs = 5000, kQuietWithEvent = 120, kQuietAlone = 24;
+    // SCSKILLER_TEST_WARM_WAIT_POLLS=<n> (tests): the limit after n polls
+#ifdef SCSK_TEST_HOOKS
+    wchar_t lim[8] = {};
+    const int kMostPolls = GetEnvironmentVariableW(L"SCSKILLER_TEST_WARM_WAIT_POLLS", lim, 8) ? _wtoi(lim) : kMostWritingS * 1000 / kPollMs;
+#else
+    constexpr int kMostPolls = kMostWritingS * 1000 / kPollMs;
+#endif
+    if (mapped_parcs().empty()) return true;
+    if (stopping) return err_printf(L"stopped before the driver's cache was written: only the items its last mark covers are kept\n"), false;
+    HANDLE done = CreateEventW(nullptr, TRUE, FALSE, nullptr);  // left open: a hung call below may still use it
+    static std::atomic<bool> refused;  // static: the call may outlive this wait
+    refused = !dev;
+    // On its own thread: a hung driver holds neither a stop nor the limits below.
+    if (dev) std::thread([dev, done] {
+        ID3D12Device6* d6 = nullptr;
+        if (FAILED(dev->QueryInterface(IID_PPV_ARGS(&d6)))) { refused = true; return; }
+        // SCSKILLER_TEST_WARM_BG_COMMIT=<action> (tests): another action, 99 is refused, -1: no event to wait on
+#ifdef SCSK_TEST_HOOKS
+        wchar_t w[4] = {};
+        const int action = GetEnvironmentVariableW(L"SCSKILLER_TEST_WARM_BG_COMMIT", w, 4) ? _wtoi(w) : D3D12_MEASUREMENTS_ACTION_COMMIT_RESULTS;
+#else
+        constexpr int action = D3D12_MEASUREMENTS_ACTION_COMMIT_RESULTS;
+#endif
+        BOOL further = FALSE;
+        g_marks_over = true;
+        std::lock_guard gate(g_commit_gate);
+        const HRESULT hr = d6->SetBackgroundProcessingMode(D3D12_BACKGROUND_PROCESSING_MODE_ALLOWED, action < 0 ? D3D12_MEASUREMENTS_ACTION_COMMIT_RESULTS : (D3D12_MEASUREMENTS_ACTION)action, action < 0 ? nullptr : done, &further);
+        refused = FAILED(hr);
+        err_printf(L"the driver's cache: commit 0x%08X, further %d, %d background threads\n", (unsigned)hr, further, background_threads());
+        d6->Release();
+    }).detach();
+    HANDLE writing = OpenEventW(EVENT_MODIFY_STATE, FALSE, writing_name(parent_pid).c_str());
+    if (writing) SetEvent(writing);
+    uint64_t shown = g_marked;
+    emit("{\"event\":\"writing\",\"written\":%llu}", shown);
+    HANDLE waits[3] = {done};
+    DWORD n = 1;
+    if (stop) waits[n++] = stop;
+    if (parent) waits[n++] = parent;
+    const ULONGLONG t0 = GetTickCount64();
+    uint64_t was = parcs_tail();
+    int quiet = 0, polls = 0;
+    const wchar_t* end = nullptr;
+    while (!end) {
+        const DWORD woke = WaitForMultipleObjects(n, waits, FALSE, kPollMs);
+        if (woke == WAIT_OBJECT_0) end = L"written";
+        else if (woke != WAIT_TIMEOUT) end = L"stopped";
+        else {
+            const uint64_t tail = parcs_tail();
+            quiet = tail == was ? quiet + 1 : 0;
+            if (!quiet) err_printf(L"the driver's cache holds %llu MB\n", tail >> 20);
+            was = tail;
+            if (const uint64_t at = g_marked; at != shown) emit("{\"event\":\"writing\",\"written\":%llu}", shown = at);
+            if (quiet >= (refused ? kQuietAlone : kQuietWithEvent)) end = L"quiet";
+            else if (++polls >= kMostPolls) end = L"at the limit";
+        }
+    }
+    err_printf(L"the driver's cache: %ls after %llu s, end of records %llu B\n", end, (GetTickCount64() - t0) / 1000, parcs_tail());
+    if (writing) ResetEvent(writing), CloseHandle(writing);
+    if (refused) return wcscmp(end, L"stopped") != 0;
+    if (wcscmp(end, L"written") && wcscmp(end, L"stopped"))
+        err_printf(L"the driver's commit event never came (%ls, driver %ls): only the items up to its last mark are kept\n", end, driver_version(dev).c_str());
+    return wcscmp(end, L"written") == 0;
+}
+
+// A COMMIT_RESULTS event every so many items, for the count while the driver writes and what a stop keeps: the runtime works in the
+// order received, measured on AMD, so each event says how far its queue has got. A mark is at the first unfinished item, not at the
+// count: an item below the count may still be in flight, its work queued after the mark. Only the final commit's event ends the wait.
+// SCSKILLER_TEST_WARM_BG_MARKS=<n> (tests): every n items on any GPU, 0 not at all
+static void background_marks(ID3D12Device* dev, const DXGI_ADAPTER_DESC1& adapter, void(WINAPI* progress)(uint64_t*),
+                             uint64_t(WINAPI* finished)(uint64_t, uint64_t*)) {
+    uint64_t p0[4];
+    progress(p0);
+    wchar_t w[16] = {};
+#ifdef SCSK_TEST_HOOKS
+    const bool test = GetEnvironmentVariableW(L"SCSKILLER_TEST_WARM_BG_MARKS", w, 16);
+#else
+    constexpr bool test = false;
+#endif
+    const uint64_t every = test ? (uint64_t)_wtoi64(w) : std::max<uint64_t>(1000, p0[1] / 100);
+    ID3D12Device6* d6 = nullptr;
+    if (!dev || !every || !finished || (!test && !amd_on_windows(adapter)) || FAILED(dev->QueryInterface(IID_PPV_ARGS(&d6)))) return;
+    g_marked = p0[0];  // what's before this process is written: it waited, or an earlier compile did
+    std::thread([d6, progress, finished, every, next = p0[0] + every, t0 = GetTickCount64()]() mutable {
+        struct Mark { uint64_t at; HANDLE done; ULONGLONG call_ms; };
+        std::deque<Mark> waiting;  // they signal in order: one thread watches the oldest, and each handle closes as it signals
+        for (bool calling = true; calling || !waiting.empty(); Sleep(100)) {
+            uint64_t p[4];
+            progress(p);
+            calling = calling && !p[3] && !g_marks_over;
+            if (calling && p[0] >= next) {
+                next = p[0] + every;
+                HANDLE done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+                BOOL further = FALSE;
+                HRESULT hr = E_ABORT;
+                const uint64_t at = finished(~0ull, nullptr);
+                const ULONGLONG call = GetTickCount64();
+                {
+                    std::lock_guard gate(g_commit_gate);
+                    if (!g_marks_over) hr = d6->SetBackgroundProcessingMode(D3D12_BACKGROUND_PROCESSING_MODE_ALLOWED, D3D12_MEASUREMENTS_ACTION_COMMIT_RESULTS, done, &further);
+                }
+                if (SUCCEEDED(hr)) waiting.push_back({at, done, GetTickCount64() - call});
+                else {
+                    CloseHandle(done);
+                    calling = false;
+                    if (hr != E_ABORT) err_printf(L"no more marks: 0x%08X at item %llu\n", (unsigned)hr, p[0]);
+                }
+            }
+            for (; !waiting.empty() && WaitForSingleObject(waiting.front().done, 0) == WAIT_OBJECT_0; waiting.pop_front()) {
+                const Mark& m = waiting.front();
+                g_marked = m.at;
+                err_printf(L"mark %llu signaled at %llu ms, call %llu ms\n", m.at, GetTickCount64() - t0, m.call_ms);
+                CloseHandle(m.done);
+            }
+        }
+        d6->Release();
+    }).detach();
+}
+
 // The child died without a last line: the retry it couldn't print, from its item states (warm_items.h). The items in flight
 // are created alone first; one that dies again alone is skipped for this compile (never a crash key: the death may not be
 // its own). False: no states to go by (it died before its items).
@@ -453,7 +686,12 @@ static IDXGIAdapter1* find_adapter(const Opts& o, DXGI_ADAPTER_DESC1* out, bool*
         uint64_t luid = (uint64_t)(uint32_t)d.AdapterLuid.HighPart << 32 | d.AdapterLuid.LowPart;
         const bool cpu = software(a, d);
         *sw = *sw || cpu;
-        if (!cpu && (o.luid ? luid == o.luid : !best || d.DedicatedVideoMemory > bd.DedicatedVideoMemory)) {
+#ifdef SCSK_TEST_HOOKS
+        const bool named = o.luid && luid == o.luid;  // the tests' WARP, by its LUID
+#else
+        constexpr bool named = false;
+#endif
+        if ((!cpu || named) && (o.luid ? luid == o.luid : !best || d.DedicatedVideoMemory > bd.DedicatedVideoMemory)) {
             if (best) best->Release();
             best = a, bd = d;
         } else a->Release();
@@ -755,6 +993,7 @@ static int child(DWORD parent_pid, const Opts& o) {
     ID3D12Device* dev = nullptr;
     if (!best) return fail(o.luid ? L"no adapter with that LUID" : sw ? NoGpu : L"no GPU adapter");
     options(o.threads, o.idle, o.start);
+    more_background_threads(proc("SetAppCompatStringPointer"), bd, workers);
     warm_rt(o.rt_threads, o.skip.data(), (uint32_t)o.skip.size());
     memory(o.memory_mb);
     warm_crash(o.skip_keys.data(), (uint32_t)(o.skip_keys.size() / 20), o.isolate.data(), (uint32_t)o.isolate.size());
@@ -787,10 +1026,15 @@ static int child(DWORD parent_pid, const Opts& o) {
     if (cpu_device(dev)) return fail(NoGpu);
     // every return from here on sets it after the last line: the driver may write its cache at exit
     HANDLE final_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, final_name(parent_pid).c_str());
-    auto ended = [final_event](int code) {
+    HANDLE stop = o.stop_event.empty() ? nullptr : CreateEventW(nullptr, TRUE, FALSE, o.stop_event.c_str());
+    bool stopping = false;
+    auto ended = [&](int code, bool cache_kept = false, const std::function<void()>& lost = {}) {
         if (final_event) SetEvent(final_event);
+        if (cache_kept && !wait_for_driver_cache(dev, stop, parent, parent_pid, stopping)) return lost(), 0;
         return code;
     };
+    auto finished = (uint64_t(WINAPI*)(uint64_t, uint64_t*))proc("SCSKiller_Finished");  // optional: then no marks, and a stop keeps nothing
+    background_marks(dev, bd, progress, finished);
 
     if (!o.aftermath.empty() && dev) {
         if (am_why.empty()) am_why = aftermath_init(o, dev);
@@ -816,11 +1060,9 @@ static int child(DWORD parent_pid, const Opts& o) {
     else start(dev);  // looks for a layer's device under it: a layer's code still runs
     if (HANDLE started = OpenEventW(EVENT_MODIFY_STATE, FALSE, started_name(parent_pid).c_str())) SetEvent(started), CloseHandle(started);
 
-    HANDLE stop = o.stop_event.empty() ? nullptr : CreateEventW(nullptr, TRUE, FALSE, o.stop_event.c_str());
     auto beat = (volatile LONG*)MapViewOfFile(beat_map, FILE_MAP_READ, 0, 0, sizeof(LONG));
     ULONGLONG t0 = GetTickCount64(), seen = t0, printed = t0;
     LONG last = beat ? *beat : 0;
-    bool stopping = false;
     uint64_t s[2];  // skipped for this compile, those before the retry's first item
     for (;; Sleep(100)) {
         progress(p);
@@ -828,6 +1070,7 @@ static int child(DWORD parent_pid, const Opts& o) {
         ULONGLONG now = GetTickCount64();
         if (beat && *beat != last) last = *beat, seen = now;
         stopping = stopping || (stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) || WaitForSingleObject(parent, 0) != WAIT_TIMEOUT;
+        if (stopping) g_marks_over = true;
         control(stopping ? STOP : beat && now - seen > 1000 ? PAUSE : RUN);
         if (now - printed < 500) continue;
         printed = now;
@@ -851,13 +1094,22 @@ static int child(DWORD parent_pid, const Opts& o) {
     known(kn, &culprits);
     uint64_t mem[2] = {0, 0};  // private and free MB when it stopped to free memory
     const bool freed = memory_stop && memory_stop(mem);
+    // A stopped queue's items past the last signaled mark can't be told written: the next compile goes on from that mark (from where
+    // this process started without one), and the later ones the driver did write are hits.
+    const auto lost = [&] {
+        uint64_t below[3] = {0, 0, 0};  // failed, skipped, known
+        const uint64_t marked = g_marked, kept = finished && marked > first ? finished(marked, below) : first;
+        err_printf(L"the driver wrote the items up to %llu: the next compile goes on from there\n", kept);
+        emit("{\"event\":\"done\",\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"driverSkipped\":%llu,\"seconds\":%.1f,\"stopped\":true,\"crashed\":[%s],\"noflush\":false,\"passedOver\":%lld,\"known\":%llu}",
+             kept, p[1], below[0], below[1], (GetTickCount64() - t0) / 1000.0, crashed, passed_over ? (long long)passed_over(kept) : 0ll, below[2]);
+    };
     if (r[0] && !stopping) {
         emit("{\"event\":\"retry\",\"from\":%llu,\"rtThreads\":%llu,\"failedItem\":%lld,\"done\":%llu,\"total\":%llu,\"failed\":%llu,\"driverSkipped\":%llu,\"seconds\":%.1f,"
              "\"privateMB\":%llu,\"freeMB\":%llu,\"reason\":\"%s\",\"crashed\":[%s],\"isolate\":[%s],\"skip\":[%s],\"passedOver\":%lld,\"unsupported\":%llu,\"cached\":%llu,\"known\":%llu,\"culprits\":[%s]}",
              r[1], r[2], r[4] == ~0ull ? -1ll : (long long)r[4], r[1], p[1], r[3], s[1], (GetTickCount64() - t0) / 1000.0, mem[0], mem[1],
              removed == 2 ? "fault" : removed ? "removed" : hang ? "hang" : freed ? "memory" : "rt", crashed, isolate, hung_skip, passed_over ? (long long)passed_over(r[1]) : -1ll,
              unsupported ? unsupported() : 0ull, cached ? cached() : 0ull, kn[1], culprits);
-        return ended(3);
+        return ended(3, !removed && !hang, lost);  // a lost or hung driver finishes nothing
     }
     if (p[0] < p[1] && !stopping)
         return ended((emit("{\"event\":\"error\",\"message\":%s,\"culprits\":[%s]}", json(L"replay aborted after repeated faults, see stage\\scskiller.log").c_str(), culprits), 1));
@@ -869,7 +1121,7 @@ static int child(DWORD parent_pid, const Opts& o) {
          p[1], failed, skips, (GetTickCount64() - t0) / 1000.0, done < p[1] ? "true" : "false", crashed, g_ds_flush ? "true" : "false",
          passed_over ? (long long)passed_over(done) : -1ll, unsupported ? unsupported() : 0ull, cached ? cached() : 0ull, r[0] ? kn[1] : kn[0], culprits,
          unbuilt ? unbuilt() : 0ull);
-    return ended(0);  // a normal exit: the driver writes its cache now
+    return ended(0, true, lost);  // a normal exit: the driver writes its cache now
 }
 
 // The replayer takes ANSI paths (its workers start from GetModuleFileNameA): only a path the code page holds exactly.
@@ -1274,7 +1526,8 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
         return fail(L"workdir not found or exe is not a file name");
 
     std::wstring flat;  // this run's own new staging folder: nothing in it was there before
-    for (int n = 1; n < 100 && flat.empty(); ++n) {
+    // a dead process's folder stays, and Wine may give each restart's process the same pid
+    for (int n = 1; n < 10000 && flat.empty(); ++n) {
         std::wstring d = work + L"stage-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(n) + L"\\";
         if (CreateDirectoryW(d.c_str(), nullptr)) flat = d;
         else if (GetLastError() != ERROR_ALREADY_EXISTS) break;
@@ -1317,7 +1570,8 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
         std::function<void()> f;
         ~Unstage() { f(); }
     } unstage{[&] {  // only inside this run's folder: the staged inputs go, the proxy's outputs stay in flat
-        for (auto n : {exe, std::wstring(L"d3d12.dll"), std::wstring(L"scskiller.db"), std::wstring(L"scskiller_gen.db"), std::wstring(L"scskiller_gen.mem"), std::wstring(L"scskiller_pass.bin")})
+        for (auto n : {exe, std::wstring(L"d3d12.dll"), std::wstring(L"scskiller.db"), std::wstring(L"scskiller_gen.db"), std::wstring(L"scskiller_gen.mem"), std::wstring(L"scskiller_pass.bin"),
+                    std::wstring(L"scskiller_hold.bin")})
             unput(n);
         for (auto& n : layer) unput(n);
         for (auto& n : agility) unput(n);
@@ -1342,7 +1596,8 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
     if (GetFileAttributesW(proxy.c_str()) == INVALID_FILE_ATTRIBUTES) proxy = bin + L"..\\d3d12.dll";  // the segheap\ build uses its parent's
     if (!put(self, exe, false) || !put(proxy, L"d3d12.dll", false) || !put(work + L"scskiller.db", L"scskiller.db", true) ||
         !put(work + L"scskiller_gen.db", L"scskiller_gen.db", true) || !put(work + L"scskiller_gen.mem", L"scskiller_gen.mem", true) ||
-        !put(work + L"scskiller_pass.bin", L"scskiller_pass.bin", true))
+        !put(work + L"scskiller_pass.bin", L"scskiller_pass.bin", true) ||
+        !put(work + L"scskiller_hold.bin", L"scskiller_hold.bin", true))
         return fail(L"staging into " + stage + L" failed (error " + std::to_wstring(GetLastError()) + L")");
     // a child without it would call every pipeline of the plan failed
     if (GetFileAttributesW((work + L"scskiller_gen.mem").c_str()) != INVALID_FILE_ATTRIBUTES) {
@@ -1427,6 +1682,7 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
     HANDLE loading = CreateEventW(nullptr, TRUE, FALSE, loading_name(me).c_str());  // set while the child reads the dbs
     // still unset when the child dies: the loader or the CRT ended it before our code, as a setting keyed on the exe name can
     HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, entered_name(me).c_str());
+    HANDLE writing = CreateEventW(nullptr, TRUE, FALSE, writing_name(me).c_str());  // set while the child waits for the driver's writes, a bounded wait of minutes
     // ReShade reads these before the child runs: RESHADE_BASE_PATH_OVERRIDE would load its config and add-ons from elsewhere
     if (wchar_t* env = GetEnvironmentStringsW()) {
         std::vector<std::wstring> reshade;
@@ -1525,6 +1781,7 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
         bool killed = false, stuck = false, orphaned = false;
         FILETIME alive = {};
         uint64_t alive_turn = 0;  // the turn the alive file's write time last changed
+        uint64_t last_line_turn = 0;
         while (WaitForSingleObject(pi.hProcess, 100) == WAIT_TIMEOUT) {
             InterlockedIncrement(beat);
             ++turns;
@@ -1534,7 +1791,9 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
                 WaitForSingleObject(pi.hProcess, 5000);
                 break;
             }
-            if (final_event && !final_turn && WaitForSingleObject(final_event, 0) == WAIT_OBJECT_0) final_turn = turns;
+            if (final_event && !final_turn && WaitForSingleObject(final_event, 0) == WAIT_OBJECT_0) last_line_turn = final_turn = turns;
+            // the child's limit is its polls: a read stuck on a dying disk stays bounded here
+            if (final_turn && writing && turns - last_line_turn < 10ull * kMostWritingS && WaitForSingleObject(writing, 0) == WAIT_OBJECT_0) final_turn = turns;
             if (final_turn && turns - final_turn > exit_turns) {
                 err_printf(L"the warm process did not exit %llu s after its last line: terminated (its unwritten driver cache is lost)\n", exit_turns / 10);
                 TerminateProcess(pi.hProcess, 3), killed = true;
@@ -1563,6 +1822,8 @@ static int parent(int argc, wchar_t** argv, bool vulkan) {
             return fail(L"the alive file " + o.alive_file + L" stayed unchanged for " + std::to_wstring(((uint64_t)o.alive_turns + exit_turns) / 10) + L" s: ended the warm process");
         DWORD code = 1;
         GetExitCodeProcess(pi.hProcess, &code);
+        // its last line counts on writes that never finished: the next compile goes on from where this process started
+        if (writing && WaitForSingleObject(writing, 0) == WAIT_OBJECT_0) return fail(L"the warm process ended while the driver was still writing its cache");
         if (killed) return 3;  // its last line was printed; the caller goes by it
         if (code == EXIT_SYSTEM_RUNTIME && sdk) {
             CloseHandle(pi.hProcess);

@@ -13,6 +13,10 @@ public static partial class ProcessMemory
     /// <summary>The log file <see cref="Line"/> goes to in the data folder, on request (`SCSKiller.exe --memory`).</summary>
     public const string LogFile = "memory.log";
 
+    /// <summary>What this process holds of its own: the GC's committed memory with its free parts and large-object holes, and
+    /// native memory. Cheap and allocation-free enough to read several times a second. 0 where it isn't known.</summary>
+    public static partial long Private();
+
     /// <summary>What this process holds, counts only: the working set, private bytes, the managed heap by generation after
     /// the last collection, what the GC keeps committed and how much of it is free, the cached key sets, threads, handles,
     /// JIT-compiled methods.</summary>

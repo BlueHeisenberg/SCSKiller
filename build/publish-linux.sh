@@ -348,5 +348,8 @@ for f in "${expected_files[@]}"; do [[ -f $out/$f ]] || die "dist/SCSKiller-linu
 for rc in SCSKiller.Ui scskiller; do py framework-version "$out/$rc.runtimeconfig.json" >/dev/null; done
 reported=$(SCSKILLER_DATA_DIR=$tmp/data "$out/scskiller" --version)
 [[ $reported == "$stamp" ]] || die "scskiller --version says '$reported', not $stamp"
+# no game key in the package: the removed ones by hash, any other key-shaped constant unless reviewed
+"$dotnet" run --project "$repo/tools/keyscan" -c Release -- --known "$repo/build/keyscan/known-keys.txt" \
+    --allow "$repo/build/keyscan/allow.txt" "$out" || die "tools/keyscan: a game key or an unreviewed key-shaped constant in dist/SCSKiller-linux"
 
 echo "dist/SCSKiller-linux: $(du -sm "$out" | cut -f1) MB, version $stamp"

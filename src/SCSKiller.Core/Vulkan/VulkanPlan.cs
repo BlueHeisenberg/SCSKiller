@@ -132,8 +132,10 @@ public static partial class VulkanPlan
     /// <summary>On a vendor whose Vulkan cache a staged warm reaches (<see cref="VendorCaps.VulkanKey"/>): ready with a
     /// recording that has a pipeline, or archives (<see cref="Recording.VulkanSources"/>) one of which has a pipeline to plan.</summary>
     public static PlanCheck Check(Recording? recording) =>
-        (recording?.VulkanSources is { } sources ? sources.Any(s => s.Origin != FozOrigin.Community && HasPipeline(s)) : recording != null && File.Exists(recording.DbPath) && HasPipeline(recording.DbPath))
-            ? new(Readiness.Ready, "planned from a recording")
+        // the best archive with a pipeline (Ours, then SteamLocal, then SteamDownload) names where the plan is from
+        (recording?.VulkanSources is { } sources ? sources.Where(s => s.Origin != FozOrigin.Community).OrderBy(s => s.Origin).FirstOrDefault(HasPipeline)?.Origin
+            : recording != null && File.Exists(recording.DbPath) && HasPipeline(recording.DbPath) ? (FozOrigin?)FozOrigin.Ours : null) is { } best
+            ? new(Readiness.Ready, best switch { FozOrigin.SteamLocal => Planner.SteamRecorded, FozOrigin.SteamDownload => Planner.SteamDownload, _ => "planned from a recording" })
             : DownloadOnly(recording) ? new(Readiness.NeedsRecording, StartOnce) : new(Readiness.NeedsRecording, Planner.Record);
 
     static bool DownloadOnly(Recording? recording) => recording?.VulkanSources is { } sources

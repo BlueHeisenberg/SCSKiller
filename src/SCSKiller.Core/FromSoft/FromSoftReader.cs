@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using SCSKiller.Core.App;
 using SCSKiller.Core.Carved;
 using SCSKiller.Core.Games;
 using SCSKiller.Core.Planning;
@@ -12,24 +13,24 @@ namespace SCSKiller.Core.FromSoft;
 /// <summary>FromSoftware's engine (Dark Souls III, Elden Ring, Elden Ring Nightreign; Dark Souls: Remastered's loose files).
 /// Shaders live in <c>shader/*.shaderbnd.dcx</c> (and <c>*.shaderbdlebnd.dcx</c> bundles): DCX-compressed BND4 binders
 /// whose files hold the DXBC/DXIL containers. In DS3 and Elden Ring they sit inside the BHD5/BDT archives (headers decrypted
-/// with the game's public RSA keys, read from its exe at run time: <see cref="SoulsKeys"/>), found by the hash of their
+/// with the game's public RSA keys, read from its exe at run time or given by the user: <see cref="SoulsKeys"/>), found by the hash of their
 /// well-known names. Read-only and in memory: nothing is unpacked to disk, the game's own code (and its Oodle DLL) is never
 /// loaded or run. The game creates its root signatures from the 1.1 ones its shaders carry (RTS0), serialized again at
 /// version 1.0 (<see cref="RootSig.AsVersion10"/>), so each shader's root signature is that blob, served by ReadShaders.
 /// EngineInfo: Family "FromSoftware", Version "&lt;title&gt; DXBC|DXIL[+RTS0]" once indexed ("&lt;title&gt;" at Detect).</summary>
-/// <param name="dataDir">the app's data folder: the archive keys found in each game's exe are kept there (local only)</param>
-/// <param name="download">see <see cref="SoulsKeys"/> (tests pass a fake, and its <paramref name="uxmSha256"/>)</param>
-public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? download = null, string uxmSha256 = SoulsKeys.UxmSha256) : IEngineReader
+/// <param name="dataDir">the app's data folder: each game's archive keys are kept there (local only)</param>
+/// <param name="download">see <see cref="SoulsKeys"/> (tests pass a fake, and its <paramref name="pinned"/>)</param>
+public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? download = null, string pinned = SoulsKeys.UxmSha256) : IEngineReader
 {
     public const string Family = "FromSoftware";
 
-    readonly SoulsKeys keys = new(dataDir, download, uxmSha256);
+    readonly SoulsKeys keys = new(dataDir, download, pinned);
 
     /// <param name="Exe">the process that creates the device (the Steam exe, not start_protected_game.exe)</param>
     /// <param name="Hash64">64-bit archive name hashes (Elden Ring and later)</param>
-    /// <param name="Archives">BHD5 archives next to the exe (their public RSA keys come from the exe at run time,
-    /// <see cref="SoulsKeys"/>). Empty: loose files in <c>shader\</c> (Dark Souls: Remastered).</param>
-    /// <param name="Uxm">the exe doesn't carry the keys in the clear: their dictionary in <see cref="SoulsKeys.Uxm"/>, downloaded</param>
+    /// <param name="Archives">BHD5 archives next to the exe (their public RSA keys: <see cref="SoulsKeys"/>). Empty: loose
+    /// files in <c>shader\</c> (Dark Souls: Remastered).</param>
+    /// <param name="Uxm">its section in <see cref="SoulsKeys.Uxm"/>, downloaded when neither the exe nor the user gave a key</param>
     public sealed record Title(string Exe, string Name, string Api, bool Hash64, string[] Archives, string? Uxm = null);
 
     /// <summary>The installs this reader knows. Sound archives (sd\) are left out: no shaders. APIs: DS3 and DSR are
@@ -43,7 +44,7 @@ public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? downlo
     ];
 
     /// <summary>Shader files by name (the archives only know their hashes): every shader name in the community's archive
-    /// dictionaries (UXM Selective Unpack's DarkSouls3 / EldenRing / EldenRingNightreign dictionaries), debug builds left out.</summary>
+    /// name lists for these games, debug builds left out.</summary>
     public static readonly string[] ShaderFiles =
     [
         .. new[] { "debugfont", "guishader", "gxdecal", "gxffxshader", "gxflvershader", "gxgui", "gxposteffect", "gxrenderershader", "gxshader",
@@ -57,6 +58,18 @@ public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? downlo
 
     public int ReaderVersion(EngineInfo engine) => 3;
 
+    /// <summary>An archive stays closed for want of its key: the game page asks for it.</summary>
+    public static bool NeedsKey(EngineInfo e) => e is { Family: Family } && (e.Encrypted || e.Note != null);
+
+    /// <summary>Keys the user gives (<see cref="SoulsKeys.Given"/>): each stored for the archive it opens.</summary>
+    public (bool Stored, IReadOnlyList<string> Refused) SetKey(Game game, string text)
+    {
+        if (TitleOf(game) is not { Archives.Length: > 0 } title || Path.GetDirectoryName(game.ExePath) is not { } dir || SourceFiles(dir, title).ToList() is not { Count: > 0 } present)
+            return (false, ["the game's files aren't found"]);
+        var archives = present.ToDictionary(f => Path.GetFileNameWithoutExtension(f.Rel), f => f.File.FullName);
+        return keys.Add(game, archives, SoulsKeys.Given(text)) > 0 ? (true, []) : (false, [App.ScsKiller.KeyRefused]);
+    }
+
     public EngineInfo? Detect(Game game)
     {
         var dir = Path.GetDirectoryName(game.ExePath);
@@ -66,7 +79,8 @@ public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? downlo
             return GameFiles.EnumerateFiles(dir, "*.bhd").Any(b => File.Exists(GameFiles.ChangeExtension(b, ".bdt")) && IsEncryptedBhd(b))
                 ? new EngineInfo(Family, "-", null, UnrealRhi.Ambiguous, false, "FromSoftware archives SCSKiller has no key for (a title it doesn't know yet)") // not Encrypted: no user key opens them
                 : null;
-        if (Archives(game, dir, title, null, out var why) is not { } archives) return new EngineInfo(Family, "-", title.Name, title.Api, false, why);
+        if (Archives(game, dir, title, null, out var why, downloadLog: Download.Log) is not { } archives)
+            return new EngineInfo(Family, "-", title.Name, title.Api, true, null, Note: title.Uxm != null ? Download.FailedNote : null);
         // Planner.Check runs on this, before any index: a sample (the smallest shader file) says DXBC or DXIL, and whether
         // the shaders carry their root signatures
         int programs = 0, dxil = 0, rts0 = 0;
@@ -86,10 +100,11 @@ public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? downlo
         return new EngineInfo(Family, version, title.Name, title.Api, false, programs == 0 ? "no shaders found in its shader files" : null, Note: why);
     }
 
-    /// <summary>The archives present with no key stored: a key that turns up later (downloaded, or added by hand) redoes
-    /// Detect and makes a warm stale, so the next compile indexes that archive too.</summary>
-    public string DetectStamp(Game game, EngineInfo? engine) => IndexStamp(game);
+    /// <summary>A key added later redoes Detect, one replacing a key that no longer opens its archive too.</summary>
+    public string DetectStamp(Game game, EngineInfo? engine) => IndexStamp(game) + (App.KeyFiles.Stamp(keys.KeyFile(game)) is { } s ? "|" + s : "");
 
+    /// <summary>The archives present with no key stored: a key added later makes a warm stale, so the next compile indexes
+    /// that archive too.</summary>
     public string IndexStamp(Game game) => TitleOf(game) is { Archives.Length: > 0 } title && Path.GetDirectoryName(game.ExePath) is { } dir
         ? string.Join(',', keys.Unstored(game, SourceFiles(dir, title).Select(f => Path.GetFileNameWithoutExtension(f.Rel)))) : "";
 
@@ -225,21 +240,21 @@ public sealed class FromSoftReader(string dataDir, Func<string, byte[]?>? downlo
     /// <summary>The title's archives present (a .bhd with its .bdt) that a key opens, in <see cref="Title.Archives"/> order,
     /// each with its key; the others are left out. <paramref name="why"/>, a line for the user: which shaders are left out,
     /// or, null returned, why none can be read. Where a user can put the keys goes to <paramref name="log"/> only.
-    /// <paramref name="fetch"/>: may download them (<see cref="Title.Uxm"/>).</summary>
-    List<(FileInfo Bhd, string Rel, string Key)>? Archives(Game game, string dir, Title title, IProgress<string>? log, out string? why, bool fetch = true)
+    /// <paramref name="fetch"/>: may download them (<see cref="Title.Uxm"/>), logging to <paramref name="downloadLog"/> if given (Detect: the
+    /// download's lines reach app.log, the line naming the key file doesn't).</summary>
+    List<(FileInfo Bhd, string Rel, string Key)>? Archives(Game game, string dir, Title title, IProgress<string>? log, out string? why, bool fetch = true, IProgress<string>? downloadLog = null)
     {
         why = null;
         if (title.Archives.Length == 0) return [];
         var present = SourceFiles(dir, title).ToList();
-        var found = keys.Get(game, present.ToDictionary(f => Path.GetFileNameWithoutExtension(f.Rel), f => f.File.FullName), fetch ? title.Uxm : null, out var missing, log);
+        var found = keys.Get(game, present.ToDictionary(f => Path.GetFileNameWithoutExtension(f.Rel), f => f.File.FullName), fetch ? title.Uxm : null, out var missing, downloadLog ?? log);
         var opened = present.Where(f => found.ContainsKey(Path.GetFileNameWithoutExtension(f.Rel))).Select(f => (f.File, f.Rel, found[Path.GetFileNameWithoutExtension(f.Rel)])).ToList();
         if (missing.Count == 0) return opened;
-        log?.Report($"{title.Name}: no key for its archives {string.Join(", ", missing)}: the game's exe doesn't carry them in the clear"
-            + (title.Uxm != null ? " and none that opens them could be downloaded (UXM Selective Unpack's)" : "")
-            + $". Put one \"<archive> <key>\" line per archive (the body of its \"RSA PUBLIC KEY\" PEM) in {keys.KeyFile(game)}");
+        log?.Report($"{title.Name}: no key for its archives {string.Join(", ", missing)}: the game's exe doesn't carry them in the clear."
+            + $" Put one \"<archive> <key>\" line per archive (the body of its \"RSA PUBLIC KEY\" PEM) in {keys.KeyFile(game)}");
         if (opened.Count == 0)
         {
-            why = "no key found for its archives" + (title.Uxm != null ? ", and none could be downloaded" : "");
+            why = "no key found for its archives";
             return null;
         }
         why = missing is ["DLC"] ? "Its DLC shaders are left out." : $"Shaders in {string.Join(", ", missing)} are left out.";

@@ -230,12 +230,23 @@ public sealed class SwarmReader : IEngineReader
 
     /// <summary>The pak read-only with its central directory loaded, or null (and why) when it doesn't open as a ZIP or
     /// declares more than <see cref="MaxPakEntries"/> entries.</summary>
-    static ZipArchive? Open(string path, out string? error)
+    internal static ZipArchive? Open(string path, out string? error)
     {
-        FileStream? fs = null;
+        FileStream fs;
+        try { fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            error = e.Message;
+            return null;
+        }
+        return Open(fs, out error);
+    }
+
+    /// <inheritdoc cref="Open(string, out string?)"/> The archive owns <paramref name="fs"/>, disposed when it doesn't open.
+    internal static ZipArchive? Open(FileStream fs, out string? error)
+    {
         try
         {
-            fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             if (ForzaTechReader.DeclaredEntries(fs, MaxPakEntries) > MaxPakEntries)
             {
                 fs.Dispose();
@@ -251,7 +262,7 @@ public sealed class SwarmReader : IEngineReader
         }
         catch (Exception e) when (e is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or OverflowException)
         {
-            fs?.Dispose();
+            fs.Dispose();
             error = e.Message;
             return null;
         }

@@ -343,6 +343,44 @@ public sealed partial class ScsKiller
         catch (UnauthorizedAccessException e) { throw new IOException($"couldn't open the {LedgerStamp} in {dir}", e); }
     }
 
+    // ponytail: checked through a handle, deleted by its path while it still names that file (inode); main's Libc.TakeOutAt unlinks in a pinned folder
+    private static partial bool DeleteIfOurs(string path, Func<Microsoft.Win32.SafeHandles.SafeFileHandle, long, bool> ours)
+    {
+        if (Linked(path)) throw new IOException(path + LinkRefused);
+        using var h = OpenToDelete(path, Path.GetDirectoryName(path)!);
+        if (h == null || !ours(h, RandomAccess.GetLength(h))) return false;
+        DeleteOpen(h, path, Path.GetDirectoryName(path)!);
+        // DeleteOpen skips a name that no longer names the checked file; a listing that fails throws, never reads as gone
+        if (Directory.EnumerateFileSystemEntries(Path.GetDirectoryName(path)!, Path.GetFileName(path)).Any()) throw new IOException($"{path} is still there");
+        return true;
+    }
+
+    // every folder from / opened without following a link: final is a real path; macOS has no /proc to reach a descriptor by
+    private static partial HeldInbox? HoldInbox(string dir, string final)
+    {
+        if (!OperatingSystem.IsLinux()) return Directory.Exists(dir) ? new(dir, final, dir, null) : null;
+        Microsoft.Win32.SafeHandles.SafeFileHandle h;
+        try { h = Libc.OpenBelow("/", final.Split('/', StringSplitOptions.RemoveEmptyEntries), make: false); }
+        catch (FileNotFoundException) { return null; }
+        return new(dir, final, $"/proc/self/fd/{h.DangerousGetHandle()}", h);
+    }
+
+    private static partial void DeleteHeld(HeldInbox inbox)
+    {
+        if (inbox.Handle is not { } h)
+        {
+            foreach (var f in Directory.EnumerateFiles(inbox.Path)) File.Delete(f);
+            Directory.Delete(inbox.Path, false);
+            return;
+        }
+        foreach (var f in Directory.EnumerateFiles(inbox.Path)) Libc.UnlinkAt(h, Path.GetFileName(f), folder: false);
+        var names = inbox.Final.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        using var parent = Libc.OpenBelow("/", names[..^1], make: false);
+        if (Libc.Stat(h) is not { } held || Libc.StatNoFollow($"/proc/self/fd/{parent.DangerousGetHandle()}/{names[^1]}") is not { } now
+            || (held.DevMajor, held.DevMinor, held.Inode) != (now.DevMajor, now.DevMinor, now.Inode)) throw new IOException($"{inbox.Dir} was replaced: left as it is");
+        if (Libc.UnlinkAt(parent, names[^1], folder: true) is not (0 or Libc.NoEntry)) throw new IOException($"couldn't delete {inbox.Dir}");
+    }
+
     // unlink takes a path: the file goes only while its path still names the open one
     private static partial void DeleteOpen(Microsoft.Win32.SafeHandles.SafeFileHandle h, string path, string dir)
     {

@@ -3,6 +3,7 @@
              xmlns:ui="using:SCSKiller.Ui"
              xmlns:c="using:SCSKiller.Ui.Controls"
              xmlns:m="using:SCSKiller.Ui.Models"
+             xmlns:app="using:SCSKiller.Core.App"
              x:Class="SCSKiller.Ui.Pages.DetailPage"
              x:DataType="m:DetailVm">
 
@@ -408,10 +409,31 @@
                                       SelectionChanged="OnRayTracingChanged" AutomationProperties.Name="Ray tracing shaders" />
                         </StackPanel>
                         <StackPanel Spacing="4" IsVisible="{Binding ShowCacheCap}">
-                            <TextBlock Text="Compile size limit" Classes="BodyStrong" />
+                            <TextBlock x:Name="LimitHeader" Text="Compile size limit" Classes="BodyStrong" />
                             <TextBlock Text="An estimate of what a compile adds. Recorded pipelines always compile. Earlier compiles stay until you clear the cache." Classes="Secondary" TextWrapping="Wrap" />
-                            <ComboBox x:Name="CacheCapBox" ItemsSource="{Binding CacheCapChoices}" SelectedIndex="{Binding CacheCapIndex, Mode=OneWay}"
-                                      SelectionChanged="OnCacheCapChanged" AutomationProperties.Name="Compile size limit" />
+                            <ComboBox ItemsSource="{Binding Limit.Modes}" SelectedIndex="{Binding Limit.ModeIndex, Mode=TwoWay}"
+                                      MinWidth="220" AutomationProperties.Name="Compile size limit" />
+                            <StackPanel Spacing="8" IsVisible="{Binding Limit.IsSize}" MaxWidth="520" HorizontalAlignment="Left">
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                                    <NumericUpDown Value="{Binding Limit.Gb}" Minimum="1" Maximum="128" Increment="1" FormatString="0" ParsingNumberStyle="Integer" VerticalContentAlignment="Center"
+                                                   MinWidth="140" AutomationProperties.Name="Size in GB" />
+                                    <Slider Grid.Column="1" Minimum="0" Maximum="1000" SmallChange="1" LargeChange="100" Value="{Binding Limit.Track}"
+                                            VerticalAlignment="Center" MinWidth="160" AutomationProperties.Name="Size in GB" />
+                                </Grid>
+                                <ItemsControl ItemsSource="{Binding Limit.Presets}" Focusable="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <c:FlowPanel Spacing="8" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="app:LimitPreset">
+                                            <Button Content="{Binding Label}" Command="{Binding}" MinWidth="64" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                            <TextBlock Text="{Binding Limit.UsesNow}" IsVisible="{Binding Limit.HasUsesNow}" Classes="Secondary" TextWrapping="Wrap" />
                         </StackPanel>
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                             <TextBlock Text="Leave out of Add all ready" Classes="BodyStrong" TextWrapping="Wrap" VerticalAlignment="Center" />

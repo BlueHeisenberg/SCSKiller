@@ -67,10 +67,20 @@ public sealed class CarvedReader : IEngineReader
     public const string NoRawShaders = "no raw DXBC/DXIL shaders in its files", Packed = "compressed or packed: needs an engine reader";
 
     /// <summary>A DirectX 12 game whose files hold none, or fewer than <see cref="MinGraphics"/>, of the shaders the carver
-    /// can read, or a Godot game (<see cref="GodotReason"/>): it plans from a recording's own shader bytes alone
-    /// (Planner.Check), so its index is empty.</summary>
+    /// can read, a Godot game (<see cref="GodotReason"/>), or a DirectX 11 game (not 10: no recorder hooks its shaders) with those files: it plans from a recording's
+    /// own shader bytes alone (Planner.Check), so its index is empty. Also a game whose files stay encrypted for want of the
+    /// user's key (<see cref="Keyless"/>).</summary>
     public static bool RecordedOnly(EngineInfo? engine) =>
-        engine?.Unsupported is { } u && (u.EndsWith(Packed, StringComparison.Ordinal) || u == GodotReason) && engine.GraphicsApi.Contains("D3D12");
+        engine?.Unsupported is { } u && (u.EndsWith(Packed, StringComparison.Ordinal) && engine.GraphicsApi.StartsWith("D3D11", StringComparison.Ordinal) && engine.GraphicsApi != Dx10
+            || (u.EndsWith(Packed, StringComparison.Ordinal) || u == GodotReason) && engine.GraphicsApi.Contains("D3D12"))
+        || Keyless(engine) && (engine!.GraphicsApi.StartsWith("D3D11", StringComparison.Ordinal) || engine.GraphicsApi.Contains("D3D12"));
+
+    /// <summary>Encrypted for want of the key the user gives: RE Engine, FromSoftware.</summary>
+    public static bool Keyless(EngineInfo? engine) =>
+        engine is { Encrypted: true, Unsupported: null, Family: ReEngine.ReEngineReader.Family or FromSoft.FromSoftReader.Family };
+
+    /// <summary>A DirectX 10 or 11 game among those: its recording's shaders are the plan's D3D11 items.</summary>
+    public static bool Recorded11(EngineInfo? engine) => RecordedOnly(engine) && !engine!.GraphicsApi.Contains("D3D12");
 
     /// <summary>The engine a carved game is built with, by a file only it ships: REDengine 4 (Cyberpunk 2077)
     /// engine\shader_final.cache; Northlight 2 (Alan Wake 2, CONTROL Resonant) .rmdtoc archive tables. Else <see cref="Family"/>.</summary>
@@ -626,6 +636,8 @@ public sealed class CarvedReader : IEngineReader
 
     internal static string Sha1Hex(string s) => Convert.ToHexStringLower(SHA1.HashData(Encoding.UTF8.GetBytes(s)));
 
+    internal static string Api(Game game) => GraphicsApi(ApiExe(game), false);
+
     /// <summary>D3D12 when the game ships DXIL (SM6 runs on DX12 only), the Agility SDK runtime (D3D12Core.dll) or its own
     /// binaries import d3d12.dll / export D3D12SDKVersion; "D3D11 or D3D12" when they import d3d11.dll too (and no DXIL);
     /// D3D11 / Vulkan when that's all they import (Vulkan also when the exe loads it at runtime, <see cref="LoadsVulkan"/>), D3D11 also when the exe itself
@@ -655,6 +667,15 @@ public sealed class CarvedReader : IEngineReader
     /// <summary>Where a Hookshot port keeps and writes its files: the folder above bin\ in the launcher layout, else the exe's own.</summary>
     internal static string HookshotDataDir(string exe) => HookshotBinLayout(exe) ? Path.GetDirectoryName(Path.GetDirectoryName(exe))! : Path.GetDirectoryName(exe)!;
 
+    /// <summary>The port's exe that a Hookshot launcher starts: bin\ with the launcher's name, else bin\'s only exe, reached through no link. Null: not a launcher.</summary>
+    internal static string? HookshotLaunched(string installDir, string exe)
+    {
+        if (Path.GetDirectoryName(exe) is not { } dir || !HookshotData(dir) || Path.Combine(dir, "bin") is var bin && !Directory.Exists(bin)) return null;
+        var port = Path.Combine(bin, Path.GetFileName(exe));
+        if (!File.Exists(port)) port = GameFiles.EnumerateFiles(bin, "*.exe").Take(2).ToList() is [var one] ? one : "";
+        return HookshotBinLayout(port) && GameFiles.InsideNoLinks(installDir, port) ? port : null;
+    }
+
     static bool HookshotBinLayout(string exe) => Path.GetDirectoryName(exe) is { } bin && Path.GetFileName(bin).Equals("bin", StringComparison.OrdinalIgnoreCase)
         && File.Exists(Path.Combine(bin, "hookshot_vk.dll")) && Path.GetDirectoryName(bin) is { } top && HookshotData(top);
 
@@ -677,7 +698,7 @@ public sealed class CarvedReader : IEngineReader
             : null;
     }
 
-    /// <summary>"D3D10" or "D3D9": the exe, or a non-middleware DLL next to it or in its bin folder (Source 1 keeps its renderer
+    /// <summary>"D3D10" (or "D3D11", <see cref="Dx10Device"/>) or "D3D9": the exe, or a non-middleware DLL next to it or in its bin folder (Source 1 keeps its renderer
     /// there), imports d3d10.dll / d3d10_1.dll or d3d9.dll, and none of them imports a later API; else the exe or such a DLL
     /// named for DirectX 9 loads one by its entry point and names no D3D11 or D3D12 runtime. Null: neither.</summary>
     static string? OldApi(Game game)
@@ -692,7 +713,7 @@ public sealed class CarvedReader : IEngineReader
             {
                 var imports = PeImports(p, out var agility);
                 if (agility || imports.Any(ApiDlls.ContainsKey)) return null;
-                if (imports.Any(D3D10Dlls.Contains)) (old, from) = ("D3D10", p);
+                if (old != "D3D11" && Dx10Device(p, imports) is { } dx) (old, from) = (dx, p);
                 else if (old == null && imports.Contains("d3d9.dll", StringComparer.OrdinalIgnoreCase)) (old, from) = ("D3D9", p);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException) { }
@@ -738,6 +759,14 @@ public sealed class CarvedReader : IEngineReader
 
     static readonly HashSet<string> D3D10Dlls = new(["d3d10.dll", "d3d10_1.dll"], StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>The device of a binary that imports d3d10.dll or d3d10_1.dll: "D3D11" when it imports d3d10.dll only for its
+    /// helpers and makes a D3D11 device at run time (a d3dx11 import, or D3D11CreateDevice named and no D3D10 device entry
+    /// point: Ryse: Son of Rome), else "D3D10". Null: neither imported.</summary>
+    static string? Dx10Device(string path, List<string> imports) =>
+        !imports.Any(D3D10Dlls.Contains) ? null
+        : imports.Contains("d3d10_1.dll", StringComparer.OrdinalIgnoreCase) || NamesApi(path, D3D10Entry) == false ? "D3D10"
+        : imports.Any(d => d.StartsWith("d3dx11_", StringComparison.OrdinalIgnoreCase)) || NamesApi(path, D3D11Entry) == false ? "D3D11" : "D3D10";
+
     static readonly Dictionary<string, string> ApiDlls = new(StringComparer.OrdinalIgnoreCase)
         { ["d3d12.dll"] = "D3D12", ["d3d11.dll"] = "D3D11", ["vulkan-1.dll"] = "Vulkan" };
 
@@ -745,7 +774,7 @@ public sealed class CarvedReader : IEngineReader
     static readonly string[] Middleware = ["eossdk", "libxess", "dstorage", "gfsdk", "nvngx", "sl.", "amd_", "ffx", "nvlowlatency", "galaxy",
         "steam_api", "discord", "overlay", "igxess", "renderdoc", "reshade", "dxgi", "d3d1", "d3d9", "opengl32", "vulkan-1", "libegl", "libglesv2",
         "vk_swiftshader", "d3dcompiler", "dxcompiler", "dxil", "cef", "nvapi", "nvtt", "physx", "bink", "xess", "fsr", "dlss", "streamline",
-        "gameoverlay", "twitch", "nvrtx", "nri", "nrd", "nrc", "ags", "libxell", "pix", "winpix", "aftermath", "gfnruntime", "optiscaler", "helixsr"];
+        "gameoverlay", "twitch", "nvrtx", "nri", "nrd", "nrc", "ags", "libxell", "pix", "winpix", "aftermath", "gfnruntime", "optiscaler", "helixsr", "dxvk"];
 
     /// <summary>Middleware that ships its own shaders or D3D12 runtime under its name, whatever API the game runs on
     /// (HelixSR\helixsr_kernels.pak holds DXIL, OptiScaler's D3D12_Optiscaler\D3D12Core.dll): a file with it in its path
@@ -835,13 +864,19 @@ public sealed class CarvedReader : IEngineReader
         D3DRuntimes = [A("d3d12.dll"), W("d3d12.dll"), A("d3d11.dll"), W("d3d11.dll"), A("d3d12createdevice"), A("d3d11createdevice")],
         D3D12Names = [A("d3d12.dll"), W("d3d12.dll"), A("d3d12createdevice")];
     // GetProcAddress names, lowercase: D3D10CreateDevice1 and *AndSwapChain, Direct3DCreate9Ex and Direct3DCreate9On12 too
-    static readonly byte[][] D3D10Entry = [A("d3d10createdevice")], D3D9Entry = [A("direct3dcreate9")], D3D9On12Entry = [A("direct3dcreate9on12")];
+    static readonly byte[][] D3D10Entry = [A("d3d10createdevice")], D3D11Entry = [A("d3d11createdevice")], D3D9Entry = [A("direct3dcreate9")], D3D9On12Entry = [A("direct3dcreate9on12")];
     static byte[] A(string s) => Encoding.ASCII.GetBytes(s);
     static byte[] W(string s) => Encoding.Unicode.GetBytes(s);
 
     /// <summary>The exe names vulkan-1.dll and a Vulkan loader entry point, and no D3D or DXGI runtime (any case): it loads
     /// Vulkan at runtime (Enshrouded imports no graphics API).</summary>
     internal static bool LoadsVulkan(string exe) => NamesApi(exe) == true;
+
+    // an import or a runtime-loaded name: Max Payne 3's x86 exe imports only D3DCOMPILER_43 and loads d3d9 to d3d11 itself
+    static readonly byte[][] GraphicsNames = [.. new[] { "d3d9.dll", "d3d10", "d3d11.dll", "d3d12.dll", "dxgi.dll", "vulkan-1.dll", "d3dcompiler_" }.SelectMany(n => new[] { A(n), W(n) })];
+
+    /// <summary>The exe names a D3D, DXGI or Vulkan runtime or the D3D shader compiler (any case), or can't be read.</summary>
+    internal static bool NamesGraphics(string exe) => NamesApi(exe, GraphicsNames) == false;
 
     /// <summary>True as <see cref="LoadsVulkan"/>; false: the exe names one of <paramref name="d3d"/> (a D3D or DXGI runtime),
     /// or can't be read; null: neither. Read in blocks, exes run to hundreds of MB.</summary>

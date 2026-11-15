@@ -250,6 +250,22 @@ public static partial class PsoDb
         return new Pso(rs, st, layout, topo);
     }
 
+    /// <summary>A 'G', 'C', 'S' or 'P' record naming root signature <paramref name="rs"/> in place of its own.</summary>
+    public static Rec WithRootSignature(Rec r, string rs)
+    {
+        var at = r.Tag switch
+        {
+            'G' or 'C' => 0,
+            'P' => 20,
+            'S' => Subobjects(r.Payload).Where(x => x.Type == 0).Select(x => x.At).DefaultIfEmpty(-1).First(),
+            _ => -1,
+        };
+        if (at < 0) throw new InvalidDataException($"a '{r.Tag}' record names no root signature");
+        var p = (byte[])r.Payload.Clone();
+        Convert.FromHexString(rs).CopyTo(p, at);
+        return new Rec(r.Tag, p);
+    }
+
     /// <summary>An 'S' payload's subobjects in order: type, where its body starts and where it ends.</summary>
     static IEnumerable<(uint Type, int At, int End)> Subobjects(byte[] p)
     {

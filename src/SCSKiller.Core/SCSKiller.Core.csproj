@@ -24,7 +24,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="CUE4Parse" Version="1.2.2.202609" />
+    <!-- CUE4Parse without game keys: build/cue4parse/build.ps1 -->
+    <PackageReference Include="SCSKiller.CUE4Parse" Version="1.2.2.202609-scsk.1" />
     <!-- CUE4Parse pulls 9.0.0, which has GHSA-73j8-2gch-69rq -->
     <PackageReference Include="Microsoft.Bcl.Memory" Version="10.0.12" />
     <!-- Ed25519 for the signed update feed (App/Updates.cs): the BCL has none; the same package the origin signs tokens with -->

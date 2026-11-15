@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace SCSKiller.Core.Vendors;
 
@@ -34,7 +35,9 @@ public interface IBeforeRunAside
 public sealed class DxQuarantine(string dxDir, string journalPath, bool nvidia = false, bool glCache = false) : IBeforeRunAside
 {
     public sealed record Move(string From, string To, long Length = -1, string? Sha256 = null);
-    public sealed record Journal(string GameId, List<Move> Moves, List<string> Skipped, string? Dir = null, bool Archived = false);
+    /// <summary><see cref="Holders"/>: the processes holding each skipped file at the set-aside's last look, never saved.</summary>
+    public sealed record Journal(string GameId, List<Move> Moves, List<string> Skipped, string? Dir = null, bool Archived = false,
+        [property: JsonIgnore] Dictionary<string, HashSet<nuint>>? Holders = null);
 
     public string Folder => Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(dxDir))!, Path.GetFileName(Path.TrimEndingDirectorySeparator(dxDir)) + ".scskiller-quarantine");
 
@@ -97,29 +100,50 @@ public sealed class DxQuarantine(string dxDir, string journalPath, bool nvidia =
     {
         var plan = new List<Move>();
         var skipped = new List<string>();
+        var holders = new Dictionary<string, HashSet<nuint>>(StringComparer.OrdinalIgnoreCase);
+        bool HeldNow(string path) => (holders[path] = AppCacheFiles.ProcessesUsing(path)).Count > 0;
         var unread = File.Exists(journalPath);
         var blocked = unread || Linked();
         if (Directory.Exists(dxDir))
-            foreach (var key in new DirectoryInfo(dxDir).EnumerateFiles(nvidia ? "*.nvph" : "*.parc")
+        {
+            var keys = new DirectoryInfo(dxDir).EnumerateFiles(nvidia ? "*.nvph" : "*.parc")
                 .Where(f => (f.Attributes & FileAttributes.ReparsePoint) == 0 && KeyOf(f.Name) is { } k && !keep(k))
-                .GroupBy(f => KeyOf(f.Name)!, StringComparer.OrdinalIgnoreCase))
-                if (blocked || key.Any(f => AppCacheFiles.ProcessesUsing(f.FullName).Count > 0)) skipped.AddRange(key.Select(f => f.FullName));
-                else plan.AddRange(key.Select(f => new Move(f.FullName, Path.Combine(Folder, f.Name))));
+                .GroupBy(f => KeyOf(f.Name)!, StringComparer.OrdinalIgnoreCase).ToList();
+            var held = blocked ? keys : Retried(keys, key => key.Count(f => HeldNow(f.FullName)) > 0);
+            skipped.AddRange(held.SelectMany(key => key.Select(f => f.FullName)));
+            plan.AddRange(keys.Except(held).SelectMany(key => key.Select(f => new Move(f.FullName, Path.Combine(Folder, f.Name)))));
+        }
         if (plan.Count == 0)
         {
             var none = new Journal(gameId, [], skipped);
             if (!unread) Write(none, replace: false);
-            return none;
+            return none with { Holders = holders };
         }
         Directory.CreateDirectory(Folder);
         Write(new(gameId, plan, skipped), replace: false);   // before the first move
-        var moved = new List<Move>();
-        foreach (var m in plan)
-            if (Rename(m.From, m.To)) moved.Add(m);
-            else skipped.Add(m.From);
-        var j = new Journal(gameId, moved, skipped);
+        var failed = Retried(plan, m => !Rename(m.From, m.To));
+        foreach (var m in failed) HeldNow(m.From);
+        skipped.AddRange(failed.Select(m => m.From));
+        var j = new Journal(gameId, plan.Except(failed).ToList(), skipped);
         Write(j);
-        return j;
+        return j with { Holders = holders };
+    }
+
+    /// <summary>The items still <paramref name="fails"/> after it is tried again at 100, 200 and 400 ms: a file is often let go
+    /// within moments (a scan, an app closing).</summary>
+    internal static Action? Retrying;
+
+    static List<T> Retried<T>(List<T> items, Func<T, bool> fails)
+    {
+        var left = items.Where(fails).ToList();
+        foreach (var ms in (int[])[100, 200, 400])
+        {
+            if (left.Count == 0) break;
+            Retrying?.Invoke();
+            Thread.Sleep(ms);
+            left = left.Where(fails).ToList();
+        }
+        return left;
     }
 
     /// <summary>Puts the set-aside files back, except <paramref name="old"/>'s (the game's old cache), which are deleted. A

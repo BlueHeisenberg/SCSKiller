@@ -18,6 +18,10 @@ public static partial class GameFiles
 
     internal static partial Microsoft.Win32.SafeHandles.SafeFileHandle OpenUnlinked(string path) => Libc.OpenUnlinked(path);
 
+    internal static partial uint? Links(Microsoft.Win32.SafeHandles.SafeFileHandle h) => Libc.Links(h);
+
+    internal static partial string? LongPath(string path) => path;
+
     internal static partial FileStream? OpenRegular(string path)
     {
         if (Libc.OpenRegular(path) is not { } h) return null;
@@ -30,12 +34,22 @@ public static partial class GameFiles
         Libc.RealPath(path) is { } final ? (Libc.Stat(final) is { } s ? WineFileId(s.Inode) : null, final) : null;
 
     internal static partial string? SystemFolder(Game game) =>
-        SteamSource.PrefixFolder(game) is { } pfx ? Path.Combine(pfx, "drive_c", "windows", "system32") : null;
+        SteamPrefix(game, SteamSource.Root()) is { } pfx ? Path.Combine(pfx, "drive_c", "windows", "system32") : null;
 
-    internal static partial string? PrefixOf(Game game) =>
-        SteamShortcuts.AppId(game.Id) is { } app ? Path.Combine(ProtonContext.ShortcutData(SteamSource.Root(), app), "pfx")
-        : LauncherPrefix.Is(game) ? LauncherPrefix.Of(game, out _)?.WineDir
-        : SteamSource.PrefixFolder(game);
+    internal static partial string? PrefixOf(Game game, string? steamRoot)
+    {
+        steamRoot ??= SteamSource.Root();
+        if (SteamShortcuts.AppId(game.Id) is { } app) return Path.Combine(ProtonContext.ShortcutData(steamRoot, app), "pfx");
+        if (LauncherPrefix.Is(game)) return LauncherPrefix.Of(game, out _)?.WineDir;
+        return SteamPrefix(game, steamRoot);
+    }
+
+    // a Steam game's prefix, the app by its id or the manifest naming its folder
+    static string? SteamPrefix(Game game, string steamRoot)
+    {
+        try { return SteamSource.CompatData(game, steamRoot) is var (id, data) ? Path.Combine(ProtonContext.Chosen(steamRoot, SteamSource.LaunchOptions(steamRoot, id)) ?? data, "pfx") : null; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return null; }
+    }
 
     internal static partial LauncherPrefix? AddedPrefix(Game game, out string? why)
     {

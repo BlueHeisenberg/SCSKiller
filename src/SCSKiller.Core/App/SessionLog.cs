@@ -16,7 +16,7 @@ public sealed record LaunchedExe(string Name, DateTimeOffset At);
 /// tracing state objects) are counted apart: compiled from <see cref="StateObjectCompileMs"/>, else ready. Compiles during
 /// the launch's startup (<see cref="FrameLog.StartupEnd"/>, the frame report's rule) or a load or precompile after it
 /// (<see cref="FrameLog.LoadSeconds"/>) are counted apart too. Newer proxies bracket each launch with <c>#session,&lt;unix_ms&gt;,&lt;exe&gt;</c> and <c>#end,&lt;unix_ms&gt;</c>
-/// (missing after a crash, and whenever the game terminates its own process, as Unreal does); <c>#swapchain</c>, <c>#overlay</c>, <c>#framegen</c>, <c>#frames,stopped</c> and <c>#api,d3d11</c> are kept per launch (<see cref="CsvLaunch"/>), other <c>#</c> lines are ignored. The #session exe is
+/// (missing after a crash, and whenever the game terminates its own process, as Unreal does); <c>#swapchain</c>, <c>#overlay</c>, <c>#framegen</c>, <c>#frames,stopped</c>, <c>#api,d3d11</c> and <c>#api,vulkan</c> are kept per launch (<see cref="CsvLaunch"/>), other <c>#</c> lines are ignored. The #session exe is
 /// GetModuleFileNameW(NULL)'s file name inside the game process: the name exactly as launched (measured: a process started
 /// as CASEPROBE.EXE from the file caseProbe.exe has CASEPROBE.EXE there, while its kernel image name and
 /// QueryFullProcessImageName say caseProbe.exe), the case AMD's cache key uses.</summary>
@@ -155,7 +155,7 @@ public static class SessionLog
         {
             if (first == null && firstAfter is { } a && s is { Start: { } st, OtherExe: false } && st > a.ToUnixTimeMilliseconds()
                 && s.Count(rayQuery) is var c && c.Hits + c.Compiles >= minCreates)
-                first = new LaunchCheck(DateTimeOffset.FromUnixTimeMilliseconds(st), c.Hits, c.Compiles, TupleKnown: c.TupleKnownCompiles);
+                first = new LaunchCheck(DateTimeOffset.FromUnixTimeMilliseconds(st), c.Hits, c.Compiles, TupleKnown: s.Launch.Vulkan ? null : c.TupleKnownCompiles);
         }
         Session? game = null;   // the last launch of exeFileName's (an unmarked launch counts: older proxies wrote no name)
         var launches = Launches(csvPath).ToList();
@@ -191,6 +191,7 @@ public static class SessionLog
         public bool FrameGen;       // a #framegen line: a frame generation module loaded (DLSS-G, XeSS)
         public bool FramesStopped;  // #frames,stopped: frame generation's swap chain with no hook on the game's frames, none follow
         public bool D3D11;          // #api,d3d11: the recorder ran as d3d11.dll, which writes no create rows
+        public bool Vulkan;         // #api,vulkan: the Vulkan layer, whose rows compare nothing (key empty, tuple_known 0)
         public readonly List<(double T, char Kind, double Ms, string? Key, long? Tid, bool Presents, bool TupleKnown)> Creates = [];   // Tid null: an older proxy
     }
 
@@ -237,6 +238,8 @@ public static class SessionLog
                     cur.FramesStopped = true;
                 else if (f[0] == "#api" && cur is { End: null } && f.Length > 1 && f[1] == "d3d11")
                     cur.D3D11 = true;
+                else if (f[0] == "#api" && cur is { End: null } && f.Length > 1 && f[1] == "vulkan")
+                    cur.Vulkan = true;
                 continue;
             }
             if (f.Length < 5 || f[1].Length != 1 || !double.TryParse(f[0], CultureInfo.InvariantCulture, out var t)

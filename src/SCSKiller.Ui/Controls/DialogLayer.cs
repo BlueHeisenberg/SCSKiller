@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Threading;
+using SCSKiller.Ui.Models;
 
 namespace SCSKiller.Ui.Controls;
 
@@ -8,6 +9,7 @@ namespace SCSKiller.Ui.Controls;
 public sealed class DialogLayer : Panel
 {
     ContentDialog? open;
+    readonly DialogWait wait = new(a => Dispatcher.UIThread.Post(a));
 
     public Border Smoke { get; } = new() { Background = new SolidColorBrush(Color.FromArgb(0x4D, 0, 0, 0)) };
 
@@ -18,7 +20,16 @@ public sealed class DialogLayer : Panel
     }
 
     /// <summary>None when another dialog is open.</summary>
-    internal Task<ContentDialogResult> ShowAsync(ContentDialog d) => TryShow(d) ?? Task.FromResult(ContentDialogResult.None);
+    internal Task<ContentDialogResult> ShowAsync(ContentDialog d) => TryShow(d) ?? Dropped(d);
+
+    internal static Task<ContentDialogResult> Dropped(ContentDialog d)
+    {
+        Host.Log?.Report($"dialog \"{d.Title}\" not shown: another dialog is open");
+        return Task.FromResult(ContentDialogResult.None);
+    }
+
+    /// <summary>Shown once no other dialog is open: the start's questions, which a dialog the user opened first must not drop.</summary>
+    internal Task<ContentDialogResult> ShowWhenFreeAsync(ContentDialog d) => wait.ShowAsync(() => TryShow(d), d.Title ?? "");
 
     /// <summary>Null when another dialog is open, so the caller can tell "never shown" from Esc or Close.</summary>
     internal Task<ContentDialogResult>? TryShow(ContentDialog d)
@@ -40,6 +51,8 @@ public sealed class DialogLayer : Panel
     {
         Children.Remove(d);
         IsVisible = Children.Count > 1;
-        if (open == d) open = null;
+        if (open != d) return;
+        open = null;
+        wait.Closed();
     }
 }

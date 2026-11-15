@@ -848,7 +848,8 @@ sealed partial class SteamCachePlace(string gameDir, string appName, string stea
             if (outs.FirstOrDefault(o => !o.Existing.Unchanged(dir.At, o.Target.Name)) is { } changed)
                 throw new Refused(SteamPlaceState.SteamBusy, $"{changed.Target.Name} changed meanwhile", leaf);
             if (SlotTarget != null) files.Check(leaf);
-            var result = new SteamPlaceResult(SteamPlaceState.Placed, leaf,
+            // every file came out as it is: up to date, as the look before a placement says of the same bytes
+            var result = new SteamPlaceResult(same && !outs.Any(o => o.Write) ? SteamPlaceState.UpToDate : SteamPlaceState.Placed, leaf,
                 [.. outs.Select(o => new SteamFilePlaced(o.Target.Name, o.Warm.Count, o.WarmBytes, o.Steam.Count, o.SteamBytes, o.SteamOwns))],
                 left.Count, left.Sum(w => w.Record.Length));
             Install(m, dir, outs, SlotTarget != null ? files : null, sets.Fingerprint, result, note, known, leaf, coding, coded, stored?.Missing, carried);

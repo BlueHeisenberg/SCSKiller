@@ -8,13 +8,12 @@ using ZstdSharp.Unsafe;
 namespace SCSKiller.Core.ReEngine;
 
 /// <summary>A Capcom RE Engine package (re_chunk_000.pak, its .patch_NNN and .sub_NNN paks, dlc\*.pak), read-only, as the
-/// community tools read it (eigeen/ree-pak-rs, ree-pak-core: spec/header.rs, spec/entry.rs, read/mod.rs,
-/// read/chunk_table.rs, pak/flag.rs; Ekey/REE.PAK.Tool):
+/// community tools read it:
 ///   - header, 16 bytes: "KPKA", u8 major, u8 minor, u16 features, u32 entry count, u32 fingerprint;
 ///   - entries: v4 48 bytes (u32 name hash lower, upper, u64 offset, u64 packed size, u64 size, u64 attributes, u64
 ///     checksum); v2.0 24 bytes (u64 offset, u64 size, u32 hash lower, upper; stored);
 ///   - then, by feature bit: 0x10 a u32, 0x04 9 bytes, 0x40 a remap table (u32 count, u32 unused, count x 16 bytes;
-///     skipped, as REE.PAK.Tool and ree-pak-rs's unmerged remap patch do: entries index the 0x20 table, not this one),
+///     skipped: entries index the 0x20 table, not this one),
 ///     0x08 128 bytes the table key is made from (the entry table is XOR-encrypted, see <see cref="Key"/>), 0x20 a chunk
 ///     table (u32 block size, u32 count, count x (u32 start low, u32 meta = packed length &lt;&lt; 10 | flags));
 ///   - attributes: bits 0-3 compression (0 stored, 1 raw deflate, 2 zstd), 16-23 resource encryption, 24 the offset is
@@ -73,7 +72,7 @@ public sealed class RePak : IDisposable
             long at = 16 + stored.Length + ((Features & ExtraU32) != 0 ? 4 : 0) + ((Features & ExtraData) != 0 ? 9 : 0);
             if ((Features & RemapTable) != 0)
             {
-                // the second u32: a block size to REE.PAK.Tool, the count's high half to ree-pak-rs; neither tool uses it
+                // the second u32: a block size or the count's high half, depending on the tool; none uses it
                 var n = BinaryPrimitives.ReadUInt32LittleEndian(Bytes(at, 8));
                 if (n > (len - at - 8) / 16) throw new InvalidDataException("bad remap table");
                 at += 8 + 16L * n;
@@ -82,11 +81,13 @@ public sealed class RePak : IDisposable
             {
                 var raw = Bytes(at, 128);
                 at += 128;
-                // the modulus that opens it: every entry's sizes are plausible (a wrong key leaves random 64-bit values)
-                table = moduli.Select(m => { var t = stored.ToArray(); Xor(t, Key(raw, m)); return t; })
-                    .FirstOrDefault(t => Enumerable.Range(0, count).All(i => BinaryPrimitives.ReadUInt64LittleEndian(t.AsSpan(i * size + (size == 24 ? 0 : 16))) < 1UL << 40
-                        && BinaryPrimitives.ReadUInt64LittleEndian(t.AsSpan(i * size + (size == 24 ? 8 : 24))) < 1UL << 40))
-                    ?? throw new InvalidDataException(NoModulus);
+                // the modulus that opens it: every entry's sizes are plausible (a wrong key leaves random 64-bit values).
+                // An empty table needs none, and any would pass.
+                if (count > 0)
+                    table = moduli.Select(m => { var t = stored.ToArray(); Xor(t, Key(raw, m)); return t; })
+                        .FirstOrDefault(t => Enumerable.Range(0, count).All(i => BinaryPrimitives.ReadUInt64LittleEndian(t.AsSpan(i * size + (size == 24 ? 0 : 16))) < 1UL << 40
+                            && BinaryPrimitives.ReadUInt64LittleEndian(t.AsSpan(i * size + (size == 24 ? 8 : 24))) < 1UL << 40))
+                        ?? throw new InvalidDataException(NoModulus);
             }
             if ((Features & ChunkTable) != 0)
             {
@@ -126,6 +127,18 @@ public sealed class RePak : IDisposable
     public static RePak Open(string path, IReadOnlyList<BigInteger>? moduli = null) => new(path, moduli ?? []);
 
     public const string NoModulus = "the entry table is encrypted and no table-key modulus opens it";
+
+    /// <summary>The header's version, in the clear even when the entry table is encrypted: null for a file that isn't a package.</summary>
+    public static (int Major, int Minor)? HeaderVersion(string path)
+    {
+        try
+        {
+            using var h = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var hd = new byte[6];
+            return RandomAccess.Read(h, hd, 0) == hd.Length && hd.AsSpan(0, 4).SequenceEqual("KPKA"u8) ? (hd[4], hd[5]) : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+    }
 
     public void Dispose() => h.Dispose();
 

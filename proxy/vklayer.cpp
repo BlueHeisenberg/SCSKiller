@@ -277,7 +277,7 @@ void scsk_layer_admit() {
         bool risk = false;
         std::string seen;
         // the layer is loaded from where its registration names: "elsewhere" doesn't apply
-        const char* why = admission_verdict(whole, read, false, risk, seen);
+        const char* why = successor_wait(admission_verdict(whole, read, false, risk, seen), read, risk, seen);
         const std::wstring rec = why ? L"" : recorder_dir(g_exe_dir), out = rec.empty() ? L"" : rec + L"\\vulkan\\" + file_key(exe) + L"\\";
         if (!why && out.empty()) why = "SCSKiller's recorder folder can't be had";
         if (!why) CreateDirectoryW((rec + L"\\vulkan").c_str(), nullptr), CreateDirectoryW(out.c_str(), nullptr);

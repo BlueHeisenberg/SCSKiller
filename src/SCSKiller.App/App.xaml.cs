@@ -109,6 +109,7 @@ public partial class App : Application
             real.ActiveCheck = new ActiveCheck(AppStore.DefaultDir, () => ActiveCheck.Allowed(real.Settings), real.Vendor.Vendor);
             // not in the unattended --driver-updated launch: nobody at the PC, no game folder is written
             real.ManageRecorders = !driverUpdated && !handed;
+            real.AwaitWelcome();
             real.CleanupHelper = Environment.ProcessPath;
             real.CheckPlans = true;
             var hadDb = false;   // signed in (or the membership turned active): check at once, not at the next scan
@@ -390,7 +391,7 @@ public partial class App : Application
     }
 
     /// <summary>The first-run welcome: the server's text (<paramref name="fetch"/>, at most 3 s) or the bundled one, as plain
-    /// text. Closing it either way marks it seen and saves its checkboxes (<see cref="Settings.ShareRecordings"/>,
+    /// text. Closing it either way marks it seen and saves its checkboxes (<see cref="Settings.RecordAllGames"/>, <see cref="Settings.ShareRecordings"/>,
     /// <see cref="Settings.ShareDiagnostics"/> as the answer to <see cref="Diagnostics.Asks"/>, and <see cref="Settings.ActiveCheck"/>).</summary>
     static async Task ShowWelcomeAsync(XamlRoot root, Task<WelcomeContent?> fetch)
     {
@@ -398,6 +399,9 @@ public partial class App : Application
         var panel = new StackPanel { Spacing = 12 };
         foreach (var p in c.Paragraphs) panel.Children.Add(new TextBlock { Text = p, TextWrapping = TextWrapping.Wrap });
         if (c.Link != null) panel.Children.Add(new HyperlinkButton { Content = c.Link.Text, NavigateUri = new Uri(c.Link.Url), Padding = new Thickness(0) });
+        // an install from before the box has none: its setting stays
+        var record = Core is ScsKiller { AwaitsWelcome: false } ? null : new CheckBox { Content = "Record in all compatible games", IsChecked = ScsKiller.RecorderTicked && Core.Settings.RecordAllGames };
+        if (record != null) panel.Children.Add(record);
         var share = new CheckBox { Content = c.Share, IsChecked = false };   // never pre-ticked: that isn't consent
         panel.Children.Add(share);
         var diagnostics = new CheckBox { Content = "Share diagnostics to help fix problems", IsChecked = false };
@@ -412,19 +416,15 @@ public partial class App : Application
             XamlRoot = root, Title = c.Title, Content = new ScrollViewer { Content = panel },
             PrimaryButtonText = c.SignIn, CloseButtonText = c.Dismiss, DefaultButton = ContentDialogButton.Primary,
         };
-        ContentDialogResult result;
-        try { result = await Themed(dialog).ShowAsync(); }
-        catch (COMException) { return; }   // another dialog is open (the user got there first): next start
-        Core.Settings = ActiveCheck.Answered(Diagnostics.Answered(Core.Settings, diagnostics.IsChecked == true), active.IsChecked == true) with { WelcomeSeen = true, ShareRecordings = share.IsChecked == true };   // either button, or Esc
+        var result = await WhenFreeAsync(dialog);
+        Core.Settings = ActiveCheck.Answered(Diagnostics.Answered(Core.Settings, diagnostics.IsChecked == true), active.IsChecked == true) with { WelcomeSeen = true, ShareRecordings = share.IsChecked == true, RecordAllGames = record == null ? Core.Settings.RecordAllGames : record.IsChecked == true };   // either button, or Esc
         if (result == ContentDialogResult.Primary) SignInWithPatreon();
     }
 
     /// <summary>The one-time daily check question (<see cref="ActiveCheck.Asks"/>): Esc or closing keeps it off and answers it.</summary>
     static async Task AskActiveCheckAsync(XamlRoot root)
     {
-        ContentDialogResult result;
-        try { result = await Themed(ActiveCheckDialog(root)).ShowAsync(); }
-        catch (COMException) { return; }   // another dialog is open: next start
+        var result = await WhenFreeAsync(ActiveCheckDialog(root));
         Core.Settings = ActiveCheck.Answered(Core.Settings, result == ContentDialogResult.Primary);
     }
 
@@ -451,9 +451,7 @@ public partial class App : Application
     /// <summary>The traversal stutter fix's one-time question (<see cref="TraversalFix.Asks"/>): Keep it off or Esc answers it, off.</summary>
     static async Task AskTraversalAsync(XamlRoot root)
     {
-        ContentDialogResult result;
-        try { result = await Themed(TraversalDialog(root, TraversalFix.LowVram(Core.Vendor.Gpu))).ShowAsync(); }
-        catch (COMException) { return; }   // another dialog is open: next start
+        var result = await WhenFreeAsync(TraversalDialog(root, TraversalFix.LowVram(Core.Vendor.Gpu)));
         Core.Settings = TraversalFix.Answered(Core.Settings, result switch
         {
             ContentDialogResult.Primary => TraversalMode.All, _ => TraversalMode.Off,
@@ -522,9 +520,7 @@ public partial class App : Application
             },
             PrimaryButtonText = "Share diagnostics", CloseButtonText = "No thanks", DefaultButton = ContentDialogButton.Close,
         };
-        ContentDialogResult result;
-        try { result = await Themed(dialog).ShowAsync(); }
-        catch (COMException) { return; }   // another dialog is open: next start
+        var result = await WhenFreeAsync(dialog);
         Core.Settings = Diagnostics.Answered(Core.Settings, result == ContentDialogResult.Primary);
     }
 
@@ -573,6 +569,17 @@ public partial class App : Application
     {
         XamlRoot = page.XamlRoot, Title = title, Content = content, PrimaryButtonText = primaryText, CloseButtonText = "Cancel", DefaultButton = defaultButton,
     };
+
+    // WinUI throws while another dialog is open and has no event for its close: a start question polls rather than be dropped
+    static async Task<ContentDialogResult> WhenFreeAsync(ContentDialog dialog)
+    {
+        for (var logged = false; ; logged = true)
+        {
+            try { return await Themed(dialog).ShowAsync(); }
+            catch (COMException) { if (!logged) Log?.Report($"dialog \"{dialog.Title}\" waits: another dialog is open"); }
+            await Task.Delay(250);
+        }
+    }
 
     /// <summary>None when another dialog is open: WinUI shows one at a time and throws, which an async void
     /// handler can't survive.</summary>

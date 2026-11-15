@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Win32.SafeHandles;
 using SCSKiller.Core.Carved;
 using SCSKiller.Core.Games;
+using SCSKiller.Core.Warming;
 
 namespace SCSKiller.Core.Vulkan;
 
@@ -14,6 +15,38 @@ public static partial class Hookshot
 {
     static partial void StartRun(Game game, string workDir, GpuInfo gpu, IProgress<WarmProgress>? progress, IProgress<string>? log, ref IWarmRun? run) =>
         run = new HiddenRun(game, workDir, gpu, progress, log);
+
+    /// <summary>Each hidden run's job, from before its port starts until the job ends it, with the port's exe while
+    /// CreateProcessW runs: an antivirus can hold a start for seconds, its process listed and its pid not known yet. What the
+    /// port starts is in its job too. The job's own pid list is read, no process is opened.</summary>
+    static readonly Dictionary<nint, string?> Jobs = [];
+
+    internal static void Track(nint job, string? starting)
+    {
+        lock (Jobs) Jobs[job] = starting == null ? null : GameFiles.FinalPath(starting) ?? starting;
+    }
+
+    internal static void Untrack(nint job)
+    {
+        lock (Jobs) Jobs.Remove(job);
+    }
+
+    static partial void InRun(int pid, ref bool ours)
+    {
+        lock (Jobs)
+            ours = Jobs.Any(j => InJob(j.Key, pid) || j.Value != null && ProcessTree.ImagePath(pid) is { } image
+                && string.Equals(GameFiles.FinalPath(image) ?? image, j.Value, StringComparison.OrdinalIgnoreCase));
+    }
+
+    static bool InJob(nint job, int pid) => Pids(job).Contains((nuint)pid);
+
+    static unsafe nuint[] Pids(nint job)
+    {
+        const int Max = 1024;
+        var list = stackalloc nuint[Max + 1];   // JOBOBJECT_BASIC_PROCESS_ID_LIST: two DWORD counts, then the ids
+        if (!QueryInformationJobObject(job, 3 /* JobObjectBasicProcessIdList */, list, (Max + 1) * sizeof(nuint), 0)) return [];
+        return new Span<nuint>(list + 1, (int)Math.Min(((uint*)list)[1], Max)).ToArray();
+    }
 
     /// <summary>In the game's own data folder while a hidden run may leave crash markers: the exe, the port's data folder as it resolved,
     /// then the markers absent before the run. Gone once the run ended them itself.</summary>
@@ -201,6 +234,7 @@ public static partial class Hookshot
             {
                 var limits = new ExtendedLimitInformation { LimitFlags = 0x2000 /* JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE */ };
                 if (job == 0 || !SetInformationJobObject(job, 9, ref limits, Marshal.SizeOf<ExtendedLimitInformation>())) throw new Win32Exception();
+                Track(job, _game.ExePath);
                 // created inside the job (PROC_THREAD_ATTRIBUTE_JOB_LIST): no moment where a crash of ours leaves it outside
                 nint size = 0;
                 InitializeProcThreadAttributeList(0, 1, 0, ref size);
@@ -224,7 +258,7 @@ public static partial class Hookshot
                 var cmd = new StringBuilder($"\"{_game.ExePath}\"{(prepare ? " --prepare-shaders" : "")} --user \"{user}\"");
                 const uint flags = 0x4 /* SUSPENDED */ | 0x10 /* NEW_CONSOLE */ | 0x400 /* UNICODE_ENVIRONMENT */ | 0x80000 /* EXTENDED_STARTUPINFO_PRESENT */;
                 if (!CreateProcessW(_game.ExePath, cmd, 0, 0, true, flags, block.ToString(), _dir, ref si, out var pi)) throw new Win32Exception();
-                Running[pi.ProcessId] = true;
+                Track(job, null);   // in the job now: a player's start of the exe is the game again
                 try
                 {
                     _log?.Report($"{_game.Name}: hookshot.exe runs hidden for its precompile (process {pi.ProcessId}{(again ? ", its shaders prepared again for this driver" : "")})");
@@ -246,7 +280,6 @@ public static partial class Hookshot
                     WaitForSingleObject(pi.Process, 10_000);
                     // ended by itself: a crash marker it left is the port's own sign, kept for its next start
                     try { File.Delete(_pending); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-                    Running.TryRemove(pi.ProcessId, out _);
                     CloseHandle(pi.Thread);
                     CloseHandle(pi.Process);
                 }
@@ -260,7 +293,13 @@ public static partial class Hookshot
                 if (initialized) DeleteProcThreadAttributeList(list);
                 if (list != 0) Marshal.FreeHGlobal(list);
                 if (jobSlot != 0) Marshal.FreeHGlobal(jobSlot);
-                if (job != 0) CloseHandle(job);
+                if (job != 0)
+                {
+                    // termination is asynchronous: a child of the port may outlive the wait on the port itself
+                    for (var waited = Stopwatch.StartNew(); Pids(job).Length > 0 && waited.Elapsed < TimeSpan.FromSeconds(10);) Thread.Sleep(100);
+                    Untrack(job);
+                    CloseHandle(job);
+                }
             }
         }
 
@@ -431,6 +470,7 @@ public static partial class Hookshot
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern nint CreateJobObjectW(nint security, string? name);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetInformationJobObject(nint job, int infoClass, ref ExtendedLimitInformation info, int length);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateJobObject(nint job, uint code);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern unsafe bool QueryInformationJobObject(nint job, int infoClass, void* info, int length, nint returnLength);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetHandleInformation(SafeFileHandle handle, uint mask, uint flags);
     [DllImport("kernel32.dll")] static extern uint ResumeThread(nint thread);
     [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(nint handle, uint ms);

@@ -153,6 +153,38 @@ public sealed partial class SteamSource(string? steamRoot = null) : IGameSource,
         return (null, true);
     }
 
+    /// <summary>The app that owns the steamapps/common folder <paramref name="path"/> is in, as the proxy's folder_owner picks
+    /// it when several apps' manifests name the folder: the only one with bytes there (SizeOnDisk), fully installed
+    /// (StateFlags 4). <paramref name="app"/> when its own manifest has bytes there, when one app or none names the folder,
+    /// or when the owner can't be told.</summary>
+    internal static uint? FolderOwner(string path, uint? app)
+    {
+        var full = Path.GetFullPath(path);
+        var at = full.IndexOf(CommonPart, StringComparison.OrdinalIgnoreCase);
+        if (at < 0 || app == null) return app;
+        var apps = full[..(at + AppsPart.Length)];
+        var folder = full[(at + CommonPart.Length)..].Split(Path.DirectorySeparatorChar)[0];
+        // folder names as the proxy matches them: a Linux library's "Game" and "game" are two folders
+        var named = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        bool Names(string text) => Values(text, "installdir").FirstOrDefault() is { } dir && dir.Equals(folder, named);
+        // an app with bytes there is never another's: no other can be the only one with bytes
+        if (Path.Combine(apps, $"appmanifest_{app}.acf") is var own && File.Exists(own) && File.ReadAllText(own) is var mine && Names(mine) && Claim(mine) > 0) return app;
+        var claims = new Dictionary<uint, int>();
+        foreach (var acf in Directory.Exists(apps) ? Manifests(apps) : [])
+        {
+            var text = File.ReadAllText(acf);
+            if (Names(text) && uint.TryParse(Values(text, "appid").FirstOrDefault(), out var id))
+                claims[id] = Math.Max(claims.GetValueOrDefault(id), Claim(text));
+        }
+        return claims.Count > 1 && claims.Where(c => c.Value > 0).ToList() is [{ Value: 2 } owner] ? owner.Key : app;
+    }
+
+    // the proxy's folder_claim: 2 with bytes there and fully installed, 1 with bytes otherwise, 0 without
+    static int Claim(string acf) =>
+        Values(acf, "SizeOnDisk").ToList() is [{ Length: > 0 } size] && size.All(char.IsAsciiDigit) && size.Any(c => c != '0')
+            ? (Values(acf, "StateFlags").ToList() is [{ Length: <= 10 } f] && ulong.TryParse(f, NumberStyles.None, CultureInfo.InvariantCulture, out var flags) && (flags & 4) != 0 ? 2 : 1)
+            : 0;
+
     // Windows lists an NTFS folder by name, the order a library's games are found in: elsewhere they're sorted so
     static IEnumerable<string> Manifests(string apps) => OperatingSystem.IsWindows() ? Directory.EnumerateFiles(apps, "appmanifest_*.acf")
         : Directory.EnumerateFiles(apps, "appmanifest_*.acf").Order(GameFiles.PathOrder);
@@ -177,16 +209,8 @@ public sealed partial class SteamSource(string? steamRoot = null) : IGameSource,
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return null; }
     }
 
-    /// <summary><see cref="PrefixOf"/>'s folder whether Steam made it yet or not (it does at the game's first start under
-    /// Proton); null when the game isn't in a steamapps/common folder or no app is known. Only read.</summary>
-    internal static string? PrefixFolder(Game game, string? steamRoot = null)
-    {
-        try { return CompatData(game, steamRoot) is { } compat ? Path.Combine(compat.Data, "pfx") : null; }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return null; }
-    }
-
     // the app and its compatdata folder (CompatDataOf)
-    static (uint App, string Data)? CompatData(Game game, string? steamRoot)
+    internal static (uint App, string Data)? CompatData(Game game, string? steamRoot)
     {
         var root = steamRoot ?? Root();
         var full = Path.GetFullPath(game.InstallDir);

@@ -6,7 +6,8 @@ using SCSKiller.Core.App;
 
 namespace SCSKiller.Core.Unreal;
 
-/// <summary>The pak AES keys of an encrypted Unreal game: its own, and keys of single containers (Fortnite's per-item ones).
+/// <summary>The pak AES keys of an encrypted Unreal game: its own, keys of single containers (Fortnite's per-item ones), and
+/// the Theia and .utoc keys some games need before an index reads (<see cref="ContainerKeys"/>).
 /// Kept only locally, in %LOCALAPPDATA%\SCSKiller\games\&lt;id&gt;\aes.key (hex, one per line; the user may also put keys
 /// there by hand), never in plans, logs or anything meant to be shared. Found statically
 /// in the game's own exe file (<see cref="Scan"/>; an anti-cheat game's too: the file on disk, never the running process),
@@ -103,6 +104,9 @@ public sealed class UnrealKeys(string dataDir)
     static readonly System.Text.RegularExpressions.Regex Line = new(@"^(?:\{?(?<g>[0-9A-Fa-f]{8}-?[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{12})\}?\s*[:,=\s]\s*)?(?:0[xX])?(?<k>[0-9A-Fa-f]{64})$",
         System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 
+    /// <summary>The keys of a key text, unchecked.</summary>
+    internal static IEnumerable<UnrealKey> Parse(string text) => Lines(text).Select(l => l.Key).OfType<UnrealKey>();
+
     /// <summary>The non-empty lines of a key text, numbered from 1: Key null when the line isn't one.</summary>
     static IEnumerable<(int Line, UnrealKey? Key)> Lines(string text)
     {
@@ -130,7 +134,8 @@ public sealed class UnrealKeys(string dataDir)
     /// that opens wins. Streams the exe (4 MB at a time); read-only.</summary>
     public static FAesKey? Scan(string exePath, Func<FAesKey, bool> opens, out string how)
     {
-        using var f = new FileStream(exePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 16);
+        // unbuffered: At() seeks for each 16-byte read, which with a buffer refills it whole (3.7 GB read for a 500 MB exe)
+        using var f = new FileStream(exePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1);
         if (f.Length > int.MaxValue)   // PEReader takes no bigger stream
         {
             how = "not found: the exe is over 2 GB, more than the scan reads";

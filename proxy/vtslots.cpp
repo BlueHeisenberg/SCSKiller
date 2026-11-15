@@ -52,5 +52,12 @@ SLOT(IDXGIFactory2, CreateSwapChainForHwnd, 15)
 SLOT(IDXGIFactory2, CreateSwapChainForCoreWindow, 16)
 SLOT(IDXGIFactory2, CreateSwapChainForComposition, 24)
 SLOT(ID3D11Device, CreateInputLayout, 11)
+SLOT(ID3D11Device, CreateVertexShader, 12)
+SLOT(ID3D11Device, CreateGeometryShader, 13)
+SLOT(ID3D11Device, CreateGeometryShaderWithStreamOutput, 14)
+SLOT(ID3D11Device, CreatePixelShader, 15)
+SLOT(ID3D11Device, CreateHullShader, 16)
+SLOT(ID3D11Device, CreateDomainShader, 17)
+SLOT(ID3D11Device, CreateComputeShader, 18)
 static_assert(sizeof(D3D11_INPUT_ELEMENT_DESC) == sizeof(D3D12_INPUT_ELEMENT_DESC) && offsetof(D3D11_INPUT_ELEMENT_DESC, InstanceDataStepRate) ==
               offsetof(D3D12_INPUT_ELEMENT_DESC, InstanceDataStepRate), "the D3D11 recorder writes a D3D11 layout as a D3D12 one");

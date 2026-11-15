@@ -26,8 +26,8 @@ public sealed partial class ScsKiller
         nameof(GameRecord.LastWarmCrashed), nameof(GameRecord.LastWarmCrashedBefore), nameof(GameRecord.LastWarmDriverSkipped), nameof(GameRecord.LastWarmKnown), nameof(GameRecord.LastWarmUnbuilt), nameof(GameRecord.LastWarmInvalid),
         nameof(GameRecord.LastWarmUnsupported), nameof(GameRecord.LastWarmTried), nameof(GameRecord.LastWarmFailedBy), nameof(GameRecord.WarmedRoomLeft), nameof(GameRecord.WarmedIndexHash), nameof(GameRecord.WarmedExeStamp),
         nameof(GameRecord.WarmedGameVersion), nameof(GameRecord.WarmedLayer), nameof(GameRecord.WarmedIndexStamp), nameof(GameRecord.BytesPerPso),
-        nameof(GameRecord.PsoPerSecond), nameof(GameRecord.PsoPerSecondDriver), nameof(GameRecord.WarmedKeys), nameof(GameRecord.WarmedParts), nameof(GameRecord.MissedTwice), nameof(GameRecord.WarmedFiles),
-        nameof(GameRecord.WarmedFileBytes), nameof(GameRecord.WarmedFileUsed), nameof(GameRecord.WarmedFileIds), nameof(GameRecord.WarmedSteamParcId), nameof(GameRecord.WarmedSteamParcBytes), nameof(GameRecord.WarmedExeName),
+        nameof(GameRecord.PsoPerSecond), nameof(GameRecord.PsoPerSecondDriver), nameof(GameRecord.WarmedKeys), nameof(GameRecord.WarmedParts), nameof(GameRecord.MissedTwice), nameof(GameRecord.KeysMissedAt), nameof(GameRecord.GameParts), nameof(GameRecord.WarmedFiles),
+        nameof(GameRecord.WarmedFileBytes), nameof(GameRecord.WarmedFileUsed), nameof(GameRecord.WarmedFileIds), nameof(GameRecord.WarmedSteamParcId), nameof(GameRecord.WarmedSteamParcBytes), nameof(GameRecord.WarmedVulkanDevices), nameof(GameRecord.WarmedExeName),
         nameof(GameRecord.WarmedAftermath), nameof(GameRecord.AftermathRetry), nameof(GameRecord.AftermathPlainHits), nameof(GameRecord.AftermathLost),
         nameof(GameRecord.WarmedAgsApp), nameof(GameRecord.WarmedRayTracing), nameof(GameRecord.WarmedCareful), nameof(GameRecord.FirstLaunch),
         nameof(GameRecord.UnreachedWarm), nameof(GameRecord.UnreachedRecheckedAt), nameof(GameRecord.UnreachedLifted), nameof(GameRecord.CompileFailedBuild), nameof(GameRecord.CompileFailedWhy),
@@ -59,7 +59,7 @@ public sealed partial class ScsKiller
             if (rec.PlanApi == now && rec.ApiCompiles?.ContainsKey(now) != true && !File.Exists(compiled) && File.Exists(compiledBack)
                 && rec.WarmedAt is { } warmed && !(rec.CacheClearedAt > warmed))
                 File.Move(compiledBack, compiled);
-            if (rec.PlanApi is not { } was || now == was) return;
+            if (rec.PlanApi is not { } was || now == was || was is not ("vk" or "11" or "12" or "11+12")) return;   // a hand-edited one names no file of ours
             var back = rec.ApiCompiles?.GetValueOrDefault(now);
             // "11+12" and one of its APIs: the plan check counts what the other plan adds (OtherApi)
             if (back == null && (now.Contains(was) || was.Contains(now))) return;
@@ -134,7 +134,11 @@ public sealed partial class ScsKiller
     /// <summary>An <see cref="ApiKey"/> as the game page names it.</summary>
     public static string KeyName(string key) => key switch { "vk" => "Vulkan", "11" => "DirectX 11", "12" => "DirectX 12", _ => "DirectX 11 and 12" };
 
+    /// <summary>The API a compile of a game of <paramref name="api"/> covers, as the CLI names it; "-" when unknown.</summary>
+    public static string CoveredApi(string api, PlanStats? plan = null) =>
+        ApiKey(api) is { } key ? KeyName(key == "11+12" && Only11(plan) ? "11" : key) : "-";
+
     /// <summary>The game page's line for the compiles kept for its other graphics APIs; null = none.</summary>
-    public static string? KeptApisNote(GameState s) => s.KeptApis is not { Count: > 0 } kept || s.Game.Id == FortniteId ? null
+    public static string? KeptApisNote(GameState s) => s.KeptApis is not { Count: > 0 } kept || IsFortnite(s.Game) ? null
         : "Also compiled for " + string.Join(" and ", kept.Select(k => KeyName(k.Api) + (k.CurrentDriver ? "" : $" on an older driver ({k.DriverVersion})"))) + ".";
 }

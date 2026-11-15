@@ -20,9 +20,7 @@ public static class ContentStamps
 
     public static string Of(string rel, string path)
     {
-        rel = rel.Replace('/', '\\');
-        if (rel.StartsWith("..", StringComparison.Ordinal) || rel.StartsWith('\\') || rel.Contains(':')) rel = rel[(rel.LastIndexOf('\\') + 1)..];
-        rel = rel.ToLowerInvariant();
+        rel = Rel(rel);
         try
         {
             var f = new FileInfo(path);
@@ -40,6 +38,25 @@ public static class ContentStamps
             return $"{rel}|{size}|{sha}\n";
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return $"{rel}|gone\n"; }
+    }
+
+    /// <summary><see cref="Of(string, string)"/> of a file open as <paramref name="h"/>, read through it, never cached.</summary>
+    public static string Of(string rel, Microsoft.Win32.SafeHandles.SafeFileHandle h)
+    {
+        rel = Rel(rel);
+        try
+        {
+            var size = RandomAccess.GetLength(h);
+            return $"{rel}|{size}|{Edges(h, size)}\n";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return $"{rel}|gone\n"; }
+    }
+
+    static string Rel(string rel)
+    {
+        rel = rel.Replace('/', '\\');
+        if (rel.StartsWith("..", StringComparison.Ordinal) || rel.StartsWith('\\') || rel.Contains(':')) rel = rel[(rel.LastIndexOf('\\') + 1)..];
+        return rel.ToLowerInvariant();
     }
 
     /// <summary>Both a change time and a file id (FAT has neither): else a replaced file could keep the old edges.</summary>

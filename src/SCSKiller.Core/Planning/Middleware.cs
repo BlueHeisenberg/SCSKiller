@@ -23,6 +23,10 @@ public sealed record MiddlewareImage(string Path, string ContentHash, long Size,
     /// reads nothing from the file then.</summary>
     public IReadOnlyDictionary<string, (uint Min, uint Max)>? Lanes { get; init; }
 
+    /// <summary>The containers that bind AMD's shader intrinsics UAV (<see cref="Middleware.UsesAmdIntrinsics"/>), read by
+    /// <see cref="Middleware.Scan"/>.</summary>
+    public HashSet<string>? AmdIntrinsics { get; init; }
+
     /// <summary>The container bytes, read from the file (read-only); null when the file no longer holds that hash there.</summary>
     public byte[]? Read(string sha1)
     {
@@ -33,10 +37,14 @@ public sealed record MiddlewareImage(string Path, string ContentHash, long Size,
     }
 
     /// <summary>Whether a GPU of this vendor runs the container's [WaveSize]: NVIDIA 32 lanes only, AMD 32 or 64 (a
-    /// FidelityFX DLL ships wave64 twins of its kernels for AMD, which NVIDIA's runtime rejects).</summary>
+    /// FidelityFX DLL ships wave64 twins of its kernels for AMD, which NVIDIA's runtime rejects). A container using AMD's
+    /// shader intrinsics runs on none: FidelityFX turns them on for the game's device, the warm's has them off, and AMD's
+    /// driver removed the device (0x887a0020) creating FidelityFX frame generation's such kernels on it.
+    /// ponytail: left out, not compiled; turn the intrinsics on for the warm's AMD device to compile them as the game does.</summary>
     public bool Runs(string sha1, bool amd) =>
-        (Lanes != null ? Lanes.TryGetValue(sha1, out var known) ? known : null : Read(sha1) is { } b ? Dxbc.WaveLanes(b) : null) is not { } l
-        || l.Min <= 32 && l.Max >= 32 || amd && l.Min <= 64 && l.Max >= 64;
+        !(AmdIntrinsics?.Contains(sha1) ?? (Read(sha1) is { } c && Middleware.UsesAmdIntrinsics(c)))
+        && ((Lanes != null ? Lanes.TryGetValue(sha1, out var known) ? known : null : Read(sha1) is { } b ? Dxbc.WaveLanes(b) : null) is not { } l
+            || l.Min <= 32 && l.Max >= 32 || amd && l.Min <= 64 && l.Max >= 64);
 }
 
 /// <summary>Middleware shader libraries (FidelityFX, XeSS, OptiScaler, DirectStorage...) next to a game's exe: detection
@@ -162,7 +170,7 @@ public static class Middleware
             if (!File.Exists(file) || JsonSerializer.Deserialize<Dictionary<string, KeptImage>>(File.ReadAllBytes(file), KeptJson) is not { } saved) return;
             lock (keptGate)
                 foreach (var (path, k) in saved)
-                    if (k?.Image.Lanes != null) kept.TryAdd(path, k);
+                    if (k?.Image.Lanes != null && k.Image.AmdIntrinsics != null) kept.TryAdd(path, k);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { }
     }
@@ -185,6 +193,15 @@ public static class Middleware
         lock (keptGate) kept.Clear();
     }
 
+    const int AmdIntrinsicsSpace = 0x7FFF0ADE;   // AGS_DX12_SHADER_INSTRINSICS_SPACE_ID
+
+    /// <summary>The shader binds AMD's shader intrinsics UAV, a UAV in <see cref="AmdIntrinsicsSpace"/> (FidelityFX's AMD kernels).</summary>
+    internal static bool UsesAmdIntrinsics(ReadOnlySpan<byte> c)
+    {
+        try { return Unreal.ShaderContainer.Parse(c, "", new(0, 0, 0, 0))?.Bindings.Any(b => b.Space == AmdIntrinsicsSpace) == true; }
+        catch (Exception e) when (e is ArgumentException or IndexOutOfRangeException) { return false; }
+    }
+
     /// <summary>Hashes the file and every embedded container (read-only; cached per path and the file's size, write time
     /// and content sample, as <see cref="App.KeyFiles"/> tells a file).</summary>
     public static MiddlewareImage Scan(string path)
@@ -202,6 +219,7 @@ public static class Middleware
         }
         var found = new Dictionary<string, (long, int)>();
         var lanes = new Dictionary<string, (uint, uint)>();
+        var intrinsics = new HashSet<string>();
         var span = data.AsSpan();
         for (var pos = 0; pos < span.Length;)
         {
@@ -212,11 +230,15 @@ public static class Middleware
             if (size > 0 && pos + (long)size <= span.Length && Dxbc.Valid(span.Slice(pos, size)))
             {
                 var hash = Hex(SHA1.HashData(span.Slice(pos, size)));
-                if (found.TryAdd(hash, (pos, size)) && Dxbc.WaveLanes(span.Slice(pos, size)) is { } l) lanes[hash] = l;
+                if (found.TryAdd(hash, (pos, size)))
+                {
+                    if (Dxbc.WaveLanes(span.Slice(pos, size)) is { } l) lanes[hash] = l;
+                    if (UsesAmdIntrinsics(span.Slice(pos, size))) intrinsics.Add(hash);
+                }
             }
             pos += 4;
         }
-        var image = new MiddlewareImage(fi.FullName, Hex(SHA1.HashData(data)), data.Length, found) { Lanes = lanes };
+        var image = new MiddlewareImage(fi.FullName, Hex(SHA1.HashData(data)), data.Length, found) { Lanes = lanes, AmdIntrinsics = intrinsics };
         if (scans.Count > 64) scans.Clear();
         scans[key] = image;
         lock (keptGate)

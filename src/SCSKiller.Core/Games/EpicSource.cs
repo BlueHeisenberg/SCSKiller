@@ -20,9 +20,9 @@ public sealed class EpicSource(string? manifestsDir = null, string? launcherDir 
         var games = new List<Game>();
         var installs = Installs(launcherDir ?? (manifestsDir == null ? DefaultLauncherDir : null));
         foreach (var i in installs)
-            try { if (i.Complete && !LeftOut(i.Dir) && GameFiles.FindExe(i.Dir, i.Exe) is { } exe) games.Add(new Game($"epic:{i.App}", i.Title, Store.Epic, i.Dir, exe, i.Version)); }
+            try { if (i.Complete && !i.NotGame && !LeftOut(i.Dir) && GameFiles.FindExe(i.Dir, i.Exe) is { } exe) games.Add(new Game($"epic:{i.App}", i.Title, Store.Epic, i.Dir, exe, i.Version)); }
             catch (Exception e) when (e is not OperationCanceledException) { GameFiles.Skip("Epic", $"epic:{i.App}", e); }
-        var current = installs.Select(i => i.App).ToHashSet();   // the launcher leaves the classic one's manifests behind
+        var current = installs.Where(i => i.Complete).Select(i => i.App).ToHashSet();   // the launcher leaves the classic one's manifests behind
         var dir = manifestsDir ?? DefaultManifestsDir;
         if (Directory.Exists(dir))
             foreach (var item in Directory.EnumerateFiles(dir, "*.item"))
@@ -35,6 +35,8 @@ public sealed class EpicSource(string? manifestsDir = null, string? launcherDir 
                     if (r.TryGetProperty("bIsIncompleteInstall", out var inc) && inc.ValueKind == JsonValueKind.True) continue;
                     if (S("AppName") is not { } app || S("InstallLocation") is not { } install || current.Contains(app) || LeftOut(install)) continue;
                     if (S("MainGameAppName") is { Length: > 0 } main && main != app) continue;   // add-on sharing the main game's install (Legendary names a base game's own)
+                    if (NotGame(app, S("CatalogNamespace"), r.TryGetProperty("AppCategories", out var cats) && cats.ValueKind == JsonValueKind.Array
+                        ? [.. cats.EnumerateArray().Where(c => c.ValueKind == JsonValueKind.String).Select(c => c.GetString()!)] : null)) continue;
                     if (GameFiles.FindExe(install, string.IsNullOrEmpty(S("LaunchExecutable")) ? null : S("LaunchExecutable")) is not { } exe) continue;
                     games.Add(new Game($"epic:{app}", S("DisplayName") ?? app, Store.Epic, install, exe, S("AppVersionString")));
                 }
@@ -44,28 +46,40 @@ public sealed class EpicSource(string? manifestsDir = null, string? launcherDir 
         return games.DistinctBy(g => g.Id).ToList();
     }
 
-    internal sealed record Install(string App, string Namespace, string ItemId, string Dir, string? Exe, string Title, string? Version, bool Complete);
+    internal sealed record Install(string App, string Namespace, string ItemId, string Dir, string? Exe, string Title, string? Version, bool Complete, bool NotGame = false);
+
+    /// <summary>An Unreal Engine install or one of its plugins (UE_5.5, the ue namespace: Quixel Bridge), or an item whose catalog categories
+    /// leave out "games" ("engines", "plugins", "software"). An item without categories (older manifests, an uncached catalog) counts as a game.</summary>
+    internal static bool NotGame(string app, string? ns, List<string>? categories) =>
+        app.StartsWith("UE_", StringComparison.OrdinalIgnoreCase) || string.Equals(ns, "ue", StringComparison.OrdinalIgnoreCase)
+        || categories is { Count: > 0 } && !categories.Contains("games", StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The launcher's base-game installs, finished or not. installations.jsonl is a journal: a header line, then a full snapshot per
-    /// change, the last one per installationId current. Titles and add-ons come from its catalog cache.</summary>
+    /// change, the last one per installationId current. Titles and add-ons come from its catalog cache. Complete: installed once, so an
+    /// update in progress (complete false, the old version kept) still counts, a first install (no version yet) doesn't.</summary>
     internal static List<Install> Installs(string? launcherDir)
     {
         var journal = launcherDir == null ? null : Path.Combine(launcherDir, "installations.jsonl");
         if (journal == null || !File.Exists(journal)) return [];
         var last = new Dictionary<string, JsonElement>();
+        var finished = new HashSet<string>();
         using (var reader = new StreamReader(new FileStream(journal, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)))
             while (reader.ReadLine() is { } line)
             {
                 try
                 {
                     using var doc = JsonDocument.Parse(line);
-                    if (doc.RootElement is { ValueKind: JsonValueKind.Object } e && Str(e, "installationId") is { } id) last[id] = e.Clone();
+                    if (doc.RootElement is { ValueKind: JsonValueKind.Object } e && Str(e, "installationId") is { } id)
+                    {
+                        last[id] = e.Clone();
+                        if (e.TryGetProperty("complete", out var c) && c.ValueKind == JsonValueKind.True) finished.Add(id);
+                    }
                 }
                 catch (JsonException) { }   // the line the launcher is appending
             }
         var catalog = Catalog(launcherDir!);
         var installs = new List<Install>();
-        foreach (var e in last.Values)
+        foreach (var (id, e) in last)
         {
             if (Str(e, "artifactId") is not { Length: > 0 } app || Str(e, "dir") is not { Length: > 0 } dir) continue;
             if (Str(e, "parentInstallationId") is { Length: > 0 }) continue;   // an add-on in its game's install
@@ -74,9 +88,12 @@ public sealed class EpicSource(string? manifestsDir = null, string? launcherDir 
             if (known && item.TryGetProperty("mainGameItem", out var main) && main.ValueKind != JsonValueKind.Null) continue;   // an add-on
             dir = Path.TrimEndingDirectorySeparator(dir);
             var title = known && Str(item, "title") is { Length: > 0 } t ? t : null;
+            List<string>? categories = known && item.TryGetProperty("categories", out var cats) && cats.ValueKind == JsonValueKind.Array
+                ? [.. cats.EnumerateArray().Select(c => c.ValueKind == JsonValueKind.Object ? Str(c, "path") : null).OfType<string>()] : null;
+            var version = Str(e, "version") is { Length: > 0 } v ? v : null;
             installs.Add(new Install(app, Str(e, "namespace") ?? "", itemId, dir, Str(e, "launchExecutable") is { Length: > 0 } exe ? exe : null,
-                title ?? (Path.GetFileName(dir) is { Length: > 0 } folder ? folder : app), Str(e, "version") is { Length: > 0 } v ? v : null,
-                e.TryGetProperty("complete", out var c) && c.ValueKind == JsonValueKind.True));
+                title ?? (Path.GetFileName(dir) is { Length: > 0 } folder ? folder : app), version,
+                finished.Contains(id) || version != null, NotGame(app, Str(e, "namespace"), categories)));
         }
         return installs;
     }

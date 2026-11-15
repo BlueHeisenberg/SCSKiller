@@ -448,7 +448,7 @@ static std::vector<std::string> anti_cheat_loaded() {
         at = end + 1;
         if (n.empty() || std::find(found.begin(), found.end(), n) != found.end()) continue;
         bool hit = false;
-        for (const char* m : {"easyanticheat_x64.dll", "easyanticheat_eos.dll", "beclient_x64.dll", "beclient.dll", "mhypbase.dll", "core_ets2mp.dll",
+        for (const char* m : {"easyanticheat_x64.dll", "easyanticheat_x86.dll", "easyanticheat_eos.dll", "beclient_x64.dll", "beclient.dll", "mhypbase.dll", "core_ets2mp.dll",
                               "core_atsmp.dll", "denuvo-anti-cheat-runtime.dll"})
             hit |= n == m;
         for (const char* p : {"easyanticheat", "libeasyanticheat", "beclient", "libbeclient"})
@@ -850,7 +850,7 @@ static bool in_game_of(const std::vector<std::pair<std::string, std::string>>& w
 // steamapps folders (admit.h passes one outside every library). A game run in a Steam app's Wine prefix is that app's
 // too, on any drive. A listed library or a game folder that doesn't exist (a drive not mounted, an uninstalled game) and
 // a prefix link whose target doesn't exist are skipped when the game's path isn't in them as text, and Steam's folder
-// without its steamapps lists no library.
+// without its steamapps lists no library. Of several apps whose installdir holds it, folder_owner's.
 static const char* vac_now_unguarded() {
     std::string argv_path;
     const std::string exe = module_path(&argv_path);
@@ -894,6 +894,7 @@ static const char* vac_now_unguarded() {
     // every app whose game folder holds the exe, every id whose prefix does and every id whose prefix the game runs in: more
     // than one Steam app, which runs can't be told
     std::vector<uint32_t> apps, prefixes, running;
+    std::vector<int> claims;  // folder_claim, an app's best
     const std::string root = real_path(steam);
     bool in_steam = !root.empty() && reaches(walk, root), in_game = true;
     for (size_t i = 0; i < libs.size(); ++i) {
@@ -915,7 +916,10 @@ static const char* vac_now_unguarded() {
                 return with_path("VAC: a Steam manifest names no single folder and app", dir + n);
             if (const char* why = owned_path(dir + "common/", d, exe, argv_path, kFolder, real)) return why;
             const bool named = i + 1 == libs.size() && !folder.empty() && d == folder;
-            if ((named || (!real.empty() && reaches(walk, real))) && std::find(apps.begin(), apps.end(), id) == apps.end()) apps.push_back(id);
+            if (!named && (real.empty() || !reaches(walk, real))) continue;
+            const size_t k = std::find(apps.begin(), apps.end(), id) - apps.begin();
+            if (k == apps.size()) apps.push_back(id), claims.push_back(0);
+            claims[k] = std::max(claims[k], folder_claim(app));
         }
         if (!list_dir(data, names)) {
             if (lstat(data.c_str(), &st) && errno == ENOENT) continue;
@@ -940,14 +944,18 @@ static const char* vac_now_unguarded() {
             if (runs && std::find(running.begin(), running.end(), id) == running.end()) running.push_back(id);
         }
     }
-    if (apps.size() > 1) return "VAC: two Steam manifests name the game's folder";
+    const std::vector<uint32_t> sharing = apps;  // past folder_owner all but the owner are clear of VAC: a prefix of theirs is the owner's
+    if (apps.size() > 1)
+        if (const char* why = folder_owner(apps, claims, [&](uint32_t a) { return vac_of(a, steam); })) return why;
     if (prefixes.size() > 1) return "VAC: two Steam prefixes hold the game's folder";
     if (running.size() > 1) return "VAC: the game's Wine prefix is two Steam prefixes";
     if (!prefixes.empty() && !in_game) return "VAC: in a Steam prefix, not in a game folder of its drive C";
     std::vector<uint32_t> ids;  // the Steam apps among them
     for (const auto* list : {&apps, &prefixes, &running})
         for (uint32_t id : *list)
-            if (id < 0x80000000u && std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id);
+            // a manifest's id is never a shortcut's
+            if ((list == &apps || (id < 0x80000000u && std::find(sharing.begin(), sharing.end(), id) == sharing.end())) && std::find(ids.begin(), ids.end(), id) == ids.end())
+                ids.push_back(id);
     if (ids.size() > 1) return "VAC: two Steam apps hold the game's folder or its Wine prefix";
     if (!ids.empty()) return vac_of(ids[0], steam);
     if (!prefixes.empty()) return nullptr;  // a shortcut's prefix holds it

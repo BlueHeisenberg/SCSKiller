@@ -19,6 +19,10 @@ public static partial class Elevated
     public static partial bool IsAdmin { get; }
     public static partial string CurrentUserSid { get; }
 
+    /// <summary>The folder's ACL lets this user create a file in it without the Administrators group, as a game an unelevated
+    /// launcher starts can. False when it can't be read. True where there's no such split (Linux, macOS).</summary>
+    public static partial bool GameCanWrite(string dir);
+
     /// <summary>The process runs elevated. Null: can't tell, or no such thing on this OS. <paramref name="deniedIsElevated"/>
     /// false: a token refused to us is unknown, as anti-cheat refuses it too.</summary>
     public static partial bool? OfProcess(Microsoft.Win32.SafeHandles.SafeProcessHandle process, bool deniedIsElevated = true);

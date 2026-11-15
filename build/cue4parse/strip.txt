@@ -1,0 +1,66 @@
+# Game keys and decryption constants removed from our CUE4Parse build (strip.cs). Paths are relative to the CUE4Parse
+# project folder. A game listed here reads as encrypted: its decryption needs data a user key can't carry.
+
+# ARC Raiders, MARVEL Tokon, Highguard: the Theia constant comes from the user (scsk.patch)
+gut-members GameTypes/Theia/Encryption/TheiaDecryptor.cs ArcRaidersKey MarvelTokonKey HighguardKey
+# The Finals and ARC Raiders: the .utoc key comes from the user (scsk.patch). Need for Speed Mobile.
+gut-if UE4/IO/Objects/FIoStoreTocResource.cs GAME_TheFinals GAME_ArcRaiders GAME_NeedForSpeedMobile
+
+# Arena Breakout Infinite and Mobile
+gut GameTypes/ABI/Encryption/**
+gut GameTypes/ABI/UE4/Lua/*
+gut GameTypes/ABI/UE4/Pak/*
+# Ace Combat 7
+gut GameTypes/ACE7/Encryption/*
+empty Resources/ACE7Key.bin
+# Aion 2
+gut GameTypes/Aion2/Encryption/**
+gut GameTypes/Aion2/Objects/FAion2KeyManifestFile.cs
+gut GameTypes/Aion2/Objects/FAion2DatFileArchive.cs
+# Apex Legends Mobile
+gut GameTypes/ApexMobile/Encryption/**
+# Code Vein II
+gut GameTypes/CodeVein2/Encryption/*
+# Dragon Quest XI
+gut GameTypes/DQXI/Encryption/*
+# EOTU
+gut GameTypes/EOTU/Encryption/*
+# 3on3 FreeStyle: Rebound, Funko Fusion, Tony Hawk's Pro Skater 1+2 and 3+4, Assault Fire Future
+gut GameTypes/FSR/Encryption/**
+gut GameTypes/FunkoFusion/Encryption/**
+gut GameTypes/THPS/Encryption/**
+gut GameTypes/NMZ/Encryption/**
+# Neverness to Everness
+gut GameTypes/NTE/Encryption/*
+# eBaseball Pro Spirit
+gut GameTypes/ProSpi/Encryption/**
+gut GameTypes/ProSpi/UE4/Pak/*
+empty Resources/ProSpiDecryptor.dll.gz
+# Game for Peace
+gut GameTypes/PUBG/UE4/Lua/*
+gut GameTypes/PUBG/UE4/Pak/*
+# PUBG Mobile, PUBG Lite, Valorant (UE5 build), Gangstar Mirage City: and the RSA helper only they use
+gut GameTypes/Tencent/Encryption/*
+gut GameTypes/Tencent/PUBGMobile/Encryption/**
+gut GameTypes/Tencent/PUBGMobile/Lua/*
+gut GameTypes/Tencent/PUBGMobile/UE4/Pak/*.cs
+gut GameTypes/Tencent/ValorantSource/Encryption/**
+gut GameTypes/Tencent/ValorantSource/Lua/*
+gut GameTypes/Tencent/ValorantSource/Pak/*
+gut GameTypes/Tencent/GangstarMirageCity/Encryption/*
+# Rennsport, Rocket League, Silver Palace, One Piece Ambition, Need for Speed Mobile
+gut GameTypes/Rennsport/Encryption/**
+gut GameTypes/Rennsport/Pak/*
+gut GameTypes/RL/Encryption/**
+gut GameTypes/SilverPalace/Encryption/*
+gut GameTypes/OPA/Encryption/*
+gut GameTypes/NFS/Mobile/**
+# Lua and table keys: Roco Kingdom World, Snowbreak, Undawn, Strinova, Lord of Mysteries, Ni no Kuni: Cross Worlds
+gut GameTypes/RocoKingdomWorld/Lua/*
+gut GameTypes/Snowbreak/Encryption/Lua/*
+gut GameTypes/UDWN/Lua/*
+gut GameTypes/Strinova/Lua/*
+gut GameTypes/LordOfMysteries/UE4/Lua/*
+gut GameTypes/Netmarble/NiNoKuni/UE4/Encryption/*
+# their pak footer masks
+gut-if UE4/Pak/Objects/FPakInfo.cs GAME_GameForPeace GAME_PUBGMobile GAME_PUBGLite GAME_ArenaBreakoutMobile GAME_ArenaBreakoutInfinite GAME_DragonQuestXI GAME_ValorantSource GAME_SilverPalace GAME_OnePieceAmbition

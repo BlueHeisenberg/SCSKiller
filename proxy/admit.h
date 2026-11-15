@@ -99,7 +99,7 @@ static std::string utf8(const std::wstring& w) {
 // The anti-cheat client modules loaded by now, by name.
 static std::vector<std::string> anti_cheat_loaded() {
     std::vector<std::string> found;
-    for (auto m : {L"EasyAntiCheat_x64.dll", L"EasyAntiCheat_EOS.dll", L"BEClient_x64.dll", L"BEClient.dll", L"mhypbase.dll",
+    for (auto m : {L"EasyAntiCheat_x64.dll", L"EasyAntiCheat_x86.dll", L"EasyAntiCheat_EOS.dll", L"BEClient_x64.dll", L"BEClient.dll", L"mhypbase.dll",
                    L"core_ets2mp.dll", L"core_atsmp.dll", L"denuvo-anti-cheat-runtime.dll"})
         if (GetModuleHandleW(m)) found.push_back(utf8(m));
     return found;
@@ -260,6 +260,23 @@ static void refused(const char* why) {
     WriteFile(h, b, (DWORD)std::clamp(n, 0, (int)sizeof b - 1), &w, nullptr);
     CloseHandle(h);
 }
+// out=1, signed (ScsKiller.OutLine): the app placed the recorder from an elevated process in a folder the game's own token
+// can't write. Every file the recorder writes goes to <recorder folder>\out\<the exe folder's file_key>\ instead (the folder
+// sig= binds: a collection's exes share it, an updated exe keeps it), where the app reads them (ScsKiller.InboxOf): never a
+// folder the ini names. Under the recorder folder admission held, not one a ledger names after it. "" when it can't be made.
+static const char* const kNoOutFolder = "SCSKiller's recorder folder can't hold this game's recordings";
+static std::wstring g_rec_admitted;  // the recorder folder of the last verdict that admitted
+[[maybe_unused]] static std::wstring out_folder() {
+    const std::wstring rec = g_rec_admitted, here = admit_dir();
+    if (rec.empty() || here.empty()) return L"";
+    const std::wstring out = rec + L"\\out", dir = out + L"\\" + folder_file_key(here.substr(0, here.size() > 3 ? here.size() - 1 : here.size()));
+    for (const std::wstring& d : {out, dir}) {
+        CreateDirectoryW(d.c_str(), nullptr);
+        const DWORD a = GetFileAttributesW(d.c_str());
+        if (a == INVALID_FILE_ATTRIBUTES || (a & FILE_ATTRIBUTE_REPARSE_POINT) || !(a & FILE_ATTRIBUTE_DIRECTORY)) return L"";
+    }
+    return dir + L"\\";
+}
 // Valve Anti-Cheat (Games.Vac): VAC runs in Steam's client and bans for a foreign DLL in the game, and no file of the game
 // says so. Decided here at each launch, from Steam's own files as they are now (the app may have been closed while Steam
 // added VAC): an exe in a Steam library is the app whose appmanifest names its folder, and it records only when that app
@@ -351,6 +368,7 @@ static DWORD real_of(const std::wstring& path, std::wstring& r) {
         if (m < final.size()) { final.resize(m), err = ERROR_SUCCESS; break; }
         final.resize(m);
     }
+    if (err && under_wine() && !(final = wine_final_path(f, path)).empty()) err = ERROR_SUCCESS;
     CloseHandle(f);
     if (err) return err;
     r = trimmed(final.rfind(L"\\\\?\\UNC\\", 0) == 0 ? L"\\\\" + final.substr(8) : final.rfind(L"\\\\?\\", 0) == 0 ? final.substr(4) : final);
@@ -499,13 +517,13 @@ static const char* wine_bound(uint64_t pid, uint64_t at) {
 // pid= and pid_time= name this process: nullptr, else why not.
 static const char* bound_here() {
     uint64_t pid, at;
-    if (!ini_number(L"pid", pid) || !ini_number(L"pid_time", at)) return "bound to another process";
+    if (!ini_number(L"pid", pid) || !ini_number(L"pid_time", at)) return kBoundElsewhere;
     if (under_wine()) return wine_bound(pid, at);
     FILETIME created, x1, x2, x3;
     return pid == GetCurrentProcessId() && GetProcessTimes(GetCurrentProcess(), &created, &x1, &x2, &x3)
                    && at == ((uint64_t)created.dwHighDateTime << 32 | created.dwLowDateTime)
                ? nullptr
-               : "bound to another process";
+               : kBoundElsewhere;
 }
 // A folder's (trailing backslash) entry names but . and .. (at most 100,000): ERROR_SUCCESS, else why it can't be listed
 // whole.
@@ -776,7 +794,7 @@ static bool wegame_folder(const std::wstring& path) {
 // game folder that isn't there (absent) is skipped when none of the exe's loader, final and command-line paths is in it,
 // as text or through the final path of its nearest folder that is there, and so is Steam's folder without its steamapps
 // (an uninstalled Steam, Proton's stand-in in the prefix). Library paths are taken in their plain form, and one with a
-// folder name ending in a dot or a space refuses: Windows would read another folder for it.
+// folder name ending in a dot or a space refuses: Windows would read another folder for it. Of several apps, folder_owner's.
 static const char* vac_now_unguarded() {
     const std::wstring exe = module_path(nullptr);
     if (exe.empty()) return "VAC: the game's path can't be read";  // a cut path could hide its steamapps\common folder
@@ -853,6 +871,7 @@ static const char* vac_now_unguarded() {
     }
     for (auto& l : common) add(l);
     std::vector<uint32_t> apps;
+    std::vector<int> claims;  // folder_claim, an app's best
     std::vector<std::wstring> names;
     bool in_library = false;
     for (auto& lib : libs) {
@@ -884,10 +903,14 @@ static const char* vac_now_unguarded() {
             if (e && in) return "VAC: a Steam game's folder that doesn't exist holds the game's path";
             bool owns = !e && holds_exe(there);
             for (auto& f : lib.folders) owns = owns || same_name(f, w);
-            if (owns && std::find(apps.begin(), apps.end(), id) == apps.end()) apps.push_back(id);
+            if (!owns) continue;
+            const size_t k = std::find(apps.begin(), apps.end(), id) - apps.begin();
+            if (k == apps.size()) apps.push_back(id), claims.push_back(0);
+            claims[k] = std::max(claims[k], folder_claim(app));
         }
     }
-    if (apps.size() > 1) return "VAC: two Steam manifests name the game's folder";
+    if (apps.size() > 1)
+        if (const char* why = folder_owner(apps, claims, [&](uint32_t a) { return vac_of(a, steam); })) return why;
     if (!apps.empty()) return vac_of(apps[0], steam);
     // a WeGame install folder no manifest names is no Steam game's, as outside every library (Games.Vac.AppId)
     if (!common.empty()) return wegame_folder(exe) && wegame_folder(real) ? nullptr : "VAC: no Steam manifest names the game's folder";
@@ -1060,8 +1083,8 @@ static const char* armed_here(const RecFolder& rec) {
     std::string kept;
     return key.empty() || read_in(rec.h, L"arms\\" + key, kept, 65536) || arm_line(kept) != arm ? "not armed by SCSKiller" : nullptr;
 }
-// sig= is recorder_sig of this exe's and this folder's file_key, the stamp lines (signed_stamp: vendor=, arm= and the
-// countdown's lines too, so a hand edit can't turn the AGS hook or the panel on), root= and the root's file_key under the
+// sig= is recorder_sig of this exe's and this folder's file_key, the stamp lines (signed_stamp: vendor=, arm=, shaders=, out= and the
+// countdown's lines too, so a hand edit can't turn the AGS hook, the shader hooks or the panel on), root= and the root's file_key under the
 // recorder folder's recorder.key: an ini copied beside another exe or a hard link of it in another folder, or reached
 // through a link whose root= resolves to another folder, fails.
 static bool signed_by_app(const RecFolder& rec, const std::wstring& root) {
@@ -1070,7 +1093,8 @@ static bool signed_by_app(const RecFolder& rec, const std::wstring& root) {
     std::string key;
     if (exe.empty() || sig.size() != 40 || read_in(rec.h, L"recorder.key", key, 256) || key.size() < 32 || key.size() > 128) return false;
     const std::wstring stamp = signed_stamp(ini_string(L"exe_size"), ini_string(L"exe_time"), pid, ini_string(L"pid_time"), ini_string(L"risk"), ini_string(L"vendor"),
-                                            ini_string(L"overlay"), ini_string(L"ab_play_s"), ini_string(L"ab_tag"), traversal_lines(ini_string), ini_string(L"arm"));
+                                            ini_string(L"overlay"), ini_string(L"ab_play_s"), ini_string(L"ab_tag"), traversal_lines(ini_string), ini_string(L"arm"), ini_string(L"shaders"),
+                                            ini_string(L"out"));
     const auto no_slash = [](const std::wstring& d) { return d.substr(0, d.size() > 3 ? d.size() - 1 : d.size()); };
     const std::wstring exe_key = file_key(exe), want = recorder_sig(key, exe_key, folder_file_key(no_slash(admit_dir())), stamp, ini_string(L"root"),
                                                                       folder_file_key(no_slash(root)));
@@ -1128,18 +1152,27 @@ static bool ini_bytes(const std::wstring& path, std::string& out) {
 // The verdict for the exe beside the recorder (admit_dir()), whose scskiller.cfg read is the bytes ini_string reads
 // (t_ini, set by the caller), whole false when it couldn't be read whole: nullptr records, else why not. elsewhere: the
 // recorder wasn't loaded from that folder. risk and seen: for the log, as it opens.
+// ScsKiller.WineMadeUpRefusal: the app shows it as its own sentence.
+static const char* const kWineMadeUp = "the game's folders read otherwise inside the game under Wine";
 static const char* admission_verdict(bool whole, const std::string& read, bool elsewhere, bool& risk, std::string& seen) {
     const std::wstring ini = config_path(admit_dir());
+    // under Wine, a process whose folder identities are made up is refused before any other call on its folders (wine_made_up),
+    // the recorder folder's open too: a ledger could name one of them. A driveless exe's folder (a Unix path) is never opened
+    // here: refused below.
+    bool made_up = false;
+    const std::wstring at = admit_dir();
+    const bool unix_exe = driveless(), wine_unread = under_wine() && !at.empty() && !unix_exe && !wine_made_up(at.size() > 3 ? at.substr(0, at.size() - 1) : at, module_path(nullptr), made_up);
+    const bool hands_off = unix_exe || wine_unread || made_up;
     // opened once and held: a ledger, link or Wine drive changed meanwhile can't move what is read there
     RecFolder rec;
-    const char* rec_why = nullptr;
-    const std::wstring rec_at = rec_path(rec_why);
+    const char* rec_why = hands_off ? "SCSKiller's recorder folder can't be resolved" : nullptr;
+    const std::wstring rec_at = rec_why ? L"" : rec_path(rec_why);
     if (!rec_why) rec_why = open_rec(rec_at, rec);
     std::string again;
     std::vector<std::wstring> markers;
     // the folders as they are on disk: a launch through a link or junction lists the real exe-to-root chain
     // the root as on disk too: a root= spelled through a link names the same folder as its target
-    const std::wstring here = final_dir(admit_dir()), root = here.empty() ? L"" : final_dir(install_root(here));
+    const std::wstring here = hands_off ? L"" : final_dir(at), root = here.empty() ? L"" : final_dir(install_root(here));
     const bool bound = !ini_string(L"pid").empty();
     risk = !ini_string(L"risk").empty();
     const char* unbound = nullptr;
@@ -1149,6 +1182,7 @@ static const char* admission_verdict(bool whole, const std::string& read, bool e
                     : elsewhere ? "loaded from another folder than the exe"
                     : !exe_as_checked() ? "exe not as checked"
                     : !whole ? "scskiller.ini can't be read whole"
+                    : made_up ? kWineMadeUp
                     : here.empty() ? "the exe's folder can't be resolved"
                     : root.empty() ? "no install root"
                     : odd_name(here) || odd_name(root) ? "a folder name ends in a dot or a space"
@@ -1195,5 +1229,32 @@ static const char* admission_verdict(bool whole, const std::string& read, bool e
     if (!why && !rec_same(rec)) why = "SCSKiller's recorder folder changed while deciding";
     if (!why) why = revoked_here(rec);
     if (!why) why = armed_here(rec);
+    if (!why) g_rec_admitted = rec_at;
     return why;
+}
+
+// A successor of an Always record session's process (a self-update) the app hands the session over to (ScsKiller.Follow):
+// the verdict refuses only the cfg's risk session binding (bound_here), that process (pid=, pid_time=) started this one
+// (descends_from), and the recorder folder's handover note names it with an app that runs. Then the verdict again on the cfg
+// the app signs for this process, until the note goes or kHandoverCapMs pass, after which the refusal stands. Called in the
+// game's own first vkCreateInstance; under the loader lock (an instance made in a DllMain) it never waits. read: the cfg's
+// bytes, which t_ini points at.
+static const char* successor_wait(const char* why, std::string& read, bool& risk, std::string& seen) {
+    uint64_t pid, at;
+    if (!why || strcmp(why, kBoundElsewhere) || !risk || under_wine() || !ini_number(L"pid", pid) || !ini_number(L"pid_time", at)) return why;
+    const char* unused;
+    const std::wstring rec = rec_path(unused), exe = module_path(nullptr), note = rec.empty() || exe.empty() ? L"" : rec + L"\\handover\\" + file_key(exe);
+    auto due = [&] {
+        std::string s;
+        uint64_t app, app_at;
+        return !note.empty() && !read_whole(note, s, 256) && handover_names(s, pid, at, app, app_at) && process_runs(app, app_at);
+    };
+    if (under_loader_lock() || !descends_from(pid, at)) return why;
+
+    return handover_wait(why, due, [&](const char* last) {
+        std::string again;
+        if (!ini_bytes(config_path(admit_dir()), again) || again == read) return last;
+        read = again;
+        return admission_verdict(true, read, false, risk, seen);
+    }, kHandoverCapMs);
 }

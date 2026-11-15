@@ -83,9 +83,16 @@ public sealed record ShaderInfo(string Sha1, Stage Stage, string ShaderModel, in
 /// through ReadShaders), taken over the shaders' own: a shader the game draws with several root signatures carries none.
 /// <see cref="Layout"/>: the input layout the game creates that pipeline with (an Unreal pipeline cache's vertex declaration).
 /// <see cref="Copy"/>: "&lt;path&gt;|&lt;container&gt;" of a library that several containers hold at one path (the mount order's
-/// pick's path on every copy), on that pick and on its other copies (<see cref="ShaderIndex.OtherCopies"/>); null otherwise.</summary>
+/// pick's path on every copy), on that pick and on its other copies (<see cref="ShaderIndex.OtherCopies"/>); null otherwise.
+/// <see cref="States"/>: the pipeline state the game's files give a pooled map's pipelines without saying which shaders each
+/// uses (CRYENGINE's bin caches), most used first; null when the files give none.</summary>
 public sealed record ShaderMap(string Hash, string Library, string Platform, IReadOnlyList<string> Shaders, bool IsPipeline = false,
-    string? RootSignature = null, IReadOnlyList<Planning.PsoDb.LayoutElem>? Layout = null, string? Copy = null);
+    string? RootSignature = null, IReadOnlyList<Planning.PsoDb.LayoutElem>? Layout = null, string? Copy = null, IReadOnlyList<MapState>? States = null);
+
+/// <summary>One distinct state of a pooled map's pipelines: its input layout (null: a vertex format no file or table defines,
+/// empty: no vertex input), D3D12 topology type (0 unknown), render-target formats (slots 0-3, trailing unbound dropped) and
+/// depth-stencil format, all DXGI, and how many of the game's pipeline records have it. Guess: the layout is a best guess.</summary>
+public sealed record MapState(IReadOnlyList<Planning.PsoDb.LayoutElem>? Layout, uint Topology, IReadOnlyList<uint> Rt, uint Dsv, int Records, bool Guess = false);
 
 public sealed record ShaderIndex(
     string ContentHash,     // changes when the game's shader libraries change (game patch) -> plans built on it are stale
@@ -94,7 +101,8 @@ public sealed record ShaderIndex(
     IReadOnlyList<ShaderMap> Maps,
     IReadOnlyDictionary<string, byte[]>? RootSignatures = null,   // every ShaderInfo.RootSignature's blob (or its RTS0 part), by that SHA-1: the planner's coverage check reads them
     IReadOnlyList<string>? LegacyHashes = null,   // ContentHash as earlier versions may have taken it (UnrealReader: tied copies in another order); none: only ContentHash
-    IReadOnlyList<ShaderMap>? OtherCopies = null)   // the maps of a library's other copies at the same path (UnrealReader: a base pak and its patches), each with its ShaderMap.Copy: a recording may show the game reads one of them
+    IReadOnlyList<ShaderMap>? OtherCopies = null,   // the maps of a library's other copies at the same path (UnrealReader: a base pak and its patches), each with its ShaderMap.Copy: a recording may show the game reads one of them
+    IReadOnlyDictionary<string, int>? LeftOut = null)   // shaders the reader leaves out of every map, by why: the plan counts each as a stage set left out
 {
     /// <summary>The ContentHash of an index without shaders, SHA-1 of nothing: every such game has it, so it fingerprints no build.</summary>
     public const string EmptyContentHash = "da39a3ee5e6b4b0d3255bfef95601890afd80709";
@@ -340,7 +348,7 @@ public enum WarmOutcome { Completed, Stopped, Failed }
 /// <param name="Invalid">Vulkan pipelines naming a shader module that fails SPIR-V validation, never created (Steam's replayer
 /// skips them too). In Done, not in Failed or DriverSkipped.</param>
 /// <param name="Unsupported">pipelines needing a feature the GPU lacks, never created: Vulkan's by Fossilize's feature filter,
-/// D3D12's that the driver refused for blending on a render target format it can't blend.
+/// D3D12's that a Windows driver refused for blending on a render target format it can't blend (vkd3d-proton refuses none for it).
 /// In Done, not in Failed, DriverSkipped or Invalid.</param>
 /// <param name="Cached">D3D12 pipelines created without a compile stored, counted only while the game's Advanced Shader
 /// Delivery is registered for the compile: the delivery served them. In Done.</param>
@@ -368,8 +376,10 @@ public interface IWarmRun
     /// <summary>Graceful: in-flight compiles finish and the process exits normally so the driver writes its cache.
     /// Resume later with <see cref="WarmOptions.StartAt"/> = the stopped run's Done.</summary>
     void Stop();
-    /// <summary>The last process's done event: it now exits while the driver writes its cache. Null: not known for this run.</summary>
+    /// <summary>A process now waits or exits while the driver writes its cache: the last one's done event, any one's "writing" event. Null: not known for this run.</summary>
     Task? LastDone => null;
+    /// <summary>How far the driver's writes are known to have got, in pipelines. 0: not known.</summary>
+    long Written => 0;
 }
 
 public interface IWarmer
@@ -426,6 +436,7 @@ public sealed record GameState(
     double? PsoPerSecond = null,   // the game's last complete warm onto a cold cache (ScsKiller.ColdWarm), or a stopped one's until one completes; null = none measured
     FrameReport? LastFrames = null,    // the last launch's frame times (FrameLog); null = none measured
     bool ReShade = false,              // ReShade next to the game (Games.ReShade.Detect), with or without a ShaderMod
+    bool Luma = false,                 // ...loading a Luma add-on (ReShadeInstall.Luma): named Luma instead of ReShade
     string? ShaderMod = null,          // a ReShade add-on that changes the game's pipelines (Games.ReShade.Detect); null = none
     bool ShaderModBlocks = false,      // ...adds to every root signature, in a layer a copy can't reproduce (ReShadeInstall.Block): never compiled, recorded or shared
     bool ShaderModLayer = false,       // ...compiles through a copy of the layer (ScsKiller.LayerFor)

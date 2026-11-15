@@ -72,6 +72,9 @@ public sealed record ReShadeInstall(string Dll, bool LoadsAddons, string? Ini, s
 
     public bool Copyable => Block == LayerBlock.None;
 
+    /// <summary>A Luma build among the add-ons ReShade loads (Detect keeps it only for a DirectX 11 game, the one API it hooks).</summary>
+    public bool Luma => LoadsAddons && Addons.Any(a => a is { Mod: "Luma", Disabled: false });
+
     /// <summary>A shader mod whose layer a copy reproduces (<see cref="Copyable"/>): compiles run through it.</summary>
     public bool Layered => ShaderMod != null && Copyable;
 
@@ -678,9 +681,9 @@ public static partial class ReShade
     {
         if (!f.Name.StartsWith("Luma-", StringComparison.OrdinalIgnoreCase)) return null;
         var project = Path.GetFileNameWithoutExtension(f.Name)["Luma-".Length..].Replace('_', ' ');
-        var every = project.Equals(LumaEveryShader, StringComparison.OrdinalIgnoreCase);
-        return !every && !LumaPatching.Contains(project, StringComparer.OrdinalIgnoreCase) || Find(f, "luma", LumaMarkers) < 0 ? null
-            : every ? AddonKind.LayoutInjecting : AddonKind.ReplacesShaders;
+        if (Find(f, "luma", LumaMarkers) < 0) return null;
+        return project.Equals(LumaEveryShader, StringComparison.OrdinalIgnoreCase) ? AddonKind.LayoutInjecting
+            : LumaPatching.Contains(project, StringComparer.OrdinalIgnoreCase) ? AddonKind.ReplacesShaders : AddonKind.NotPipeline;
     }
 
     static AddonKind? Listed(string fileName) => RenoDxFolder(fileName) is { } folder && RenoDxTable.TryGetValue(folder, out var k) ? k : null;

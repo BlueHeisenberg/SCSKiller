@@ -98,7 +98,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     /// <summary>Bump when the plan for the same game and inputs changes (new pipeline kinds, root-signature rules, D3D11):
     /// the app then rebuilds plans (warmed games' when idle, ScsKiller.CheckPlans) and offers a re-warm only where the new
     /// plan has records the warm didn't replay.</summary>
-    public const int Version = 1001;   // the 1.4.x line numbers from 1000: main has used 59 and 60
+    public const int Version = 1002;   // the 1.4.x line numbers from 1000: main has used 59 and 60
 
     /// <summary>The vendor's D3D11 driver cache persists across processes, is keyed on the exe file name and caches per
     /// shader, whatever the state or the other stages (measured on NVIDIA and Intel, proxy/probe11.cpp): a staged warm
@@ -176,6 +176,8 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     /// <summary>Ends the reason of a game that may run on DirectX 11, where the recorder never loads.</summary>
     public const string Dx12Only = "helps only when played on DirectX 12 (the game may run on DirectX 11)";
     public const string RecordedOnly = "plans only the recorded pipelines";
+    /// <summary>Ends the reason of a game planned from its recording for want of the user's key (CarvedReader.Keyless).</summary>
+    public const string KeyAdds = "the game's key adds the pipelines from its files";
     /// <summary>A game without a recording planned from the PSO disk cache its own engine wrote (Unreal.PsoDiskCache).</summary>
     public const string OwnPipelineCache = "planned from the game's own pipeline cache";
 
@@ -183,6 +185,10 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
     public const string Dx9AmdReason = "runs on DirectX 9: compiling it waits for SCSKiller's DirectX 9 compile on AMD";
 
     static string Dx9For(string reason, VendorCaps caps) => reason == CarvedReader.Dx9Reason && caps.Profile == "amd-1" ? Dx9AmdReason : reason;
+
+    /// <summary>A packed DirectX 11 game a recorder can take on this GPU: its d3d11.dll records every shader.</summary>
+    public static bool Recorded11(EngineInfo? engine, VendorCaps caps) =>
+        CarvedReader.Recorded11(engine) && OperatingSystem.IsWindows() && caps.Profile is "amd-1" or "nvidia-1";
 
     public PlanCheck Check(Game game, EngineInfo engine, Recording? recording, VendorCaps caps)
     {
@@ -203,10 +209,9 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
             return check.Readiness == Readiness.NeedsRecording && Vulkan.VulkanLayer.Key(game) == null ? new(Readiness.Unsupported, App.ScsKiller.SkipVulkanSteamOnly) : check;
         }
         // shaders in no readable file: a DirectX 12 recording's own bytes are the whole plan, nothing is generated
-        if (CarvedReader.RecordedOnly(engine))
-            return !caps.CacheKeyedByExeName ? new(Readiness.Unsupported, "not supported on this GPU yet")
-                : recording != null && File.Exists(recording.DbPath) && new FileInfo(recording.DbPath).Length > 0 ? new(Readiness.Ready, RecordedOnly)
-                : new(Readiness.NeedsRecording, Record);
+        if (CarvedReader.RecordedOnly(engine) && !CarvedReader.Recorded11(engine))
+            return !caps.CacheKeyedByExeName ? new(Readiness.Unsupported, "not supported on this GPU yet") : OwnRecording(recording, engine);
+        if (Recorded11(engine, caps)) return OwnRecording(recording, engine);
         if (engine.Unsupported != null) return new(Readiness.Unsupported, Dx9For(engine.Unsupported, caps));
         if (engine.Encrypted) return new(Readiness.Unsupported, "encrypted game files");
         // GraphicsApi: "D3D12[ (why)]", "D3D11[ (why)]", "Vulkan…", or "D3D11 or D3D12" when the game offers both (UnrealRhi)
@@ -226,6 +231,10 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
             : App.Format.Then($"{all11} (the game may run on either)", $"for DirectX 12, {dx12.Reason}"));
     }
 
+    static PlanCheck OwnRecording(Recording? recording, EngineInfo engine) => recording != null && File.Exists(recording.DbPath) && new FileInfo(recording.DbPath).Length > 0
+        ? new(Readiness.Ready, App.Format.Then(RecordedOnly, CarvedReader.Keyless(engine) ? KeyAdds : null))
+        : new(Readiness.NeedsRecording, App.Format.Then(Record, CarvedReader.Keyless(engine) ? KeyAdds : null));
+
     static PlanCheck CheckD3D12(EngineInfo engine, Recording? recording, VendorCaps caps, string? maybe)
     {
         if (!caps.CacheKeyedByExeName) return new(Readiness.Unsupported, "not supported on this GPU yet");
@@ -236,7 +245,12 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
             return caps.StateIndependentCache || HasDraws(recording) ? new(Readiness.Ready, App.Format.Then("planned from a recording", maybe))
                 : FromSteam(recording) is { } drawless ? new(Readiness.Ready, App.Format.Then(drawless, maybe))
                 : new(Readiness.NeedsRecording, App.Format.Then("the recording has no draws: play into the game world", maybe)); // no vertex layouts to learn
-        if (caps.StateIndependentCache && RootSig.RuleFor(engine) != null) return new(Readiness.Ready, App.Format.Then(Untested, maybe));
+        // CryEngine's shipped resource layouts: root signatures rebuilt as the engine creates them, no game confirms them yet. AMD
+        // keys a stage on its static sampler states too: only with a learned table for the build
+        var cryLayouts = engine.Family == CryEngine.CryEngineReader.Family && engine.Version.Contains(CryEngine.CryEngineReader.Layouts);
+        if (caps.StateIndependentCache && (RootSig.RuleFor(engine) != null || cryLayouts)
+            || caps.Profile.StartsWith("amd") && cryLayouts && engine.Version.Contains(CryEngine.CryAmdSamplers.Suffix))
+            return new(Readiness.Ready, App.Format.Then(Untested, maybe));
         return SteamOnly(recording, maybe) ?? new(Readiness.NeedsRecording, App.Format.Then(Record, maybe));
     }
 
@@ -699,7 +713,7 @@ public sealed class Planner(string? packDir = null, string? sharedPackDir = null
         var generated = topUp.Generated;
         topUp.Before = [.. main, .. generated];
         (var dropped, topUp.LeftOut) = App.CompiledItems.LeftOut(topUp.Before, topUp.Compiled, topUp.Held, topUp.Again, topUp.Redone);
-        bool Stay(Rec r) => r.Tag is not ('G' or 'C' or 'S' or 'P' or 'R' or 'A') || !dropped.Contains(r.Key);
+        bool Stay(Rec r) => !dropped.Contains(r.Key);
         var named = Rehydrate.References(topUp.Before.Where(Stay));
         named.IntersectWith(written);
         using (var f = new BufferedStream(File.Create(mainDb), 1 << 20))

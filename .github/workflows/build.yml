@@ -91,6 +91,23 @@ jobs:
       - name: Build
         run: dotnet build SCSKiller.slnx -c Release
 
+      # No game key in what ships: the keys removed from CUE4Parse by hash, any other key-shaped constant unless reviewed
+      # (tools/keyscan, build/keyscan/). Its self-test first: made-up keys in each form must fail it. Publish scans dist\
+      # and the zip, publish-linux.sh and publish-mac.sh their packages; a private PR publishes native\ only, so its
+      # build output is scanned here.
+      - name: Key scan
+        shell: powershell
+        env:
+          NATIVE_ONLY: ${{ github.event.repository.private && github.event_name == 'pull_request' && 'yes' || '' }}
+        run: |
+          dotnet run --project tools/keyscan -c Release -- --self-test
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if ($env:NATIVE_ONLY) {
+              # not src/SCSKiller.App/bin: the WinUI app isn't published
+              dotnet run --project tools/keyscan -c Release -- --known build/keyscan/known-keys.txt --allow build/keyscan/allow.txt src/SCSKiller.Ui/bin src/SCSKiller.Cli/bin
+              if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+
       # No Oodle DLL in anything that leaves the build (THIRD-PARTY-NOTICES.md); the app downloads it on first use.
       # Nothing is signed here: the release step signs these exact bytes after checking them against the sums.
       # A tag build is stamped with the tag's version (publish.ps1 drops the v; a bad tag fails it), the nightly and a

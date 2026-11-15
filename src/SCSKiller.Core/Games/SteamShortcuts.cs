@@ -4,7 +4,7 @@ using System.Text;
 namespace SCSKiller.Core.Games;
 
 /// <summary>A game added to Steam with "Add a Non-Steam Game", as a user's shortcuts.vdf keeps it. <paramref name="AppId"/>:
-/// the id Steam gave it, high bit set, which names its compatdata folder and keys its compatibility tool.
+/// the id Steam gave it, high bit set, which names its compatdata folder (unless its launch options set one) and keys its compatibility tool.
 /// <paramref name="Exe"/> and <paramref name="StartDir"/> without the quotes Steam keeps them in.</summary>
 public sealed record SteamShortcut(uint AppId, string Name, string Exe, string StartDir, string LaunchOptions);
 

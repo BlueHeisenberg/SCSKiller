@@ -73,6 +73,7 @@ public sealed class TankReader(string? documents = null) : IEngineReader
         options.MaxDegreeOfParallelism = Math.Min(options.MaxDegreeOfParallelism, Readers);
         Parallel.ForEach(files, options, file =>
         {
+            using var gate = ReadGate.Enter(ct);
             var mine = perFile.GetOrAdd(file.Name, _ => new());
             try
             {

@@ -177,6 +177,12 @@ public sealed class SettingsVm : Bindable
         get => ShowsRecordAntiCheatGames && S.RecordAntiCheatGames;
         set { if (ShowsRecordAntiCheatGames && value is { } v && v != S.RecordAntiCheatGames) Save(S with { RecordAntiCheatGames = v }); }   // off: the core clears each game's switch off this thread
     }
+    /// <summary>The setting is off and a session's files are still in a game's folder (held, or its game still runs): the
+    /// games by name under "Some recorders are still in place"; null otherwise.</summary>
+    public string? RiskFilesLeft => !ShowsRecordAntiCheatGames || S.RecordAntiCheatGames ? null
+        : Host.Core.Games.Where(g => g.OfflineRunning && !g.OfflineEligible).Select(g => g.Game.Name).ToList() is { Count: > 0 } names
+            ? "Some recorders are still in place\n" + string.Join("\n", names) : null;
+    public bool HasRiskFilesLeft => RiskFilesLeft != null;
     /// <summary>"Recording in 23 games · 5 skipped: anti-cheat"; not-DX12 and unsupported games aren't counted.</summary>
     public string RecordingCount
     {

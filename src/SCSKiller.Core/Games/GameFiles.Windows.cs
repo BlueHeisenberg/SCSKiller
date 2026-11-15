@@ -9,7 +9,7 @@ public static partial class GameFiles
 
     internal static partial string? SystemFolder(Game game) => Environment.SystemDirectory;
 
-    internal static partial string? PrefixOf(Game game) => null;
+    internal static partial string? PrefixOf(Game game, string? steamRoot) => null;
 
     internal static partial LauncherPrefix? AddedPrefix(Game game, out string? why)
     {
@@ -55,7 +55,13 @@ public static partial class GameFiles
         return h;
     }
 
-    static string? FinalPath(Microsoft.Win32.SafeHandles.SafeFileHandle h)
+    internal static partial uint? Links(Microsoft.Win32.SafeHandles.SafeFileHandle h)
+    {
+        var standard = new byte[24];
+        return GetFileInformationByHandleEx(h, 1 /* FileStandardInfo */, standard, standard.Length) ? BitConverter.ToUInt32(standard, 16) : null;   // NumberOfLinks
+    }
+
+    internal static string? FinalPath(Microsoft.Win32.SafeHandles.SafeFileHandle h)
     {
         var name = new char[32768];
         var n = GetFinalPathNameByHandleW(h, name, name.Length, 0);
@@ -68,6 +74,16 @@ public static partial class GameFiles
     internal static partial bool TruckersMpHere() => TruckersMp(TruckersMpFolders(), InstalledPrograms());
 
     internal static partial FileStream? OpenRegular(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+    internal static partial string? LongPath(string path)
+    {
+        var b = new char[32768];
+        var n = GetLongPathNameW(path, b, b.Length);
+        return n is > 0 and < 32768 ? new string(b, 0, (int)n) : null;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    static extern uint GetLongPathNameW(string shortPath, char[] longPath, int size);
 
     // the launcher's mod files (Roaming\TruckersMP\installation; the older launcher's under ProgramData), its own data, and
     // the multiplayer profiles in Documents

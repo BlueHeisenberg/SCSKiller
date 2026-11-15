@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.X86;
 using System.Security.Cryptography;
 using CUE4Parse.Compression;
@@ -57,7 +58,8 @@ public static partial class Codecs
 
     /// <summary>False when <paramref name="name"/> can't be had or loaded, logged once.
     /// ponytail: tried once per process, retry on a later scan if transient network failures turn out to matter.</summary>
-    internal static bool TryLoad(string name, Func<string, bool> download, Action<string> init, IProgress<string>? log, string? dir = null, string? seedDir = null)
+    internal static bool TryLoad(string name, Func<string, bool> download, Action<string> init, IProgress<string>? log, string? dir = null, string? seedDir = null,
+        Func<string, bool>? loadRuntime = null)
     {
         var path = Path.Combine(dir ?? Dir, name);
         lock (Gate)
@@ -65,6 +67,9 @@ public static partial class Codecs
             if (Failed.Contains(path)) return false;
             try
             {
+                // the codecs import vcruntime140.dll and the data folder has none: load the install folder's first, the loader
+                // then reuses it by name. A dev build has none there (the machine's redistributable serves): no error.
+                if (OperatingSystem.IsWindows()) (loadRuntime ?? (p => NativeLibrary.TryLoad(p, out _)))(Path.Combine(seedDir ?? AppContext.BaseDirectory, "vcruntime140.dll"));
                 var file = Ensure(name, download, dir, seedDir);
                 using (Hold(file, name)) init(file);   // CUE4Parse loads by path: the held file can't be swapped or deleted (and re-fetched unpinned) under it
                 return true;

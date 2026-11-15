@@ -62,13 +62,22 @@ public static class ShaderContainer
         readonly ConcurrentDictionary<string, ResourceCounts> wide = new();
         int votes;
 
-        public void See(byte[] code, ShaderInfo info)
+        /// <returns>the wide counts and the vote it cast, for <see cref="Restore"/>; null when the shader has no 10-byte 'p'</returns>
+        public (ResourceCounts Counts, int Vote)? See(byte[] code, ShaderInfo info)
         {
-            if (!OptionalData(code).TryGetValue('p', out var pc) || pc.Length != 10) return;
+            if (!OptionalData(code).TryGetValue('p', out var pc) || pc.Length != 10) return null;
             var w = new ResourceCounts(pc[4], pc[2] | pc[3] << 8, pc[5], pc[1]);
-            wide[info.Sha1] = w;
             var cbs = info.Bindings.Where(b => b.Class == "cbv" && b.Space == 0).Select(b => b.Lower + Math.Max(1, b.Count)).DefaultIfEmpty(0).Max();
-            if ((cbs == w.Cb) != (cbs == info.Counts.Cb)) Interlocked.Add(ref votes, cbs == w.Cb ? 1 : -1);
+            var vote = (cbs == w.Cb) == (cbs == info.Counts.Cb) ? 0 : cbs == w.Cb ? 1 : -1;
+            Restore(info.Sha1, w, vote);
+            return (w, vote);
+        }
+
+        /// <summary>What <see cref="See"/> of a shader found, from a read that saw it before (an inline read's checkpoint).</summary>
+        public void Restore(string sha1, ResourceCounts w, int vote)
+        {
+            wide[sha1] = w;
+            Interlocked.Add(ref votes, vote);
         }
 
         /// <returns>whether the wide layout won</returns>

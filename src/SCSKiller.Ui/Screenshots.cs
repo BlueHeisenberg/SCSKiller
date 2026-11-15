@@ -109,6 +109,24 @@ static partial class Screenshots
             await Dialog(StartDialogs.Welcome(WelcomeContent.Default).Dialog, "welcome");   // the bundled text
         }
 
+        // The compile size limit's picker on a game's page with an 84.3 GB cache, dark only. SCSKILLER_SHOTS=limit takes only it.
+        if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") is null or "limit")
+        {
+            main.RequestedThemeVariant = ThemeVariant.Dark;
+            var was = fake.Games[0];
+            fake.Change(ff7, s => s with { CacheOnDisk = 90_516_889_190 });
+            main.Navigate(typeof(DetailPage), ff7);
+            await Task.Delay(800);
+            var game = Detail().Vm.Limit;
+            (game.ModeIndex, game.Gb) = (1, 96);
+            await Task.Delay(400);
+            Detail().ScrollToLimit();
+            await Shot("detail-limit");
+            await game.Saving;
+            fake.Change(ff7, _ => was);
+            if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") == "limit") return;
+        }
+
         // The Library's summary as cards and with Compact UI, at both widths, and the option in Settings, dark only.
         // SCSKILLER_SHOTS=compact takes only these.
         if (Environment.GetEnvironmentVariable("SCSKILLER_SHOTS") == "compact")

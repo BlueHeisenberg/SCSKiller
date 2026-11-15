@@ -44,8 +44,8 @@ public static partial class GameFiles
         List<FileInfo> Exes(EnumerationOptions depth) => [.. EnumerateFiles(installDir, "*.exe", depth).Where(f => !NotTheGameExe(installDir, f, excluded)).Select(f => new FileInfo(f))];
         var exes = Exes(Deep) is { Count: > 0 } near ? near : Exes(FarDeep);
         if (launcherExe != null && Path.GetFullPath(Find(installDir, launcherExe)) is var named && File.Exists(named) && !IsHelper(named))   // a store may name Epic's bootstrapper
-            return XboxSource.LauncherOrUtility(Path.GetFileName(named)) ? LaunchedExe(installDir, new FileInfo(named), exes)
-                : RedLauncherTarget(installDir, named) ?? BuildOf32BitLauncher(installDir, named) ?? named;
+            return NotUpdater(installDir, XboxSource.LauncherOrUtility(Path.GetFileName(named)) ? LaunchedExe(installDir, new FileInfo(named), exes)
+                : RedLauncherTarget(installDir, named) ?? CarvedReader.HookshotLaunched(installDir, named) ?? BuildOf32BitLauncher(installDir, named) ?? named, exes);
         // the exe an EasyAntiCheat bootstrap starts is the game: ELDEN RING NIGHTREIGN's Artbook/OST DLC is a Unity app in its own folder
         if (exes.Where(f => f.Name.Equals("start_protected_game.exe", StringComparison.OrdinalIgnoreCase)).Select(f => EacExecutable(installDir, f.FullName)).OfType<string>()
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList() is [{ } eac])
@@ -58,19 +58,53 @@ public static partial class GameFiles
         // LaunchedExe: an engine in a DLL leaves the game's exe importing no graphics API, and a larger tool may import one
         if (steamLaunch != null && Nested(guess) && !UnrealFolders(installDir).Any()
             && Path.GetFullPath(Find(installDir, steamLaunch.Trim('\\', '/'))) is var target && exes.FirstOrDefault(f => f.FullName.Equals(target, StringComparison.OrdinalIgnoreCase)) is { } launched
-            && !XboxSource.LauncherOrUtility(launched.Name))
-            return launched.FullName;
-        return NotPlus(LaunchedExe(installDir, guess, exes), exes);
+            && !XboxSource.LauncherOrUtility(launched.Name) && !LauncherStub(installDir, launched, guess))
+            return NotUpdater(installDir, launched.FullName, exes);
+        return NotUpdater(installDir, NotPlus(LaunchedExe(installDir, guess, exes), exes), exes);
     }
 
-    /// <summary>&lt;Name&gt;.exe for &lt;Name&gt;_Plus.exe beside it, whatever their sizes: the Ubisoft+ build, which only
-    /// subscribers run (the watcher follows it when it runs).</summary>
+    static readonly string[] UpdaterNames = ["updater", "patcher", "autopatch"];
+
+    static bool UpdaterNamed(string? name) => name != null && UpdaterNames.Any(n => name.Contains(n, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>For an updater (named so, or so by its FileDescription or ProductName) that names no graphics runtime, the
+    /// largest exe of <paramref name="exes"/> beside it that imports or names one (<see cref="CarvedReader.NamesGraphics"/>):
+    /// Far Cry 3's Steam launch target bin\FC3UpdaterSteam.exe ("Autopatch system") starts bin\farcry3_d3d11.exe, whose engine
+    /// DLL imports D3D. Else, and in an install with anti-cheat, <paramref name="exe"/>.</summary>
+    static string NotUpdater(string installDir, string exe, IReadOnlyList<FileInfo> exes)
+    {
+        if (DetectAntiCheat(new Game("", "", Store.Other, installDir, exe)) != AntiCheat.None) return exe;
+        try
+        {
+            if (!UpdaterNamed(Path.GetFileName(exe)) && PeVersionInfo.GetVersionInfo(exe) is var v && !UpdaterNamed(v.FileDescription) && !UpdaterNamed(v.ProductName)) return exe;
+        }
+        catch (IOException) { return exe; }
+        if (ImportsGraphics(exe, old: true) != false || CarvedReader.NamesGraphics(exe)) return exe;
+        var dir = Path.GetDirectoryName(exe);
+        return exes.Where(f => string.Equals(f.DirectoryName, dir, StringComparison.OrdinalIgnoreCase) && !XboxSource.LauncherOrUtility(f.Name)
+                && ImportsGraphics(f.FullName, old: true) is { } imports && (imports || CarvedReader.NamesGraphics(f.FullName)))
+            .MaxBy(f => f.Length)?.FullName ?? exe;
+    }
+
+    /// <summary><paramref name="stub"/> is under a tenth of <paramref name="game"/> beside it and names no graphics runtime, which
+    /// <paramref name="game"/> does (<see cref="CarvedReader.NamesGraphics"/>): Max Payne 3's x64 PlayMaxPayne3.exe starts its x86
+    /// MaxPayne3.exe, which loads D3D at runtime. No binary is read in an install with anti-cheat.</summary>
+    static bool LauncherStub(string installDir, FileInfo stub, FileInfo game) =>
+        string.Equals(stub.DirectoryName, game.DirectoryName, StringComparison.OrdinalIgnoreCase) && stub.Length * 10 < game.Length
+        && DetectAntiCheat(new Game("", "", Store.Other, installDir, stub.FullName)) == AntiCheat.None
+        && ImportsGraphics(stub.FullName) == false && ImportsGraphics(game.FullName) != null
+        && !CarvedReader.NamesGraphics(stub.FullName) && CarvedReader.NamesGraphics(game.FullName);
+
+    /// <summary>&lt;Name&gt;.exe for &lt;Name&gt;_Plus.exe beside it, and &lt;Dir&gt;\&lt;Name&gt;.exe for &lt;Dir&gt;_Plus\&lt;Name&gt;.exe
+    /// (Far Cry 5's bin_plus), whatever their sizes: the Ubisoft+ build, which only subscribers run (the watcher follows it when it runs).</summary>
     static string NotPlus(string exe, IReadOnlyList<FileInfo> exes)
     {
         var name = Path.GetFileNameWithoutExtension(exe);
-        if (!name.EndsWith("_Plus", StringComparison.OrdinalIgnoreCase)) return exe;
-        var plain = Path.Combine(Path.GetDirectoryName(exe)!, name[..^"_Plus".Length] + ".exe");
-        return exes.FirstOrDefault(f => f.FullName.Equals(plain, StringComparison.OrdinalIgnoreCase))?.FullName ?? exe;
+        var dir = Path.GetDirectoryName(exe)!;
+        var plain = name.EndsWith("_Plus", StringComparison.OrdinalIgnoreCase) ? Path.Combine(dir, name[..^"_Plus".Length] + ".exe")
+            : Path.GetFileName(dir) is { Length: > 5 } d && d.EndsWith("_Plus", StringComparison.OrdinalIgnoreCase) ? Path.Combine(Path.GetDirectoryName(dir)!, d[..^"_Plus".Length], Path.GetFileName(exe))
+            : null;
+        return plain == null ? exe : exes.FirstOrDefault(f => f.FullName.Equals(plain, StringComparison.OrdinalIgnoreCase))?.FullName ?? exe;
     }
 
     /// <summary>An exe <see cref="FindExe"/> never picks by its path or name: a helper, a redistributable's, patcher's or installer's copy, or one an Xbox app game's config marks as not the game.</summary>
@@ -96,12 +130,12 @@ public static partial class GameFiles
 
     /// <summary>The exe SCSKiller uses for a game whose store or user names <paramref name="exe"/>: a Shipping exe it names, else
     /// the one an EasyAntiCheat bootstrap it names starts (<see cref="EacExecutable"/>), then of that the Unreal game's Shipping
-    /// exe (<see cref="ShippingExe"/>) over a bootstrap stub or launcher; else that exe.</summary>
+    /// exe (<see cref="ShippingExe"/>) over a bootstrap stub or launcher, a Hookshot launcher's port (<see cref="CarvedReader.HookshotLaunched"/>); else that exe.</summary>
     public static string GameExe(string installDir, string exe, Action<string>? ambiguous = null)
     {
         if (IsShipping(exe)) return exe;
         exe = EacExecutable(installDir, exe) ?? exe;
-        return IsShipping(exe) ? exe : ShippingExe(installDir, exe, ambiguous) ?? exe;
+        return IsShipping(exe) ? exe : ShippingExe(installDir, exe, ambiguous) ?? CarvedReader.HookshotLaunched(installDir, exe) ?? exe;
     }
 
     /// <summary>The exe the EasyAntiCheat bootstrap <paramref name="exe"/> starts: the "executable" of the
@@ -362,14 +396,15 @@ public static partial class GameFiles
 
     // Streamline's interposer stands in for dxgi and d3d12 in games that ship it: witcher3.exe imports neither
     static readonly string[] GraphicsDlls = ["d3d12.dll", "d3d11.dll", "dxgi.dll", "sl.interposer.dll", "vulkan-1.dll"];
+    static readonly string[] OldGraphicsDlls = ["d3d10.dll", "d3d10_1.dll", "d3d9.dll"];
 
     /// <summary>Null when the file isn't a readable PE. A modular Unreal build's exe (Returnal) imports its RHI module
     /// (&lt;Project&gt;-RHI-Win64-Shipping.dll), which loads the graphics API.</summary>
-    internal static bool? ImportsGraphics(string exe)
+    internal static bool? ImportsGraphics(string exe, bool old = false)
     {
         try
         {
-            return CarvedReader.PeImports(exe, out _).Any(d => GraphicsDlls.Contains(d, StringComparer.OrdinalIgnoreCase)
+            return CarvedReader.PeImports(exe, out _).Any(d => GraphicsDlls.Contains(d, StringComparer.OrdinalIgnoreCase) || old && OldGraphicsDlls.Contains(d, StringComparer.OrdinalIgnoreCase)
                 || d.Contains("-RHI-", StringComparison.OrdinalIgnoreCase) || d.EndsWith("-RHI.dll", StringComparison.OrdinalIgnoreCase));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException) { return null; }
@@ -455,8 +490,11 @@ public static partial class GameFiles
     internal static partial string? SystemFolder(Game game);
 
     /// <summary>The Wine prefix the game runs in: a Steam game's or non-Steam game's Proton prefix, a launcher's (Heroic,
-    /// Lutris, Faugus); null on Windows or when none is known.</summary>
-    internal static partial string? PrefixOf(Game game);
+    /// Lutris, Faugus); null on Windows or when none is known. <paramref name="steamRoot"/>: Steam's folder (default: Steam's own).</summary>
+    internal static partial string? PrefixOf(Game game, string? steamRoot = null);
+
+    /// <summary>Proton made the prefix <paramref name="pfx"/>: its system.reg is there, as a compile under Proton needs.</summary>
+    internal static bool ProtonPrefixMade(string pfx) => File.Exists(Path.Combine(pfx, "system.reg"));
 
     /// <summary>How a game added by hand runs (<see cref="LauncherPrefix.Added"/>); null on Windows.</summary>
     internal static partial LauncherPrefix? AddedPrefix(Game game, out string? why);
@@ -726,7 +764,9 @@ public static partial class GameFiles
         }
     }
 
-    static readonly string[] NotTheGame = ["redist", "directx", "crash", "unins", "setup", "vconsole",   // vconsole2.exe: Source 2's developer console
+    static readonly string[] NotTheGame = ["redist", "directx", "unins", "setup", "vconsole",   // vconsole2.exe: Source 2's developer console
+        "CrashHandler", "crashpad", "CrashSender", "CrashUploader",   // not a bare "crash": Crash Bandicoot's exes start with it
+        "dotNetF",   // dotNetFramework\ and dotNetFx* installers: Far Cry 3's Support\dotNetFramework\dotNetFX30\XPSEPSC-amd64-en-US.exe
         "WeGameLauncher", "rail_files"];   // the launcher and files WeGame installs in each of its games
 
     // the Epic Online Services installer is 64-bit and can be the largest exe in an Unreal game's Binaries\Win64
@@ -737,15 +777,19 @@ public static partial class GameFiles
         "crs-handler", "crs-uploader", "crs-video"];   // Sony's PC crash reporter, beside the exe of its ports and still running after a crash
 
     /// <summary>An installer, redistributable or engine helper shipped beside a game's exe, by its file name.</summary>
-    internal static bool IsHelper(string exe) => Helpers.Any(h => Path.GetFileName(exe).Contains(h, StringComparison.OrdinalIgnoreCase)) || TrialBeside(exe);
+    internal static bool IsHelper(string exe) => Helpers.Any(h => Path.GetFileName(exe).Contains(h, StringComparison.OrdinalIgnoreCase)) || TrialBeside(exe) || NetInstaller(exe);
+
+    /// <summary>A .NET Framework offline installer, NDP&lt;version&gt;-KB&lt;n&gt;-....exe (NDP461-KB3102436-x86-x64-AllOS-ENU.exe).</summary>
+    static bool NetInstaller(string exe) => Path.GetFileName(exe) is var n && n.Length > 3 && n.StartsWith("NDP", StringComparison.OrdinalIgnoreCase) && char.IsAsciiDigit(n[3]);
 
     /// <summary>&lt;Name&gt;_Trial.exe with &lt;Name&gt;.exe beside it: the EA app leaves EA SPORTS WRC's trial build next to the game.</summary>
     static bool TrialBeside(string exe) => Path.GetFileNameWithoutExtension(exe) is var n && n.EndsWith("_Trial", StringComparison.OrdinalIgnoreCase)
         && File.Exists(Find(Path.GetDirectoryName(exe) ?? "", n[..^6] + ".exe"));
 
-    /// <summary>Folders a patcher or installer keeps a copy of the game's files in, which never run: Stellar Blade's
-    /// PatchData\SB\Binaries\Win64 holds a second SB-Win64-Shipping.exe; the EA app's __Installer its own tools.</summary>
-    static readonly string[] Staging = ["PatchData", "__Installer", "Backup", "Backups", "Staging"];
+    /// <summary>Folders whose exes never run as the game: a patcher's or installer's copy of its files (Stellar Blade's
+    /// PatchData\SB\Binaries\Win64 holds a second SB-Win64-Shipping.exe), the EA app's __Installer tools, and Ubisoft's
+    /// Support redistributable installers (Far Cry 5's NDP461 .NET installer, larger than bin\FarCry5.exe).</summary>
+    static readonly string[] Staging = ["PatchData", "__Installer", "Backup", "Backups", "Staging", "Support"];
 
     // a drive root's own folders, Hidden|System: the recycle bin keeps deleted exes
     static readonly string[] WindowsFolders = ["$RECYCLE.BIN", "System Volume Information"];
@@ -794,7 +838,7 @@ public static partial class GameFiles
         ("Warframe.x64.exe", AntiCheat.Other),   // Digital Extremes' own client-side detection: no driver or folder of its own
         ("ONCE_HUMAN.exe", AntiCheat.Other),   // NetEase's anti-cheat installs outside the game folder (also AntiCheatIds)
         ("Marvel-Win64-Shipping.exe", AntiCheat.Other), ("Marvel-Win64-Test.exe", AntiCheat.Other), ("Marvel.exe", AntiCheat.Other), ("MarvelRivals_Launcher.exe", AntiCheat.Other),
-        ("FragPunk.exe", AntiCheat.Other), ("nshm.exe", AntiCheat.Other), ("NarakaBladepoint.exe", AntiCheat.Other),   // NetEase's too: Marvel Rivals, FragPunk, Sword of Justice, NARAKA: BLADEPOINT (also AntiCheatIds)
+        ("FragPunk.exe", AntiCheat.Other), ("nshm.exe", AntiCheat.Other), ("NarakaBladepoint.exe", AntiCheat.Other), ("wwm.exe", AntiCheat.Other),   // NetEase's too: Marvel Rivals, FragPunk, Sword of Justice, NARAKA: BLADEPOINT, Where Winds Meet (also AntiCheatIds)
         ("Discovery.exe", AntiCheat.Other), ("Discovery-e.exe", AntiCheat.Other), ("Discovery-d.exe", AntiCheat.Other),   // THE FINALS: Elytra installs outside its folder (also AntiCheatIds)
         ("DungeonCrawler.exe", AntiCheat.Other),   // Dark and Darker: Ironmace's IronShield leaves no file of its own (also AntiCheatIds)
         ("ModernWarfare.exe", AntiCheat.Other), ("cod.exe", AntiCheat.Other),   // Call of Duty: Ricochet's driver isn't always in the folder (also AntiCheatIds)
@@ -833,8 +877,9 @@ public static partial class GameFiles
     /// <summary>Looks for anti-cheat folders/files by name anywhere under the install, under the exe's folder when it is
     /// outside it, and in the names of the folders from the exe's up to the install root. A tree that can't be read whole
     /// (a folder it may not list, the root included; more than <see cref="MaxEntries"/> entries; longer than <see cref="Budget"/>) is <see cref="AntiCheat.Other"/>:
-    /// not known to be clean. A junction or symlink is a name, not followed: a folder it points into inside the tree is
-    /// read where it is, and one outside is another folder's; one on the way from the install root to the exe is Other. <paramref name="quick"/>: the install root's and the exe
+    /// not known to be clean. A junction or symlink is followed where it leads, each folder read once by its real path (a
+    /// loop ends there, a link into a huge tree runs into the cap); one on the way from the install root to the exe is Other.
+    /// <paramref name="linked"/>: called for each link followed. <paramref name="quick"/>: the install root's and the exe
     /// folder's own entries only, for a recheck right after a full one. A game added by hand (<see cref="Store.Manual"/>), or to
     /// Steam as a non-Steam game (<see cref="SteamShortcuts"/>), also has
     /// the entries of each folder above its install read, by every name links give them (<see cref="LinkedAncestors"/>), one level each, up to a drive root or a store's folder of games
@@ -856,10 +901,10 @@ public static partial class GameFiles
     /// An "anti-cheat" game verdict (<see cref="GameVerdicts.HasAntiCheat(Game)"/>) is Other by the game's or its WeGame id or
     /// its exe's name, and its names count in the walk as a marker's do, also for a WeGame game with a no-anti-cheat entry.</summary>
     public static AntiCheat DetectAntiCheat(Game game, bool quick = false, TimeSpan? budget = null, AntiCheat ignore = AntiCheat.None, Action<string>? at = null,
-        string? steamRoot = null, Action? late = null, Action<Exception>? unreadable = null)
+        string? steamRoot = null, Action? late = null, Action<Exception>? unreadable = null, Action? linked = null)
     {
         if (GameVerdicts.Current.HasAntiCheat(game)) return AntiCheat.Other;
-        if (WeGameId(game) is not { } wegame) return Walked(game, quick, budget, ignore, at, steamRoot, late, unreadable);
+        if (WeGameId(game) is not { } wegame) return Walked(game, quick, budget, ignore, at, steamRoot, late, unreadable, linked);
         if (GameVerdicts.Current.HasAntiCheat(wegame)) return AntiCheat.Other;
         string? marker = null;
         var wasLate = false;
@@ -878,14 +923,14 @@ public static partial class GameFiles
             marker = p;
             at?.Invoke(p);
         }
-        var found = Walked(game, quick, budget, ignore, Own, steamRoot, () => { wasLate = true; late?.Invoke(); }, unreadable);
+        var found = Walked(game, quick, budget, ignore, Own, steamRoot, () => { wasLate = true; late?.Invoke(); }, unreadable, linked);
         if (marker != null && found != AntiCheat.None || found == AntiCheat.None && GameVerdicts.Current.NoAntiCheat(wegame)) return found;
         if (!wasLate) late?.Invoke();
         return AntiCheat.Other;
     }
 
     /// <summary><see cref="DetectAntiCheat"/> before a WeGame game's hold.</summary>
-    static AntiCheat Walked(Game game, bool quick, TimeSpan? budget, AntiCheat ignore, Action<string>? at, string? steamRoot, Action? late, Action<Exception>? unreadable)
+    static AntiCheat Walked(Game game, bool quick, TimeSpan? budget, AntiCheat ignore, Action<string>? at, string? steamRoot, Action? late, Action<Exception>? unreadable, Action? linked)
     {
         var listed = GameVerdicts.Current;
         AntiCheat Marker(string name) => GameFiles.Marker(name) is var kind && kind != AntiCheat.None && kind != ignore ? kind : listed.HasAntiCheat(name) ? AntiCheat.Other : AntiCheat.None;
@@ -902,6 +947,9 @@ public static partial class GameFiles
         bool Inside(string d) => d.Equals(install, named) || d.StartsWith(install + Path.DirectorySeparatorChar, named);
         // an exe outside the install as spelled may be under it through a link or a short name: nothing is known off its path
         bool OnExePath(string d) => !Inside(exeDir) || exeDir.Equals(d, named) || exeDir.StartsWith(d + Path.DirectorySeparatorChar, named);
+        // a folder on the exe's path reached first through a link is read once, by its real path: it is on the path by that too
+        var exeReal = FinalPath(exeDir);
+        bool RealOnExePath(string real) => exeReal != null && (exeReal.Equals(real, named) || exeReal.StartsWith(real + Path.DirectorySeparatorChar, named));
         var visited = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var seen = 0;
         var clock = Stopwatch.StartNew();
@@ -914,10 +962,11 @@ public static partial class GameFiles
 
         AntiCheat Walk(string root, bool deep = true)
         {
-            var dirs = new Stack<string>([root]);
-            while (dirs.TryPop(out var dir))
+            var dirs = new Stack<(string Dir, string Real)>([(root, FinalPath(root) ?? root)]);
+            while (dirs.TryPop(out var top))
             {
-                if (!visited.Add(OperatingSystem.IsWindows() ? dir : FinalPath(dir) ?? dir)) continue;
+                var (dir, real) = top;
+                if (!visited.Add(real)) continue;
                 if (Late()) return AntiCheat.Other;   // also between folders: empty ones queued, a slow open
                 IEnumerator<FileSystemInfo> entries;   // the cap bounds memory too
                 try
@@ -932,12 +981,18 @@ public static partial class GameFiles
                 {
                     var e = entries.Current;
                     if (++seen > MaxEntries || Late()) return AntiCheat.Other;
-                    if (Marker(e.Name) is var kind and not AntiCheat.None && (dir == root || OnExePath(dir) || !ExeMarkers.Contains(e.Name, StringComparer.OrdinalIgnoreCase)))
+                    if (Marker(e.Name) is var kind and not AntiCheat.None && (dir == root || OnExePath(dir) || RealOnExePath(real) || !ExeMarkers.Contains(e.Name, StringComparer.OrdinalIgnoreCase)))
                     {
                         at?.Invoke(e.FullName);
                         return kind;
                     }
-                    if (deep && !quick && e is DirectoryInfo d && ((d.Attributes & FileAttributes.ReparsePoint) == 0 || d.LinkTarget == null)) dirs.Push(d.FullName);
+                    if (!deep || quick || e is not DirectoryInfo d) continue;
+                    if ((d.Attributes & FileAttributes.ReparsePoint) == 0 || d.LinkTarget == null) dirs.Push((d.FullName, Path.Combine(real, d.Name)));
+                    else
+                    {
+                        linked?.Invoke();
+                        dirs.Push((d.FullName, FinalPath(d.FullName) ?? throw new IOException($"where {d.FullName} leads couldn't be read")));
+                    }
                 }
             }
             return AntiCheat.None;
@@ -978,6 +1033,7 @@ public static partial class GameFiles
                     if (Walk(d, deep: false) is var kind and not AntiCheat.None) return kind;
                 }
             if (Vac.LaunchExes(game, steamRoot).Any(e => Marker(e) != AntiCheat.None)) return AntiCheat.Other;
+            if (Late()) return AntiCheat.Other;   // a last listing that stalled past the budget and came back empty
         }
         // a link target that isn't a path (LinkedAncestors) counts as unreadable too: never clean
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException or NotSupportedException)
@@ -1041,14 +1097,14 @@ public static partial class GameFiles
     internal static readonly string[] TruckersMpExes = ["eurotrucks2.exe", "amtrucks.exe"];
 
     /// <summary>Games whose anti-cheat leaves no file in the install. NetEase's: Once Human, Marvel Rivals, FragPunk, Sword of
-    /// Justice, NARAKA: BLADEPOINT. Elytra's, whose service installs under Program Files: THE FINALS. Playground's own (online
+    /// Justice, NARAKA: BLADEPOINT, Where Winds Meet. Elytra's, whose service installs under Program Files: THE FINALS. Playground's own (online
     /// checks, hardware bans): Forza Horizon 5 and 6 on Steam and the Xbox app. Ironmace's IronShield: Dark and Darker. Grinding Gear Games' own: Path of Exile and Path of Exile 2.
     /// Activision's Ricochet: Call of Duty: Modern Warfare (2019) on Steam, whose install has no randgrid.sys, and Call of Duty
     /// HQ and Warzone, should their driver leave the game folder.</summary>
     internal static readonly string[] AntiCheatIds = ["steam:2139460", "steam:2767030", "steam:2943650", "steam:2782500", "steam:1203220",
         "steam:2483190", "steam:2073850", "steam:2016590", "xbox:Microsoft.ForteBaseGame_8wekyb3d8bbwe",
         "steam:1551360", "xbox:Microsoft.624F8B84B80_8wekyb3d8bbwe", "steam:2000950", "steam:1938090", "steam:1962663",
-        "steam:238960", "steam:2694490"];
+        "steam:238960", "steam:2694490", "steam:3564740"];
 
     /// <summary>The game's folder or exe, as given or as it is on disk, lies in the install folder, as named or as it is on disk,
     /// of a Steam app on <see cref="AntiCheatIds"/>: in a library Steam lists or the one the game's path is in. Such an app's
@@ -1102,6 +1158,13 @@ public static partial class GameFiles
     /// <summary>A read-write handle on <paramref name="path"/> that no other handle shares; throws for a symlink or junction
     /// (opened as itself, never followed) and for a file with more than one name.</summary>
     internal static partial Microsoft.Win32.SafeHandles.SafeFileHandle OpenUnlinked(string path);
+
+    /// <summary>The path with each short (8.3) name expanded to its long one, listing each parent folder only; null when it
+    /// can't be had. The path itself elsewhere.</summary>
+    internal static partial string? LongPath(string path);
+
+    /// <summary>The number of names the open file <paramref name="h"/> has, null when it can't be had.</summary>
+    internal static partial uint? Links(Microsoft.Win32.SafeHandles.SafeFileHandle h);
 
     internal static AntiCheat Marker(string name)
     {
