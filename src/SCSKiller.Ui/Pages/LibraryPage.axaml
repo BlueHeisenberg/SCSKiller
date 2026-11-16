@@ -429,7 +429,9 @@
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
                                 Spacing="12" MaxWidth="{DynamicResource TextFit.412}" Margin="24">
                         <c:ProgressRing Width="32" Height="32" IsActive="{Binding ScanEmpty}" />
-                        <TextBlock Text="{Binding ScanEmptyTitle}" Classes="Section" HorizontalAlignment="Center" />
+                        <TextBlock Text="{Binding ScanEmptyTitle}" Classes="Section" HorizontalAlignment="Stretch"
+                                   TextAlignment="Center" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                   ToolTip.Tip="{Binding ScanTitle}" />
                         <TextBlock Text="{Binding ScanEmptyNote}" Classes="Secondary" TextWrapping="Wrap" TextAlignment="Center" />
                     </StackPanel>
                 </ScrollViewer>

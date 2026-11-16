@@ -239,7 +239,9 @@
                 <StackPanel Grid.Row="2" Visibility="{x:Bind Vm.ScanEmpty, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center"
                             Spacing="12" MaxWidth="460" Padding="24">
                     <ProgressRing Width="32" Height="32" IsActive="{x:Bind Vm.ScanEmpty, Mode=OneWay}" />
-                    <TextBlock Text="{x:Bind Vm.ScanEmptyTitle, Mode=OneWay}" Style="{StaticResource Section}" HorizontalAlignment="Center" />
+                    <TextBlock Text="{x:Bind Vm.ScanEmptyTitle, Mode=OneWay}" Style="{StaticResource Section}" HorizontalAlignment="Stretch"
+                               TextAlignment="Center" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                               ToolTipService.ToolTip="{x:Bind Vm.ScanTitle, Mode=OneWay}" />
                     <TextBlock Text="{x:Bind Vm.ScanEmptyNote, Mode=OneWay}" Style="{StaticResource Secondary}" TextWrapping="Wrap" TextAlignment="Center" />
                 </StackPanel>
 
