@@ -4526,7 +4526,8 @@ public sealed partial class ScsKiller : IScsKiller
 
     /// <summary>The driver-cache keys Clear cache covers: the learned ones, and on AMD, unless a learned D3D12 key shows an
     /// app profile, the name hash of each case the exe was seen under that has files (the key of a name without a
-    /// profile). Gap: which of the game's driver cache may be left, null when none.</summary>
+    /// profile), and on NVIDIA the exe name's keys that have files (<see cref="NvidiaAppCache.HintKeys"/>). Gap: which of
+    /// the game's driver cache may be left, null when none.</summary>
     (HashSet<string> Keys, string? Gap) DriverKeys(Game g, GameRecord rec)
     {
         var keys = OwnKeys(g, rec);
@@ -4536,10 +4537,11 @@ public sealed partial class ScsKiller : IScsKiller
         if (Games.FirstOrDefault(s => s.Game.Id == g.Id)?.Engine is { } e && VulkanPlan.IsVulkan(e))
             return (keys, AppCache == null || keys.Any(AppCacheFiles.IsVulkanKey) || SteamGlFiles(g, e).Count > 0 ? null
                 : FindsDriverCache);
+        var names = new[] { exe, rec.LaunchedExeName, rec.WarmedExeName }.OfType<string>().Distinct().ToList();
+        if (AppCache is NvidiaAppCache nv) keys.UnionWith(names.SelectMany(NvidiaAppCache.HintKeys).Where(k => nv.FilesOf([k]).Count > 0));
         if (AppCache is not AmdAppCache amd)
             return (keys, AppCache == null || keys.Count > 0 ? null
                 : FindsDriverCache);
-        var names = new[] { exe, rec.LaunchedExeName, rec.WarmedExeName }.OfType<string>().Distinct().ToList();
         var dxc = keys.Where(k => k.StartsWith(AmdAppCache.D3D12Prefix, StringComparison.Ordinal)).ToList();
         // the AGS app name's key is only a hint: cleared once a process is seen holding it, like any key
         var ags = AgsFor(g, rec) is { } a && AgsKey(g, null) is { } ak && !keys.Contains(ak) && (dxc.Count == 0 || amd.FilesOf([ak]).Count > 0)

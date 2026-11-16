@@ -297,7 +297,7 @@ public sealed partial class ScsKiller
         };
     }
 
-    /// <summary>Driver cache key -> the games that claim it: learned keys, on AMD the exe name's hash, and on NVIDIA every game
+    /// <summary>Driver cache key -> the games that claim it: learned keys, on AMD and NVIDIA the exe name's hash, and on NVIDIA every game
     /// whose exe has the same file name (the key is that name's). A record left out of the list for its folder's listed game
     /// keeps only keys that game doesn't claim, and <paramref name="leftBehind"/> gets that game. <paramref name="notes"/> gets uninstalled games' notes.</summary>
     Dictionary<string, List<(CacheGroupKind Kind, string Name, string Id)>> Claims(GpuVendor own, Dictionary<string, string>? notes = null, HashSet<string>? leftBehind = null)
@@ -312,6 +312,8 @@ public sealed partial class ScsKiller
             keys.AddRange(rec.DisputedKeys.Where(k => !rec.CacheKeys.Contains(k)).Select(k => (k, kind)));   // SortTwinKeys' drops: still a claim
             if (own == GpuVendor.Amd)   // the name hash is the key of an exe without an app profile; a learned key's place stands
                 keys.AddRange(exeNames.OfType<string>().Select(AmdAppCache.HintKey).Where(h => !rec.CacheKeys.Contains(h)).Select(h => (h, kind)));
+            if (own == GpuVendor.Nvidia)
+                keys.AddRange(exeNames.OfType<string>().SelectMany(NvidiaAppCache.HintKeys).Where(h => !rec.CacheKeys.Contains(h)).Select(h => (h, kind)));
             foreach (var (k, claimed) in keys)
                 (claims.TryGetValue(k, out var l) ? l : claims[k] = []).Add((claimed, name, id));
             // every name it ran or compiled under: a key learned under an earlier exe name is that name's

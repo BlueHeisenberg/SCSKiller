@@ -4,6 +4,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**Improved on Windows**
+
+- With NVIDIA, the Cache page lists a game's DirectX driver cache under the game, and Clear cache deletes it, before
+  SCSKiller has compiled the game or seen it running. This includes games with anti-cheat.
+
 ## [1.4.8] - 2026-11-15
 
 **New on Windows**
