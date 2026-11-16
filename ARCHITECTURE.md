@@ -378,7 +378,7 @@ folder per exe path, not a driver cache.
 
 The Cache page (`ScsKiller.CacheInventory`) puts each driver cache file in one item, reading names, sizes and write
 times only. A learned key goes to its game, an installed one before an uninstalled game's record, and a record the list
-left out because a listed game has its folder claims none of that game's keys. On AMD the exe name's
+left out because a listed game has its folder claims none of that game's keys. On AMD and NVIDIA the exe name's
 hash counts as a learned key. An NVIDIA file last written before the active driver's DriverStore folder was created, or
 before the earliest compile under that driver, is an older driver's. A key only an earlier compile opened, and the D3DSCache folders of staged compile exes, are earlier
 compiles'. The other vendor's folders are listed whole. Keys nobody learned can't be named. Links below a cache folder
@@ -404,7 +404,7 @@ compiles.
 - **Granularity:** per stage, on shader and whole root signature only (`StateIndependentCache`, `PerStageCache`).
   Fixed-function state, formats and input layout aren't in the key, so synthesized state hits. View instancing is: a
   shader reading SV_ViewID gets the recording's, else its engine rule's (`vi.v1`), on every stage of its pipelines.
-- **Files:** `NVIDIA\DXCache\*.nvph`, named by an underivable hash of the exe name and a type that changes with the
+- **Files:** `NVIDIA\DXCache\*.nvph`, named by a hash of the exe name (`NvidiaAppCache.HintKeys`) and a type that changes with the
   driver, matched on the hash alone, learned from the files the driver holds open (`NvidiaAppCache`). A driver update
   deletes older D3D12 files. Files are pre-sized, not sparse. SCSKiller reads only their names, sizes and which
   processes hold them, never their contents. A game whose 4 GiB file was 94-97% full lost hits on its own entries.
