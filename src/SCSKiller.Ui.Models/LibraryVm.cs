@@ -91,6 +91,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.Ready => "Ready to compile",
         _ when ScsKiller.CheckingAntiCheat(s) => ScsKiller.AntiCheatHeld(s) ? ScsKiller.HeldAntiCheatTitle : ScsKiller.CheckingAntiCheatTitle,
         _ when ScsKiller.NeedsOfflineSession(s) => "Needs an offline session",
+        _ when ScsKiller.NeedsOutsideSession(s) => ScsKiller.NeedsOutsideTitle,
         _ when ScsKiller.NeedsSteamStart(s) => "Start it once from Steam",
         GameStatus.NeedsRecording when ScsKiller.NeverRecorded(s) => ScsKiller.NothingRecordedTitle,
         GameStatus.NeedsRecording => ScsKiller.RecordedEnough(s) ? "Needs a recording" : "Needs a 5-min recording",
@@ -111,6 +112,7 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
         GameStatus.Warmed => $"driver {s.WarmedDriverVersion}" + (ScsKiller.IsPartial(s.Plan) ? " · a recording compiles the rest"
             : ScsKiller.RtAfterRecording(s) ? " · " + ScsKiller.RtAfterRecordingNote : "") + Format.KeyNote(s),
         _ when ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsSteamStart(s) => s.StatusReason,
+        _ when ScsKiller.NeedsOutsideSession(s) => ScsKiller.NeedsOutsideNote,
         _ when ScsKiller.CheckingAntiCheat(s) => ScsKiller.AntiCheatHeld(s) ? ScsKiller.HeldAntiCheatNote : ScsKiller.CheckingAntiCheatNote,
         GameStatus.NeedsRecording when s.AnyAntiCheat && !s.RiskEligible => "Contains anti-cheat",
         GameStatus.NeedsRecording when s.RecordingPaused => ScsKiller.PausedNote(Host.Core.Settings),
@@ -145,11 +147,11 @@ public sealed class GameRow(GameState s, bool queued = false, bool compiling = f
     public bool IsAdd => s.Status is GameStatus.Ready or GameStatus.Stale && !s.CompileUnreached;
     public string AddText => queued ? "In queue" : "Add to queue";
     public bool CanAdd => !queued;
-    public bool IsRecord => s.Status == GameStatus.NeedsRecording && !s.RecorderInstalled && s.NoStutter == null && !ScsKiller.NeedsOfflineSession(s) && !ScsKiller.NeedsSteamStart(s) && !s.RiskEligible && !Shared && !ScsKiller.CheckingAntiCheat(s) && !AmdVkAntiCheat;
+    public bool IsRecord => s.Status == GameStatus.NeedsRecording && !s.RecorderInstalled && s.NoStutter == null && !ScsKiller.NeedsOfflineSession(s) && !ScsKiller.NeedsSteamStart(s) && !s.RiskEligible && !s.OutsideEligible && !Shared && !ScsKiller.CheckingAntiCheat(s) && !AmdVkAntiCheat;
     bool AmdVkAntiCheat => s.StatusReason == ScsKiller.AmdVkAntiCheatReason;   // its page, where an own-risk session is offered
     bool Shared => Collections.RecordedBy(s.Game.Id) != null;   // recorded by its collection's first game's recorder, switched on that game's page
     public bool CanRecord => !s.AnyAntiCheat;
-    public bool IsDetails => s.Status == GameStatus.Warmed || ScsKiller.IsUnchecked(s) || s.CompileUnreached || ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsSteamStart(s) || ScsKiller.CheckingAntiCheat(s) || (s.Status == GameStatus.NeedsRecording && (s.RecorderInstalled || s.NoStutter != null || s.RiskEligible || Shared || AmdVkAntiCheat));
+    public bool IsDetails => s.Status == GameStatus.Warmed || ScsKiller.IsUnchecked(s) || s.CompileUnreached || ScsKiller.NeedsOfflineSession(s) || ScsKiller.NeedsOutsideSession(s) || ScsKiller.NeedsSteamStart(s) || ScsKiller.CheckingAntiCheat(s) || (s.Status == GameStatus.NeedsRecording && (s.RecorderInstalled || s.NoStutter != null || s.RiskEligible || Shared || AmdVkAntiCheat));
     public bool IsWhy => s.Status == GameStatus.Unsupported && !ScsKiller.IsUnchecked(s) && !ScsKiller.CheckingAntiCheat(s);
     public string Reason => s.StatusReason;
 
