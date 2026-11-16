@@ -4,10 +4,9 @@ namespace SCSKiller.Core.Vendors;
 
 public static partial class GpuBackends
 {
-    // NVIDIA's own driver (also when Vulkan doesn't name it), and Mesa's RADV, ANV and NVK, without Intel's switch.
+    // NVIDIA's own driver (also when Vulkan doesn't name it), and Mesa's RADV, ANV, NVK and Turnip, without Intel's switch.
     // The other drivers' caches aren't measured.
-    public static partial bool HasBackend(DxgiAdapter adapter, bool intel) => NvidiaOwn(adapter) || (adapter.Gpu.Vendor, adapter.Driver) is
-        (GpuVendor.Amd, MesaLinux.Radv) or (GpuVendor.Intel, MesaLinux.Anv) or (GpuVendor.Nvidia, MesaLinux.Nvk);
+    public static partial bool HasBackend(DxgiAdapter adapter, bool intel) => NvidiaOwn(adapter) || MesaLinux.Ours(adapter.Gpu.Vendor, adapter.Driver);
 
     /// <summary>ANV compiles through Mesa's path as RADV does, with no switch.</summary>
     public const bool IntelSwitch = false;
@@ -20,14 +19,14 @@ public static partial class GpuBackends
         !HasBackend(adapter, intel) ? new UnsupportedVendor(adapter.Gpu, MesaLinux.Refusal(adapter))
         : NvidiaOwn(adapter) ? new NvidiaLinuxBackend(adapter.Gpu) : new MesaLinuxBackend(adapter.Gpu, driver: adapter.Driver);
 
-    public static partial string? DriverNote(IGpuVendorBackend backend) => backend is MesaLinuxBackend { Driver: MesaLinux.Anv or MesaLinux.Nvk } m
-        ? $"{m.Gpu.Name} compiles through the Mesa path on Mesa's {(m.Driver == MesaLinux.Anv ? "ANV" : "NVK")} driver, whose cache behaviour SCSKiller hasn't measured" : null;
+    public static partial string? DriverNote(IGpuVendorBackend backend) => backend is MesaLinuxBackend { Driver: MesaLinux.Anv or MesaLinux.Nvk or MesaLinux.Turnip } m
+        ? $"{m.Gpu.Name} compiles through the Mesa path on Mesa's {m.Driver switch { MesaLinux.Anv => "ANV", MesaLinux.Nvk => "NVK", _ => "Turnip" }} driver, whose cache behaviour SCSKiller hasn't measured" : null;
 
     /// <summary>The backend of an adapter whose Vulkan driver isn't known.</summary>
     public static IGpuVendorBackend For(GpuInfo gpu, bool intel = false) => For(new DxgiAdapter(gpu, 0, 0), intel);
 
     /// <summary>The Vulkan devices but the CPU ones, in Vulkan's order: what Proton's DXGI lists. DriverVersion is the driver's
-    /// own (<see cref="Wine.FormatDriverVersion"/>), on RADV, ANV and NVK with the driver build's tag (<see cref="MesaVersion"/>),
+    /// own (<see cref="Wine.FormatDriverVersion"/>), on RADV, ANV, NVK and Turnip with the driver build's tag (<see cref="MesaVersion"/>),
     /// AdapterLuid the PCI address (<see cref="PciAddress"/>, 0 when the driver doesn't say it), DedicatedVideoMemory a discrete
     /// GPU's largest device-local heap, Driver the VkDriverId (0 when the driver doesn't say it). Vulkan has no subsystem id: 0.</summary>
     public static unsafe IReadOnlyList<DxgiAdapter> Adapters()
@@ -79,7 +78,7 @@ public static partial class GpuBackends
                     var id = has.Contains("VK_KHR_driver_properties") ? DriverIdOf(properties2, device) : 0;
                     var vendor = Enum.IsDefined(typeof(GpuVendor), (int)vendorId) ? (GpuVendor)vendorId : GpuVendor.Unknown;
                     var version = Wine.FormatDriverVersion(id == MesaLinux.Nvk ? 0 : vendorId, driver);   // NVK numbers itself as Mesa does
-                    if (id is MesaLinux.Radv or MesaLinux.Anv or MesaLinux.Nvk) version = MesaVersion(version, new ReadOnlySpan<byte>(props + 276, 16));   // pipelineCacheUUID
+                    if (id is MesaLinux.Radv or MesaLinux.Anv or MesaLinux.Nvk or MesaLinux.Turnip) version = MesaVersion(version, new ReadOnlySpan<byte>(props + 276, 16));   // pipelineCacheUUID
                     all.Add(new(new GpuInfo(vendor, name, version, luid, vram), deviceId, 0, id));
                 }
                 return all;
