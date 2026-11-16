@@ -59,8 +59,9 @@ public sealed partial record AppVersion(int Major, int Minor, int Patch, string 
     }
 }
 
-/// <summary>Velopack's feed entries have no OS field, so each OS has feeds and packages of its own (<see cref="UpdateChannels.Signed"/>).</summary>
-public enum FeedOs { Windows, Linux }
+/// <summary>Velopack's feed entries have no OS field, so each OS has feeds and packages of its own (<see cref="UpdateChannels.Signed"/>).
+/// Linux is x86-64; LinuxArm64 the arm64 build, whose feeds and packages are apart from it (an x86-64 package doesn't run there).</summary>
+public enum FeedOs { Windows, Linux, LinuxArm64 }
 
 /// <summary>Which update feed to follow (§4.1, §4.5 item 5).</summary>
 public static partial class UpdateChannels
@@ -75,7 +76,12 @@ public static partial class UpdateChannels
     /// <summary>The name <paramref name="channel"/>'s feed is signed for on <paramref name="os"/>: the feed file
     /// (releases.&lt;signed&gt;.json, still under the edge's v1/updates/&lt;channel&gt;/), the signature's channel, the
     /// replay record and Velopack's channel.</summary>
-    public static string Signed(string channel, FeedOs os) => os == FeedOs.Linux ? channel + "-linux" : channel;
+    public static string Signed(string channel, FeedOs os) => os switch
+    {
+        FeedOs.Linux => channel + "-linux",
+        FeedOs.LinuxArm64 => channel + "-linux-arm64",
+        _ => channel,
+    };
 
     /// <summary>The channel whose feed is signed as <paramref name="signed"/> on <paramref name="os"/>; null: none.</summary>
     public static string? Of(string signed, FeedOs os) => All.FirstOrDefault(c => Signed(c, os) == signed);
@@ -332,9 +338,14 @@ public static class UpdateFeeds
         : new(PackageHost, $"v1/updates/{v.Channel}/{Uri.EscapeDataString(fileName)}");
 
     /// <summary>Whether a feed's <paramref name="fileName"/> is a package for <paramref name="os"/>. vpk names one
-    /// &lt;id&gt;-&lt;version&gt;-&lt;vpk channel&gt;-full.nupkg (or -delta): every Linux channel ends in -linux, no Windows one does.</summary>
-    public static bool PackageFor(FeedOs os, string fileName) =>
-        (fileName.EndsWith("-linux-full.nupkg", StringComparison.Ordinal) || fileName.EndsWith("-linux-delta.nupkg", StringComparison.Ordinal)) == (os == FeedOs.Linux);
+    /// &lt;id&gt;-&lt;version&gt;-&lt;vpk channel&gt;-full.nupkg (or -delta): every x86-64 Linux channel ends in -linux, every arm64
+    /// one in -linux-arm64, no Windows one in either.</summary>
+    public static bool PackageFor(FeedOs os, string fileName) => OsOf(fileName) == os;
+
+    static FeedOs OsOf(string fileName) =>
+        fileName.EndsWith("-linux-arm64-full.nupkg", StringComparison.Ordinal) || fileName.EndsWith("-linux-arm64-delta.nupkg", StringComparison.Ordinal) ? FeedOs.LinuxArm64
+        : fileName.EndsWith("-linux-full.nupkg", StringComparison.Ordinal) || fileName.EndsWith("-linux-delta.nupkg", StringComparison.Ordinal) ? FeedOs.Linux
+        : FeedOs.Windows;
 
     /// <summary>The first package a signed <paramref name="feed"/> lists that isn't for <paramref name="os"/>; null: none.</summary>
     public static string? Foreign(FeedOs os, byte[] feed)
@@ -358,7 +369,7 @@ public static class UpdateFeeds
     public static string? Unsignable(string signed, byte[] feed)
     {
         if (Enum.GetValues<FeedOs>().Where(o => UpdateChannels.Of(signed, o) != null).ToList() is not [var os])
-            return $"'{signed}' is no channel's feed: {string.Join(", ", UpdateChannels.All)}, with -linux for the Linux one";
+            return $"'{signed}' is no channel's feed: {string.Join(", ", UpdateChannels.All)}, with -linux for the Linux one, -linux-arm64 for the arm64 Linux one";
         try { return Foreign(os, feed) is { } f ? $"it lists {f}, not a {os} package: the {signed} feed lists only {os} packages" : null; }
         catch (FeedRejectedException e) { return e.Message; }
     }

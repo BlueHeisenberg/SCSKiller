@@ -7,6 +7,9 @@
 #   SCSKiller.App-<version>-<channel>-linux-full.nupkg   the update package
 #   releases.<channel>-linux.json                        its feed: vpk channel <channel>-linux, the Linux client's
 #   SHA256SUMS-linux.txt                                 the three files' SHA-256, sha256sum format
+# The arm64 package (SCSK_ARCH=aarch64, default this machine's CPU) has its own names, so both go into one release:
+# SCSKiller-aarch64.AppImage, -<channel>-linux-arm64-full.nupkg, releases.<channel>-linux-arm64.json (the arm64 client's
+# feed: UpdateChannels.Signed) and SHA256SUMS-linux-arm64.txt.
 # No delta package: the app installs full packages only.
 # The version is the package's own (scskiller --version); --version (a leading v is dropped) must be the same. Its
 # pre-release label is the channel: none = stable, beta, alpha, internal.
@@ -37,6 +40,15 @@ while (($#)); do
     esac
 done
 [[ $(uname -s) == Linux ]] || die "runs on Linux: the AppImage takes the package's file modes, which only a Linux folder keeps"
+# SCSK_ARCH: the CPU the package is for, default this machine's (x86_64 or aarch64); the package's own executables run
+# here, so it takes that CPU or qemu-user's binfmt for it
+case ${SCSK_ARCH:-$(uname -m)} in
+    x86_64 | amd64) arch=x86_64 rid=linux-x64 elf_machine=62 ;;
+    aarch64 | arm64) arch=aarch64 rid=linux-arm64 elf_machine=183 ;;
+    *) die "no Linux package for ${SCSK_ARCH:-$(uname -m)} (SCSK_ARCH: x86_64 or aarch64)" ;;
+esac
+if [[ $arch == x86_64 ]]; then os=linux sums=SHA256SUMS-linux.txt; else os=linux-arm64 sums=SHA256SUMS-linux-arm64.txt; fi
+appimage=SCSKiller-$arch.AppImage
 [[ -n $out ]] || { usage >&2; die "--out is required"; }
 [[ ! -e $out || -d $out && -z $(ls -A "$out") ]] || die "$out isn't a new or empty folder"
 [[ -d $dir ]] || die "no package folder $dir"
@@ -57,13 +69,13 @@ label=${BASH_REMATCH[2]}
 [[ -z $version || ${version#v} == "$own" ]] || die "the package is version $own, not ${version#v}"
 channel=${label:-stable}
 [[ $channel =~ ^(stable|beta|alpha|internal)$ ]] || die "pre-release label '$label' isn't a channel (beta, alpha, internal)"
-pkg=SCSKiller.App-$own-$channel-linux-full.nupkg
-feed=releases.$channel-linux.json
-echo "version $own, channel $channel-linux"
+pkg=SCSKiller.App-$own-$channel-$os-full.nupkg
+feed=releases.$channel-$os.json
+echo "version $own, channel $channel-$os, $rid"
 
 # 2. vpk, into a folder of its own: it lists every package it finds in its output folder in the feed
 "$vpk" --skip-updates pack --packId SCSKiller.App --packVersion "$own" --packDir "$dir" --mainExe SCSKiller.Ui \
-    --packTitle SCSKiller --packAuthors "The SCSKiller authors" --channel "$channel-linux" --runtime linux-x64 \
+    --packTitle SCSKiller --packAuthors "The SCSKiller authors" --channel "$channel-$os" --runtime "$rid" \
     --outputDir "$tmp/vpk" --icon "$icon"
 
 # 3. what vpk wrote: one AppImage, the package, and a feed that lists exactly that package as built
@@ -73,9 +85,9 @@ images=("$tmp"/vpk/*.AppImage)
 [[ -f $tmp/vpk/$pkg ]] || die "vpk wrote no $pkg (did its naming change?)"
 [[ -f $tmp/vpk/$feed ]] || die "vpk wrote no $feed"
 check() {
-python3 -I - "$tmp/vpk/$feed" "$tmp/vpk/$pkg" "$own" "${images[0]}" <<'PY'
+python3 -I - "$tmp/vpk/$feed" "$tmp/vpk/$pkg" "$own" "${images[0]}" "$elf_machine" "$arch" <<'PY'
 import hashlib, json, os, struct, sys
-feed, pkg, version, image = sys.argv[1:]
+feed, pkg, version, image, machine, arch = sys.argv[1:]
 name, data = os.path.basename(pkg), open(pkg, 'rb').read()
 try: assets = json.load(open(feed, encoding='utf-8-sig'))['Assets']
 except (ValueError, KeyError, TypeError): sys.exit(f'pack-linux: {os.path.basename(feed)} is no feed')
@@ -87,9 +99,9 @@ got = {k: str(a.get(k)).lower() if k == 'SHA256' else a.get(k) for k in want}
 if got != want or a.get('Type') not in ('Full', 1):
     sys.exit(f'pack-linux: {os.path.basename(feed)} lists {name} otherwise than vpk built it')
 h = open(image, 'rb').read(20)
-# a type 2 AppImage is an x86-64 ELF executable with 'AI', 2 in e_ident's padding (offset 8)
-if len(h) < 20 or h[:4] != b'\x7fELF' or h[4] != 2 or h[5] != 1 or h[8:11] != b'AI\x02' or struct.unpack_from('<H', h, 18)[0] != 62:
-    sys.exit(f'pack-linux: {os.path.basename(image)} is no x86-64 AppImage')
+# a type 2 AppImage is an ELF executable for its CPU with 'AI', 2 in e_ident's padding (offset 8)
+if len(h) < 20 or h[:4] != b'\x7fELF' or h[4] != 2 or h[5] != 1 or h[8:11] != b'AI\x02' or struct.unpack_from('<H', h, 18)[0] != int(machine):
+    sys.exit(f'pack-linux: {os.path.basename(image)} is no {arch} AppImage')
 PY
 }
 check
@@ -186,7 +198,7 @@ check
 
 # 5. the release files and their sums
 mkdir -p "$out"
-install -m 755 "${images[0]}" "$out/SCSKiller-x86_64.AppImage"
+install -m 755 "${images[0]}" "$out/$appimage"
 install -m 644 "$tmp/vpk/$pkg" "$tmp/vpk/$feed" "$out/"
-(cd "$out" && sha256sum SCSKiller-x86_64.AppImage "$pkg" "$feed" > SHA256SUMS-linux.txt)
-echo "$out: SCSKiller-x86_64.AppImage ($(du -m "$out/SCSKiller-x86_64.AppImage" | cut -f1) MB), $pkg, $feed, SHA256SUMS-linux.txt"
+(cd "$out" && sha256sum "$appimage" "$pkg" "$feed" > "$sums")
+echo "$out: $appimage ($(du -m "$out/$appimage" | cut -f1) MB), $pkg, $feed, $sums"
