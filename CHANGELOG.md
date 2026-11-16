@@ -4,6 +4,10 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**Improved**
+
+- Steam scan progress now shows how many entries have been checked and which entry is being checked.
+
 ## [1.4.8] - 2026-11-15
 
 **New on Windows**

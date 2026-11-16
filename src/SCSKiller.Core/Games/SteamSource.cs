@@ -25,11 +25,15 @@ public sealed partial class SteamSource(string? steamRoot = null) : IGameSource,
     /// <summary>A library or game folder that couldn't be read (a broken junction): skipped, the rest still listed.</summary>
     public IProgress<string>? Log { get; set; }
 
+    /// <summary>Progress while each app manifest is checked: count and the current install name.</summary>
+    public Action<int, string>? ScanProgress { get; set; }
+
     public IReadOnlyList<Game> Discover()
     {
         var root = steamRoot ?? Root();
         var installed = new List<(uint Id, Game Game)>();
         var noExe = new List<(uint Id, string Name, string Install)>();
+        var checkedManifests = 0;
         foreach (var lib in Libraries(root).Where(l => !LeftOut(l)))
             try
             {
@@ -40,6 +44,7 @@ public sealed partial class SteamSource(string? steamRoot = null) : IGameSource,
                     {
                         var text = File.ReadAllText(acf);
                         string? V(string key) => Values(text, key).FirstOrDefault();
+                        ScanProgress?.Invoke(++checkedManifests, V("name") ?? Path.GetFileNameWithoutExtension(acf));
                         if (!uint.TryParse(V("appid"), out var id) || V("installdir") is not { } dir) continue;
                         if (!int.TryParse(V("StateFlags"), out var flags) || (flags & 4) == 0) continue;   // 4 = fully installed
                         var install = Path.Combine(apps, "common", dir);

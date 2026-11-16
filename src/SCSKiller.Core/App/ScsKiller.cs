@@ -972,7 +972,15 @@ public sealed partial class ScsKiller : IScsKiller
             {
                 Progress($"Scanning {SourceName(source)}… {found.Count} games found");
                 // also the last list's games a start with ScanAtStart off reuses unread
-                var named = list(source).Where(g => g.Store == Core.Store.Manual || !leftOut(g.InstallDir)).ToList();
+                IReadOnlyList<Game> discovered;
+                if (source is SteamSource steam)
+                {
+                    steam.ScanProgress = (checkedManifests, name) => Progress($"Scanning Steam… checking entry \n {checkedManifests}: {name}");
+                    try { discovered = list(source); }
+                    finally { steam.ScanProgress = null; }
+                }
+                else discovered = list(source);
+                var named = discovered.Where(g => g.Store == Core.Store.Manual || !leftOut(g.InstallDir)).ToList();
                 foreach (var g in named)   // the folders of both the exe the user picked and the one it runs; a folder's game is only left out
                     if (g.Store == Core.Store.Manual && !(source is ManualSource m && m.InFolder(g.Id)) && found.FirstOrDefault(f => GameFiles.Inside(f.InstallDir, g.ExePath)) is { } owner
                         && new[] { g, Shipping(g) }.Distinct().Where(at => InScope(at) && InScope(owner)).Select(at => AdoptManual(at, owner)).ToList() is [_, ..] left && left.All(l => l))   // else pending for the next whole scan
