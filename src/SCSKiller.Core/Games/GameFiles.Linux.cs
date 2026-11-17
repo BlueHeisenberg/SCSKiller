@@ -34,7 +34,7 @@ public static partial class GameFiles
         Libc.RealPath(path) is { } final ? (Libc.Stat(final) is { } s ? WineFileId(s.Inode) : null, final) : null;
 
     internal static partial string? SystemFolder(Game game) =>
-        SteamPrefix(game, SteamSource.Root()) is { } pfx ? Path.Combine(pfx, "drive_c", "windows", "system32") : null;
+        PrefixOf(game, null) is { } pfx ? Path.Combine(pfx, "drive_c", "windows", "system32") : null;
 
     internal static partial string? PrefixOf(Game game, string? steamRoot)
     {
