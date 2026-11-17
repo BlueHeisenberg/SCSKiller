@@ -4,6 +4,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**Fixed on Linux**
+
+- A Heroic, Lutris or Faugus game's shader cache in the folder its own variables name
+  (`__GL_SHADER_DISK_CACHE_PATH`) is placed, and its compile lands there, instead of being refused.
+
 ## [1.4.8] - 2026-11-15
 
 **New on Windows**

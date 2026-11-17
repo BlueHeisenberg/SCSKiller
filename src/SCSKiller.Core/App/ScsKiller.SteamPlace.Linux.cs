@@ -162,16 +162,17 @@ public sealed partial class ScsKiller
             : seen.Set is { } set ? $"the game reads its shader cache from {set} (no Steam variables), up to {Format.Bytes(seen.Size)}" : $"the game's shader cache can't be reached: {seen.Off}"));
     }
 
-    /// <summary>A launcher game's set as the placer may take it: only in the driver's default folder of the game's environment
-    /// ($XDG_CACHE_HOME/nvidia, else ~/.cache/nvidia), never one its variables move elsewhere, and under the default cap with
-    /// the folder's other files counted whatever the game sets: a program run without a size deletes the oldest sets of a
-    /// folder past it.</summary>
+    /// <summary>A launcher game's set as the placer may take it: in the folder its variables name
+    /// (`__GL_SHADER_DISK_CACHE_PATH`), where the game sets the size and cleanup, else only in the driver's default folder of
+    /// the game's environment ($XDG_CACHE_HOME/nvidia, else ~/.cache/nvidia), under the default cap with the folder's other
+    /// files counted whatever the game sets: a program run without a size deletes the oldest sets of a folder past it.</summary>
     internal static GameCacheWhere Shared(GameCacheWhere where, IReadOnlyDictionary<string, string> env)
     {
         if (where.Set is not { } set) return where;
+        if (env.GetValueOrDefault("__GL_SHADER_DISK_CACHE_PATH") is { Length: > 0 }) return where with { Shared = true };
         var cache = env.GetValueOrDefault("XDG_CACHE_HOME") is { } x && Path.IsPathFullyQualified(x) ? x
             : env.GetValueOrDefault("HOME") is { } h && Path.IsPathFullyQualified(h) ? Path.Combine(h, ".cache") : null;
-        return env.ContainsKey("__GL_SHADER_DISK_CACHE_PATH") || cache == null || Libc.RealPath(Path.Combine(cache, "nvidia", "GLCache")) is not { } root
+        return cache == null || Libc.RealPath(Path.Combine(cache, "nvidia", "GLCache")) is not { } root
             || !set.StartsWith(root + "/", StringComparison.Ordinal)
             ? new(Off: GameCacheWhere.NvidiaElsewhere)
             : where with { Size = Math.Min(where.Size, GameCacheWhere.NvidiaDefaultSize), SkipCleanup = false, Shared = true };
