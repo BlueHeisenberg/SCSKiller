@@ -4,6 +4,17 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+## [1.4.9] - 2026-11-21
+
+**Fixed**
+
+- Windows, Linux: Steam games are no longer treated as anti-cheat games when the Steam client beta is installed.
+- Windows, Linux: Red Dead Redemption 2 and other games keep their correct game file when the online game list is older
+  than the app's own.
+- Windows: With NVIDIA, the Cache page shows each game's own DirectX shader cache files and Clear cache deletes them,
+  except files other apps with the same exe name use. (Thanks to ecelebi29 for the PR.)
+- Windows, Linux: The message about a damaged Steam manifest no longer tells you to move the file.
+
 ## [1.4.8] - 2026-11-15
 
 **New on Windows**

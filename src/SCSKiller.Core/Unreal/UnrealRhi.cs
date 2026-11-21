@@ -579,15 +579,15 @@ public static class UnrealRhi
     public static (IReadOnlyList<string> Entries, string? Default) LaunchMenu(Game game)
     {
         if (SteamSource.AppId(game.Id) is not { } id) return ([], null);
-        var f = new FileInfo(Path.Combine(SteamRoot, "appcache", "appinfo.vdf"));
-        var stamp = f.Exists ? $"{f.Length}:{f.LastWriteTimeUtc.Ticks}" : "";
+        var appinfo = Path.Combine(SteamRoot, "appcache", "appinfo.vdf");
+        var stamp = SteamSource.AppInfoStamp(appinfo);
         var key = $"{game.Id}|{game.InstallDir}|{game.ExePath}";
         lock (menus)
         {
             if (menuStamp != stamp) { menus.Clear(); menuStamp = stamp; }
             if (menus.TryGetValue(key, out var hit)) return hit;
         }
-        var apps = SteamSource.Apps(f.FullName, new HashSet<uint> { id });
+        var apps = SteamSource.Apps(appinfo, new HashSet<uint> { id });
         var menu = LaunchMenu(apps?.GetValueOrDefault(id), game);
         if (apps != null) lock (menus) if (menuStamp == stamp) menus[key] = menu;   // a failed read is tried again
         return menu;

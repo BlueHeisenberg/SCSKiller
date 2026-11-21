@@ -656,8 +656,30 @@ static std::string steam_root() {
 // The Steam app's VAC: a Valve VAC title, or appinfo.vdf's info about it marks VAC or can't be had. nullptr: no VAC.
 static const char* vac_of(uint32_t app, const std::string& steam) {
     if (std::find(std::begin(kValveVac), std::end(kValveVac), app) != std::end(kValveVac)) return "VAC (a Valve game)";
-    // appinfo.vdf: as admit.h reads it
+    // appinfo.vdf and its shards: as admit.h reads them
+    std::string entry;
+    std::vector<std::string> names;
+    uint32_t state = 0;
+    int64_t newest = INT64_MIN;
+    const char* sharded = shard_find(app, [&](int i) -> FILE* {
+        char n[16];
+        snprintf(n, sizeof n, "%02x.vdf", i);
+        const int s = open((steam + "/appcache/appinfo/appinfo_" + n).c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        struct stat sst;
+        FILE* sf = s < 0 || fstat(s, &sst) || !S_ISREG(sst.st_mode) ? nullptr : fdopen(s, "rb");
+        if (!sf && s >= 0) close(s), errno = EIO;
+        return sf;
+    }, entry, names, state, newest);
+    // the shards' folder there without appinfo_00.vdf: an incomplete set
+    struct stat dst;
+    if (sharded == kNoShards && (!stat((steam + "/appcache/appinfo").c_str(), &dst) || (errno != ENOENT && errno != ENOTDIR))) sharded = "VAC: Steam's app info shards can't be read";
+    // the source Steam wrote last decides, as admit.h
+    struct stat lst;
+    const bool legacy = sharded != kNoShards && (stat((steam + "/appcache/appinfo.vdf").c_str(), &lst) ? errno != ENOENT && errno != ENOTDIR : (int64_t)lst.st_mtime > newest);
+    if (!legacy && !sharded) return vac_verdict(entry, 0, &names, state);
+    if (!legacy && (sharded == kVacNotListed || sharded == kShardEntryDamaged)) return sharded;
     const int fd = open((steam + "/appcache/appinfo.vdf").c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0 && sharded != kNoShards) return legacy ? "VAC: Steam's appinfo.vdf can't be read" : sharded;
     if (fd < 0 && errno == ENOENT) return kVacNoAppinfo;
     struct stat st;
     FILE* f = fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ? nullptr : fdopen(fd, "rb");
@@ -669,8 +691,7 @@ static const char* vac_of(uint32_t app, const std::string& steam) {
     const char* why = "VAC: Steam's appinfo.vdf can't be read";
     uint32_t hd[2] = {};
     int64_t table = 0;
-    std::string entry;
-    std::vector<std::string> names;
+    entry.clear(), names.clear();
     if (fread(hd, 4, 2, f) != 2 || (hd[0] != 0x07564428 && hd[0] != 0x07564429) || (hd[0] == 0x07564429 && (fread(&table, 8, 1, f) != 1 || table < 16 || table >= flen)))
         why = "VAC: Steam's appinfo.vdf isn't understood";
     else
@@ -703,14 +724,8 @@ static const char* vac_of(uint32_t app, const std::string& steam) {
     }
     fclose(f);
     if (entry.empty()) return why;
-    uint32_t state;
     memcpy(&state, entry.data(), 4);
-    Kv kv{entry, 60, hd[0] == 0x07564429 ? &names : nullptr};
-    if (!kv.object(0, 0)) return "VAC: the game's entry in appinfo.vdf is damaged";
-    if (!kv.common) return kVacNoInfo;
-    if (kv.vac) return "VAC (Steam marks the game)";
-    if (!kv.category && state != 2) return kVacNoInfo;
-    return nullptr;
+    return vac_verdict(entry, 60, hd[0] == 0x07564429 ? &names : nullptr, state);
 }
 
 // A Steam app id as Steam writes one (steam_appid.txt, a compatdata folder): decimal, 1 to 2^32-1. 0: not one.

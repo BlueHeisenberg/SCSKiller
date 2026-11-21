@@ -217,7 +217,8 @@ public static class Vac
         if (steam && id == null && SteamShortcuts.AppId(g.Id) is { } own && InOwnPrefix(own, g.InstallDir, root, leftOut) && InOwnPrefix(own, g.ExePath, root, leftOut))
             steam = false;
         if (steam && (id is not { } app || Valve.Contains(app) || Apps(path) is not { } apps || apps.GetValueOrDefault(app)?.Vac != false)) return true;
-        return Named(g).Any(n => Valve.Contains(n) || Apps(path)?.GetValueOrDefault(n) is { Vac: true or null });
+        // Steam's app info there but unreadable can't say, as the proxy's named_vac refuses it
+        return Named(g).Any(n => Valve.Contains(n) || (Apps(path) is { } info ? info.GetValueOrDefault(n) is { Vac: true or null } : SteamSource.AppInfoStamp(path).Length > 0));
     }
 
     /// <summary>The app ids the steam_appid.txt files name in the folders the proxy's vac_named reads (folders_to: the exe's
@@ -286,14 +287,13 @@ public static class Vac
     static Dictionary<uint, SteamApp>? Apps(string path)
     {
         if (path.Length == 0) return null;
-        var f = new FileInfo(path);
-        var stamp = f.Exists ? $"{f.Length}:{f.LastWriteTimeUtc.Ticks}" : "";
+        var stamp = SteamSource.AppInfoStamp(path);
         lock (Gate)
         {
             if (_cache is { } c && c.Path == path && c.Stamp == stamp && (c.Apps != null || c.Age.Elapsed < RetryFailed)) return c.Apps;
             var states = new Dictionary<uint, uint>();
-            string? error = f.Exists ? null : "missing";
-            var apps = (f.Exists ? SteamSource.Apps(path, null, states, e => error = e) : null)
+            string? error = stamp.Length > 0 ? null : "missing";
+            var apps = (stamp.Length > 0 ? SteamSource.Apps(path, null, states, e => error = e) : null)
                 ?.ToDictionary(a => a.Key, a => new SteamApp(Verdict(a.Value, states.GetValueOrDefault(a.Key)), LaunchExes(a.Value)));
             // an entry that doesn't parse is listed without usable info, as the proxy's damaged entry
             if (apps != null) foreach (var id in states.Keys) apps.TryAdd(id, new SteamApp(null, []));

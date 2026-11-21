@@ -155,6 +155,12 @@ public sealed partial class ScsKiller
             if (kind is CacheGroupKind.Installed or CacheGroupKind.Uninstalled && ids != null) i.Ids.UnionWith(ids);
         }
 
+        // a shared or generic exe name's key: every app of that name may read it
+        var nameKeys = NvidiaNameKeys();
+        var soleKeys = nameKeys.Where(x => x.Sole).Select(x => x.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var shownKeys = nameKeys.Where(x => !x.Sole).GroupBy(x => x.Key)
+            .ToDictionary(g => g.Key, g => string.Join(", ", g.Select(x => x.Exe).Distinct(StringComparer.OrdinalIgnoreCase)), StringComparer.OrdinalIgnoreCase);
+        var shownItems = new HashSet<(CacheGroupKind, string)>();
         var oldBefore = OldDriverBefore(fresh: true);
         string? KeyOf(FileInfo f, bool d3d12) => own switch
         {
@@ -171,6 +177,12 @@ public sealed partial class ScsKiller
                 var key = KeyOf(f, d3d12);
                 if (key != null) readKeys.Add(key);
                 var (kind, name, ids) = Owner(claims, key);
+                if (ids == null && key != null && shownKeys.TryGetValue(key, out var exes))
+                {
+                    Add(CacheGroupKind.Unattributed, exes, [f]);
+                    shownItems.Add((CacheGroupKind.Unattributed, exes));
+                    continue;
+                }
                 if (old.Contains(f.FullName)) Add(CacheGroupKind.OldDriver, ids != null ? name : OtherApps, [f]);
                 else Add(kind, name, [f], ids);
             }
@@ -210,7 +222,8 @@ public sealed partial class ScsKiller
         var kept = new HashSet<(CacheGroupKind, string)>();
         if (AppCache != null)
         {
-            foreach (var by in claims.Keys.Where(k => !readKeys.Contains(k)).Select(k => (Key: k, Owner: Owner(claims, k))).GroupBy(x => (x.Owner.Kind, x.Owner.Name)))
+            // a name key's files are all in the DXCache folder read above
+            foreach (var by in claims.Keys.Where(k => !readKeys.Contains(k) && !soleKeys.Contains(k)).Select(k => (Key: k, Owner: Owner(claims, k))).GroupBy(x => (x.Owner.Kind, x.Owner.Name)))
             {
                 Add(by.Key.Kind, by.Key.Name, AppCache.FilesOf(by.Select(x => x.Key)).Where(f => added.Add(f.FullName)), by.SelectMany(x => x.Owner.Ids ?? []));
                 if (AppCache is MesaLinuxAppCache) kept.Add(by.Key);
@@ -269,14 +282,18 @@ public sealed partial class ScsKiller
             .Select(g => new CacheGroup(g.Key,
                 g.Select(i => new CacheItem(i.Key.Name, g.Key, i.Value.Files.Select(f => new CacheFile(f.FullName, f.Length, f.LastWriteTimeUtc,
                         own == GpuVendor.Nvidia && NvidiaAppCache.Key(f.Name) != null ? NvidiaAppCache.UsedBytes(f.FullName) : null)).ToList(),
-                        i.Value.Ids.Order().ToList(), Seen(i.Value.Files), kept.Contains(i.Key) ? MesaKept : g.Key == CacheGroupKind.Uninstalled ? notes.GetValueOrDefault(i.Key.Name)
+                        i.Value.Ids.Order().ToList(), Seen(i.Value.Files), shownItems.Contains(i.Key) ? SharedNameNote(i.Key.Name) : kept.Contains(i.Key) ? MesaKept : g.Key == CacheGroupKind.Uninstalled ? notes.GetValueOrDefault(i.Key.Name)
                             : oldVersions.Contains(i.Key) ? OldVersionsNote : null,
-                        kept.Contains(i.Key), i.Value.Ids.Overlaps(leftBehind)))
+                        kept.Contains(i.Key) || shownItems.Contains(i.Key), i.Value.Ids.Overlaps(leftBehind)))
                     .OrderByDescending(p => p.Bytes).ToList(),
                 g.Key == CacheGroupKind.OtherVendor ? note : null))
             .ToList();
         return new(shown, groups, oldBefore?.At);
     }
+
+    internal const string NameShared = "other apps of the same exe name use these files";
+
+    static string SharedNameNote(string exes) => $"Every app named {exes} uses this cache, so it isn't deleted.";
 
     const string MesaKept = "Steam's pre-cache writes to the same file, so it isn't deleted here.";
 
@@ -297,7 +314,7 @@ public sealed partial class ScsKiller
         };
     }
 
-    /// <summary>Driver cache key -> the games that claim it: learned keys, on AMD the exe name's hash, and on NVIDIA every game
+    /// <summary>Driver cache key -> the games that claim it: learned keys, on AMD and NVIDIA the exe name's hash, and on NVIDIA every game
     /// whose exe has the same file name (the key is that name's). A record left out of the list for its folder's listed game
     /// keeps only keys that game doesn't claim, and <paramref name="leftBehind"/> gets that game. <paramref name="notes"/> gets uninstalled games' notes.</summary>
     Dictionary<string, List<(CacheGroupKind Kind, string Name, string Id)>> Claims(GpuVendor own, Dictionary<string, string>? notes = null, HashSet<string>? leftBehind = null)
@@ -345,6 +362,9 @@ public sealed partial class ScsKiller
                 foreach (var (kind, _, id) in list.ToList())
                     foreach (var o in byExe.Where(o => o.Id != id && byExe.Any(m => m.Id == id && m.Exes.Overlaps(o.Exes)) && !list.Any(x => x.Id == o.Id)))
                         list.Add((kind == CacheGroupKind.OldBuild ? kind : o.Kind, o.Name, o.Id));
+        // after the same-name spread: a sole name key's one game is already known
+        foreach (var (g, _, key, sole) in NvidiaNameKeys())
+            if (sole) (claims.TryGetValue(key, out var l) ? l : claims[key] = []).Add((CacheGroupKind.Installed, g.Name, g.Id));
         // a delete forgets every claimant's compile: a record left out of the list has no share in its folder owner's keys
         foreach (var list in claims.Values)
         {
@@ -356,6 +376,23 @@ public sealed partial class ScsKiller
             }
         }
         return claims;
+    }
+
+    /// <summary>NVIDIA's keys from the exe names of listed and hidden games (<see cref="NvidiaAppCache.HintKeys"/>), none any record
+    /// learned: a learned key is its record's. Sole: only this game derives the key and its name isn't generic
+    /// (<see cref="NvidiaAppCache.GenericName"/>), so it is the game's to attribute and delete. Any other is shown, never deleted.</summary>
+    List<(Game Game, string Exe, string Key, bool Sole)> NvidiaNameKeys()
+    {
+        if (AppCache is not NvidiaAppCache) return [];
+        var games = Games.Select(s => s.Game).Concat(HiddenGames).Select(g => (Game: g, Rec: Store.LoadGame(g.Id))).ToList();
+        var learned = games.Select(x => x.Rec).Concat(UninstalledRecords(Games).Select(x => x.Rec)).SelectMany(r => r.CacheKeys.Concat(r.DisputedKeys))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var derived = games.SelectMany(x => new[] { Path.GetFileName(x.Game.ExePath), x.Rec.LaunchedExeName, x.Rec.WarmedExeName }.OfType<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase).SelectMany(n => NvidiaAppCache.HintKeys(n).Select(k => (x.Game, Exe: n, Key: k))))
+            .Where(x => !learned.Contains(x.Key)).ToList();
+        // one verdict per key: a generic name colliding with another name of the same game still makes the key shared
+        var sole = derived.GroupBy(x => x.Key).ToDictionary(g => g.Key, g => g.Select(x => x.Game.Id).Distinct().Count() == 1 && !g.Any(x => NvidiaAppCache.GenericName(x.Exe)));
+        return [.. derived.Select(x => (x.Game, x.Exe, x.Key, sole[x.Key]))];
     }
 
     /// <summary>Whose a key's files are: installed wins over uninstalled, either over a compile's unused key, and every
@@ -499,6 +536,8 @@ public sealed partial class ScsKiller
         var roots = CacheRoots().Select(r => (Root: r, Final: GameFiles.FinalPath(r))).Where(r => r.Final != null).ToList();
         var own = AppCache switch { NvidiaAppCache => GpuVendor.Nvidia, AmdAppCache => GpuVendor.Amd, IntelAppCache => GpuVendor.Intel, _ => GpuVendor.Unknown };
         var claims = Claims(own);   // who claims each key now: a game seen running since the page read may have learned one
+        // a shared or generic exe name's key now, whatever the page read: never deleted
+        var shownNow = NvidiaNameKeys().Where(x => !x.Sole).Select(x => x.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var held = new Dictionary<string, FileStream?>();   // one lock per game: an id in two items is the same lock
         var gameD3ds = Games.Select(s => s.Game).Concat(HiddenGames).SelectMany(g => Store.LoadGame(g.Id) is var r ? GameD3DSCacheDirs(g, r).Where(d => !LeftByOldExe(g, r, d)).Select(d => (Dir: d, g.Id)) : [])
             .ToLookup(x => Path.GetFullPath(x.Dir), x => x.Id, StringComparer.OrdinalIgnoreCase);
@@ -546,6 +585,7 @@ public sealed partial class ScsKiller
                 {
                     if (item.Note == OldVersionsNote && OldVersionRefusal(dir) is { } notOld) return notOld;
                     var fileKey = OwnKey(unit[0].Path);
+                    if (fileKey != null && shownNow.Contains(fileKey)) return NameShared;
                     var owner = fileKey != null && item.Kind != CacheGroupKind.OldDriver ? Owner(claims, fileKey) : default;
                     if (item.Kind == CacheGroupKind.OldDriver && !unit.All(f => oldNow!.Contains(Path.GetFullPath(f.Path)))) return "the current driver uses these files";
                     // a game's own D3DSCache folder goes only with that game's cache

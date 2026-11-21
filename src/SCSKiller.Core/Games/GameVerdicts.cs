@@ -7,7 +7,8 @@ namespace SCSKiller.Core.Games;
 /// <summary>Verdicts on single games from game-verdicts.json. The embedded copy is the plain document; the server's travel
 /// signed (<see cref="ContentTrust"/>, name "game-verdicts"): the public copy at /v1/content/game-verdicts.json and alpha's
 /// and beta's at /v1/updates/&lt;channel&gt;/game-verdicts.json behind the access token. A channel's copy that verifies wins,
-/// even over a newer public one, so an entry only in the public copy reaches only stable.
+/// even over a newer public one, so an entry only in the public copy reaches only stable. A served copy replaces the embedded
+/// entries of the ids it names and keeps the rest (<see cref="Served"/>).
 /// "no-stutter": the game prepares its shaders itself, so SCSKiller never suggests compiling it (no bulk add, no
 /// driver-update rebuild, no recorder by default) but still allows it. "unsupported-yet" and "unsupported": the game is
 /// Unsupported ("Not supported yet", "Not supported"). "no-anti-cheat": a WeGame game confirmed to carry no anti-cheat,
@@ -45,6 +46,7 @@ public sealed class GameVerdicts
         string? Note = null, string[]? Engines = null, string[]? Builds = null, string[]? Exes = null);
 
     readonly Dictionary<string, List<Entry>> byId = new(StringComparer.OrdinalIgnoreCase);
+    readonly List<Entry> entries;
     readonly List<string> antiCheat = [];   // ids and exe names: only an id has a ':'
 
     /// <summary>The entries this version applies.</summary>
@@ -56,8 +58,15 @@ public sealed class GameVerdicts
             foreach (var id in e.Ids)
                 (byId.TryGetValue(id, out var l) ? l : byId[id] = []).Add(e);
         antiCheat.AddRange(entries.Where(e => e.Verdict == AntiCheatVerdict).SelectMany(e => e.Ids.Concat(e.Exes ?? [])));
-        Count = entries.Count;
+        (this.entries, Count) = (entries, entries.Count);
     }
+
+    /// <summary>A served list (<see cref="TryParse"/>) over the embedded one: its entries replace the embedded entries of the ids
+    /// it names, and the embedded entries of every other id stay. A served list never removes an embedded entry.</summary>
+    public static GameVerdicts? Served(string json) => TryParse(json) is { } served ? served.Over(Embedded) : null;
+
+    internal GameVerdicts Over(GameVerdicts under) =>
+        new([.. entries, .. under.entries.Select(e => e with { Ids = [.. e.Ids.Where(id => !byId.ContainsKey(id))] }).Where(e => e.Ids.Length > 0)]);
 
     /// <summary>The list, or null when the document isn't an object within <see cref="ContentFile.MaxBytes"/> whose
     /// "games" is an array of at most <see cref="MaxGames"/>. The plain document: a signed one is checked by

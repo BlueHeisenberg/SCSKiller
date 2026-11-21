@@ -402,9 +402,12 @@ static int panel(const std::string& path, bool round0) {
     return drawn ? 1 : untouched ? 0 : -1;
 }
 
+static int shards();
+
 static int vkrec(const std::string& bin) {
     namespace fs = std::filesystem;
     int bad = 0;
+    bad += shards();
     // the keys and the HMAC as Python's hashlib makes them of the same UTF-16LE
     bad += sha1_hex("abc") != "a9993e364706816aba3e25717850c26c9cd0d89d";
     bad += path_key("/Home/\xc3\x89t\xc3\xa9/G\xf0\x9f\x98\x80/A.exe") != "abc08883149eb06d69a87a07c569df9a0c09454b";
@@ -701,8 +704,122 @@ static int vkrec(const std::string& bin) {
     return bad ? 1 : 0;
 }
 
+// Steam's app info shards in place of appinfo.vdf (admission.h's shard_find): vac_of reads them as it reads appinfo.vdf. Of
+// a whole set and appinfo.vdf, the one Steam wrote last decides (a tie: the shards), a newer appinfo.vdf that can't be read
+// refuses, a set missing a shard yields to appinfo.vdf, a damaged set without it refuses.
+static int shards() {
+    namespace fs = std::filesystem;
+    char tmpl[] = "/tmp/scsk-shards-XXXXXX";
+    CHECK(mkdtemp(tmpl));
+    const std::string steam = tmpl, dir = steam + "/appcache/appinfo/";
+    std::error_code ec;
+    fs::create_directories(dir, ec), fs::create_directories(steam + "/steamapps", ec);
+    auto u32 = [](uint32_t v) { return std::string((const char*)&v, 4); };
+    const std::string z(1, '\0'), end(1, '\x08');
+    // app 100 clean, 101 flagged, 102 Steam has no info (byte 20 of the index block set), 103 info without categories
+    struct App { uint32_t id; bool info; int cats; };  // cats: 0 none, 1 clean, 2 VAC
+    auto write = [&](const std::vector<App>& apps) {
+        for (int i = 0; i < 256; i++) {
+            std::vector<std::string> keys;
+            auto key = [&](const char* k) {
+                size_t n = std::find(keys.begin(), keys.end(), k) - keys.begin();
+                if (n == keys.size()) keys.push_back(k);
+                return u32((uint32_t)n);
+            };
+            std::string index, data;
+            uint32_t count = 0;
+            for (const App& a : apps) {
+                if (a.id % 256 != (uint32_t)i) continue;
+                auto obj = [&](const char* k) { return std::string(1, '\0') + key(k); };
+                std::string kv = obj("appinfo") + obj("common") + std::string(1, '\1') + key("name") + "x" + z;
+                if (a.cats) kv += obj("category") + std::string(1, '\2') + key(a.cats == 2 ? "category_8" : "category_1") + u32(1) + end;
+                kv += end + end + end;
+                const std::string payload = std::string(20, '\0') + kv;
+                std::string block(50, '\0');
+                block[20] = a.info ? 0 : 1;
+                index += u32(a.id) + u32((uint32_t)data.size()) + u32((uint32_t)payload.size()) + block + u32(0) + std::string(13, '\0') + z;
+                data += payload, count++;
+            }
+            std::string table;
+            for (auto& k : keys) table += k + z;
+            const std::string head = u32(0x0756442A) + u32(1) + u32(i) + u32(256) + u32(count) + u32((uint32_t)index.size()) + u32((uint32_t)keys.size()) +
+                                     u32((uint32_t)table.size()) + u32((uint32_t)data.size()) + std::string(8, '\0');
+            char name[32];
+            snprintf(name, sizeof name, "appinfo_%02x.vdf", i);
+            if (!write_file(dir + name, head + index + table + data)) return false;
+        }
+        return true;
+    };
+    CHECK(write({{100, true, 1}, {101, true, 2}, {102, false, 0}, {103, true, 0}}));
+    int bad = 0;
+    auto expect = [&](const char* label, uint32_t app, const char* want) {
+        const char* got = vac_of(app, steam);
+        const bool ok = want ? got && !strcmp(got, want) : !got;
+        printf("  %s %u: %s%s\n", label, app, got ? got : "no VAC", ok ? "" : "  FAILED");
+        bad += !ok;
+    };
+    expect("shards", 100, nullptr);
+    expect("shards", 101, "VAC (Steam marks the game)");
+    expect("shards", 102, kVacNoInfo);
+    expect("shards", 103, nullptr);
+    expect("shards", 999, kVacNotListed);
+    // appinfo.vdf flagging app 100 beside the shards, all of them written at t: older, the same second, newer, unreadable
+    const time_t t = time(nullptr) - 600;
+    auto stamp = [&](const std::string& p, time_t at) { struct timespec ts[2] = {{at, 0}, {at, 0}}; return !utimensat(AT_FDCWD, p.c_str(), ts, 0); };
+    for (int i = 0; i < 256; i++) {
+        char name[32];
+        snprintf(name, sizeof name, "appinfo_%02x.vdf", i);
+        CHECK(stamp(dir + name, t));
+    }
+    const std::string kv = std::string(1, '\0') + "appinfo" + z + std::string(1, '\0') + "common" + z + std::string(1, '\0') + "category" + z + "\2category_8" + z +
+                           u32(1) + end + end + end + end;
+    CHECK(write_file(steam + "/appcache/appinfo.vdf", u32(0x07564428) + u32(1) + u32(100) + u32(60 + (uint32_t)kv.size()) + u32(2) + std::string(56, '\0') + kv + u32(0)));
+    CHECK(stamp(steam + "/appcache/appinfo.vdf", t - 3600));
+    expect("older appinfo.vdf", 100, nullptr);
+    CHECK(stamp(steam + "/appcache/appinfo.vdf", t));
+    expect("same second", 100, nullptr);
+    CHECK(stamp(steam + "/appcache/appinfo.vdf", t + 1));
+    expect("newer appinfo.vdf", 100, "VAC (Steam marks the game)");
+    const std::string old = read_all(steam + "/appcache/appinfo.vdf", 1 << 20);
+    CHECK(write_file(steam + "/appcache/appinfo.vdf", "garbage!") && stamp(steam + "/appcache/appinfo.vdf", t + 1));
+    expect("newer appinfo.vdf unreadable", 100, "VAC: Steam's appinfo.vdf isn't understood");
+    CHECK(write_file(steam + "/appcache/appinfo.vdf", old) && stamp(steam + "/appcache/appinfo.vdf", t - 3600));
+    // appinfo.vdf in a folder this user can't enter, so its time can't be read: never the shards (root enters any)
+    if (geteuid()) {
+        const std::string link = steam + "/appcache/appinfo.vdf", locked = steam + "/locked", inside = locked + "/appinfo.vdf";
+        CHECK(!mkdir(locked.c_str(), 0700) && !rename(link.c_str(), inside.c_str()) && !symlink(inside.c_str(), link.c_str()) && !chmod(locked.c_str(), 0));
+        expect("appinfo.vdf's time unreadable", 100, "VAC: Steam's appinfo.vdf can't be read");
+        CHECK(!chmod(locked.c_str(), 0700) && !unlink(link.c_str()) && !rename(inside.c_str(), link.c_str()) && stamp(link, t - 3600) && !rmdir(locked.c_str()));
+    }
+    // a shard missing: the older appinfo.vdf decides
+    const std::string held = dir + "appinfo_65.vdf.held";
+    CHECK(!rename((dir + "appinfo_65.vdf").c_str(), held.c_str()));
+    expect("missing shard", 100, "VAC (Steam marks the game)");
+    // and without it the set refuses
+    CHECK(!unlink((steam + "/appcache/appinfo.vdf").c_str()));
+    expect("missing shard, no appinfo.vdf", 100, "VAC: Steam's app info shards can't be read");
+    CHECK(!rename(held.c_str(), (dir + "appinfo_65.vdf").c_str()));
+    // a damaged shard (its sizes don't add up) refuses
+    CHECK(truncate((dir + "appinfo_e8.vdf").c_str(), 50) == 0);
+    expect("damaged shard", 100, "VAC: Steam's app info shards are damaged");
+    // an app listed twice, the later entry clean: its entry is damaged
+    CHECK(write({{101, true, 2}, {101, true, 1}, {100, true, 1}}));
+    expect("listed twice", 101, kShardEntryDamaged);
+    expect("listed twice", 100, nullptr);
+    // no shard and no appinfo.vdf, beside a library: as before
+    fs::remove_all(dir, ec);
+    expect("none", 100, kVacNoAppinfo);
+    // the shards' folder left without appinfo_00.vdf: an incomplete set, not "no Steam data"
+    fs::create_directories(dir, ec);
+    expect("empty shard folder", 100, "VAC: Steam's app info shards can't be read");
+    fs::remove_all(tmpl, ec);
+    printf("shards: %s\n", bad ? "FAILED" : "ok");
+    return bad ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
     const std::string self = module_path();
+    if (argc > 1 && !strcmp(argv[1], "shards")) return shards();
     if (argc > 1 && !strcmp(argv[1], "vkchild")) return vkchild();
     if (argc > 1 && !strcmp(argv[1], "vkrec")) return vkrec(self.substr(0, self.find_last_of('/') + 1));
     printf("usage: selftest_linux vkrec\n");

@@ -6,7 +6,8 @@ namespace SCSKiller.Core.Games;
 
 /// <summary>The exe of single games whose own pick is wrong, from game-exes.json. The embedded copy is the bundled body;
 /// downloaded copies travel signed (<see cref="ContentTrust"/>, name "game-exes") like game-verdicts.json: the public copy
-/// at /v1/content/ and alpha's and beta's at /v1/updates/&lt;channel&gt;/, a channel's copy winning. Matched by store id, and
+/// at /v1/content/ and alpha's and beta's at /v1/updates/&lt;channel&gt;/, a channel's copy winning, each over the embedded entries
+/// of the ids it names, the rest kept (<see cref="Served"/>). Matched by store id, and
 /// only within the entry's engines and builds when it lists them (<see cref="GameVerdicts.InScope"/>). exe is relative to
 /// the install root, either separator, never rooted, no part ending in a dot; the app uses it only when that file is in
 /// the install, and a user's own pick wins over it. Read leniently like the game verdicts: unknown top-level members are
@@ -19,6 +20,7 @@ public sealed class GameExes
     sealed record Entry(string Name, string[] Ids, string Exe, string Source, string Date, string[]? Engines = null, string[]? Builds = null);
 
     readonly Dictionary<string, List<Entry>> byId = new(StringComparer.OrdinalIgnoreCase);
+    readonly List<Entry> entries;
 
     /// <summary>The entries this version applies.</summary>
     public int Count { get; }
@@ -28,8 +30,15 @@ public sealed class GameExes
         foreach (var e in entries)
             foreach (var id in e.Ids)
                 (byId.TryGetValue(id, out var l) ? l : byId[id] = []).Add(e);
-        Count = entries.Count;
+        (this.entries, Count) = (entries, entries.Count);
     }
+
+    /// <summary>A served list (<see cref="TryParse"/>) over the embedded one: its entries replace the embedded entries of the ids
+    /// it names, and the embedded entries of every other id stay. A served list never removes an embedded entry.</summary>
+    public static GameExes? Served(string json) => TryParse(json) is { } served ? served.Over(Embedded) : null;
+
+    internal GameExes Over(GameExes under) =>
+        new([.. entries, .. under.entries.Select(e => e with { Ids = [.. e.Ids.Where(id => !byId.ContainsKey(id))] }).Where(e => e.Ids.Length > 0)]);
 
     /// <summary>The list, or null when the document isn't an object within <see cref="ContentFile.MaxBytes"/> whose "games"
     /// is an array of at most <see cref="GameVerdicts.MaxGames"/>. The plain document: a signed one is checked by

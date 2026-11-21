@@ -176,9 +176,9 @@ public sealed partial class ScsKiller : IScsKiller
         if (StutterList.Cached(StutterFile) is { } cached) StutterList.Current = cached;
         if (ConfirmedEngines.Cached(ConfirmedFile) is { } confirmed) ConfirmedEngines.Current = confirmed;
         if (BootPrecompiles.Cached(PrecompilesFile) is { } precompiles) BootPrecompiles.Current = precompiles;
-        if (RulesTrust.Cached(GameVerdicts.Name, GameVerdicts.TryParse, VerdictsFile, null) is { } verdicts) GameVerdicts.Current = verdicts;
+        if (RulesTrust.Cached(GameVerdicts.Name, GameVerdicts.Served, VerdictsFile, null) is { } verdicts) GameVerdicts.Current = verdicts;
         if (RulesTrust.Cached(MaximumMode.Name, MaximumMode.TryParse, MaximumFile, null) is { } maximum) MaximumMode.Current = maximum;
-        if (RulesTrust.Cached(GameExes.Name, GameExes.TryParse, ExesFile, null) is { } exes) GameExes.Current = exes;
+        if (RulesTrust.Cached(GameExes.Name, GameExes.Served, ExesFile, null) is { } exes) GameExes.Current = exes;
         if (RulesFile.Cached(RulesPath, RulesTrust, null) is { } rules) RulesFile.Current = RulesFile.WithServer(rules);
         News = News.Cached(NewsPath, RulesTrust, null) ?? News.Empty;
         _compat = CompatFeed.Cached(CompatTrust, CompatFile);
@@ -1121,9 +1121,9 @@ public sealed partial class ScsKiller : IScsKiller
                     read = ChannelsRead();
                 }
                 // the news' channels; none of them verifying: the app's own list
-                UseVerdicts(await RulesTrust.FetchAsync(GameVerdicts.Name, GameVerdicts.TryParse, VerdictsFile, read?.News, access?.Token, routes) ?? GameVerdicts.Embedded);
+                UseVerdicts(await RulesTrust.FetchAsync(GameVerdicts.Name, GameVerdicts.Served, VerdictsFile, read?.News, access?.Token, routes) ?? GameVerdicts.Embedded);
                 UseMaximum(await RulesTrust.FetchAsync(MaximumMode.Name, MaximumMode.TryParse, MaximumFile, read?.News, access?.Token, routes) ?? MaximumMode.Embedded);
-                UseExes(await RulesTrust.FetchAsync(GameExes.Name, GameExes.TryParse, ExesFile, read?.News, access?.Token, routes) ?? GameExes.Embedded);
+                UseExes(await RulesTrust.FetchAsync(GameExes.Name, GameExes.Served, ExesFile, read?.News, access?.Token, routes) ?? GameExes.Embedded);
                 if (CompatKeys.Count > 0) UseCompat(await CompatFeed.FetchAsync(CompatTrust, CompatFile, routes));
                 var rules = await RulesFile.FetchAsync(RulesPath, RulesTrust, routes, access?.Token, read?.Rules);
                 var news = await News.FetchAsync(NewsPath, RulesTrust, routes, access?.Token, read?.News);
@@ -1273,9 +1273,9 @@ public sealed partial class ScsKiller : IScsKiller
         if (always || _newsRead == null || !read.News.SequenceEqual(_newsRead))
         {
             UseNews(News.Cached(NewsPath, RulesTrust, _newsRead = read.News));
-            UseVerdicts(RulesTrust.Cached(GameVerdicts.Name, GameVerdicts.TryParse, VerdictsFile, read.News) ?? GameVerdicts.Embedded);   // the news' channels
+            UseVerdicts(RulesTrust.Cached(GameVerdicts.Name, GameVerdicts.Served, VerdictsFile, read.News) ?? GameVerdicts.Embedded);   // the news' channels
             UseMaximum(RulesTrust.Cached(MaximumMode.Name, MaximumMode.TryParse, MaximumFile, read.News) ?? MaximumMode.Embedded);
-            UseExes(RulesTrust.Cached(GameExes.Name, GameExes.TryParse, ExesFile, read.News) ?? GameExes.Embedded);
+            UseExes(RulesTrust.Cached(GameExes.Name, GameExes.Served, ExesFile, read.News) ?? GameExes.Embedded);
         }
     }
 
@@ -2242,11 +2242,7 @@ public sealed partial class ScsKiller : IScsKiller
     const string LateRefusal = " (at the first device, after the early decision)";   // proxy.cpp refused_late
     internal const string OutFolderNote = "The last launch wasn't recorded: the recorder couldn't save to SCSKiller's data folder.";
 
-    static readonly string[] ManifestRefusals = ["VAC: a Steam manifest can't be read: ", "VAC: a Steam manifest is malformed: ", "VAC: a Steam manifest names no single folder and app: "];
-
-    /// <summary>The note for a refusal the proxy wrote. One naming a Steam manifest's path says to move that file aside: a bare reason names no file.</summary>
-    internal static string NotRecordedNote(string why) => $"The last launch wasn't recorded: {why}."
-        + (ManifestRefusals.Any(m => why.StartsWith(m, StringComparison.Ordinal)) ? " Move it out of that folder and start the game again." : "");
+    internal static string NotRecordedNote(string why) => $"The last launch wasn't recorded: {why}.";
 
     static string? RefusedBeside(string exe, string exeDir, PlayWindow run)
     {
@@ -4526,7 +4522,8 @@ public sealed partial class ScsKiller : IScsKiller
 
     /// <summary>The driver-cache keys Clear cache covers: the learned ones, and on AMD, unless a learned D3D12 key shows an
     /// app profile, the name hash of each case the exe was seen under that has files (the key of a name without a
-    /// profile). Gap: which of the game's driver cache may be left, null when none.</summary>
+    /// profile), and on NVIDIA the game's sole name keys that have files (<see cref="NvidiaNameKeys"/>). Gap: which of the
+    /// game's driver cache may be left, null when none.</summary>
     (HashSet<string> Keys, string? Gap) DriverKeys(Game g, GameRecord rec)
     {
         var keys = OwnKeys(g, rec);
@@ -4536,6 +4533,8 @@ public sealed partial class ScsKiller : IScsKiller
         if (Games.FirstOrDefault(s => s.Game.Id == g.Id)?.Engine is { } e && VulkanPlan.IsVulkan(e))
             return (keys, AppCache == null || keys.Any(AppCacheFiles.IsVulkanKey) || SteamGlFiles(g, e).Count > 0 ? null
                 : FindsDriverCache);
+        if (AppCache is NvidiaAppCache nv && NvidiaNameKeys().Where(x => x.Sole && x.Game.Id == g.Id).Select(x => x.Key).ToList() is { Count: > 0 } sole)
+            keys.UnionWith(nv.FilesOf(sole).Select(f => NvidiaAppCache.Key(f.Name)).OfType<string>());
         if (AppCache is not AmdAppCache amd)
             return (keys, AppCache == null || keys.Count > 0 ? null
                 : FindsDriverCache);

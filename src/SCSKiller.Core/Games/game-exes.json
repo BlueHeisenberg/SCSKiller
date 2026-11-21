@@ -1,5 +1,5 @@
 {
-  "about": "The exe of games whose own pick is wrong. ids are Game.Id values, the only match. exe is relative to the install root (either separator, never rooted, no part ending in a dot) and used only when that file is in the install. engines and builds limit an entry like game-verdicts.json's. source is never shown but this file is public. date = when the entry was last checked. This is the body: the server serves it signed (release-sign sign-content --name game-exes).",
+  "about": "The exe of games whose own pick is wrong. ids are Game.Id values, the only match for a store's game. A game added by hand matches an entry whose exe is in its install, in the folder of the exe it has. exe is relative to the install root (either separator, never rooted, no part ending in a dot) and used only when that file is in the install. engines and builds limit an entry like game-verdicts.json's. source is never shown but this file is public. date = when the entry was last checked. This is the body: the server serves it signed (release-sign sign-content --name game-exes).",
   "games": [
     {
       "name": "Phantom Blade Zero",
@@ -9,6 +9,26 @@
       "exe": "platform/steam/PBZ.exe",
       "source": "Steam appinfo 4115450 (installdir PBZ) and user installs: the game is platform/steam/PBZ.exe, ProjectPBZ/Binaries/Win64 holds only tools (8za_v2.exe, CheckEnv.exe), no Shipping exe",
       "date": "2026-10-29"
+    },
+    {
+      "name": "FATAL FRAME II: Crimson Butterfly REMAKE",
+      "ids": [
+        "steam:3920610",
+        "steam:4226020"
+      ],
+      "exe": "FatalFrameII.exe",
+      "source": "Steam appinfo 3920610 and its demo 4226020: launch 0 is FatalFrameII.exe at the install root. Launch 1 (DLC 4123380, Digital Art Book & Soundtrack) is DigitalArtBook/FatalFrameIIDigitalArtBook.exe, which the guess can take over the game (a Unity build is taken first). The art book's engine isn't verified",
+      "date": "2026-11-03"
+    },
+    {
+      "name": "Red Dead Redemption 2",
+      "ids": [
+        "epic:Heather",
+        "steam:1174180"
+      ],
+      "exe": "RDR2.exe",
+      "source": "Steam's launch target is PlayRDR2.exe at the install root, which starts the Rockstar Games Launcher, which starts RDR2.exe beside it (the game). Epic app Heather is assumed to name the same launch exe. A store-named launcher is kept as the exe, and the recorder admits only the exe it was armed for",
+      "date": "2026-11-10"
     }
   ]
 }

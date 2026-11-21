@@ -87,8 +87,7 @@ public sealed partial class SteamSource(string? steamRoot = null) : IGameSource,
 
     Dictionary<uint, string>? TypesOf(string appinfo, HashSet<uint> ids)
     {
-        var f = new FileInfo(appinfo);
-        var stamp = f.Exists ? $"{f.Length}:{f.LastWriteTimeUtc.Ticks}" : "";
+        var stamp = AppInfoStamp(appinfo);
         lock (_gate)
         {
             if (_types is { } c && c.Stamp == stamp && ids.IsSubsetOf(c.Asked)) return c.Types;
@@ -361,14 +360,24 @@ public sealed partial class SteamSource(string? steamRoot = null) : IGameSource,
     }
 
     /// <summary>The appinfo object (common, config...) of the given app ids (null: all) from appinfo.vdf (binary KeyValues, v28 or v29),
-    /// streamed: other apps are skipped by their size. Null when the file is missing or not
-    /// understood; an app that is absent or whose entry doesn't parse is just missing from the result.</summary>
+    /// streamed: other apps are skipped by their size, or from the shards beside it (<see cref="ShardDir"/>), which win
+    /// whenever all 256 read. Null when neither is there or understood; an app that is absent or whose entry doesn't parse
+    /// is just missing from the result.</summary>
     public static Dictionary<uint, Dictionary<string, object>>? Apps(string path, IReadOnlySet<uint>? ids) => Apps(path, ids, null);
 
     /// <param name="states">filled with each read app's info state (the entry's first field: 2 = Steam has its info, 1 = none)</param>
     /// <param name="failed">called with the reason when the result is null</param>
     public static Dictionary<uint, Dictionary<string, object>>? Apps(string path, IReadOnlySet<uint>? ids, Dictionary<uint, uint>? states, Action<string>? failed = null)
     {
+        // the source Steam wrote last decides; an appinfo.vdf written later than every shard is read alone, unreadable or not
+        if (path.Length > 0 && Directory.Exists(ShardDir(path)) && !LegacyNewer(path))
+        {
+            string? why = null;
+            if (Shards(ShardDir(path), ids, states, e => why = e) is { } sharded) return sharded;
+            // an incomplete or damaged set yields to appinfo.vdf
+            if (!File.Exists(path)) { failed?.Invoke(why ?? "unreadable"); return null; }
+            states?.Clear();
+        }
         try
         {
             using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16);
@@ -437,6 +446,161 @@ public sealed partial class SteamSource(string? steamRoot = null) : IGameSource,
     static (string Stamp, Dictionary<uint, (long Offset, uint Size)> Index, string[]? Keys)? indexed;
     static readonly Lock indexGate = new();
 
+    /// <summary>The folder of the 256 shards a Steam client writes in place of <paramref name="appinfo"/> (appinfo.vdf), which it
+    /// deletes on converting: appinfo_00.vdf to appinfo_ff.vdf. The shards are there when appinfo_00.vdf is.</summary>
+    public static string ShardDir(string appinfo) => Path.Combine(Path.GetDirectoryName(appinfo) ?? "", "appinfo");
+
+    internal static string ShardPath(string dir, int i) => Path.Combine(dir, $"appinfo_{i:x2}.vdf");
+
+    /// <summary>appinfo.vdf was written in a later second than every shard beside it, as the proxy compares them (whole
+    /// seconds). A tie goes to the shards: Steam converts appinfo.vdf into them, never the other way.</summary>
+    internal static bool LegacyNewer(string appinfo)
+    {
+        if (new FileInfo(appinfo) is not { Exists: true } legacy) return false;
+        var newest = long.MinValue;
+        for (int i = 0; i < 256; i++)
+            if (new FileInfo(ShardPath(ShardDir(appinfo), i)) is { Exists: true } f) newest = Math.Max(newest, Seconds(f.LastWriteTimeUtc));
+        return Seconds(legacy.LastWriteTimeUtc) > newest;
+    }
+
+    static long Seconds(DateTime utc) => (long)Math.Floor((decimal)(utc.Ticks - DateTime.UnixEpoch.Ticks) / TimeSpan.TicksPerSecond);
+
+    /// <summary>Changes whenever Steam's app info at <paramref name="appinfo"/> (appinfo.vdf or its shards) changes; "" when
+    /// neither is there.</summary>
+    public static string AppInfoStamp(string appinfo)
+    {
+        if (appinfo.Length == 0) return "";
+        var legacy = new FileInfo(appinfo);
+        var dir = ShardDir(appinfo);
+        // a file that can't be checked never matches an earlier stamp, so no cached read stands for it
+        string Unknown() => $"?{System.Diagnostics.Stopwatch.GetTimestamp()}";
+        var shards = new StringBuilder();
+        if (Directory.Exists(dir))
+            for (int i = 0; i < 256; i++)
+                shards.Append(new FileInfo(ShardPath(dir, i)) is { Exists: true } f ? $"{i}:{f.Length}:{f.LastWriteTimeUtc.Ticks}," : Absent(ShardPath(dir, i)) ? $"{i}:-," : $"{i}:{Unknown()},");
+        else if (!Absent(dir)) shards.Append(Unknown());
+        var file = legacy.Exists ? $"{legacy.Length}:{legacy.LastWriteTimeUtc.Ticks}" : Absent(appinfo) ? "" : Unknown();
+        return shards.Length == 0 && file.Length == 0 ? "" : $"{shards}|{file}";
+    }
+
+    // the shard set last read whole: the shard that lists each app, and the apps listed more than once
+    static (string Stamp, Dictionary<uint, int> Shard, HashSet<uint> Twice)? shardIndex;
+
+    /// <summary><see cref="Apps(string, IReadOnlySet{uint}?, Dictionary{uint, uint}?, Action{string}?)"/> from the shards in
+    /// <paramref name="dir"/>: null unless all 256 read whole. A shard: a 44-byte header (u32 magic 0x0756442A, universe,
+    /// shard index, shard count 256, apps, index bytes, keys, key bytes, data bytes, 8 more bytes), the index (per app u32 id,
+    /// payload offset into the data, payload size, 50 bytes whose byte 20 is 0 when Steam has the app's info, u32 n and n
+    /// u32s, 13 bytes, a NUL-terminated string), the key table (NUL-terminated names) and the data (per app a SHA-1, then
+    /// binary KeyValues whose keys index the shard's key table). Which shard holds an app isn't derived from its id. An app
+    /// listed twice, or with an entry over 16 MiB, is listed without usable info, as the proxy's damaged entry.</summary>
+    static Dictionary<uint, Dictionary<string, object>>? Shards(string dir, IReadOnlySet<uint>? ids, Dictionary<uint, uint>? states, Action<string> failed)
+    {
+        try
+        {
+            var stamp = dir + "|" + AppInfoStamp(Path.Combine(Path.GetDirectoryName(dir) ?? "", "appinfo.vdf"));
+            (string Stamp, Dictionary<uint, int> Shard, HashSet<uint> Twice) known;
+            lock (indexGate) known = shardIndex is { } k && k.Stamp == stamp ? k : default;
+            var read = new Dictionary<int, (List<(uint Id, int Offset, int Size, uint State)> Entries, string[] Keys, byte[] Bytes)>();
+            if (known.Shard == null)
+            {
+                var shard = new Dictionary<uint, int>();
+                var twice = new HashSet<uint>();
+                for (int i = 0; i < 256; i++)
+                {
+                    read[i] = Shard(dir, i);
+                    foreach (var e in read[i].Entries)
+                        if (!shard.TryAdd(e.Id, i)) twice.Add(e.Id);
+                }
+                // an app moved between shards while they were read would be missed
+                if (dir + "|" + AppInfoStamp(Path.Combine(Path.GetDirectoryName(dir) ?? "", "appinfo.vdf")) != stamp) throw new IOException($"{dir}: changed while read");
+                known = (stamp, shard, twice);
+                lock (indexGate) shardIndex = known;
+            }
+            else
+                // a reused index still needs every shard readable, as the proxy reads them all
+                for (int i = 0; i < 256; i++) File.OpenHandle(ShardPath(dir, i), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete).Dispose();
+            var result = new Dictionary<uint, Dictionary<string, object>>();
+            foreach (var group in (ids ?? (IEnumerable<uint>)known.Shard.Keys).Where(known.Shard.ContainsKey).Distinct().GroupBy(id => known.Shard[id]))
+            {
+                // the shard read again whole: an index is never paired with another write's data
+                var (entries, keys, bytes) = read.TryGetValue(group.Key, out var had) ? had : Shard(dir, group.Key);
+                foreach (var id in group)
+                {
+                    var at = entries.FindIndex(x => x.Id == id);
+                    if (at < 0)
+                    {
+                        if (states != null) states[id] = 1;   // gone from its shard since the index: listed without usable info
+                        continue;
+                    }
+                    var e = entries[at];
+                    if (states != null) states[id] = e.State;
+                    if (known.Twice.Contains(id) || entries.FindLastIndex(x => x.Id == id) != at || e.Size + 20 > 16 << 20) continue;
+                    try
+                    {
+                        var kv = Object(new BinaryReader(new MemoryStream(bytes, e.Offset, e.Size, writable: false)), keys);
+                        result[id] = kv.GetValueOrDefault("appinfo") as Dictionary<string, object> ?? kv;
+                    }
+                    catch (Exception x) when (x is InvalidDataException or EndOfStreamException or IndexOutOfRangeException) { }
+                }
+            }
+            return result;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or IndexOutOfRangeException)
+        {
+            failed(e.Message);
+            return null;   // FileNotFoundException and EndOfStreamException are IOExceptions
+        }
+    }
+
+    /// <summary>Shard <paramref name="i"/> in <paramref name="dir"/>, read whole once and checked (see <see cref="Shards"/>):
+    /// each app's payload (offset into the bytes, past the SHA-1) and info state, the key table, the bytes.</summary>
+    static (List<(uint Id, int Offset, int Size, uint State)> Entries, string[] Keys, byte[] Bytes) Shard(string dir, int i)
+    {
+        var path = ShardPath(dir, i);
+        byte[] b;
+        using (var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16))
+        {
+            if (f.Length < 44 || f.Length > (192L << 20) + 44) throw new InvalidDataException($"{path}: damaged header");
+            b = new byte[f.Length];
+            f.ReadExactly(b);
+            // read twice: a shard Steam rewrites in place meanwhile can't mix two writes
+            var again = new byte[b.Length];
+            f.Position = 0;
+            f.ReadExactly(again);
+            if (f.Length != b.Length || !again.AsSpan().SequenceEqual(b)) throw new IOException($"{path}: changed while read");
+        }
+        uint U(long at) => BitConverter.ToUInt32(b, (int)at);
+        if (U(0) != 0x0756442A) throw new InvalidDataException($"{path}: unknown format");
+        uint apps = U(16), indexBytes = U(20), keyCount = U(24), keyBytes = U(28), dataBytes = U(32);
+        if (U(8) != i || U(12) != 256 || 44L + indexBytes + keyBytes + dataBytes != b.Length || apps > indexBytes / 80 || keyCount > keyBytes
+            || indexBytes > 64 << 20 || keyBytes > 64 << 20)
+            throw new InvalidDataException($"{path}: damaged header");
+        long end = 44L + indexBytes, data = end + keyBytes, at = 44;
+        var entries = new List<(uint, int, int, uint)>((int)apps);
+        for (uint n = 0; n < apps; n++)
+        {
+            if (end - at < 66) throw new InvalidDataException($"{path}: damaged index");
+            uint id = U(at), offset = U(at + 4), size = U(at + 8), extra = U(at + 62);
+            if (size < 20 || (long)offset + size > dataBytes || extra > indexBytes / 4 || end - at - 66 < 4L * extra + 14) throw new InvalidDataException($"{path}: damaged index");
+            var from = at + 66 + 4L * extra + 13;
+            var z = Array.IndexOf(b, (byte)0, (int)from, (int)(end - from));
+            if (z < 0) throw new InvalidDataException($"{path}: damaged index");
+            entries.Add((id, (int)(data + offset + 20), (int)size - 20, b[at + 32] == 0 ? 2u : 1u));
+            at = z + 1;
+        }
+        if (at != end) throw new InvalidDataException($"{path}: damaged index");
+        var names = new List<string>();
+        for (long p = end; p < data;)
+        {
+            var z = Array.IndexOf(b, (byte)0, (int)p, (int)(data - p));
+            if (z < 0) throw new InvalidDataException($"{path}: damaged key table");
+            names.Add(Encoding.UTF8.GetString(b, (int)p, (int)(z - p)));
+            p = z + 1;
+        }
+        if (names.Count != keyCount) throw new InvalidDataException($"{path}: damaged key table");
+        return (entries, [.. names], b);
+    }
+
     /// <summary>A binary KeyValues object up to its end marker: nested objects, strings and 32-bit ints kept, other numbers skipped.</summary>
     static Dictionary<string, object> Object(BinaryReader r, string[]? keys, int depth = 0)
     {
@@ -447,15 +611,30 @@ public sealed partial class SteamSource(string? steamRoot = null) : IGameSource,
             var key = keys == null ? CString(r) : keys[r.ReadInt32()];
             switch (t)
             {
-                case 0: o[key] = Object(r, keys, depth + 1); break;
-                case 1: o[key] = CString(r); break;
-                case 2: o[key] = r.ReadInt32(); break;
+                case 0: o[key] = o.GetValueOrDefault(key) is Dictionary<string, object> had ? Merge(had, Object(r, keys, depth + 1)) : Object(r, keys, depth + 1); break;
+                case 1: Keep(o, key, CString(r)); break;
+                case 2: Keep(o, key, r.ReadInt32()); break;
                 case 3 or 4 or 6: r.ReadInt32(); break;          // float, pointer, color
                 case 7 or 10: r.ReadInt64(); break;              // uint64, int64
                 default: throw new InvalidDataException($"KeyValues type {t}");
             }
         }
         return o;
+    }
+
+    // a key listed twice keeps both objects' keys, as the proxy's walk sees a category_8 in either
+    static Dictionary<string, object> Merge(Dictionary<string, object> into, Dictionary<string, object> from)
+    {
+        foreach (var (k, v) in from)
+            if (into.GetValueOrDefault(k) is Dictionary<string, object> a && v is Dictionary<string, object> b) Merge(a, b);
+            else Keep(into, k, v);
+        return into;
+    }
+
+    // a value never takes an object's place
+    static void Keep(Dictionary<string, object> o, string key, object value)
+    {
+        if (o.GetValueOrDefault(key) is not Dictionary<string, object>) o[key] = value;
     }
 
     static string CString(BinaryReader r)

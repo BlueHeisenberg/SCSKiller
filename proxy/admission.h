@@ -43,7 +43,14 @@ static inline std::string to_utf8(const std::wstring& w) {
     return s;
 }
 #endif
+#include <cerrno>
 #include <chrono>
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <io.h>
+// whole Unix seconds, floored (before 1970 too, which _fstat64 reports as -1)
+static int64_t filetime_seconds(const FILETIME& t) { return (int64_t)((((uint64_t)t.dwHighDateTime << 32) | t.dwLowDateTime) / 10000000ull) - 11644473600ll; }
+#endif
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -387,6 +394,96 @@ struct Kv {
         }
     }
 };
+
+// vac_of's verdict on an app's binary KeyValues at entry[at] (names: its key table, null: inline keys) and info state.
+static const char* vac_verdict(const std::string& entry, size_t at, const std::vector<std::string>* names, uint32_t state) {
+    Kv kv{entry, at, names};
+    if (!kv.object(0, 0)) return "VAC: the game's entry in appinfo.vdf is damaged";
+    if (!kv.common) return kVacNoInfo;
+    if (kv.vac) return "VAC (Steam marks the game)";
+    if (!kv.category && state != 2) return kVacNoInfo;
+    return nullptr;
+}
+
+// shard_find's findings compared by address: appinfo_00.vdf isn't there; the set reads but the app's entry in it doesn't
+static const char kNoShards[] = "VAC: Steam has no app info shards";
+static const char kShardEntryDamaged[] = "VAC: the game's entry in Steam's app info shards is damaged";
+
+// The app's entry in the 256 shards that replace appinfo.vdf (Games.SteamSource.Shards, same layout and checks): open(i)
+// opens appinfo_<i as 2 hex digits>.vdf, null when it can't. Each shard is read whole once, then parsed, and every one is
+// checked, as the app can be in any. Found (nullptr): kv is its binary KeyValues, names its shard's key table, state 2 when
+// Steam has its info, else 1. Not in a whole set: kVacNotListed. Listed twice or oversized: kShardEntryDamaged. Those three
+// are the set's answer. appinfo_00.vdf absent: kNoShards. Else why the set can't be read. newest: the latest modification
+// time of the shards read, in whole seconds (Games.SteamSource.LegacyNewer).
+template <class Open> const char* shard_find(uint32_t app, Open open, std::string& kv, std::vector<std::string>& names, uint32_t& state, int64_t& newest) {
+    kv.clear(), names.clear();
+    newest = INT64_MIN;
+    int found = 0;
+    bool oversized = false;
+    for (int i = 0; i < 256; i++) {
+        errno = 0;
+        FILE* f = open(i);
+        if (!f) return i == 0 && errno == ENOENT ? kNoShards : "VAC: Steam's app info shards can't be read";
+#ifdef _WIN32
+        FILETIME w;
+        const bool stamped = GetFileTime((HANDLE)_get_osfhandle(_fileno(f)), nullptr, nullptr, &w);
+        const int64_t mtime = stamped ? filetime_seconds(w) : 0;
+#else
+        struct stat st;
+        const bool stamped = !fstat(fileno(f), &st);
+        const int64_t mtime = stamped ? (int64_t)st.st_mtime : 0;
+#endif
+        if (!stamped) return fclose(f), "VAC: Steam's app info shards can't be read";
+        if (mtime > newest) newest = mtime;
+        std::string b, again;
+        long flen = -1;
+        // read twice: a shard Steam rewrites in place meanwhile can't mix two writes
+        const bool read = !fseek(f, 0, SEEK_END) && (flen = ftell(f)) >= 44 && flen <= (192l << 20) + 44 && !fseek(f, 0, SEEK_SET)
+                          && (b.resize((size_t)flen), fread(&b[0], 1, b.size(), f) == b.size()) && !fseek(f, 0, SEEK_SET)
+                          && (again.resize(b.size()), fread(&again[0], 1, again.size(), f) == again.size()) && fgetc(f) == EOF && again == b;
+        fclose(f);
+        if (!read) return flen > (192l << 20) + 44 ? "VAC: Steam's app info shards are damaged" : "VAC: Steam's app info shards can't be read";
+        uint32_t h[11];
+        memcpy(h, b.data(), 44);
+        if (h[0] != 0x0756442A) return "VAC: Steam's app info shards aren't understood";
+        // magic, universe, shard, count, apps, index bytes, keys, key bytes, data bytes, 8 more bytes
+        if (h[2] != (uint32_t)i || h[3] != 256 || 44ull + h[5] + h[7] + h[8] != b.size() || h[4] > h[5] / 80 || h[6] > h[7] || h[5] > (64u << 20) || h[7] > (64u << 20))
+            return "VAC: Steam's app info shards are damaged";
+        // index records: u32 app, payload offset, payload size, 50 bytes (byte 20: 0 when Steam has the info), u32 n, n u32s,
+        // 13 bytes, a NUL-terminated string
+        const size_t end = 44 + (size_t)h[5], data = end + h[7];
+        size_t at = 44, off = 0, size = 0;
+        bool here = false;
+        uint8_t flag = 0;
+        for (uint32_t n = 0; n < h[4]; n++) {
+            uint32_t r[3], extra;
+            if (end - at < 66) return "VAC: Steam's app info shards are damaged";
+            memcpy(r, b.data() + at, 12), memcpy(&extra, b.data() + at + 62, 4);
+            if (r[2] < 20 || (uint64_t)r[1] + r[2] > h[8] || extra > h[5] / 4 || end - at - 66 < 4ull * extra + 14) return "VAC: Steam's app info shards are damaged";
+            const size_t z = b.find('\0', at + 66 + 4 * (size_t)extra + 13);
+            if (z == std::string::npos || z >= end) return "VAC: Steam's app info shards are damaged";
+            if (r[0] == app) here = true, found++, off = r[1], size = r[2], flag = (uint8_t)b[at + 32];
+            at = z + 1;
+        }
+        if (at != end) return "VAC: Steam's app info shards are damaged";
+        size_t keys = 0;
+        std::vector<std::string> table;
+        for (size_t p = end; p < data; keys++) {
+            const size_t z = b.find('\0', p);
+            if (z == std::string::npos || z >= data) return "VAC: Steam's app info shards are damaged";
+            if (here) table.push_back(b.substr(p, z - p));
+            p = z + 1;
+        }
+        if (keys != h[6]) return "VAC: Steam's app info shards are damaged";
+        if (here) {
+            oversized = size > (16u << 20);
+            if (!oversized) kv = b.substr(data + off + 20, size - 20);
+            names.swap(table), state = flag ? 1 : 2;
+        }
+    }
+    if (found > 1 || oversized) return kv.clear(), names.clear(), kShardEntryDamaged;
+    return found ? nullptr : kVacNotListed;
+}
 
 // The binding's refusal (admit.h's bound_here): the cfg names another process.
 static const char* const kBoundElsewhere = "bound to another process";

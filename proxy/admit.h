@@ -627,14 +627,35 @@ static const char* vac_of(uint32_t app, const std::wstring& steam) {
     const std::wstring path = appinfo_path(steam);
     // under Wine the Steam that started the game names it without a Windows Steam
     if (steam.empty() && path == L"\\appcache\\appinfo.vdf") return kVacNoSteam;
+    std::string entry;
+    std::vector<std::string> names;
+    uint32_t state = 0;
+    int64_t newest = INT64_MIN;
+    const std::wstring shards = path.empty() ? L"" : path.substr(0, path.size() - wcslen(L"appinfo.vdf")) + L"appinfo\\appinfo_";
+    const char* sharded = path.empty() ? kNoShards : shard_find(app, [&](int i) {
+        wchar_t n[16];
+        swprintf(n, 16, L"%02x.vdf", i);
+        return _wfsopen(long_path(shards + n).c_str(), L"rb", _SH_DENYNO);
+    }, entry, names, state, newest);
+    // the shards' folder there without appinfo_00.vdf: an incomplete set
+    if (sharded == kNoShards && !path.empty() && (GetFileAttributesW(long_path(shards.substr(0, shards.size() - wcslen(L"\\appinfo_"))).c_str()) != INVALID_FILE_ATTRIBUTES || !absent(GetLastError())))
+        sharded = "VAC: Steam's app info shards can't be read";
+    // the source Steam wrote last decides (Games.SteamSource.LegacyNewer): an appinfo.vdf written in a later second than
+    // every shard is read alone, unreadable or not; an incomplete or damaged set yields to it
+    WIN32_FILE_ATTRIBUTE_DATA la;
+    // appinfo.vdf's time unknown but not absent: read it alone, so the shards can't decide
+    const bool legacy = sharded != kNoShards && (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &la)
+                        ? filetime_seconds(la.ftLastWriteTime) > newest : !absent(GetLastError()));
+    if (!legacy && !sharded) return vac_verdict(entry, 0, &names, state);
+    if (!legacy && (sharded == kVacNotListed || sharded == kShardEntryDamaged)) return sharded;
     FILE* f = path.empty() ? nullptr : _wfsopen(path.c_str(), L"rb", _SH_DENYNO);
+    if (!f && sharded != kNoShards) return legacy ? "VAC: Steam's appinfo.vdf can't be read" : sharded;
     if (!f) return !path.empty() && errno == ENOENT ? kVacNoAppinfo : "VAC: Steam's appinfo.vdf can't be read";
     const int64_t flen = _filelengthi64(_fileno(f));
     const char* why = "VAC: Steam's appinfo.vdf can't be read";
     uint32_t hd[2] = {};
     int64_t table = 0;
-    std::string entry;
-    std::vector<std::string> names;
+    entry.clear(), names.clear();
     if (fread(hd, 4, 2, f) != 2 || (hd[0] != 0x07564428 && hd[0] != 0x07564429) || (hd[0] == 0x07564429 && (fread(&table, 8, 1, f) != 1 || table < 16 || table >= flen)))
         why = "VAC: Steam's appinfo.vdf isn't understood";
     else
@@ -667,14 +688,8 @@ static const char* vac_of(uint32_t app, const std::wstring& steam) {
     }
     fclose(f);
     if (entry.empty()) return why;
-    uint32_t state;
     memcpy(&state, entry.data(), 4);
-    Kv kv{entry, 60, hd[0] == 0x07564429 ? &names : nullptr};
-    if (!kv.object(0, 0)) return "VAC: the game's entry in appinfo.vdf is damaged";
-    if (!kv.common) return kVacNoInfo;
-    if (kv.vac) return "VAC (Steam marks the game)";
-    if (!kv.category && state != 2) return kVacNoInfo;
-    return nullptr;
+    return vac_verdict(entry, 60, hd[0] == 0x07564429 ? &names : nullptr, state);
 }
 
 // A Steam app id as Steam writes one in steam_appid.txt: decimal, 1 to 2^32-1. 0: not one.
