@@ -2007,6 +2007,7 @@ public sealed partial class ScsKiller : IScsKiller
         var elsewhere = by == null && (foreign || Foreign(RecordedAt(s.Game, rec)));
         var db = Length(Path.Combine(InboxOf(s.Game.ExePath), "scskiller.db"));
         var offline = OfflineEntry(s.Game, s.AntiCheat, s.Engine) != null && GameVerdicts.Current.Unsupported(s.Game, s.Engine) == null;
+        var outside = !offline && OutsideOffered(s);
         var effective = by != null ? shared : RecorderWanted(o, RecordsByDefault(Settings, s), skip, PairFrames11(s.Engine, rec, Vendor.Caps) && !RecorderOffByDefault(s.Game));
         return s with { RecorderOverride = o, RecorderSkip = skip, RecorderEffective = effective,
             RecorderForeign = elsewhere, RecorderUnarmed = unarmed, RecorderFailure = effective && by == null ? rec.RecorderFailure : null,
@@ -2017,7 +2018,8 @@ public sealed partial class ScsKiller : IScsKiller
             RecordAlongsideMod = rec.RecordAlongsideMod,
             RecordingBytes = RecordingFiles(s.Game).Where(f => Path.GetFileName(f) != FrameLog.FileName).Sum(Length), RecordedPipelines = rec.RecordedPipelines,
             RecordingPaused = ours && DbCap(s.Game) is { } cap && db >= cap,
-            OfflineEligible = offline, OfflineRecord = rec.OfflineRecord, AlwaysRecord = rec.AlwaysRecord,
+            OfflineEligible = offline, OfflineRecord = rec.OfflineRecord, AlwaysRecord = rec.AlwaysRecord, OutsideEligible = outside, OutsideLaunchOption = outside ? OutsideOption(s.Game) : null,
+            OutsideAlways = outside && SteamSource.AppId(s.Game.Id) != null && HasLaunch(SCSKiller.Core.Unreal.UnrealRhi.LaunchOptions(s.Game), s.Game.Id),
             OfflineRunning = (OfflineLive(s.Game.Id) || rec.OfflineSession != null) && !_armed.ContainsKey(s.Game.Id),
             RiskEligible = !offline && RiskOffered(s), RiskNoLaunch = !offline && RiskOfferedButLaunch(s.Game, s.Engine, s.AnyAntiCheat) && !StoreLaunches(s.Game),
             RiskTrusted = !offline && RecordsAntiCheat && s.AnyAntiCheat && TrustedLaunch(s.Game), SessionNote = _sessionNotes.GetValueOrDefault(s.Game.Id) };
@@ -7015,6 +7017,7 @@ public sealed partial class ScsKiller : IScsKiller
         s.AnyAntiCheat ? SkipAntiCheat
         : IntelLocalDriver(s.Game) ? SkipIntelDriver
         : RecorderCrashes(s.Game) ? SkipCrashes
+        : OutsideOnly(s.Game) ? SkipOutside
         : s.ShaderModBlocks ? SkipShaderMod
         : s.RootUnconfirmed ? SkipManual
         : SteamSandboxSkip is { } sandboxed && (s.Game.Store == Core.Store.Steam || SteamShortcuts.Is(s.Game.Id)) ? sandboxed
@@ -8326,7 +8329,8 @@ public sealed partial class ScsKiller : IScsKiller
     void HoldTakenFolder(Game g, GameRecord rec)
     {
         if (RecorderInstallAllowed(Store.DataDir, AppStore.Moved, Environment.GetEnvironmentVariable("SCSKILLER_TEST_RECORDER"))
-            || rec.RecorderFiles.Count > 0 || rec.RecorderChained != null || rec.VulkanLayer != null) return;
+            || rec.RecorderFiles.Count > 0 || rec.RecorderChained != null || rec.VulkanLayer != null
+            || rec.OfflineSession != null) return;   // an outside session's marker: it places no dll, and its own end takes the marker out
         foreach (var dir in new[] { g, RecordedAt(g, rec) }.Select(x => FullDir(Path.GetDirectoryName(x.ExePath)!)).Distinct(StringComparer.OrdinalIgnoreCase))
             try
             {
