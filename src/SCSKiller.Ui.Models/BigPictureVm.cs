@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Net.WebSockets;
 using System.Text.Json;
 using SCSKiller.Core.App;
 
@@ -88,11 +89,28 @@ public sealed class BigPictureVm : Bindable
             latest = "Newest published: " + release.Version;
             Url = release.Zip.ToString();
             Changed();
-            status = "Installing " + release.Version + " into Decky...";
+            status = "Installing " + release.Version + " through Decky Loader...";
             Changed();
-            await Decky.InstallAsync(http, release);
-            ReadInstalled();
-            status = "Installed " + release.Version + " into Decky. Restart Steam to load it.";
+            try
+            {
+                await Decky.HotInstallAsync(release, new Progress<string>(step =>
+                {
+                    status = "Decky Loader: " + step;
+                    Changed();
+                }));
+                ReadInstalled();
+                status = "Installed " + release.Version + " and loaded it in Decky: no Steam restart needed.";
+            }
+            catch (Exception e) when (e is InvalidOperationException or IOException or WebSocketException)
+            {
+                // No loader, or it refused: the files still install, and Steam loads them at its next start
+                Host.Log?.Report("Decky hot install unavailable, copying the files instead: " + e);
+                status = "Decky Loader couldn't load it live (" + e.Message + "). Installing the files...";
+                Changed();
+                await Decky.InstallAsync(http, release);
+                ReadInstalled();
+                status = "Installed " + release.Version + " into Decky. Restart Steam to load it.";
+            }
         }
         catch (Exception e) when (e is HttpRequestException or IOException or UnauthorizedAccessException
             or InvalidDataException or InvalidOperationException or JsonException or TaskCanceledException)

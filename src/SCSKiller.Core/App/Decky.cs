@@ -1,4 +1,6 @@
 using System.IO.Compression;
+using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 
 namespace SCSKiller.Core.App;
@@ -18,6 +20,14 @@ public static class Decky
 
     const string Releases = "https://api.github.com/repos/" + Repository + "/releases?per_page=20";
     const string TagPrefix = PluginName + "-v";
+
+    /// <summary>Decky Loader's own local API: a token endpoint, then one WebSocket through which the loader installs and
+    /// loads plugins in the running Steam. Installing through it needs no Steam restart; copying the folder does.</summary>
+    const string LoaderApi = "http://127.0.0.1:1337/";
+    const string LoaderSocket = "ws://127.0.0.1:1337/ws?auth=";
+
+    // the loader's message types, read off its own frontend (decky-loader v3.3.1)
+    const int Call = 0, Reply = 1, Error = 2, ReceivedReply = 3, Event = 5;
 
     /// <summary>Decky's home: <c>%USERPROFILE%\homebrew</c> on Windows, <c>$HOME/homebrew</c> elsewhere (the Deck's own
     /// <c>/home/deck/homebrew</c>). DECKY_HOME overrides it, for a fake Decky folder in a test.</summary>
@@ -105,6 +115,85 @@ public static class Decky
         {
             foreach (var path in new[] { zip, partial })
                 try { File.Delete(path); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    /// <summary>Decky Loader's token, or null when the loader isn't running on this PC.</summary>
+    public static async Task<string?> LoaderTokenAsync(HttpClient http, CancellationToken cancel = default)
+    {
+        try
+        {
+            using var response = await http.GetAsync(new Uri(LoaderApi + "auth/token"), HttpCompletionOption.ResponseHeadersRead, cancel);
+            if (!response.IsSuccessStatusCode) return null;
+            var token = (await response.Content.ReadAsStringAsync(cancel)).Trim();
+            return token.Length == 36 ? token : null;
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidOperationException) { return null; }
+    }
+
+    /// <summary>Installs the release through Decky Loader itself: the loader downloads the zip, installs it and loads the
+    /// plugin into the Steam that is already running, so nothing restarts. <paramref name="progress"/> gets the loader's own
+    /// progress text. Throws when the loader isn't there or refuses, and the caller can fall back to
+    /// <see cref="InstallAsync"/>.</summary>
+    public static async Task HotInstallAsync(Release release, IProgress<string>? progress = null, CancellationToken cancel = default)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        var token = await LoaderTokenAsync(http, cancel)
+            ?? throw new InvalidOperationException("Decky Loader isn't running: its local API on 127.0.0.1:1337 doesn't answer.");
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri(LoaderSocket + token), cancel);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        deadline.CancelAfter(TimeSpan.FromMinutes(3));
+        var id = 1;
+        await LoaderSendAsync(socket, new { type = Call, route = "utilities/install_plugin", args = new object[] { release.Zip.ToString(), PluginName, release.Version }, id }, deadline.Token);
+        while (true)
+        {
+            using var frame = await LoaderReceiveAsync(socket, deadline.Token)
+                ?? throw new IOException("Decky Loader closed the connection before the plugin loaded.");
+            if (!frame.RootElement.TryGetProperty("type", out var type)) continue;
+            switch (type.GetInt32())
+            {
+                case Event:
+                    var name = frame.RootElement.GetProperty("event").GetString() ?? "";
+                    var args = frame.RootElement.GetProperty("args");
+                    if (name == "loader/add_plugin_install_prompt")
+                    {
+                        // the loader has the zip and asks its UI to confirm: answer as the QAM would
+                        var request = args[2].GetString() ?? "";
+                        await LoaderSendAsync(socket, new { type = Call, route = "utilities/confirm_plugin_install", args = new object[] { request }, id = ++id }, deadline.Token);
+                    }
+                    else if (name == "loader/plugin_download_info")
+                        progress?.Report(args[0].ValueKind == JsonValueKind.Number ? args[0].GetInt32() + "%" : args[1].ToString());
+                    else if (name == "loader/import_plugin" && args[0].GetString() == PluginName)
+                        return;
+                    else if (name.Contains("error", StringComparison.OrdinalIgnoreCase))
+                        throw new IOException("Decky Loader reported " + name + ": " + args);
+                    break;
+                case Reply:
+                case Error:
+                    if (frame.RootElement.TryGetProperty("id", out var replyId))
+                        await LoaderSendAsync(socket, new { type = ReceivedReply, id = replyId.GetInt32() }, deadline.Token);
+                    if (type.GetInt32() == Error) throw new InvalidOperationException("Decky Loader refused it: " + frame.RootElement.GetProperty("error"));
+                    break;
+            }
+        }
+    }
+
+    static async Task LoaderSendAsync(ClientWebSocket socket, object message, CancellationToken cancel)
+        => await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(message), WebSocketMessageType.Text, true, cancel);
+
+    static async Task<JsonDocument?> LoaderReceiveAsync(ClientWebSocket socket, CancellationToken cancel)
+    {
+        var buffer = new byte[16 * 1024];
+        using var payload = new MemoryStream();
+        while (true)
+        {
+            var result = await socket.ReceiveAsync(buffer, cancel);
+            if (result.MessageType == WebSocketMessageType.Close) return null;
+            payload.Write(buffer, 0, result.Count);
+            if (!result.EndOfMessage) continue;
+            payload.Position = 0;
+            return await JsonDocument.ParseAsync(payload, cancellationToken: cancel);
         }
     }
 

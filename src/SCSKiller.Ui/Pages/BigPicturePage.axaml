@@ -32,12 +32,12 @@
                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
                         <TextBlock Text="2" FontWeight="SemiBold" />
                         <TextBlock Grid.Column="1" TextWrapping="Wrap"
-                                   Text="Come back to this page and press Install: the newest published plugin release is downloaded from GitHub and written into Decky's plugin folder." />
+                                   Text="Come back to this page and press Install: the newest published release is handed to Decky Loader, which downloads it, installs it and loads it in the Steam that is already running." />
                     </Grid>
                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
                         <TextBlock Text="3" FontWeight="SemiBold" />
                         <TextBlock Grid.Column="1" TextWrapping="Wrap"
-                                   Text="Restart Steam: Decky loads its plugins when the client starts." />
+                                   Text="Nothing to restart. Decky loads the plugin straight away; with Steam closed, it loads it at the next start." />
                     </Grid>
                     <WrapPanel ItemSpacing="12" Margin="0,2,0,0">
                         <HyperlinkButton Content="Decky Loader downloads" Click="OnDeckyDownloads" />
@@ -50,8 +50,7 @@
 
             <Border Classes="Card" Padding="20">
                 <StackPanel Spacing="10">
-                    <TextBlock Text="Install the plugin into Decky" Classes="Section" />
-                    <WrapPanel ItemSpacing="12">
+                    <TextBlock Text="Install the plugin into Decky" Classes="Section" />                    <WrapPanel ItemSpacing="12">
                         <Button Content="Install the plugin" Click="OnInstall" IsEnabled="{Binding Idle}" />
                         <SelectableTextBlock Text="{Binding Status}" Classes="Secondary" VerticalAlignment="Center"
                                              TextWrapping="Wrap" MaxWidth="620" IsVisible="{Binding HasStatus}" />
