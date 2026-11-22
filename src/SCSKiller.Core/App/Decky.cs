@@ -109,11 +109,12 @@ public static class Decky
     }
 
     /// <summary>Where the zip goes while it installs: the temp folder when it takes a file, else Decky's own plugins
-    /// folder, which the install writes into anyway. A temp folder can be read-only or be a full disk; the message names
-    /// both folders when neither takes it.</summary>
+    /// folder, which the install writes into anyway. A temp folder can be read-only or be a full disk; the message lists
+    /// what each folder answered when neither takes it.</summary>
     static string DownloadPath(string? home)
     {
         string[] candidates = [Path.GetTempPath(), Path.Combine(home ?? Home, "plugins")];
+        var refused = new List<string>();
         foreach (var folder in candidates)
         {
             try
@@ -124,9 +125,12 @@ public static class Decky
                 File.Delete(probe);
                 return Path.Combine(folder, $"scskiller-decky-{Guid.NewGuid():N}.zip");
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException)
+            {
+                refused.Add($"{folder}: {e.GetType().Name}: {e.Message}");
+            }
         }
-        throw new IOException($"The plugin's download has nowhere to go: neither {candidates[0]} nor {candidates[1]} takes a file.");
+        throw new IOException("The plugin's download has nowhere to go - " + string.Join(" | ", refused));
     }
 
     /// <summary>Unpacks the zip's one top-level folder into <paramref name="target"/>, after checking that it is the
@@ -158,7 +162,10 @@ public static class Decky
         if (!string.Equals(name, PluginName, StringComparison.Ordinal))
             throw new InvalidDataException($"The plugin zip carries '{name}', not {PluginName}.");
 
+        // The working copy is set aside, never deleted first: an unpack that can't be put in place is put back, so a
+        // failed install never leaves Decky without the plugin it had.
         var staging = target + ".new";
+        var previous = target + ".old";
         try
         {
             if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
@@ -168,12 +175,24 @@ public static class Decky
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 entry.ExtractToFile(path, overwrite: true);
             }
-            if (Directory.Exists(target)) Directory.Delete(target, recursive: true);
-            Directory.Move(staging, target);
+            if (Directory.Exists(previous)) Directory.Delete(previous, recursive: true);
+            if (Directory.Exists(target)) Directory.Move(target, previous);
+            try { Directory.Move(staging, target); }
+            catch
+            {
+                if (!Directory.Exists(target) && Directory.Exists(previous)) Directory.Move(previous, target);
+                throw;
+            }
+            try { Directory.Delete(previous, recursive: true); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             throw new IOException($"Decky's folder for the plugin can't be replaced ({target}): close Steam and Decky Loader, then install again. {e.Message}", e);
+        }
+        finally
+        {
+            try { if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         }
         return target;
     }
