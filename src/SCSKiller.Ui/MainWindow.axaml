@@ -98,6 +98,13 @@
                                     <TextBlock Text="Cache" Margin="44,0,0,0" VerticalAlignment="Center" />
                                 </Panel>
                             </Button>
+                            <Button x:Name="BigPictureItem" Classes="Nav" AutomationProperties.Name="Steam Big Picture" Click="OnNavClick">
+                                <Panel>
+                                    <Border Classes="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Background="{DynamicResource AccentFillColorDefaultBrush}" />
+                                    <TextBlock Classes="Icon" Text="{x:Static ui:Glyphs.Bolt}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                    <TextBlock Text="Steam Big Picture" Margin="44,0,0,0" VerticalAlignment="Center" />
+                                </Panel>
+                            </Button>
                             <Button x:Name="SettingsItem" Classes="Nav" AutomationProperties.Name="Settings" Click="OnNavClick">
                                 <Panel>
                                     <Border Classes="Pill" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left" Background="{DynamicResource AccentFillColorDefaultBrush}" />

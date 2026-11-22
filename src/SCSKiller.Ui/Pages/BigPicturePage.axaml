@@ -1,0 +1,71 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="using:SCSKiller.Ui.Controls"
+             xmlns:m="using:SCSKiller.Ui.Models"
+             x:Class="SCSKiller.Ui.Pages.BigPicturePage"
+             x:DataType="m:BigPictureVm">
+
+    <ScrollViewer>
+        <StackPanel Margin="36,28,36,28" Spacing="16">
+            <TextBlock Text="Steam Big Picture" Classes="Title" />
+
+            <Border Classes="Card" Padding="20">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="SCSKiller inside Big Picture" Classes="Section" />
+                    <TextBlock TextWrapping="Wrap"
+                               Text="Decky Loader's SCSKiller plugin puts this app into Steam's Big Picture interface: a 48 by 48 shader button next to the controller icon on a game's page, a status window fed by SCSKiller, and a Quick Access Menu page that lists the compile queue with its progress." />
+                    <TextBlock Classes="Secondary" TextWrapping="Wrap"
+                               Text="The plugin ships no binary of its own: it reports what this SCSKiller install already knows and starts the same compiles. No account is needed and nothing leaves the machine." />
+                </StackPanel>
+            </Border>
+
+            <Border Classes="Card" Padding="20">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Decky Loader is required" Classes="Section" />
+                    <TextBlock Classes="Secondary" TextWrapping="Wrap"
+                               Text="Steam has no plugin system of its own: Decky Loader adds one to Big Picture, and the SCSKiller plugin installs into it." />
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                        <TextBlock Text="1" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" TextWrapping="Wrap"
+                                   Text="Install Decky Loader in the Steam client that runs Big Picture." />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                        <TextBlock Text="2" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" TextWrapping="Wrap"
+                                   Text="Come back to this page and press Install: the newest published release is handed to Decky Loader, which downloads it and installs it into its plugin folder." />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                        <TextBlock Text="3" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" TextWrapping="Wrap"
+                                   Text="Restart Steam: Decky lists the plugin and loads it when the client starts." />
+                    </Grid>
+                    <WrapPanel ItemSpacing="12" Margin="0,2,0,0">
+                        <HyperlinkButton Content="Decky Loader downloads" Click="OnDeckyDownloads" />
+                        <HyperlinkButton Content="decky.xyz" Click="OnDeckySite" />
+                        <HyperlinkButton Content="Plugin releases" Click="OnPluginReleases" />
+                    </WrapPanel>
+                    <SelectableTextBlock Text="{Binding PluginsFolder}" Classes="Caption" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Classes="Card" Padding="20">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Install the plugin into Decky" Classes="Section" />                    <WrapPanel ItemSpacing="12">
+                        <Button Content="Install the plugin" Click="OnInstall" IsEnabled="{Binding Idle}" />
+                        <SelectableTextBlock Text="{Binding Status}" Classes="Secondary" VerticalAlignment="Center"
+                                             TextWrapping="Wrap" MaxWidth="620" IsVisible="{Binding HasStatus}" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding Installed}" Classes="Secondary" />
+                    <TextBlock Text="{Binding Latest}" Classes="Secondary" IsVisible="{Binding HasLatest}" />
+                    <c:InfoBar Severity="Warning" IsClosable="False" Title="Decky Loader not found" IsVisible="{Binding DeckyMissing}"
+                               Message="Its plugins folder doesn't exist yet. Install Decky Loader, start Steam once, then come back to this page." />
+                    <StackPanel Spacing="4" IsVisible="{Binding HasUrl}">
+                        <TextBlock Classes="Secondary" TextWrapping="Wrap"
+                                   Text="Decky can install it itself: Developer, Install Plugin from URL, with this URL." />
+                        <SelectableTextBlock Text="{Binding Url}" Classes="Caption" TextWrapping="Wrap" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
