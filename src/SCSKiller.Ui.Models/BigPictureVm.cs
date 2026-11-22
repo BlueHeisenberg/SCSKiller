@@ -99,7 +99,7 @@ public sealed class BigPictureVm : Bindable
                     Changed();
                 }));
                 ReadInstalled();
-                status = "Installed " + release.Version + " and loaded it in Decky: no Steam restart needed. Decky's Plugins list can stay stale for a moment - close and reopen the Quick Access Menu to see it.";
+                status = "Installed " + release.Version + " into Decky. Restart Steam: Decky lists the plugin and loads it when the client starts.";
             }
             catch (Exception e) when (e is InvalidOperationException or IOException or WebSocketException)
             {

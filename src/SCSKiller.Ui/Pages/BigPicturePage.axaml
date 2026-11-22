@@ -32,12 +32,12 @@
                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
                         <TextBlock Text="2" FontWeight="SemiBold" />
                         <TextBlock Grid.Column="1" TextWrapping="Wrap"
-                                   Text="Come back to this page and press Install: the newest published release is handed to Decky Loader, which downloads it, installs it and loads it in the Steam that is already running." />
+                                   Text="Come back to this page and press Install: the newest published release is handed to Decky Loader, which downloads it and installs it into its plugin folder." />
                     </Grid>
                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
                         <TextBlock Text="3" FontWeight="SemiBold" />
                         <TextBlock Grid.Column="1" TextWrapping="Wrap"
-                                   Text="Nothing to restart. Decky loads the plugin straight away; with Steam closed, it loads it at the next start." />
+                                   Text="Restart Steam: Decky lists the plugin and loads it when the client starts." />
                     </Grid>
                     <WrapPanel ItemSpacing="12" Margin="0,2,0,0">
                         <HyperlinkButton Content="Decky Loader downloads" Click="OnDeckyDownloads" />
