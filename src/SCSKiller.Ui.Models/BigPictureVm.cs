@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Text.Json;
 using SCSKiller.Core.App;
 
@@ -8,6 +10,11 @@ namespace SCSKiller.Ui.Models;
 /// Decky's plugin folder and fetches the release's zip.</summary>
 public sealed class BigPictureVm : Bindable
 {
+    /// <summary>Where Decky Loader is downloaded from, what it is, and where the plugin's releases are.</summary>
+    public const string DeckyDownloads = "https://github.com/SteamDeckHomebrew/decky-loader/releases/latest";
+    public const string DeckySite = "https://decky.xyz/";
+    public const string PluginReleases = "https://github.com/JamesDAdams/my-decky-plugins/releases";
+
     string status = "";
     string latest = "";
     string installed = "";
@@ -103,6 +110,22 @@ public sealed class BigPictureVm : Bindable
     void ReadInstalled() => installed = Decky.InstalledVersion() is { } version
         ? "Installed in Decky: " + version
         : "Not installed in Decky yet";
+
+    /// <summary>Opens a link in the user's browser. A link that can't open says why on the page: a click that does
+    /// nothing is worse than a message.</summary>
+    public void Open(string url)
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch (Exception e) when (e is Win32Exception or InvalidOperationException or FileNotFoundException)
+        {
+            status = "Couldn't open " + url + " (" + e.Message + ")";
+            Host.Log?.Report($"Opening {url} failed: {e}");
+            Changed();
+        }
+    }
 
     // GitHub answers an anonymous request with the release list; RouteFailover passes other hosts through and names the
     // build in the User-Agent, which the API requires.

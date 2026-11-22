@@ -21,4 +21,9 @@ public sealed partial class BigPicturePage : UserControl
     }
 
     async void OnInstall(object? _, RoutedEventArgs __) => await Vm.InstallAsync();
+
+    // the links open in the user's browser through the shell, which says so on the page when it refuses
+    void OnDeckyDownloads(object? _, RoutedEventArgs __) => Vm.Open(BigPictureVm.DeckyDownloads);
+    void OnDeckySite(object? _, RoutedEventArgs __) => Vm.Open(BigPictureVm.DeckySite);
+    void OnPluginReleases(object? _, RoutedEventArgs __) => Vm.Open(BigPictureVm.PluginReleases);
 }

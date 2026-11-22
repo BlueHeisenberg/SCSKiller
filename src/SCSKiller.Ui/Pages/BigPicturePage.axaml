@@ -40,9 +40,9 @@
                                    Text="Restart Steam: Decky loads its plugins when the client starts." />
                     </Grid>
                     <WrapPanel ItemSpacing="12" Margin="0,2,0,0">
-                        <HyperlinkButton Content="Decky Loader downloads" NavigateUri="https://github.com/SteamDeckHomebrew/decky-loader/releases/latest" />
-                        <HyperlinkButton Content="decky.xyz" NavigateUri="https://decky.xyz/" />
-                        <HyperlinkButton Content="Plugin releases" NavigateUri="https://github.com/JamesDAdams/my-decky-plugins/releases" />
+                        <HyperlinkButton Content="Decky Loader downloads" Click="OnDeckyDownloads" />
+                        <HyperlinkButton Content="decky.xyz" Click="OnDeckySite" />
+                        <HyperlinkButton Content="Plugin releases" Click="OnPluginReleases" />
                     </WrapPanel>
                     <SelectableTextBlock Text="{Binding PluginsFolder}" Classes="Caption" TextWrapping="Wrap" />
                 </StackPanel>

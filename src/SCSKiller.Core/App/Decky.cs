@@ -88,20 +88,15 @@ public static class Decky
     /// folder written. Throws when the folder can't be replaced, with what to do about it.</summary>
     public static async Task<string> InstallAsync(HttpClient http, Release release, string? home = null, CancellationToken cancel = default)
     {
-        var zip = Path.Combine(Path.GetTempPath(), $"scskiller-decky-{Guid.NewGuid():N}.zip");
+        var zip = DownloadPath(home);
         var partial = zip + ".partial";
         try
         {
             using (var response = await http.SendAsync(Identify(HttpMethod.Get, release.Zip), HttpCompletionOption.ResponseHeadersRead, cancel))
             {
                 response.EnsureSuccessStatusCode();
-                FileStream download;
-                try { download = File.Create(partial); }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-                {
-                    throw new IOException($"The plugin's download has nowhere to go: {Path.GetDirectoryName(zip)} isn't writable ({e.Message}).", e);
-                }
-                await using (download) await response.Content.CopyToAsync(download, cancel);
+                await using (var download = File.Create(partial))
+                    await response.Content.CopyToAsync(download, cancel);
             }
             File.Move(partial, zip, overwrite: true);
             return Unpack(zip, PluginFolder(home));
@@ -111,6 +106,27 @@ public static class Decky
             foreach (var path in new[] { zip, partial })
                 try { File.Delete(path); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         }
+    }
+
+    /// <summary>Where the zip goes while it installs: the temp folder when it takes a file, else Decky's own plugins
+    /// folder, which the install writes into anyway. A temp folder can be read-only or be a full disk; the message names
+    /// both folders when neither takes it.</summary>
+    static string DownloadPath(string? home)
+    {
+        string[] candidates = [Path.GetTempPath(), Path.Combine(home ?? Home, "plugins")];
+        foreach (var folder in candidates)
+        {
+            try
+            {
+                Directory.CreateDirectory(folder);
+                var probe = Path.Combine(folder, $"scskiller-probe-{Guid.NewGuid():N}.tmp");
+                using (File.Create(probe)) { }
+                File.Delete(probe);
+                return Path.Combine(folder, $"scskiller-decky-{Guid.NewGuid():N}.zip");
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+        throw new IOException($"The plugin's download has nowhere to go: neither {candidates[0]} nor {candidates[1]} takes a file.");
     }
 
     /// <summary>Unpacks the zip's one top-level folder into <paramref name="target"/>, after checking that it is the
