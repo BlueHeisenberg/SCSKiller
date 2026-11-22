@@ -4,6 +4,12 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**Added**
+
+- Windows, Linux: a Steam Big Picture page: what SCSKiller's Decky Loader plugin adds to Big Picture, what Decky
+  Loader is and how to install it, and one button that downloads the newest published plugin release from GitHub and
+  installs it into Decky's plugin folder (Decky loads it at the next Steam start).
+
 ## [1.4.9] - 2026-11-21
 
 **Fixed**

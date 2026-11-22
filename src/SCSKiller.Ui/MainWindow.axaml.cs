@@ -39,7 +39,7 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
         AddHandler(PointerPressedEvent, OnMouseNav, RoutingStrategies.Tunnel);
-        pages = [(LibraryItem, typeof(LibraryPage)), (QueueItem, typeof(QueuePage)), (CacheItem, typeof(CachePage)), (SettingsItem, typeof(SettingsPage)), (AboutItem, typeof(AboutPage))];
+        pages = [(LibraryItem, typeof(LibraryPage)), (QueueItem, typeof(QueuePage)), (CacheItem, typeof(CachePage)), (BigPictureItem, typeof(BigPicturePage)), (SettingsItem, typeof(SettingsPage)), (AboutItem, typeof(AboutPage))];
         paneWidth = Nav.OpenPaneLength;
         ((Panel)LibraryItem.Content!).Children.OfType<TextBlock>().Last().PropertyChanged += (_, e) => { if (e.Property == TextBlock.FontSizeProperty) FitPane(); };
         FitPane();
