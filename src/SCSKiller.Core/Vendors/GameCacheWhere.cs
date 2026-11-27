@@ -11,9 +11,10 @@ namespace SCSKiller.Core.Vendors;
 /// its default folder. <see cref="Steam"/>: Steam's folder. <see cref="Set"/>: on NVIDIA, the file set the game's process
 /// writes and reads whole, its real path without .toc or .bin, under the cap <see cref="Size"/>. <see cref="Off"/>: why the
 /// compile can't be put where the game reads. <see cref="OwnProcess"/>: a non-Steam game's, seen in its own process (by its
-/// game id or prefix), never another game's of the same exe name.</summary>
+/// game id or prefix), never another game's of the same exe name. <see cref="LocalProton"/>: Proton's per-prefix NVIDIA
+/// cache with PROTON_LOCAL_SHADER_CACHE enabled.</summary>
 public sealed record GameCacheWhere(bool Steam = false, string? Set = null, long Size = 0, bool SkipCleanup = false, string? Off = null, bool Shared = false,
-    bool OwnProcess = false)
+    bool OwnProcess = false, bool LocalProton = false)
 {
     public static string FileOf(string gameDir) => Path.Combine(gameDir, "cache-where.json");
 
@@ -41,11 +42,15 @@ public sealed record GameCacheWhere(bool Steam = false, string? Set = null, long
         var app = env.GetValueOrDefault("__GL_SHADER_DISK_CACHE_APP_NAME") is { Length: > 0 } a ? a : null;
         if (path != null && app == SteamAppName && path == real(steamNvidia)) return new(Steam: true);
         var readOnly = (env.GetValueOrDefault("__GL_SHADER_DISK_CACHE_READ_ONLY_APP_NAME") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+        var localProton = env.GetValueOrDefault("PROTON_LOCAL_SHADER_CACHE") is "1" or "true"
+            && path != null && Path.GetFileName(path) == "nvidiav1" && Path.GetFileName(Path.GetDirectoryName(path)) == "shadercache";
         var sets = open.Where(f => f.EndsWith(".toc", StringComparison.Ordinal) || f.EndsWith(".bin", StringComparison.Ordinal)).Select(f => f[..^4])
             .Where(s => IsSet(s, path, app) && !readOnly.Contains(Path.GetFileName(s))).Distinct(StringComparer.Ordinal).ToList();
-        if (sets.Count != 1) return sets.Count == 0 ? null : new(Off: $"the game holds several NVIDIA cache files open ({string.Join(", ", sets.Select(Path.GetFileName))})");
+        if (sets.Count != 1 && !(localProton && sets.Count > 1 && sets.Select(Path.GetDirectoryName).Distinct(StringComparer.Ordinal).Count() == 1))
+            return sets.Count == 0 ? null : new(Off: $"the game holds several NVIDIA cache files open ({string.Join(", ", sets.Select(Path.GetFileName))})");
         var size = long.TryParse(env.GetValueOrDefault("__GL_SHADER_DISK_CACHE_SIZE"), NumberStyles.None, CultureInfo.InvariantCulture, out var s) ? s : NvidiaDefaultSize;
-        return new(Set: sets[0], Size: size, SkipCleanup: env.GetValueOrDefault("__GL_SHADER_DISK_CACHE_SKIP_CLEANUP") is "1" or "true");
+        return new(Set: sets[0], Size: size, SkipCleanup: env.GetValueOrDefault("__GL_SHADER_DISK_CACHE_SKIP_CLEANUP") is "1" or "true",
+            LocalProton: localProton);
     }
 
     /// <summary>&lt;folder&gt;/GLCache/&lt;32 hex&gt;/&lt;16 hex&gt;/&lt;name&gt;, in <paramref name="folder"/> when the game names one. The
